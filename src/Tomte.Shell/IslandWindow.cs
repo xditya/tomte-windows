@@ -240,6 +240,9 @@ internal sealed unsafe class IslandWindow : IDisposable
         // The region goes before the resize; the other order leaves it clipping the enlarged window for a frame.
         ClearRegion();
         SizeWindow(System.Drawing.Rectangle.Union(Bounds(from), Bounds(to)));
+        // Re-place the start outline inside the resized window now; waiting for the first tick draws it at
+        // the union's left edge for one frame, and the crossfade would copy that stale offset to the ghost.
+        Apply(from);
         if (!visible)
         {
             visible = true;
