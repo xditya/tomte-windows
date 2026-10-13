@@ -112,12 +112,12 @@ public sealed class SettingsStore : IDisposable
 
     public SettingsStore(string? path = null)
     {
-        Path = path ?? DefaultPath;
-        string directory = System.IO.Path.GetDirectoryName(Path)!;
+        FilePath = path ?? DefaultPath;
+        string directory = Path.GetDirectoryName(FilePath)!;
         Directory.CreateDirectory(directory);
-        Current = Load(Path);
+        Current = Load(FilePath);
         lastText = Serialize(Current);
-        watcher = new FileSystemWatcher(directory, System.IO.Path.GetFileName(Path))
+        watcher = new FileSystemWatcher(directory, Path.GetFileName(FilePath))
         {
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
         };
@@ -127,10 +127,10 @@ public sealed class SettingsStore : IDisposable
         watcher.EnableRaisingEvents = true;
     }
 
-    public static string DefaultPath { get; } = System.IO.Path.Combine(
+    public static string DefaultPath { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "settings.json");
 
-    public string Path { get; }
+    public string FilePath { get; }
 
     public TomteSettings Current { get; private set; }
 
@@ -160,9 +160,9 @@ public sealed class SettingsStore : IDisposable
     public void Save(TomteSettings settings)
     {
         string text = Serialize(settings);
-        string temp = Path + ".tmp";
+        string temp = FilePath + ".tmp";
         File.WriteAllText(temp, text);
-        File.Move(temp, Path, overwrite: true);
+        File.Move(temp, FilePath, overwrite: true);
         Publish(settings, text);
     }
 
@@ -172,7 +172,7 @@ public sealed class SettingsStore : IDisposable
     {
         try
         {
-            var settings = JsonSerializer.Deserialize<TomteSettings>(File.ReadAllText(Path), Json) ?? new();
+            var settings = JsonSerializer.Deserialize<TomteSettings>(File.ReadAllText(FilePath), Json) ?? new();
             Publish(settings, Serialize(settings));
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
