@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet restore Tomte.sln
+      - run: dotnet build Tomte.sln --no-restore --configuration Release
+      - run: dotnet test Tomte.sln --no-build --configuration Release
+      - run: dotnet format Tomte.sln --verify-no-changes --no-restore
