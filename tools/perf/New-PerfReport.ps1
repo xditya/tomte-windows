@@ -51,5 +51,5 @@ $sha = (git -C $PSScriptRoot rev-parse --short HEAD).Trim()
 $f = if ($Frames) { Get-Content $Frames -Raw | ConvertFrom-Json }
 New-Item -ItemType Directory -Force $ReportDir | Out-Null
 $path = Join-Path $ReportDir "perf-$(Get-Date -Format yyyy-MM-dd)-$sha.md"
-Build-Report (Get-Content $Idle -Raw | ConvertFrom-Json) $f $sha | Set-Content $path -Encoding utf8
+Build-Report (Get-Content $Idle -Raw | ConvertFrom-Json) $f $sha | ForEach-Object { [IO.File]::WriteAllText($path, $_) }
 Resolve-Path $path
