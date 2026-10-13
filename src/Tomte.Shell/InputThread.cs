@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Tomte.Core;
+using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -29,7 +30,7 @@ internal static unsafe class InputThread
     public const uint MsgDragInZone = PInvoke.WM_APP + 4;       // lParam = packed x, y
     public const uint MsgDragEnd = PInvoke.WM_APP + 5;
     public const uint MsgHotkey = PInvoke.WM_APP + 6;           // wParam = hotkey id
-    public const uint MsgHotkeyReleased = PInvoke.WM_APP + 7;   // the Rambler chord came up
+    public const uint MsgHotkeyReleased = PInvoke.WM_APP + 7;   // the Rambler chord came up; wParam 1 = held long enough to keep
     public const uint MsgHotkeysRegistered = PInvoke.WM_APP + 8; // Registrations holds a new snapshot
 
     public const int EscapeHotkeyId = 100;
@@ -48,6 +49,7 @@ internal static unsafe class InputThread
     private static SettingsStore store = null!;
     private static RevealSettings reveal = null!;
     private static EdgePushDetector detector = null!;
+    private static HoldDetector hold = null!;
     private static readonly ManualResetEventSlim ready = new(false);
     private static Registration[] registrations = [];
     private static readonly Stopwatch clock = Stopwatch.StartNew();
@@ -61,7 +63,7 @@ internal static unsafe class InputThread
     private static int seenBoundsVersion = -1;
     private static bool pointerInside, rawMouseOn;
     private static int dragX, dragY, downX, downY;
-    private static bool buttonDown, candidate, rawKeyboardArmed;
+    private static bool buttonDown, candidate;
 
     // Callback timing, read by the UI thread at exit.
     public static long HookCalls, HookTicksMax, HookTicksSum, InputCalls, InputTicksMax, InputTicksSum;
@@ -153,6 +155,11 @@ internal static unsafe class InputThread
             }
         }
 
+        // Hold-to-talk: RegisterHotKey gives the press but not the release, so the detector arms raw keyboard input only
+        // while the chord is down and sees the first key-up. Auto-repeat presses while held are ignored by it.
+        hold = new HoldDetector(on => RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, on));
+        hold.Started += () => PInvoke.PostMessage(island, MsgHotkey, (nuint)HotkeyAction.Rambler + 1, 0);
+        hold.Ended += keep => PInvoke.PostMessage(island, MsgHotkeyReleased, (nuint)(keep ? 1 : 0), 0);
         Apply(store.Current);
         ready.Set();
         MSG message;
@@ -253,13 +260,17 @@ internal static unsafe class InputThread
                     }
 
                     return new LRESULT(0);
-                case PInvoke.WM_HOTKEY:
-                    PInvoke.PostMessage(island, MsgHotkey, wParam, 0);
-                    if (wParam.Value == (nuint)HotkeyAction.Rambler + 1 && !rawKeyboardArmed)
+                case PInvoke.WM_HOTKEY when wParam.Value == (nuint)HotkeyAction.Rambler + 1:
+                    hold.Press(clock.ElapsedMilliseconds);
+                    // A tap shorter than WM_HOTKEY's delivery has already released V when this runs.
+                    if ((PInvoke.GetAsyncKeyState(VkV) & 0x8000) == 0)
                     {
-                        ArmRelease();
+                        hold.KeyUp(VkV, clock.ElapsedMilliseconds);
                     }
 
+                    return new LRESULT(0);
+                case PInvoke.WM_HOTKEY:
+                    PInvoke.PostMessage(island, MsgHotkey, wParam, 0);
                     return new LRESULT(0);
                 case MsgSetEscape:
                     if (wParam.Value == 1)
@@ -304,28 +315,6 @@ internal static unsafe class InputThread
         return PInvoke.DefWindowProc(hwnd, message, wParam, lParam);
     }
 
-    /// <summary>
-    /// Hold-to-talk: RegisterHotKey gives the press but not the release, so raw keyboard input is armed only while the
-    /// chord is down and sees the first key-up. A tap shorter than WM_HOTKEY's delivery has already released V when
-    /// this runs; the key state check closes that gap.
-    /// </summary>
-    private static void ArmRelease()
-    {
-        rawKeyboardArmed = true;
-        RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, true);
-        if ((PInvoke.GetAsyncKeyState(VkV) & 0x8000) == 0)
-        {
-            Released();
-        }
-    }
-
-    private static void Released()
-    {
-        rawKeyboardArmed = false;
-        RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, false);
-        PInvoke.PostMessage(island, MsgHotkeyReleased, 0, 0);
-    }
-
     private static void OnInput(HRAWINPUT handle)
     {
         RAWINPUT raw;
@@ -340,14 +329,9 @@ internal static unsafe class InputThread
             // A precision touchpad's input arrives with no device handle; so does injected input.
             OnMouseInput(in raw.data.mouse, raw.header.hDevice.IsNull);
         }
-        else if (raw.header.dwType == (uint)RID_DEVICE_INFO_TYPE.RIM_TYPEKEYBOARD && rawKeyboardArmed && (raw.data.keyboard.Flags & PInvoke.RI_KEY_BREAK) != 0)
+        else if (raw.header.dwType == (uint)RID_DEVICE_INFO_TYPE.RIM_TYPEKEYBOARD && hold.Held && (raw.data.keyboard.Flags & PInvoke.RI_KEY_BREAK) != 0)
         {
-            // V, Win or Alt up: the chord is over.
-            ushort vk = raw.data.keyboard.VKey;
-            if (vk is VkV or 0x5B or 0x5C or 0x12 or 0xA4 or 0xA5)
-            {
-                Released();
-            }
+            hold.KeyUp(raw.data.keyboard.VKey, clock.ElapsedMilliseconds);
         }
     }
 

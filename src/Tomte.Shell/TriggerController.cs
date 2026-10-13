@@ -30,6 +30,7 @@ internal sealed unsafe class TriggerController : IDisposable
     private readonly DesktopWatch watch;
     private readonly DropTarget dropTarget;
     private readonly Action<string>? log;
+    private Rambler? rambler;
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
@@ -74,8 +75,25 @@ internal sealed unsafe class TriggerController : IDisposable
 
     public IslandState State => machine.State;
 
-    /// <summary>The one state machine; the palette host drives Palette on it.</summary>
+    /// <summary>The one state machine; the palette host and the rambler drive their states on it.</summary>
     internal IslandStateMachine Machine => machine;
+
+    /// <summary>
+    /// The hold-to-talk session Win+Alt+V drives: Begin on the hold's start, End on its release. Null until the
+    /// speech-to-text is configured; then the chord only logs.
+    /// </summary>
+    public Rambler? Rambler
+    {
+        get => rambler;
+        set
+        {
+            rambler = value;
+            if (value is not null)
+            {
+                value.Retracted += OnRamblerRetracted;
+            }
+        }
+    }
 
     /// <summary>An internal event: shows Compact for the hold time, or waits while Focus, DND or fullscreen is on.</summary>
     public void Raise(IslandEvent e)
@@ -189,13 +207,8 @@ internal sealed unsafe class TriggerController : IDisposable
                 OnHotkey((int)wParam);
                 return true;
             case InputThread.MsgHotkeyReleased:
-                activity &= ~IslandActivity.Rambling;
-                if (machine.State == IslandState.Compact)
-                {
-                    island.Mascot.Set(MascotState.Compact);
-                    Hide();
-                }
-
+                // The session retracts itself once the note is written; Retracted then releases the rest.
+                rambler?.End(keep: wParam == 1);
                 return true;
             case InputThread.MsgHotkeysRegistered:
                 Conflicts = InputThread.Registrations
@@ -348,11 +361,17 @@ internal sealed unsafe class TriggerController : IDisposable
             case HotkeyAction.Palette:
                 Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
                 break;
+            case HotkeyAction.Rambler when rambler is null:
+                log?.Invoke("rambler: no session configured (start with --rambler)");
+                break;
             case HotkeyAction.Rambler:
-                if (Reveal(RevealTrigger.Hotkey, IslandState.Compact))
+                if (Allowed(RevealTrigger.Hotkey))
                 {
+                    // Begin opens the 262 wide pill and sets the mascot itself.
+                    rambler.Begin();
                     activity |= IslandActivity.Rambling;
-                    island.Mascot.Set(MascotState.Rambler);
+                    pointerInside = false;
+                    InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
                 }
 
                 break;
@@ -429,6 +448,17 @@ internal sealed unsafe class TriggerController : IDisposable
     /// <summary>The pause, then the suppression check, then the morph. False when nothing was shown.</summary>
     private bool Reveal(RevealTrigger trigger, IslandState state, (double W, double H) size = default, bool ignorePause = false)
     {
+        if (!Allowed(trigger, ignorePause))
+        {
+            return false;
+        }
+
+        Go(state, size);
+        return true;
+    }
+
+    private bool Allowed(RevealTrigger trigger, bool ignorePause = false)
+    {
         if (!ignorePause && pause.IsPaused(DateTimeOffset.Now))
         {
             log?.Invoke($"{trigger}: paused");
@@ -441,8 +471,15 @@ internal sealed unsafe class TriggerController : IDisposable
             return false;
         }
 
-        Go(state, size);
         return true;
+    }
+
+    private void OnRamblerRetracted()
+    {
+        if (activity.HasFlag(IslandActivity.Rambling))
+        {
+            Hide();
+        }
     }
 
     /// <summary>
