@@ -60,7 +60,7 @@ public interface IPaletteSession
 
     PaletteStatus Status { get; }
 
-    /// <summary>The visible send: which provider and model are being called, or "Nothing sent".</summary>
+    /// <summary>Which provider and model are being called while a request is in flight, or "Nothing sent": the user always sees where data goes.</summary>
     string ProviderIndicator { get; }
 
     string? Error { get; }
@@ -244,7 +244,16 @@ public sealed class PaletteSession : IPaletteSession
         var calls = new List<ToolCallPart>();
         TurnDone usage = new(null, 0, 0);
         TextSegment? segment = null;
-        StringBuilder? text = null;
+        int placeholder = -1;
+
+        // Deltas accumulate in the segment; the assistant turn gets the text as one part when the segment closes.
+        void CloseText()
+        {
+            if (segment is not null)
+                assistant[placeholder] = new TextPart(segment.Text);
+            segment = null;
+        }
+
         await foreach (var e in _provider.StreamAsync(request, ct))
         {
             switch (e)
@@ -254,23 +263,20 @@ public sealed class PaletteSession : IPaletteSession
                     {
                         segment = new TextSegment();
                         _answer.Add(segment);
-                        text = new StringBuilder();
+                        placeholder = assistant.Count;
                         assistant.Add(new TextPart(""));
                     }
 
                     segment.Builder.Append(delta.Text);
-                    text!.Append(delta.Text);
-                    // The assistant turn echoes the text as one part; replace the placeholder with the full text so far.
-                    assistant[^1] = new TextPart(text.ToString());
                     break;
                 case ToolCallEvent call:
+                    CloseText();
                     assistant.Add(call.Call);
                     calls.Add(call.Call);
-                    segment = null;
                     break;
                 case OpaqueEvent opaque:
+                    CloseText();
                     assistant.Add(opaque.Part);
-                    segment = null;
                     break;
                 case TurnDone done:
                     usage = done;
@@ -280,6 +286,7 @@ public sealed class PaletteSession : IPaletteSession
             Changed?.Invoke();
         }
 
+        CloseText();
         return (assistant, calls, usage);
     }
 
