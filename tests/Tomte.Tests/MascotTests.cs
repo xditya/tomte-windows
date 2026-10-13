@@ -31,7 +31,6 @@ public class MascotTests
         foreach (var state in Enum.GetValues<MascotState>())
         {
             Assert.True(MascotStates.Table.ContainsKey(state), $"{state} has no row");
-            Assert.Equal(state != MascotState.Hidden, MascotStates.Table[state].Draw);
         }
 
         Assert.Equal(7, MascotStates.Table.Count);

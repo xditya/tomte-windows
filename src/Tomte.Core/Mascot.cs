@@ -29,8 +29,8 @@ public enum MascotState
 /// <summary>The end pose a state springs to. Angles in degrees, offsets in viewBox units.</summary>
 public readonly record struct MascotPose(double RootRotate = 0, double RootX = 0, double RootY = 0, double CapRotate = 0, double TipRotate = 0);
 
-/// <summary>One row of the state table: whether it draws, the spring it moves with, its pose and its reduced-motion pose.</summary>
-public readonly record struct MascotReaction(bool Draw, SpringPreset Preset, MascotPose Pose, MascotPose ReducedPose);
+/// <summary>One row of the state table: the spring it moves with, its pose and its reduced-motion pose.</summary>
+public readonly record struct MascotReaction(SpringPreset Preset, MascotPose Pose, MascotPose ReducedPose);
 
 /// <summary>
 /// The character in a 64 x 64 viewBox as flat-colour parts. The parts, their pivots and the draw order
@@ -110,13 +110,13 @@ public static class MascotStates
     public static readonly IReadOnlyDictionary<MascotState, MascotReaction> Table = new Dictionary<MascotState, MascotReaction>
     {
         // Retracting lifts it back above the screen, the reveal run backwards.
-        [MascotState.Hidden] = new(false, SpringPreset.Snappy, new(RootY: PeekFromY), new(RootY: PeekFromY)),
-        [MascotState.Compact] = new(true, SpringPreset.Gentle, default, default),
-        [MascotState.ShelfDrop] = new(true, SpringPreset.Snappy, default, default),
-        [MascotState.Rambler] = new(true, SpringPreset.Snappy, default, default),
-        [MascotState.Thinking] = new(true, SpringPreset.Gentle, default, new(TipRotate: 8)),
-        [MascotState.Result] = new(true, SpringPreset.Gentle, default, default),
-        [MascotState.Error] = new(true, SpringPreset.Gentle, new(RootY: 1.5, CapRotate: 8, TipRotate: 38), new(RootY: 1.5, CapRotate: 8, TipRotate: 38)),
+        [MascotState.Hidden] = new(SpringPreset.Snappy, new(RootY: PeekFromY), new(RootY: PeekFromY)),
+        [MascotState.Compact] = new(SpringPreset.Gentle, default, default),
+        [MascotState.ShelfDrop] = new(SpringPreset.Snappy, default, default),
+        [MascotState.Rambler] = new(SpringPreset.Snappy, default, default),
+        [MascotState.Thinking] = new(SpringPreset.Gentle, default, new(TipRotate: 8)),
+        [MascotState.Result] = new(SpringPreset.Gentle, default, default),
+        [MascotState.Error] = new(SpringPreset.Gentle, new(RootY: 1.5, CapRotate: 8, TipRotate: 38), new(RootY: 1.5, CapRotate: 8, TipRotate: 38)),
     };
 
     /// <summary>
