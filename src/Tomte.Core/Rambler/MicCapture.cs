@@ -54,11 +54,15 @@ public sealed class MicCapture
 
     private unsafe void Run()
     {
+        IMMDeviceEnumerator? enumerator = null;
+        IMMDevice? device = null;
         IAudioClient? client = null;
+        IAudioCaptureClient? captureClient = null;
+        Microsoft.Win32.SafeHandles.SafeFileHandle? ready = null;
         try
         {
-            var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-            enumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eConsole, out var device);
+            enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+            enumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eConsole, out device);
             device.Activate(typeof(IAudioClient).GUID, CLSCTX.CLSCTX_ALL, null, out var activated);
             client = (IAudioClient)activated;
 
@@ -76,11 +80,11 @@ public sealed class MicCapture
                 | PInvoke.AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
             client.Initialize(AUDCLNT_SHAREMODE.AUDCLNT_SHAREMODE_SHARED, flags, 2_000_000, 0, &format, null);
 
-            using var ready = PInvoke.CreateEvent(null, false, false, null);
+            ready = PInvoke.CreateEvent(null, false, false, null);
             client.SetEventHandle((HANDLE)ready.DangerousGetHandle());
             var iid = typeof(IAudioCaptureClient).GUID;
             client.GetService(&iid, out void* service);
-            var captureClient = (IAudioCaptureClient)Marshal.GetObjectForIUnknown((nint)service);
+            captureClient = (IAudioCaptureClient)Marshal.GetObjectForIUnknown((nint)service);
             Marshal.Release((nint)service);
             client.Start();
 
@@ -97,6 +101,25 @@ public sealed class MicCapture
         catch (Exception e)
         {
             failure = e;
+        }
+        finally
+        {
+            // Stop before the event handle closes: the client must not signal a closed handle.
+            try
+            {
+                client?.Stop();
+            }
+            catch (COMException)
+            {
+                // Already stopped, or never started.
+            }
+
+            ready?.Dispose();
+            foreach (var com in new object?[] { captureClient, client, device, enumerator })
+            {
+                if (com is not null)
+                    Marshal.FinalReleaseComObject(com);
+            }
         }
     }
 
@@ -115,9 +138,14 @@ public sealed class MicCapture
             bool silent = (bufferFlags & (uint)_AUDCLNT_BUFFERFLAGS.AUDCLNT_BUFFERFLAGS_SILENT) != 0;
             int start = samples.Count;
             if (silent)
-                samples.AddRange(new float[frames]);
+            {
+                CollectionsMarshal.SetCount(samples, start + (int)frames);
+                CollectionsMarshal.AsSpan(samples)[start..].Clear();
+            }
             else
+            {
                 samples.AddRange(packet);
+            }
             captureClient.ReleaseBuffer(frames);
 
             // The device position is in 100 ns units on the QPC clock, which is Stopwatch's clock.
