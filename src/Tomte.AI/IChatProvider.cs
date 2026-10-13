@@ -52,7 +52,8 @@ public sealed record ToolResultPart(string CallId, string Name, string Content, 
 
 /// <summary>
 /// A provider block the caller must echo back verbatim in the assistant turn (Anthropic thinking
-/// blocks before a tool call). Other adapters drop it.
+/// blocks before a tool call; current Claude models think by default, so these arrive without any
+/// thinking parameter and must go back unchanged, empty ones included). Other adapters drop it.
 /// </summary>
 public sealed record OpaquePart(JsonElement Raw) : ContentPart;
 
