@@ -33,6 +33,7 @@ internal sealed unsafe class TrayIcon : IDisposable
     private readonly HWND hwnd;
     private readonly PauseState pause;
     private HICON icon;
+    private bool menuOpen;
 
     public TrayIcon(PauseState pause)
     {
@@ -133,6 +134,25 @@ internal sealed unsafe class TrayIcon : IDisposable
     }
 
     private void ShowMenu(int x, int y)
+    {
+        // Enter sends NIN_KEYSELECT twice; the second arrives inside TrackPopupMenu's own loop.
+        if (menuOpen)
+        {
+            return;
+        }
+
+        menuOpen = true;
+        try
+        {
+            ShowMenuCore(x, y);
+        }
+        finally
+        {
+            menuOpen = false;
+        }
+    }
+
+    private void ShowMenuCore(int x, int y)
     {
         var now = DateTimeOffset.Now;
         bool timed = pause.IsPaused(now) && !pause.UntilRestart;
