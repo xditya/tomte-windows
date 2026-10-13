@@ -3,6 +3,7 @@
   Starts an exe (which is expected to start hidden on its own) and records RAM, CPU, context switches and wake-ups for a fixed time.
 .EXAMPLE
   .\Measure-Idle.ps1 -Exe ..\..\src\Tomte.Shell\bin\Release\net10.0-windows10.0.22621.0\Tomte.Shell.exe -Out idle.json
+  .\Measure-Idle.ps1 -Exe ..\..\src\Tomte.Shell\bin\Release\net10.0-windows10.0.22621.0\win-x64\Tomte.Shell.exe -Arguments --rambler -Out idle.json
   .\Measure-Idle.ps1 -SelfTest
 .NOTES
   Windows has no per-process wake-up counter outside ETW. Wake-ups here are thread context
@@ -10,6 +11,7 @@
 #>
 param(
     [string]$Exe,
+    [string[]]$Arguments = @(),
     [int]$Seconds = 300,
     [int]$IntervalSeconds = 5,
     [int]$WarmupSeconds = 10,
@@ -77,7 +79,7 @@ function Read-Sample($p) {
     }
 }
 
-$proc = Start-Process $Exe -PassThru
+$proc = if ($Arguments) { Start-Process $Exe -ArgumentList $Arguments -PassThru } else { Start-Process $Exe -PassThru }
 try {
     Start-Sleep $WarmupSeconds
     if ($proc.HasExited) { throw "process exited during warm-up (code $($proc.ExitCode))" }

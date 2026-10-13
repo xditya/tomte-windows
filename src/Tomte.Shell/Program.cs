@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Rambler;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
@@ -51,7 +52,8 @@ internal static class Program
         bool debugMascot = args.Contains("--debug-mascot");
         int paletteArg = Array.IndexOf(args, "--palette");
         string? palettePrompt = paletteArg >= 0 && paletteArg + 1 < args.Length ? args[paletteArg + 1] : null;
-        bool debug = debugAuto || debugMascot || palettePrompt is not null || args.Contains("--debug-cycle");
+        bool rambler = args.Contains("--rambler");
+        bool debug = debugAuto || debugMascot || rambler || palettePrompt is not null || args.Contains("--debug-cycle");
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
@@ -64,14 +66,15 @@ internal static class Program
             island.Mascot.CapColor = Convert.ToUInt32(args[cap + 1], 16);
         }
 
-        StreamWriter? log = null;
+        TextWriter? log = null;
         int step = 0;
         int reaction = 0;
         if (debug)
         {
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte");
             Directory.CreateDirectory(dir);
-            log = OpenLog(dir);
+            // Synchronized: the rambler's input thread writes here too.
+            log = TextWriter.Synchronized(OpenLog(dir));
             island.Log = log.WriteLine;
             log.WriteLine($"{DateTime.Now:O} start args=[{string.Join(' ', args)}] scale={island.MonitorSize}");
             // Win+Alt+Shift+T steps, Win+Alt+Shift+Q quits (Win+Alt+T is taken on the owner's PC). Thread hotkeys arrive
@@ -85,6 +88,11 @@ internal static class Program
                 log.WriteLine($"hotkeys: Win+Alt+Shift+M mascot={PInvoke.RegisterHotKey(HWND.Null, MascotHotKey, chord, 'M')}");
                 StartMascotFeed(island);
             }
+        }
+
+        if (rambler)
+        {
+            StartRambler(args, island, machine, log!);
         }
 
         if (debugAuto)
@@ -166,7 +174,7 @@ internal static class Program
         settingsProcess = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
     }
 
-    private static async Task AutoCycle(IslandWindow island, IslandStateMachine machine, StreamWriter log)
+    private static async Task AutoCycle(IslandWindow island, IslandStateMachine machine, TextWriter log)
     {
         try
         {
@@ -235,7 +243,7 @@ internal static class Program
     /// Ollama with the window chip on and an in-memory shelf and scratchpad, logs the stream and the tool
     /// steps, then retracts and quits. External-effect tools are allowed once each, as a user would.
     /// </summary>
-    private static async Task PaletteRun(IslandWindow island, IslandStateMachine machine, StreamWriter log, string prompt)
+    private static async Task PaletteRun(IslandWindow island, IslandStateMachine machine, TextWriter log, string prompt)
     {
         try
         {
@@ -298,7 +306,7 @@ internal static class Program
         PInvoke.PostQuitMessage(0);
     }
 
-    private static async Task Step(IslandWindow island, IslandStateMachine machine, StreamWriter? log, (IslandState State, double W, double H, MascotState? React) next)
+    private static async Task Step(IslandWindow island, IslandStateMachine machine, TextWriter? log, (IslandState State, double W, double H, MascotState? React) next)
     {
         try
         {
@@ -321,6 +329,60 @@ internal static class Program
         {
             log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} step to {next.State} failed: {e}");
         }
+    }
+
+    /// <summary>
+    /// Temporary wiring for --rambler: Win+Alt+V is registered here until the triggers own every hotkey, and the
+    /// provider comes from the command line until settings exist (--provider-id, --provider-kind, --base-url,
+    /// --model; the key is read from Credential Manager under the id). Speech to text is local whisper.cpp when
+    /// tools/whisper/Get-Whisper.ps1 has run, or the provider's /audio/transcriptions with --stt-provider.
+    /// Without a provider the note is the raw transcript.
+    /// </summary>
+    private static void StartRambler(string[] args, IslandWindow island, IslandStateMachine machine, TextWriter log)
+    {
+        ProviderConfig? config = Arg(args, "--provider-id") is { } id
+            ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
+            : null;
+        // Only a configured provider needs HTTP; local whisper with raw notes never opens a connection.
+        var http = config is null ? null : new HttpClient();
+        ISpeechToText? speech = null;
+        ProviderSend? speechSend = null;
+        if (args.Contains("--stt-provider") && config is { Kind: ProviderKind.OpenAICompatible, BaseUrl: { } url })
+        {
+            speechSend = new ProviderSend(config.Id, Arg(args, "--stt-model") ?? "whisper-1");
+            speech = new OpenAITranscriber(http!, url, CredentialStore.Read(config.Id), speechSend.Model);
+        }
+        else if (WhisperTranscriber.IsInstalled(WhisperTranscriber.DefaultDirectory))
+        {
+            speech = new WhisperTranscriber(WhisperTranscriber.DefaultDirectory);
+        }
+
+        if (speech is null)
+        {
+            log.WriteLine("rambler: no speech to text. Run tools/whisper/Get-Whisper.ps1, or pass --stt-provider with an OpenAI-compatible provider.");
+            return;
+        }
+
+        RamblerStructure? structure = null;
+        if (config is { DefaultModel: { } model })
+        {
+            var provider = ProviderSetup.Load(config, http!);
+            structure = new RamblerStructure(new ProviderSend(config.Id, model), (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct));
+        }
+
+        var scratchpad = new ScratchpadFile(ScratchpadFile.DefaultPath);
+        var sendLog = new SendLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl"));
+        var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
+        // Bounce is raised on the island's thread, where the mascot's level must be set.
+        session.Bounce += level => island.Mascot.Level = level;
+        RamblerHotkey.Start(island.Queue, session.Begin, session.End, log.WriteLine);
+        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"} scratchpad={scratchpad.FilePath}");
+    }
+
+    private static string? Arg(string[] args, string name)
+    {
+        int i = Array.IndexOf(args, name);
+        return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
     }
 
     /// <summary>Routes await continuations back to the UI thread's dispatcher queue.</summary>
