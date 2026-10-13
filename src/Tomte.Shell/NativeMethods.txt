@@ -15,7 +15,6 @@ GetSystemMetrics
 MonitorFromWindow
 GetDpiForMonitor
 RegisterHotKey
-UnregisterHotKey
 DwmSetWindowAttribute
 CreateDispatcherQueueController
 DCompositionWaitForCompositorClock
