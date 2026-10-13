@@ -198,8 +198,8 @@ public sealed class SettingsTests : IDisposable
     {
         // Win+Alt+Shift+F24 is unlikely to be taken by anything on a test machine.
         var chord = new Hotkey(HotkeyModifiers.Win | HotkeyModifiers.Alt | HotkeyModifiers.Shift, 0x87);
-        Assert.True(chord.IsFree());
-        Assert.True(chord.IsFree(), "the probe must release what it registers");
+        Assert.Null(chord.CheckFree(HotkeyAction.Summon));
+        Assert.Null(chord.CheckFree(HotkeyAction.Summon));
     }
 
     [Fact]

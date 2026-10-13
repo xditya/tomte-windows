@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
@@ -107,7 +108,7 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
     /// <summary>
     /// Checks a new chord for <paramref name="action"/> against the rules for Tomte's shortcuts and
     /// against the other bindings. Returns the message to show, or null when it can be saved. An empty
-    /// chord means "no shortcut" and is allowed. Whether another app owns the chord is <see cref="IsFree"/>.
+    /// chord means "no shortcut" and is allowed. Whether another app owns the chord is <see cref="CheckFree"/>.
     /// </summary>
     public static string? Validate(HotkeySettings bindings, HotkeyAction action, string chord)
     {
@@ -143,19 +144,24 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
     }
 
     /// <summary>
-    /// Registers and releases the chord on the calling thread. False means another app holds it
-    /// (or this process does: do not probe a chord Tomte has registered itself).
+    /// Registers and releases the chord on the calling thread. Null when it is free; the conflict
+    /// message when another app holds it (ERROR_HOTKEY_ALREADY_REGISTERED); otherwise a message with
+    /// the error code. Do not probe a chord this process has registered itself: it reads as taken.
     /// </summary>
-    public bool IsFree()
+    public string? CheckFree(HotkeyAction action)
     {
+        const int AlreadyRegistered = 1409;
         var mods = (HOT_KEY_MODIFIERS)Modifiers | HOT_KEY_MODIFIERS.MOD_NOREPEAT;
         if (!PInvoke.RegisterHotKey(HWND.Null, ProbeId, mods, Key))
         {
-            return false;
+            int error = Marshal.GetLastPInvokeError();
+            return error == AlreadyRegistered
+                ? ConflictMessage(action, ToString())
+                : $"Tomte could not register {this} (error {error}). Pick another shortcut for {Name(action)}.";
         }
 
         PInvoke.UnregisterHotKey(HWND.Null, ProbeId);
-        return true;
+        return null;
     }
 
     /// <summary>The canonical text, modifiers in the order Win, Ctrl, Alt, Shift.</summary>

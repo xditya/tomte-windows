@@ -146,7 +146,7 @@ public sealed class SettingsWindow : Window
 
             // Tomte's own process holds the chords it uses now, so only a new chord is probed.
             string? error = Hotkey.Validate(store.Current.Hotkeys, action, chord)
-                ?? (chord.Length > 0 && !parsed.IsFree() ? Hotkey.ConflictMessage(action, chord) : null);
+                ?? (chord.Length > 0 ? parsed.CheckFree(action) : null);
             Show(note, error);
             if (error is null)
             {
