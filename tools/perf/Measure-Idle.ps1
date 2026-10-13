@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Starts an exe hidden and records RAM, CPU, context switches and wake-ups for a fixed time.
 .EXAMPLE
@@ -48,12 +48,18 @@ if ($SelfTest) {
 if (-not $Exe) { throw 'pass -Exe <path>' }
 $Exe = (Resolve-Path $Exe).Path
 
+$seen = @{}; $total = 0L
 function Read-Sample($p) {
     $p.Refresh()
-    $cs = (Get-CimInstance Win32_PerfRawData_PerfProc_Thread -Filter "IDProcess=$($p.Id)" | Measure-Object ContextSwitchesPersec -Sum).Sum
+    # per-thread raw counters vanish with the thread, so add up per-thread growth instead of summing the raw values
+    foreach ($th in Get-CimInstance Win32_PerfRawData_PerfProc_Thread -Filter "IDProcess=$($p.Id)") {
+        $prev = if ($seen.ContainsKey($th.IDThread)) { $seen[$th.IDThread] } else { 0 }
+        $script:total += [math]::Max(0, [long]$th.ContextSwitchesPersec - $prev)
+        $seen[$th.IDThread] = [long]$th.ContextSwitchesPersec
+    }
     [pscustomobject]@{
         t = [Diagnostics.Stopwatch]::GetTimestamp() / [Diagnostics.Stopwatch]::Frequency
-        cpu = $p.TotalProcessorTime.TotalSeconds; cs = [long]$cs; ws = $p.WorkingSet64; pm = $p.PrivateMemorySize64
+        cpu = $p.TotalProcessorTime.TotalSeconds; cs = $script:total; ws = $p.WorkingSet64; pm = $p.PrivateMemorySize64
     }
 }
 
