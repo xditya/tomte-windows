@@ -39,8 +39,7 @@ Each one needs a written reason in the submission.
       API keys.
 - [ ] Support contact (email or URL) and project website.
 - [ ] Age rating questionnaire.
-- [ ] Pricing: free. Check how the paid business licence fits Store policy (licensing sold outside
-      the Store for a free Store app).
+- [ ] Pricing: free.
 - [ ] Markets.
 - [ ] System requirements: Windows 11 22H2 (build 22621) or later.
 
