@@ -1,4 +1,6 @@
 using System.Text;
+using System.Text.Json;
+using Tomte.AI.Mcp;
 using Tomte.Core;
 using Tomte.Core.Device;
 
@@ -126,6 +128,9 @@ public sealed class PaletteSession : IPaletteSession
     public Func<ToolRequest, CancellationToken, Task<PermissionAnswer>> ConfirmTool { get; set; } =
         (_, _) => Task.FromResult(PermissionAnswer.Deny);
 
+    /// <summary>The user's MCP servers. Their tools are listed (and stdio servers started) on the first send; the owner disposes it when the palette closes.</summary>
+    public McpTools? Mcp { get; init; }
+
     /// <summary>Clock for the daily cap; tests set it.</summary>
     public Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.Now;
 
@@ -181,13 +186,14 @@ public sealed class PaletteSession : IPaletteSession
         {
             List<ContentPart> parts;
             (parts, attached) = await ContextAssembly.BuildAsync(Chips, Prompt, ct);
+            IReadOnlyList<ToolDefinition> tools = Mcp is null ? BuiltInTools.Definitions : [.. BuiltInTools.Definitions, .. await Mcp.ListAsync(ct)];
             var messages = new List<ChatMessage> { new(ChatRole.User, parts) };
             while (true)
             {
                 _indicator = $"Sending to {_config.Id} · {_model}";
                 sent = true;
                 Changed?.Invoke();
-                var (assistant, calls, usage) = await StreamTurnAsync(messages, ct);
+                var (assistant, calls, usage) = await StreamTurnAsync(messages, tools, ct);
                 inputTokens += usage.InputTokens;
                 outputTokens += usage.OutputTokens;
                 messages.Add(new ChatMessage(ChatRole.Assistant, assistant));
@@ -244,10 +250,10 @@ public sealed class PaletteSession : IPaletteSession
 
     public void Cancel() => _userCancel?.Cancel();
 
-    private async Task<(List<ContentPart> Assistant, List<ToolCallPart> Calls, TurnDone Usage)> StreamTurnAsync(List<ChatMessage> messages, CancellationToken ct)
+    private async Task<(List<ContentPart> Assistant, List<ToolCallPart> Calls, TurnDone Usage)> StreamTurnAsync(List<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken ct)
     {
         // A copy: the list keeps growing, and a request must not change after it was sent.
-        var request = new ChatRequest(_model, [.. messages], SystemPrompt, BuiltInTools.Definitions, _options.MaxTokens);
+        var request = new ChatRequest(_model, [.. messages], SystemPrompt, tools, _options.MaxTokens);
         var assistant = new List<ContentPart>();
         var calls = new List<ToolCallPart>();
         TurnDone usage = new(null, 0, 0);
@@ -300,11 +306,16 @@ public sealed class PaletteSession : IPaletteSession
 
     private async Task<ToolResultPart> RunToolAsync(ToolCallPart call, CancellationToken ct)
     {
-        if (BuiltInTools.Validate(call.Name, call.Input) is { } invalid)
+        bool mcp = Mcp?.Owns(call.Name) == true;
+        // MCP servers check their own arguments; the only shape rule here is the one every tool shares.
+        string? invalid = mcp
+            ? call.Input.ValueKind == JsonValueKind.Object ? null : "Arguments must be a JSON object."
+            : BuiltInTools.Validate(call.Name, call.Input);
+        if (invalid is not null)
             return Step(call, call.Name, invalid, isError: true);
 
-        var summary = BuiltInTools.Describe(call.Name, call.Input);
-        var tier = BuiltInTools.Tiers[call.Name];
+        var summary = mcp ? Mcp!.Describe(call.Name, call.Input) : BuiltInTools.Describe(call.Name, call.Input);
+        var tier = mcp ? Mcp!.TierOf(call.Name) : BuiltInTools.Tiers[call.Name];
         if (_grants.NeedsConfirmation(call.Name, tier))
         {
             var answer = await ConfirmTool(new ToolRequest(call.Name, summary, tier, PermissionGrants.CanAlwaysAllow(tier)), ct);
@@ -313,6 +324,12 @@ public sealed class PaletteSession : IPaletteSession
                 await Task.Run(() => _grants.AlwaysAllow(call.Name));
             if (answer == PermissionAnswer.Deny)
                 return Step(call, summary, "The user did not allow this.", isError: true);
+        }
+
+        if (mcp)
+        {
+            var mcpResult = await Mcp!.CallAsync(call, ct);
+            return Step(call, summary, mcpResult.Content, mcpResult.IsError);
         }
 
         // Device actions block on WinRT, COM and WMI; the pool runs them so the island's thread keeps animating.
