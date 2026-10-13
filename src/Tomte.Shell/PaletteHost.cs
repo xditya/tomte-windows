@@ -22,6 +22,8 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
     {
         var from = machine.State;
         machine.TransitionTo(IslandState.Palette);
+        island.Mascot.Follow(from, IslandState.Palette);
+        island.Mascot.Set(MascotState.Thinking);
         island.PanelLook = true;
         var placeholder = island.Compositor.CreateSpriteVisual();
         placeholder.Brush = island.Compositor.CreateColorBrush(Color.FromArgb(28, 255, 255, 255));
@@ -46,6 +48,7 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
                 growth = island.MorphTo(Geometry(height), SpringPreset.Gentle);
             };
             await session.SendAsync();
+            island.Mascot.Set(session.Status == PaletteStatus.Done ? MascotState.Result : MascotState.Error);
             await growth;
             log($"{DateTime.Now:HH:mm:ss.fff} palette {session.Status}{(session.Error is null ? "" : ": " + session.Error)} indicator=\"{session.ProviderIndicator}\" steps={session.ToolSteps} height={island.Current.Depth}");
         }
