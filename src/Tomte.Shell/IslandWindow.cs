@@ -636,7 +636,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
-    private static DesktopWindowTarget CreateDesktopWindowTarget(Compositor compositor, HWND hwnd)
+    internal static DesktopWindowTarget CreateDesktopWindowTarget(Compositor compositor, HWND hwnd)
     {
         nint unknown = WinRT.MarshalInspectable<object>.FromManaged(compositor);
         try
