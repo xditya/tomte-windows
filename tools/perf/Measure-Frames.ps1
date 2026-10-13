@@ -5,6 +5,7 @@
   Input is one of:
     - the app's own tick log: one line per frame, first field a timestamp in milliseconds
     - a PresentMon CSV (has a MsBetweenPresents column), which measures real DWM presents
+  Get-RefreshHz reads the primary display only; pass -RefreshHz for another monitor.
   The shell has no composition yet and writes no tick log, so there is no live input today;
   this is exercised with -SelfTest and takes the island's tick log once it exists.
 .EXAMPLE
@@ -18,6 +19,7 @@ param(
     [switch]$SelfTest
 )
 
+# index floor(p*n) is one rank above nearest-rank; fine for a probe, and it never understates the tail
 function Get-Percentile([double[]]$sorted, [double]$p) { $sorted[[math]::Min($sorted.Count - 1, [math]::Floor($p * $sorted.Count))] }
 
 function Get-FrameSummary([double[]]$deltas, [double]$hz) {
@@ -70,10 +72,10 @@ function Read-Deltas($path) {
 }
 
 if ($SelfTest) {
-    # 99 frames at 144 Hz and one 20 ms hitch: exactly one dropped frame
-    $d = [double[]](@(1..99 | ForEach-Object { 6.94 }) + 20)
+    # 98 frames at 144 Hz, one exactly at the 1.5-interval threshold, one 20 ms hitch: two drops
+    $d = [double[]](@(1..98 | ForEach-Object { 6.94 }) + (1.5 * (1000 / 144)) + 20)
     $r = Get-FrameSummary $d 144
-    if ($r.droppedFrames -ne 1 -or $r.maxMs -ne 20 -or $r.p50Ms -ne 6.94 -or $r.budgetMs -ne 6.94) { throw "self-test failed: $($r | ConvertTo-Json)" }
+    if ($r.droppedFrames -ne 2 -or $r.p99Ms -ne 20 -or $r.maxMs -ne 20 -or $r.p50Ms -ne 6.94 -or $r.budgetMs -ne 6.94) { throw "self-test failed: $($r | ConvertTo-Json)" }
     $f = New-TemporaryFile
     "0`n10`n20`n40" | Set-Content $f
     if ((Read-Deltas $f).Count -ne 3) { throw 'tick-log parse failed' }
@@ -85,5 +87,5 @@ if ($SelfTest) {
 if (-not $Log) { throw 'pass -Log <tick log or PresentMon csv>' }
 if ($RefreshHz -le 0) { $RefreshHz = Get-RefreshHz }
 $r = Get-FrameSummary (Read-Deltas $Log) $RefreshHz
-$r | ConvertTo-Json | Set-Content $Out -Encoding utf8
+[IO.File]::WriteAllText($Out, ($r | ConvertTo-Json))
 $r | Format-List
