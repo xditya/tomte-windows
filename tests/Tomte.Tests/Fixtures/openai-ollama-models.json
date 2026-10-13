@@ -1,0 +1,1 @@
+{"object":"list","data":[{"id":"llama3.2:3b","object":"model","created":1791916818,"owned_by":"library"},{"id":"llama3.2:latest","object":"model","created":1772717889,"owned_by":"library"},{"id":"qwen2.5-coder:7b","object":"model","created":1738164281,"owned_by":"library"}]}
