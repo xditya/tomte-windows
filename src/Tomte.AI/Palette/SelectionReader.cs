@@ -59,9 +59,7 @@ public static unsafe class SelectionReader
     /// </summary>
     public static string? Fallback(nint expectedForeground)
     {
-        if ((nint)PInvoke.GetForegroundWindow().Value != expectedForeground)
-            return null;
-        var copy = ClipboardSnapshot.CopySelection();
+        var copy = ClipboardSnapshot.CopySelection(expectedForeground);
         if (copy is not { Text: { Length: > 0 } text } || SelectionRule.IsEmptySelectionCopy(copy.Value.ChromiumMime))
             return null;
         return SelectionRule.Normalize(text);

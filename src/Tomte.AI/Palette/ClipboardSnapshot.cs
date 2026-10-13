@@ -24,14 +24,26 @@ internal static unsafe class ClipboardSnapshot
         CF_OWNERDISPLAY = 0x80, CF_DSPBITMAP = 0x82, CF_DSPMETAFILEPICT = 0x83, CF_DSPENHMETAFILE = 0x8E;
 
     private static HWND owner;
+    private static int ownerThread;
 
-    /// <summary>A message-only owner window, created on first use: with a null owner SetClipboardData fails after EmptyClipboard.</summary>
+    /// <summary>
+    /// A message-only owner window, created on first use: with a null owner SetClipboardData fails
+    /// after EmptyClipboard. A window dies with the thread that created it and only that thread
+    /// receives its messages (WM_CLIPBOARDUPDATE, WM_DESTROYCLIPBOARD), so every clipboard call
+    /// must come from one long-lived thread with a message loop: the selection chip and the copy
+    /// tool are wired on the island thread.
+    /// </summary>
     private static HWND Owner
     {
         get
         {
             if (owner.IsNull)
+            {
                 owner = PInvoke.CreateWindowEx(0, "STATIC", "tomte-clipboard", 0, 0, 0, 0, 0, HWND.HWND_MESSAGE, null, null, null);
+                ownerThread = Environment.CurrentManagedThreadId;
+            }
+
+            Debug.Assert(ownerThread == Environment.CurrentManagedThreadId, "clipboard calls must stay on the thread that created the owner window");
             return owner;
         }
     }
@@ -52,13 +64,21 @@ internal static unsafe class ClipboardSnapshot
         }
     }
 
-    /// <summary>The selection copied by Ctrl+C in the foreground window, or null when nothing was copied within the timeout.</summary>
-    public static (string? Text, string? ChromiumMime)? CopySelection(int timeoutMs = 250)
+    /// <summary>
+    /// The selection copied by Ctrl+C in <paramref name="expectedForeground"/>, or null when nothing
+    /// was copied within the timeout or another window came to the front meanwhile (the chord
+    /// would land there instead).
+    /// </summary>
+    public static (string? Text, string? ChromiumMime)? CopySelection(nint expectedForeground, int timeoutMs = 250)
     {
         // A held Win or Alt from the hotkey would turn Ctrl+C into another chord.
         var wait = Stopwatch.StartNew();
         while (ModifierDown() && wait.ElapsedMilliseconds < 2000)
             Pump(5);
+
+        // Checked after the wait: an Alt+Tab during the release moves the foreground.
+        if ((nint)PInvoke.GetForegroundWindow().Value != expectedForeground)
+            return null;
 
         var before = Snapshot();
         uint s0 = Sequence;
@@ -66,8 +86,9 @@ internal static unsafe class ClipboardSnapshot
         bool changed;
         try
         {
-            SendChord(VIRTUAL_KEY.VK_CONTROL, VIRTUAL_KEY.VK_C);
-            changed = WaitForClipboardUpdate(timeoutMs) || Sequence != s0;
+            changed = (nint)PInvoke.GetForegroundWindow().Value == expectedForeground
+                && SendChord(VIRTUAL_KEY.VK_CONTROL, VIRTUAL_KEY.VK_C)
+                && (WaitForClipboardUpdate(timeoutMs) || Sequence != s0);
         }
         finally
         {
@@ -262,10 +283,10 @@ internal static unsafe class ClipboardSnapshot
 
     private static bool Down(VIRTUAL_KEY vk) => (PInvoke.GetAsyncKeyState((int)vk) & 0x8000) != 0;
 
-    private static void SendChord(VIRTUAL_KEY modifier, VIRTUAL_KEY key)
+    private static bool SendChord(VIRTUAL_KEY modifier, VIRTUAL_KEY key)
     {
         ReadOnlySpan<INPUT> inputs = [Key(modifier, false), Key(key, false), Key(key, true), Key(modifier, true)];
-        PInvoke.SendInput(inputs, sizeof(INPUT));
+        return PInvoke.SendInput(inputs, sizeof(INPUT)) == inputs.Length;
     }
 
     private static INPUT Key(VIRTUAL_KEY vk, bool up) => new()
