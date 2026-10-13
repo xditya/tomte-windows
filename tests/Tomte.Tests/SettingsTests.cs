@@ -56,7 +56,9 @@ public sealed class SettingsTests : IDisposable
 
         var loaded = SettingsStore.Load(File);
         Assert.Equal(SettingsStore.Serialize(changed), SettingsStore.Serialize(loaded));
-        Assert.Contains("\"mode\": \"Deny\"", System.IO.File.ReadAllText(File));
+        string text = System.IO.File.ReadAllText(File);
+        Assert.Contains("\"mode\": \"Deny\"", text);
+        Assert.Contains("\"summon\": \"Win+Alt+Shift+I\"", text);
     }
 
     [Fact]

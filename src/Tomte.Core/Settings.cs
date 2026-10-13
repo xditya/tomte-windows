@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -99,6 +100,8 @@ public sealed class SettingsStore : IDisposable
     private static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true,
+        // Keeps "Win+Alt+I" readable in the file; it is never embedded in HTML.
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() },
     };
