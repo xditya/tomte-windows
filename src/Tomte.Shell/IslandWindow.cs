@@ -230,7 +230,6 @@ internal sealed unsafe class IslandWindow : IDisposable
         var from = Current;
         targetGeometry = to;
         crossfadeGeneration++; // a crossfade still in flight must not settle this morph
-        screenCenterX = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN) / 2;
         foreach (var spring in springs)
         {
             spring.Use(preset);
@@ -478,17 +477,19 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>
-    /// Re-lay the current outline out at a new scale. WM_DPICHANGED can arrive at once, during the next
-    /// SetWindowPos, or not until then, so this is idempotent and never completes a morph.
+    /// Re-lay the current outline out at a new scale or screen centre. WM_DPICHANGED can arrive at once,
+    /// during the next SetWindowPos, or not until then, so this is idempotent and never completes a morph.
+    /// A resolution change at the same DPI only moves the centre, so that is checked too.
     /// </summary>
     private void Rescale(double newScale)
     {
-        if (newScale == scale)
+        int centerX = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN) / 2;
+        if (newScale == scale && centerX == screenCenterX)
         {
             return;
         }
 
-        scale = newScale;
+        (scale, screenCenterX) = (newScale, centerX);
         if (!visible)
         {
             return;
