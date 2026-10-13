@@ -11,6 +11,7 @@ param(
     [string]$ReportDir = (Join-Path $PSScriptRoot '..\..\artifacts\perf'),
     [switch]$SelfTest
 )
+$ReportDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ReportDir)
 
 function Get-Verdict($ok) { if ($ok) { 'pass' } else { 'FAIL' } }
 

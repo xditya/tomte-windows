@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Starts an exe hidden and records RAM, CPU, context switches and wake-ups for a fixed time.
+  Starts an exe (which is expected to start hidden on its own) and records RAM, CPU, context switches and wake-ups for a fixed time.
 .EXAMPLE
   .\Measure-Idle.ps1 -Exe ..\..\src\Tomte.Shell\bin\Release\net10.0-windows10.0.22621.0\Tomte.Shell.exe -Out idle.json
   .\Measure-Idle.ps1 -SelfTest
@@ -16,6 +16,7 @@ param(
     [string]$Out = 'idle.json',
     [switch]$SelfTest
 )
+$Out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
 
 # Samples are cumulative ({t, cpu, cs, ws, pm}); totals come from first and last, memory from all.
 function Get-IdleSummary($samples) {

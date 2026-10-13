@@ -18,6 +18,7 @@ param(
     [string]$Out = 'frames.json',
     [switch]$SelfTest
 )
+$Out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
 
 # index floor(p*n) is one rank above nearest-rank; fine for a probe, and it never understates the tail
 function Get-Percentile([double[]]$sorted, [double]$p) { $sorted[[math]::Min($sorted.Count - 1, [math]::Floor($p * $sorted.Count))] }
