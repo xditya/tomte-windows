@@ -49,3 +49,13 @@ PostMessage
 SetTimer
 KillTimer
 GetCursorPos
+RegisterRawInputDevices
+GetRawInputData
+RAWINPUT
+RAWINPUTHEADER
+HID_USAGE_PAGE_GENERIC
+HID_USAGE_GENERIC_KEYBOARD
+RI_KEY_BREAK
+WM_INPUT
+GetAsyncKeyState
+RID_DEVICE_INFO
