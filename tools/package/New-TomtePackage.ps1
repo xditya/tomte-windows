@@ -55,6 +55,9 @@ $makeappx = Find-SdkTool 'makeappx.exe'
 $signtool = Find-SdkTool 'signtool.exe'
 
 # 1. Publish self-contained, so the package does not depend on a .NET runtime being installed.
+# A copy registered with -Register runs from $stage and locks it, so stop it first.
+Get-Process Tomte.Shell -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$stage\*" } |
+    Stop-Process -Force -PassThru | Wait-Process -Timeout 10
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 dotnet publish "$root\src\Tomte.Shell\Tomte.Shell.csproj" -c Release -r win-x64 --self-contained -o $stage --nologo
 if ($LASTEXITCODE) { throw 'dotnet publish failed' }
@@ -119,13 +122,16 @@ if ($Register) {
 } else {
     # 8. Trust the certificate on this machine, once.
     if (-not (Test-Path "Cert:\LocalMachine\TrustedPeople\$($cert.Thumbprint)")) {
-        $cer = Join-Path $env:TEMP "tomte-dev-$($cert.Thumbprint).cer"
-        Export-Certificate -Cert $cert -FilePath $cer | Out-Null
         Write-Host 'Adding the dev certificate to LocalMachine\TrustedPeople (UAC prompt).'
-        $import = "Import-Certificate -FilePath '$cer' -CertStoreLocation Cert:\LocalMachine\TrustedPeople"
+        # The public certificate goes in as base64 on the command line, so no file is written.
+        $publicCert = [Convert]::ToBase64String($cert.RawData)
+        $import = "`$s = New-Object Security.Cryptography.X509Certificates.X509Store TrustedPeople, LocalMachine; " +
+            "`$s.Open('ReadWrite'); `$s.Add([Security.Cryptography.X509Certificates.X509Certificate2][Convert]::FromBase64String('$publicCert')); `$s.Close()"
+        $failed = 'The certificate was not trusted'
+        $retry = "The signed .msix is in $out; rerun and accept the prompt, or use -Register."
         try { Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile', '-Command', $import }
-        catch { throw "The certificate was not trusted ($($_.Exception.Message)). The signed .msix is in $out; rerun and accept the prompt, or use -Register." }
-        finally { Remove-Item $cer -ErrorAction SilentlyContinue }
+        catch { throw "$failed ($($_.Exception.Message)). $retry" }
+        if (-not (Test-Path "Cert:\LocalMachine\TrustedPeople\$($cert.Thumbprint)")) { throw "$failed (import did not land in the store). $retry" }
     }
 
     # 9. Install.
