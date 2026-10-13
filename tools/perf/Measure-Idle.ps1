@@ -34,7 +34,21 @@ function Get-IdleSummary($samples) {
     }
 }
 
+# Raw per-thread counters vanish with the thread, so add up per-thread growth instead of summing raw values.
+$seen = @{}; $total = 0L
+function Add-ThreadGrowth($threads) {
+    foreach ($th in $threads) {
+        $prev = if ($seen.ContainsKey($th.IDThread)) { $seen[$th.IDThread] } else { 0 }
+        $script:total += [math]::Max(0, [long]$th.ContextSwitchesPersec - $prev)
+        $seen[$th.IDThread] = [long]$th.ContextSwitchesPersec
+    }
+}
+
 if ($SelfTest) {
+    Add-ThreadGrowth @([pscustomobject]@{ IDThread = 1; ContextSwitchesPersec = 10 }, [pscustomobject]@{ IDThread = 2; ContextSwitchesPersec = 5 })
+    $before = $total
+    Add-ThreadGrowth @([pscustomobject]@{ IDThread = 1; ContextSwitchesPersec = 14 })   # thread 2 exited
+    if ($total - $before -ne 4) { throw "thread accumulation failed: grew by $($total - $before)" }
     $s = @(
         [pscustomobject]@{ t = 0;   cpu = 1.0; cs = 100; ws = 30MB; pm = 8MB },
         [pscustomobject]@{ t = 100; cpu = 1.5; cs = 300; ws = 34MB; pm = 9MB },
@@ -48,22 +62,21 @@ if ($SelfTest) {
 if (-not $Exe) { throw 'pass -Exe <path>' }
 $Exe = (Resolve-Path $Exe).Path
 
-$seen = @{}; $total = 0L
+# One ReadCategory is about 0.1 s; Get-CimInstance and Get-Counter take seconds on a busy machine.
+$threadCategory = New-Object Diagnostics.PerformanceCounterCategory 'Thread'
 function Read-Sample($p) {
     $p.Refresh()
-    # per-thread raw counters vanish with the thread, so add up per-thread growth instead of summing the raw values
-    foreach ($th in Get-CimInstance Win32_PerfRawData_PerfProc_Thread -Filter "IDProcess=$($p.Id)") {
-        $prev = if ($seen.ContainsKey($th.IDThread)) { $seen[$th.IDThread] } else { 0 }
-        $script:total += [math]::Max(0, [long]$th.ContextSwitchesPersec - $prev)
-        $seen[$th.IDThread] = [long]$th.ContextSwitchesPersec
-    }
+    $d = $threadCategory.ReadCategory()
+    $owner = $d['ID Process']; $tid = $d['ID Thread']; $cs = $d['Context Switches/sec']
+    Add-ThreadGrowth @($owner.Keys | Where-Object { $owner[$_].RawValue -eq $p.Id } | ForEach-Object {
+        [pscustomobject]@{ IDThread = $tid[$_].RawValue; ContextSwitchesPersec = $cs[$_].RawValue } })
     [pscustomobject]@{
         t = [Diagnostics.Stopwatch]::GetTimestamp() / [Diagnostics.Stopwatch]::Frequency
         cpu = $p.TotalProcessorTime.TotalSeconds; cs = $script:total; ws = $p.WorkingSet64; pm = $p.PrivateMemorySize64
     }
 }
 
-$proc = Start-Process $Exe -WindowStyle Hidden -PassThru
+$proc = Start-Process $Exe -PassThru
 try {
     Start-Sleep $WarmupSeconds
     if ($proc.HasExited) { throw "process exited during warm-up (code $($proc.ExitCode))" }
@@ -80,7 +93,7 @@ try {
         started = $started.ToString('s'); warmupSeconds = $WarmupSeconds
         summary = Get-IdleSummary $samples.ToArray()
     }
-    $result | ConvertTo-Json -Depth 4 | Set-Content $Out -Encoding utf8
+    [IO.File]::WriteAllText($Out, ($result | ConvertTo-Json -Depth 4))
     $result.summary | Format-List
 } finally {
     if (-not $proc.HasExited) { Stop-Process $proc -Force }
