@@ -129,10 +129,13 @@ public class RamblerTests
         var file = new ScratchpadFile(Path.Combine(dir, "scratchpad.md"));
         try
         {
-            file.Append("### First\n- one\n", new DateTime(2026, 10, 14, 9, 5, 0));
-            file.Append("  second  ", new DateTime(2026, 10, 14, 9, 7, 0));
+            Assert.Equal("", file.Text);
+            file.AppendNote("### First\n- one\n", new DateTime(2026, 10, 14, 9, 5, 0));
+            file.Text += "typed by hand"; // the user's own text, with no blank line after it
+            file.AppendNote("  second  ", new DateTime(2026, 10, 14, 9, 7, 0));
 
-            Assert.Equal("## 2026-10-14 09:05\n\n### First\n- one\n\n## 2026-10-14 09:07\n\nsecond\n\n", File.ReadAllText(file.FilePath));
+            Assert.Equal("## 2026-10-14 09:05\n\n### First\n- one\n\ntyped by hand\n\n## 2026-10-14 09:07\n\nsecond\n\n", file.Text);
+            Assert.Equal(file.Text, File.ReadAllText(file.FilePath));
         }
         finally
         {

@@ -361,10 +361,10 @@ internal static class Program
             structure = (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct);
         }
 
-        var notes = new ScratchpadFile(ScratchpadFile.DefaultPath);
-        var session = new Rambler(island, machine, speech, structure, notes, log.WriteLine);
+        var scratchpad = new ScratchpadFile(ScratchpadFile.DefaultPath);
+        var session = new Rambler(island, machine, speech, structure, scratchpad, log.WriteLine);
         RamblerHotkey.Start(island.Queue, session.Begin, session.End, log.WriteLine);
-        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"} notes={notes.FilePath}");
+        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"} scratchpad={scratchpad.FilePath}");
     }
 
     private static string? Arg(string[] args, string name)

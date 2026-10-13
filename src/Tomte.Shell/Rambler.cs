@@ -27,7 +27,7 @@ internal sealed class Rambler(
     IslandStateMachine machine,
     ISpeechToText speech,
     Func<string, CancellationToken, Task<string>>? structure,
-    INoteTarget notes,
+    IScratchpad scratchpad,
     Action<string> log)
 {
     // The design's rambler pill is wider than the 220 Compact so the bars fit beside the mascot.
@@ -110,7 +110,7 @@ internal sealed class Rambler(
                 }
             }
 
-            notes.Append(note, DateTime.Now);
+            scratchpad.AppendNote(note, DateTime.Now);
             log($"{DateTime.Now:HH:mm:ss.fff} rambler: note appended ({note.Length} chars)");
         }
         catch (Exception e)
