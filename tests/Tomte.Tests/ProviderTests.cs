@@ -160,6 +160,14 @@ public class ProviderTests
     }
 
     [Fact]
+    public async Task GeminiStreamErrorThrows()
+    {
+        using var http = RecordedHandler.Client(out _, "gemini-stream-error.sse");
+        var e = await Assert.ThrowsAsync<ProviderException>(() => Collect(new GeminiProvider(http, Key).StreamAsync(Hello)));
+        Assert.Contains("overloaded", e.Message);
+    }
+
+    [Fact]
     public void GeminiToolRoundTripRequestShape()
     {
         var call = new ToolCallPart("call_0", "get_weather", JsonDocument.Parse("""{"city":"Paris"}""").RootElement, "c2ln");

@@ -35,6 +35,8 @@ public sealed class GeminiProvider(HttpClient http, string key) : IChatProvider
         {
             using var doc = JsonDocument.Parse(data);
             var chunk = doc.RootElement;
+            if (chunk.TryGetProperty("error", out _))
+                throw new ProviderException(ProviderHttp.Scrub(ProviderHttp.ErrorMessage(data), key));
             if (chunk.TryGetProperty("usageMetadata", out var usage))
             {
                 input = usage.TryGetProperty("promptTokenCount", out var p) ? p.GetInt32() : input;
