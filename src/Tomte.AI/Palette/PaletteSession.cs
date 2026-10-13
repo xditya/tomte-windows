@@ -213,7 +213,8 @@ public sealed class PaletteSession : IPaletteSession
             Finish(_userCancel.IsCancellationRequested ? PaletteStatus.Cancelled : PaletteStatus.Failed,
                 _userCancel.IsCancellationRequested ? null : $"Timed out after {_options.Timeout.TotalSeconds:0} s.");
         }
-        catch (Exception e) when (e is ProviderException or HttpRequestException or IOException or InvalidOperationException)
+        // A failed chip read (capture, UIA) or provider call ends the send; it must never unwind the island's thread.
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
             Finish(PaletteStatus.Failed, e.Message);
         }

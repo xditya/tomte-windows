@@ -135,6 +135,19 @@ public class PaletteTests : IDisposable
     }
 
     [Fact]
+    public async Task FailingChipReadEndsInFailedWithoutSending()
+    {
+        var chip = new ContextChip(ContextKind.Screenshot, "Screenshot", "screenshot:app",
+            _ => throw new System.Runtime.InteropServices.COMException("capture lost"), on: true);
+        var session = Session(chips: [chip]);
+        await session.SendAsync();
+        Assert.Equal(PaletteStatus.Failed, session.Status);
+        Assert.Contains("capture lost", session.Error);
+        Assert.Empty(_provider.Requests);
+        Assert.Empty(new SendLog(_logPath).ReadAll());
+    }
+
+    [Fact]
     public async Task TimeCapEndsInFailed()
     {
         _provider.Turns.Add(ScriptedProvider.Text(10, 5, "a", "b", "c"));
