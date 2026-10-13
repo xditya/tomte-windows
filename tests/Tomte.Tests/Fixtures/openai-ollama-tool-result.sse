@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-832","object":"chat.completion.chunk","created":1791916844,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"The current weather in Paris is 18 degrees Celsius, with plenty of sunshine."},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-832","object":"chat.completion.chunk","created":1791916844,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":98,"completion_tokens":17,"total_tokens":115}}
+
+data: [DONE]
+
