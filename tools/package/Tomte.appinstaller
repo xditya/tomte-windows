@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Template. New-TomtePackage.ps1 writes a filled-in copy next to the .msix. The URLs here are placeholders. -->
+<AppInstaller
+  xmlns="http://schemas.microsoft.com/appx/appinstaller/2018"
+  Uri="https://example.invalid/tomte/Tomte.appinstaller"
+  Version="0.1.0.0">
+  <MainPackage
+    Name="Tomte"
+    Publisher="CN=Tomte Dev"
+    Version="0.1.0.0"
+    ProcessorArchitecture="x64"
+    Uri="https://example.invalid/tomte/Tomte_0.1.0.0_x64.msix" />
+  <UpdateSettings>
+    <OnLaunch HoursBetweenUpdateChecks="24" />
+  </UpdateSettings>
+</AppInstaller>

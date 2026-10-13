@@ -1,0 +1,19 @@
+# Draft. Publisher, URLs and the License value are placeholders to fill in before submission.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: AdityaS.Tomte
+PackageVersion: 0.1.0.0
+PackageLocale: en-US
+Publisher: Aditya S
+PackageName: Tomte
+License: "TODO: set when LICENSE lands on main"
+ShortDescription: A utility that stays hidden until called and opens from the top edge of the screen.
+Description: >-
+  Tomte opens from the top edge of the screen when you call it and is hidden the rest of the time.
+  It holds a file shelf, shortcuts, media controls, a scratchpad and clipboard history.
+  An optional AI layer works with your own API key.
+Tags:
+  - utility
+  - clipboard
+  - productivity
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
