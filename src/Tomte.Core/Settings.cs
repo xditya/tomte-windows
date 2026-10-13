@@ -29,6 +29,9 @@ public sealed record TomteSettings
 
     /// <summary>AI tools the user answered "always allow" for, by tool name; the AI layer reads and writes it, the settings window lists and removes.</summary>
     public IReadOnlyList<string> AlwaysAllowedTools { get; init; } = [];
+
+    /// <summary>MCP servers whose tools the AI palette may use; see <see cref="McpServerSettings"/>.</summary>
+    public IReadOnlyList<McpServerSettings> McpServers { get; init; } = [];
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>
