@@ -1,3 +1,4 @@
+using Tomte.Core;
 using Tomte.Core.Triggers;
 using Xunit;
 using static Tomte.Core.Triggers.EdgePushDetector;
@@ -6,9 +7,9 @@ namespace Tomte.Tests;
 
 public class EdgePushDetectorTests
 {
-    private static readonly TriggerSettings Spec = new();
+    private static readonly RevealSettings Spec = new();
 
-    private static EdgePushDetector New() => new(Spec.PushCounts, Spec.PushWindowMs);
+    private static EdgePushDetector New() => new(Spec.PushCounts, Spec.TouchpadPushCounts, Spec.PushWindowMs);
 
     [Fact]
     public void SustainedPushRevealsInsideTheWindow()
@@ -82,6 +83,23 @@ public class EdgePushDetectorTests
         // Only after the cursor leaves the top row can the next session start.
         Assert.Equal(Event.None, d.Feed(500, 10, false, true));
         Assert.Equal(Event.EnterZone, d.Feed(600, -10, true, true));
+    }
+
+    [Fact]
+    public void TouchpadSamplesUseTheirOwnThreshold()
+    {
+        var d = new EdgePushDetector(60, 20, Spec.PushWindowMs);
+        d.Feed(0, -5, true, true, touchpad: true);
+        Assert.Equal(EdgePushDetector.Event.None, d.Feed(10, -5, true, true, touchpad: true));
+        Assert.Equal(EdgePushDetector.Event.None, d.Feed(20, -5, true, true, touchpad: true));
+        Assert.Equal(EdgePushDetector.Event.Reveal, d.Feed(30, -5, true, true, touchpad: true));
+
+        // The same 20 counts from a mouse are a third of the way.
+        d = new EdgePushDetector(60, 20, Spec.PushWindowMs);
+        for (double t = 0; t <= 30; t += 10)
+        {
+            Assert.NotEqual(EdgePushDetector.Event.Reveal, d.Feed(t, -5, true, true));
+        }
     }
 
     [Fact]

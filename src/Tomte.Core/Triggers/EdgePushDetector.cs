@@ -4,10 +4,12 @@ namespace Tomte.Core.Triggers;
 /// The edge-push rule with no Win32 in it, so it runs on fake timestamps. Idle: the cursor is not pinned
 /// at the top row inside the zone. Pushing: it is, and upward raw counts accumulate in a sliding window.
 /// Revealed: the reveal fired; nothing more until the cursor leaves the top row, which resets the count.
-/// The caller owns the dwell timer: arm it on EnterZone, kill it on LeaveZone or Reveal, and call
-/// <see cref="DwellElapsed"/> when it fires. Runs on the input thread: no allocation after construction.
+/// A precision touchpad reports with no device handle and scales its counts by the pointer speed, so it
+/// has its own threshold; the sample says which one applies. The caller owns the dwell timer: arm it on
+/// EnterZone, kill it on LeaveZone or Reveal, and call <see cref="DwellElapsed"/> when it fires. Runs on
+/// the input thread: no allocation after construction.
 /// </summary>
-public sealed class EdgePushDetector(int countsToReveal, int windowMs)
+public sealed class EdgePushDetector(int mouseCounts, int touchpadCounts, int windowMs)
 {
     public enum Event
     {
@@ -33,7 +35,7 @@ public sealed class EdgePushDetector(int countsToReveal, int windowMs)
     public int WindowCounts { get; private set; }
 
     /// <summary>One raw mouse sample. <paramref name="dy"/> is the raw vertical delta (negative is up).</summary>
-    public Event Feed(double nowMs, int dy, bool atTopRow, bool inZone)
+    public Event Feed(double nowMs, int dy, bool atTopRow, bool inZone, bool touchpad = false)
     {
         bool pinned = atTopRow && inZone;
         switch (state)
@@ -57,7 +59,7 @@ public sealed class EdgePushDetector(int countsToReveal, int windowMs)
                 }
 
                 Push(nowMs, dy);
-                if (WindowCounts < countsToReveal)
+                if (WindowCounts < (touchpad ? touchpadCounts : mouseCounts))
                 {
                     return Event.None;
                 }

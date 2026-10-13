@@ -23,6 +23,9 @@ public sealed record TomteSettings
 
     /// <summary>Reveal on every monitor whose top is a screen edge; false means the primary monitor only.</summary>
     public bool AllMonitors { get; init; } = true;
+
+    /// <summary>The ten-second "push your cursor up here" pill has been shown; replaying the tour clears it.</summary>
+    public bool FirstRunHintShown { get; init; }
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>

@@ -1,15 +1,5 @@
 namespace Tomte.Core.Triggers;
 
-public enum TriggerKind
-{
-    EdgePush,
-    Drag,
-    Hotkey,
-    Event,
-    Peek,
-    FirstRun,
-}
-
 /// <summary>What the desktop watch knows about the island's monitor. Immutable so the UI thread can swap it whole.</summary>
 public sealed record SuppressionState
 {
@@ -27,45 +17,34 @@ public sealed record SuppressionState
     /// <summary>Quiet hours or Focus: events wait.</summary>
     public bool Quiet { get; init; }
 
-    /// <summary>File name of the foreground process, lower case, when the per-app lists need it.</summary>
+    /// <summary>File name of the foreground process, when any app rule exists.</summary>
     public string? ForegroundExe { get; init; }
 }
 
 public static class Suppression
 {
     /// <summary>
-    /// The decision table. Deny list wins over everything but the secure check. The allow list lifts the fullscreen
-    /// rules for that app (a game the user wants the island over). Hotkeys still work over ordinary fullscreen,
-    /// but not over an exclusive D3D swap chain, where the island would not be visible anyway.
+    /// The decision table, in order: nothing on a secure surface; nothing over an exclusive D3D swap chain unless
+    /// the app is allow-listed (the island is not on the scanout there, so a hotkey would show nothing); then the
+    /// per-app rules with the fullscreen rule (hotkeys keep working over ordinary fullscreen); then quiet holds events.
     /// </summary>
-    public static bool Allows(TriggerKind kind, SuppressionState state, TriggerSettings settings)
+    public static bool Allows(RevealTrigger trigger, SuppressionState state, IReadOnlyList<AppRule> rules)
     {
         if (state.Secure)
         {
             return false;
         }
 
-        if (Listed(settings.DenyApps, state.ForegroundExe))
+        if (state.ExclusiveFullscreen && AppRules.Find(rules, state.ForegroundExe)?.Mode != AppRuleMode.Allow)
         {
             return false;
         }
 
-        if (!Listed(settings.AllowApps, state.ForegroundExe))
+        if (!AppRules.Allows(rules, state.ForegroundExe, trigger, state.Fullscreen))
         {
-            if (state.ExclusiveFullscreen)
-            {
-                return false;
-            }
-
-            if (state.Fullscreen && kind != TriggerKind.Hotkey)
-            {
-                return false;
-            }
+            return false;
         }
 
-        return kind != TriggerKind.Event || !state.Quiet;
+        return trigger != RevealTrigger.Event || !state.Quiet;
     }
-
-    private static bool Listed(IReadOnlyList<string> apps, string? exe) =>
-        exe is not null && apps.Count > 0 && apps.Any(a => string.Equals(a, exe, StringComparison.OrdinalIgnoreCase));
 }

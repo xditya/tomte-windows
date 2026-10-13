@@ -38,8 +38,8 @@ public class RetractionRulesTests
     [Fact]
     public void RevealZoneIsTheMiddleThirtyPercentScaledByDpi()
     {
-        var settings = new TriggerSettings();
-        var zone = RevealZone.For(0, 0, 2560, settings.ZoneFraction, settings.DragBand, 1.5);
+        var settings = new RevealSettings();
+        var zone = RevealZone.For(0, 0, 2560, settings.ZoneFraction, settings.DragApproachDip, 1.5);
 
         Assert.Equal(896, zone.Left);
         Assert.Equal(1664, zone.Right);

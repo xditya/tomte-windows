@@ -1,3 +1,4 @@
+using Tomte.Core;
 using Tomte.Core.Triggers;
 using Xunit;
 
@@ -5,46 +6,50 @@ namespace Tomte.Tests;
 
 public class SuppressionTests
 {
-    private static readonly TriggerSettings Defaults = new();
-    private static readonly TriggerKind[] AllKinds = Enum.GetValues<TriggerKind>();
+    private static readonly IReadOnlyList<AppRule> NoRules = [];
+    private static readonly RevealTrigger[] AllTriggers = Enum.GetValues<RevealTrigger>();
 
     [Fact]
     public void ClearDesktopAllowsEverything()
     {
-        foreach (var kind in AllKinds)
+        foreach (var trigger in AllTriggers)
         {
-            Assert.True(Suppression.Allows(kind, SuppressionState.Clear, Defaults));
+            Assert.True(Suppression.Allows(trigger, SuppressionState.Clear, NoRules));
         }
     }
 
     [Fact]
-    public void FullscreenKeepsHotkeysAndQueuesTheRest()
+    public void FullscreenKeepsHotkeysAndHoldsTheRest()
     {
         var fullscreen = new SuppressionState { Fullscreen = true };
-        foreach (var kind in AllKinds)
+        foreach (var trigger in AllTriggers)
         {
-            Assert.Equal(kind == TriggerKind.Hotkey, Suppression.Allows(kind, fullscreen, Defaults));
+            Assert.Equal(trigger == RevealTrigger.Hotkey, Suppression.Allows(trigger, fullscreen, NoRules));
         }
     }
 
     [Fact]
     public void ExclusiveFullscreenSuppressesHotkeysToo()
     {
-        var exclusive = new SuppressionState { Fullscreen = true, ExclusiveFullscreen = true };
-        foreach (var kind in AllKinds)
+        var exclusive = new SuppressionState { Fullscreen = true, ExclusiveFullscreen = true, ForegroundExe = "game.exe" };
+        foreach (var trigger in AllTriggers)
         {
-            Assert.False(Suppression.Allows(kind, exclusive, Defaults));
+            Assert.False(Suppression.Allows(trigger, exclusive, NoRules));
+            Assert.False(Suppression.Allows(trigger, exclusive, [new AppRule("game", AppRuleMode.Deny)]));
         }
+
+        // An Allow rule is the user saying the island belongs over this game.
+        Assert.True(Suppression.Allows(RevealTrigger.Hotkey, exclusive, [new AppRule("game.exe", AppRuleMode.Allow)]));
+        Assert.True(Suppression.Allows(RevealTrigger.EdgePush, exclusive, [new AppRule("game.exe", AppRuleMode.Allow)]));
     }
 
     [Fact]
     public void SecureSurfacesShowNothing()
     {
         var secure = new SuppressionState { Secure = true, ForegroundExe = "game.exe" };
-        var settings = Defaults with { AllowApps = ["game.exe"] };
-        foreach (var kind in AllKinds)
+        foreach (var trigger in AllTriggers)
         {
-            Assert.False(Suppression.Allows(kind, secure, settings));
+            Assert.False(Suppression.Allows(trigger, secure, [new AppRule("game.exe", AppRuleMode.Allow)]));
         }
     }
 
@@ -52,34 +57,24 @@ public class SuppressionTests
     public void QuietOnlyHoldsEvents()
     {
         var quiet = new SuppressionState { Quiet = true };
-        foreach (var kind in AllKinds)
+        foreach (var trigger in AllTriggers)
         {
-            Assert.Equal(kind != TriggerKind.Event, Suppression.Allows(kind, quiet, Defaults));
+            Assert.Equal(trigger != RevealTrigger.Event, Suppression.Allows(trigger, quiet, NoRules));
         }
     }
 
     [Fact]
-    public void DenyListBlocksTheAppCaseInsensitively()
+    public void AppRulesDecideByModeForTheForegroundExe()
     {
-        var settings = Defaults with { DenyApps = ["Game.exe"] };
-        var inGame = new SuppressionState { ForegroundExe = "game.exe" };
+        var inGame = new SuppressionState { ForegroundExe = @"C:\Games\Game.EXE" };
         var elsewhere = new SuppressionState { ForegroundExe = "code.exe" };
-        foreach (var kind in AllKinds)
+        IReadOnlyList<AppRule> deny = [new AppRule("game", AppRuleMode.Deny)];
+        IReadOnlyList<AppRule> denyAll = [new AppRule("game", AppRuleMode.DenyWithHotkeys)];
+        foreach (var trigger in AllTriggers)
         {
-            Assert.False(Suppression.Allows(kind, inGame, settings));
-            Assert.True(Suppression.Allows(kind, elsewhere, settings));
+            Assert.Equal(trigger == RevealTrigger.Hotkey, Suppression.Allows(trigger, inGame, deny));
+            Assert.False(Suppression.Allows(trigger, inGame, denyAll));
+            Assert.True(Suppression.Allows(trigger, elsewhere, deny));
         }
-    }
-
-    [Fact]
-    public void AllowListLiftsFullscreenButNotDenyOrSecure()
-    {
-        var settings = Defaults with { AllowApps = ["game.exe"], DenyApps = ["game.exe"] };
-        var allowedOnly = Defaults with { AllowApps = ["game.exe"] };
-        var fullscreenGame = new SuppressionState { Fullscreen = true, ExclusiveFullscreen = true, ForegroundExe = "game.exe" };
-
-        Assert.True(Suppression.Allows(TriggerKind.EdgePush, fullscreenGame, allowedOnly));
-        Assert.True(Suppression.Allows(TriggerKind.Hotkey, fullscreenGame, allowedOnly));
-        Assert.False(Suppression.Allows(TriggerKind.Hotkey, fullscreenGame, settings));
     }
 }
