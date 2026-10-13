@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using Tomte.Core;
+using Windows.Graphics;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using Windows.Graphics.DirectX.Direct3D11;
@@ -13,8 +15,8 @@ using Windows.Win32.Graphics.Dxgi;
 namespace Tomte.AI.Palette;
 
 /// <summary>
-/// One frame of a window through Windows.Graphics.Capture, as a PNG no wider than
-/// <see cref="MaxWidth"/>. The D3D device exists only for the call; nothing stays allocated.
+/// One frame of a window, or a region of a monitor, through Windows.Graphics.Capture, as a PNG no
+/// wider than <see cref="MaxWidth"/>. The D3D device exists only for the call; nothing stays allocated.
 /// </summary>
 public static class WindowCapture
 {
@@ -29,7 +31,36 @@ public static class WindowCapture
             ?? throw new InvalidOperationException("The window cannot be captured.");
 
         using var bitmap = await FirstFrameAsync(item, ct);
-        return await EncodePngAsync(bitmap);
+        return await EncodePngAsync(bitmap, new PixelRect(0, 0, bitmap.PixelWidth, bitmap.PixelHeight));
+    }
+
+    /// <summary><paramref name="crop"/> is in the monitor's physical pixels, which is what the frame is in.</summary>
+    public static async Task<byte[]> CaptureMonitorRegionPngAsync(nint hmonitor, PixelRect crop, CancellationToken ct)
+    {
+        if (!GraphicsCaptureSession.IsSupported())
+            throw new InvalidOperationException("Screen capture is not available on this PC.");
+        var item = GraphicsCaptureItem.TryCreateFromDisplayId(new DisplayId((ulong)hmonitor))
+            ?? throw new InvalidOperationException("The screen cannot be captured.");
+
+        using var bitmap = await FirstFrameAsync(item, ct);
+        return await EncodePngAsync(bitmap, crop);
+    }
+
+    /// <summary>
+    /// The encoder scales first and crops after, in scaled pixels, so a crop wider than
+    /// <paramref name="maxWidth"/> scales the whole frame by the crop's factor and scales the crop with it.
+    /// The crop is clamped to the frame first.
+    /// </summary>
+    internal static (int ScaledWidth, int ScaledHeight, PixelRect Bounds) Fit(int width, int height, PixelRect crop, int maxWidth)
+    {
+        int x = Math.Clamp(crop.X, 0, width - 1), y = Math.Clamp(crop.Y, 0, height - 1);
+        int w = Math.Clamp(crop.Width, 1, width - x), h = Math.Clamp(crop.Height, 1, height - y);
+        if (w <= maxWidth)
+            return (width, height, new PixelRect(x, y, w, h));
+        double f = (double)maxWidth / w;
+        int sw = Math.Max(1, (int)Math.Round(width * f)), sh = Math.Max(1, (int)Math.Round(height * f));
+        int bx = Math.Min((int)(x * f), sw - 1), by = Math.Min((int)(y * f), sh - 1);
+        return (sw, sh, new PixelRect(bx, by, Math.Min(maxWidth, sw - bx), Math.Clamp((int)Math.Round(h * f), 1, sh - by)));
     }
 
     /// <summary>One frame, then the session and pool are gone before the encode starts, so no later frame is copied.</summary>
@@ -96,17 +127,20 @@ public static class WindowCapture
         }
     }
 
-    private static async Task<byte[]> EncodePngAsync(SoftwareBitmap bitmap)
+    private static async Task<byte[]> EncodePngAsync(SoftwareBitmap bitmap, PixelRect crop)
     {
         using var stream = new InMemoryRandomAccessStream();
         var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
         encoder.SetSoftwareBitmap(bitmap);
-        if (bitmap.PixelWidth > MaxWidth)
+        var (sw, sh, b) = Fit(bitmap.PixelWidth, bitmap.PixelHeight, crop, MaxWidth);
+        if (sw != bitmap.PixelWidth)
         {
-            encoder.BitmapTransform.ScaledWidth = MaxWidth;
-            encoder.BitmapTransform.ScaledHeight = (uint)Math.Max(1, (long)bitmap.PixelHeight * MaxWidth / bitmap.PixelWidth);
+            encoder.BitmapTransform.ScaledWidth = (uint)sw;
+            encoder.BitmapTransform.ScaledHeight = (uint)sh;
             encoder.BitmapTransform.InterpolationMode = BitmapInterpolationMode.Fant;
         }
+
+        encoder.BitmapTransform.Bounds = new BitmapBounds { X = (uint)b.X, Y = (uint)b.Y, Width = (uint)b.Width, Height = (uint)b.Height };
 
         await encoder.FlushAsync();
         var bytes = new byte[stream.Size];
