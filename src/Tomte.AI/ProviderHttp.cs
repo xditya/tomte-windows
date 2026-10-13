@@ -9,15 +9,20 @@ namespace Tomte.AI;
 /// <summary>HTTP plumbing shared by the adapters. Nothing here logs; errors are scrubbed of the key.</summary>
 internal static class ProviderHttp
 {
-    public static HttpRequestMessage Post(string url, JsonNode body) => new(HttpMethod.Post, url)
+    /// <summary>A streaming POST: JSON body in, server-sent events out.</summary>
+    public static HttpRequestMessage Post(string url, JsonNode body)
     {
-        Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
-    };
+        var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+        return request;
+    }
 
     public static async Task<HttpResponseMessage> SendAsync(
         HttpClient http, HttpRequestMessage request, string? key, CancellationToken ct)
     {
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
         HttpResponseMessage response;
         try
         {

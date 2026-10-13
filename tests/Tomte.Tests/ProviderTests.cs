@@ -110,6 +110,7 @@ public class ProviderTests
 
         Assert.Equal([new ModelInfo("claude-opus-5-5", 1_000_000), new ModelInfo("claude-haiku-5-5", 1_000_000)], models);
         Assert.StartsWith("https://api.anthropic.com/v1/models", handler.Request!.RequestUri!.ToString());
+        Assert.Empty(handler.Request.Headers.Accept);
     }
 
     [Fact]
