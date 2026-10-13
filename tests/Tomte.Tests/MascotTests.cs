@@ -220,6 +220,10 @@ public class MascotTests
         Run(m, 0.5, x => 0);
         Assert.Equal(8, m.TipRotate);
         Assert.False(m.Step(FrameDt));
+        m.Set(MascotState.Rambler);
+        m.Level = 1;
+        Assert.False(m.Step(FrameDt)); // one frame for the new level, then the tick may park
+        Assert.Equal(1.25, m.ScaleY, 6);
     }
 
     [Fact]

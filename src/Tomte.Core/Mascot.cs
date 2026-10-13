@@ -357,7 +357,8 @@ public sealed class Mascot
             driveScaleY = 100 * MascotStates.RamblerScaleY * smoothed;
             driveScaleX = -100 * MascotStates.RamblerScaleX * smoothed;
             driveTip = MascotStates.RamblerTip * smoothed;
-            return true;
+            // Reduced motion shows the pose for the current level only; the Level setter wakes the next frame.
+            return !reduce;
         }
 
         if (State == MascotState.Thinking && !reduce)
