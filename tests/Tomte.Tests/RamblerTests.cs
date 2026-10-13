@@ -83,9 +83,10 @@ public class RamblerTests
         using var http = RecordedHandler.Client(out var handler, "openai-ollama-rambler-note.sse");
         var provider = new OpenAICompatibleProvider(http, "http://127.0.0.1:11434/v1", null);
 
-        var note = await RamblerNote.StructureAsync(provider, "llama3.2:3b", transcript);
+        var structured = await RamblerNote.StructureAsync(provider, "llama3.2:3b", transcript);
 
-        Assert.Equal("### Tomorrow's Tasks\n- Call dentist before 10:00 AM\n- Send fishing plan to John\n- Buy milk\n- Team meeting now on Thursday at 3:00 PM", note);
+        Assert.Equal("### Tomorrow's Tasks\n- Call dentist before 10:00 AM\n- Send fishing plan to John\n- Buy milk\n- Team meeting now on Thursday at 3:00 PM", structured.Note);
+        Assert.Equal((176, 39), (structured.InputTokens, structured.OutputTokens));
         var body = JsonNode.Parse(handler.Body!)!;
         Assert.Equal(RamblerNote.Prompt, body["messages"]![0]!["content"]!.GetValue<string>());
         Assert.Equal(transcript, body["messages"]![1]!["content"]!.GetValue<string>());

@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Tomte.AI;
+using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Rambler;
 using Windows.UI;
@@ -26,8 +27,10 @@ internal sealed class Rambler(
     IslandWindow island,
     IslandStateMachine machine,
     ISpeechToText speech,
-    Func<string, CancellationToken, Task<string>>? structure,
+    ProviderSend? speechSend,
+    RamblerStructure? structure,
     IScratchpad scratchpad,
+    SendLog sendLog,
     Action<string> log)
 {
     // The design's rambler pill is wider than the 220 Compact so the bars fit beside the mascot.
@@ -86,7 +89,18 @@ internal sealed class Rambler(
             var watch = Stopwatch.StartNew();
             // whisper.cpp cannot be stopped mid-run; the timeout only bounds the provider path.
             using var speechTimeout = new CancellationTokenSource(SendTimeout);
-            string text = await speech.TranscribeAsync(samples, speechTimeout.Token);
+            string text;
+            try
+            {
+                text = await speech.TranscribeAsync(samples, speechTimeout.Token);
+            }
+            finally
+            {
+                // Local whisper sends nothing; a provider transcription is logged whether or not it succeeded.
+                if (speechSend is not null)
+                    LogSend(speechSend, 0, 0, "audio");
+            }
+
             log($"{DateTime.Now:HH:mm:ss.fff} rambler: transcribed {samples.Length / (double)MicCapture.SampleRate:F1} s in {watch.ElapsedMilliseconds} ms");
             // whisper.cpp writes [BLANK_AUDIO] and similar for silence.
             if (text.Length == 0 || (text.StartsWith('[') && text.EndsWith(']')))
@@ -98,15 +112,21 @@ internal sealed class Rambler(
             string note = text;
             if (structure is not null)
             {
+                int inputTokens = 0, outputTokens = 0;
                 try
                 {
                     using var timeout = new CancellationTokenSource(SendTimeout);
-                    note = await structure(text, timeout.Token);
+                    var structured = await structure.Run(text, timeout.Token);
+                    (note, inputTokens, outputTokens) = (structured.Note, structured.InputTokens, structured.OutputTokens);
                 }
                 catch (Exception e) when (e is ProviderException or OperationCanceledException)
                 {
                     // The transcript is kept as it is; losing what the user said is worse than an untidy note.
                     log($"{DateTime.Now:HH:mm:ss.fff} rambler: structuring failed, raw transcript kept: {e.Message}");
+                }
+                finally
+                {
+                    LogSend(structure.Send, inputTokens, outputTokens, "transcript");
                 }
             }
 
@@ -123,6 +143,10 @@ internal sealed class Rambler(
             await Retract();
         }
     }
+
+    /// <summary>One send-log line per request that left the PC. There is no price table here yet, so the cost is 0.</summary>
+    private void LogSend(ProviderSend send, int inputTokens, int outputTokens, string attached) =>
+        sendLog.Append(new SendLogEntry(DateTimeOffset.Now, send.Provider, send.Model, inputTokens, outputTokens, 0m, [attached], null));
 
     private void Level(float rms)
     {
@@ -222,6 +246,12 @@ internal sealed class Rambler(
         return fade;
     }
 }
+
+/// <summary>Which provider and model a rambler send goes to, for the send log.</summary>
+internal sealed record ProviderSend(string Provider, string Model);
+
+/// <summary>The structuring step: where it sends, and the call that turns a transcript into a note.</summary>
+internal sealed record RamblerStructure(ProviderSend Send, Func<string, CancellationToken, Task<RamblerNote.Structured>> Run);
 
 /// <summary>
 /// Temporary Win+Alt+V registration for <c>--rambler</c>, until the triggers (A2) own every hotkey.

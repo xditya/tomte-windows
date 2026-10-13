@@ -15,17 +15,21 @@ public static class RamblerNote
     public static ChatRequest Request(string model, string transcript) =>
         new(model, [ChatMessage.User(transcript)], System: Prompt, MaxTokens: 1024);
 
-    public static async Task<string> StructureAsync(IChatProvider provider, string model, string transcript, CancellationToken ct = default)
+    /// <summary>The note and the turn's token counts, for the send log.</summary>
+    public sealed record Structured(string Note, int InputTokens, int OutputTokens);
+
+    public static async Task<Structured> StructureAsync(IChatProvider provider, string model, string transcript, CancellationToken ct = default)
     {
         var reply = new System.Text.StringBuilder();
-        // This send is not in the send log yet: the log comes with the palette work, and Rambler.End records
-        // each rambler send there once it lands. The user's hold is the visible action until then.
+        int input = 0, output = 0;
         await foreach (var e in provider.StreamAsync(Request(model, transcript), ct))
         {
             if (e is TextDelta t)
                 reply.Append(t.Text);
+            else if (e is TurnDone done)
+                (input, output) = (done.InputTokens, done.OutputTokens);
         }
-        return Parse(reply.ToString(), transcript);
+        return new(Parse(reply.ToString(), transcript), input, output);
     }
 
     /// <summary>The model's note without a code fence around it; the raw transcript when the reply is empty.</summary>

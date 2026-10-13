@@ -345,24 +345,34 @@ internal static class Program
             : null;
         // Only a configured provider needs HTTP; local whisper with raw notes never opens a connection.
         var http = config is null ? null : new HttpClient();
-        ISpeechToText? speech = args.Contains("--stt-provider") && config is { Kind: ProviderKind.OpenAICompatible, BaseUrl: { } url }
-            ? new OpenAITranscriber(http!, url, CredentialStore.Read(config.Id), Arg(args, "--stt-model") ?? "whisper-1")
-            : WhisperTranscriber.IsInstalled(WhisperTranscriber.DefaultDirectory) ? new WhisperTranscriber(WhisperTranscriber.DefaultDirectory) : null;
+        ISpeechToText? speech = null;
+        ProviderSend? speechSend = null;
+        if (args.Contains("--stt-provider") && config is { Kind: ProviderKind.OpenAICompatible, BaseUrl: { } url })
+        {
+            speechSend = new ProviderSend(config.Id, Arg(args, "--stt-model") ?? "whisper-1");
+            speech = new OpenAITranscriber(http!, url, CredentialStore.Read(config.Id), speechSend.Model);
+        }
+        else if (WhisperTranscriber.IsInstalled(WhisperTranscriber.DefaultDirectory))
+        {
+            speech = new WhisperTranscriber(WhisperTranscriber.DefaultDirectory);
+        }
+
         if (speech is null)
         {
             log.WriteLine("rambler: no speech to text. Run tools/whisper/Get-Whisper.ps1, or pass --stt-provider with an OpenAI-compatible provider.");
             return;
         }
 
-        Func<string, CancellationToken, Task<string>>? structure = null;
+        RamblerStructure? structure = null;
         if (config is { DefaultModel: { } model })
         {
             var provider = ProviderSetup.Load(config, http!);
-            structure = (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct);
+            structure = new RamblerStructure(new ProviderSend(config.Id, model), (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct));
         }
 
         var scratchpad = new ScratchpadFile(ScratchpadFile.DefaultPath);
-        var session = new Rambler(island, machine, speech, structure, scratchpad, log.WriteLine);
+        var sendLog = new SendLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl"));
+        var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
         RamblerHotkey.Start(island.Queue, session.Begin, session.End, log.WriteLine);
         log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"} scratchpad={scratchpad.FilePath}");
     }
