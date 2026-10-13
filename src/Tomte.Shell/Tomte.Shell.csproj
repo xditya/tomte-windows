@@ -9,6 +9,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Unpackaged while developing; the MSIX comes from tools/package. -->
     <WindowsPackageType>None</WindowsPackageType>
+    <!-- Win32 icon resource so the exe shows the tomte in Explorer. -->
+    <ApplicationIcon>Assets\tomte.ico</ApplicationIcon>
     <SelfContained>false</SelfContained>
     <!-- A self-contained publish also bundles the Windows App SDK runtime. Set here, not on the
          command line, because the global property would reach the Tomte.Panels class library and fail. -->

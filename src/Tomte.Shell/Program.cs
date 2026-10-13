@@ -12,21 +12,26 @@ internal static class Program
 {
     private const int CycleHotKey = 1;
     private const int QuitHotKey = 2;
+    private const int MascotHotKey = 3;
+
+    // --debug-mascot: Win+Alt+Shift+M steps the reactions the AI layer and the rambler will set.
+    private static readonly MascotState[] MascotCycle = [MascotState.Rambler, MascotState.Thinking, MascotState.Result, MascotState.Error, MascotState.Compact];
 
     // Until the triggers exist, --debug-cycle walks this legal path through the state table, one hotkey press per step.
-    private static readonly (IslandState State, double W, double H)[] DebugCycle =
+    // The palette steps stand in for an AI request: thinking while it opens, the result as the answer grows.
+    private static readonly (IslandState State, double W, double H, MascotState? React)[] DebugCycle =
     [
-        (IslandState.Compact, 0, 0),
-        (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H),
-        (IslandState.Panels, PanelSize.Clipboard.W, PanelSize.Clipboard.H),
-        (IslandState.Panels, PanelSize.Media.W, PanelSize.Media.H),
-        (IslandState.Hidden, 0, 0),
-        (IslandState.ShelfDrop, 0, 0),
-        (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H),
-        (IslandState.Hidden, 0, 0),
-        (IslandState.Palette, PanelSize.PaletteWidth, PanelSize.PaletteMinHeight),
-        (IslandState.Palette, PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight),
-        (IslandState.Hidden, 0, 0),
+        (IslandState.Compact, 0, 0, null),
+        (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H, null),
+        (IslandState.Panels, PanelSize.Clipboard.W, PanelSize.Clipboard.H, null),
+        (IslandState.Panels, PanelSize.Media.W, PanelSize.Media.H, null),
+        (IslandState.Hidden, 0, 0, null),
+        (IslandState.ShelfDrop, 0, 0, null),
+        (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H, null),
+        (IslandState.Hidden, 0, 0, null),
+        (IslandState.Palette, PanelSize.PaletteWidth, PanelSize.PaletteMinHeight, MascotState.Thinking),
+        (IslandState.Palette, PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight, MascotState.Result),
+        (IslandState.Hidden, 0, 0, null),
     ];
 
     private static Process? settingsProcess;
@@ -41,13 +46,23 @@ internal static class Program
         }
 
         bool debugAuto = args.Contains("--debug-auto");
-        bool debug = debugAuto || args.Contains("--debug-cycle");
+        bool debugMascot = args.Contains("--debug-mascot");
+        bool debug = debugAuto || debugMascot || args.Contains("--debug-cycle");
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
         var machine = new IslandStateMachine();
+        // Stand-ins for the settings until they exist: the off switch and a cap colour as RRGGBB hex.
+        island.Mascot.Enabled = !args.Contains("--debug-mascot-off");
+        int cap = Array.IndexOf(args, "--debug-cap");
+        if (cap >= 0 && cap + 1 < args.Length)
+        {
+            island.Mascot.CapColor = Convert.ToUInt32(args[cap + 1], 16);
+        }
+
         StreamWriter? log = null;
         int step = 0;
+        int reaction = 0;
         if (debug)
         {
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte");
@@ -61,6 +76,11 @@ internal static class Program
             bool cycle = PInvoke.RegisterHotKey(HWND.Null, CycleHotKey, chord, 'T');
             bool quit = PInvoke.RegisterHotKey(HWND.Null, QuitHotKey, chord, 'Q');
             log.WriteLine($"hotkeys: Win+Alt+Shift+T cycle={cycle} Win+Alt+Shift+Q quit={quit}");
+            if (debugMascot)
+            {
+                log.WriteLine($"hotkeys: Win+Alt+Shift+M mascot={PInvoke.RegisterHotKey(HWND.Null, MascotHotKey, chord, 'M')}");
+                StartMascotFeed(island);
+            }
         }
 
         if (debugAuto)
@@ -71,14 +91,14 @@ internal static class Program
         var pause = new PauseState();
         using var tray = new TrayIcon(pause);
         tray.OpenIsland += () => _ = Step(island, machine, log, machine.State == IslandState.Hidden
-            ? (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H)
-            : (IslandState.Hidden, 0, 0));
+            ? (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H, null)
+            : (IslandState.Hidden, 0, 0, null));
         tray.OpenSettings += OpenSettings;
         tray.Paused += () =>
         {
             if (machine.State != IslandState.Hidden)
             {
-                _ = Step(island, machine, log, (IslandState.Hidden, 0, 0));
+                _ = Step(island, machine, log, (IslandState.Hidden, 0, 0, null));
             }
         };
         tray.Quit += () => PInvoke.PostQuitMessage(0);
@@ -91,6 +111,12 @@ internal static class Program
                 if (message.wParam.Value == QuitHotKey)
                 {
                     PInvoke.PostQuitMessage(0);
+                }
+                else if (message.wParam.Value == MascotHotKey)
+                {
+                    var next = MascotCycle[reaction++ % MascotCycle.Length];
+                    island.Mascot.Set(next);
+                    log!.WriteLine($"{DateTime.Now:HH:mm:ss.fff} mascot {next}");
                 }
                 else
                 {
@@ -154,12 +180,40 @@ internal static class Program
         }
     }
 
-    private static async Task Step(IslandWindow island, IslandStateMachine machine, StreamWriter? log, (IslandState State, double W, double H) next)
+    /// <summary>Debug stand-ins for the drag and the microphone: lean toward the cursor, and a synthetic level at 20 Hz.</summary>
+    private static void StartMascotFeed(IslandWindow island)
+    {
+        var timer = island.Queue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(50);
+        double t = 0;
+        timer.Tick += (_, _) =>
+        {
+            t += 0.05;
+            var mascot = island.Mascot;
+            if (mascot.State == MascotState.ShelfDrop && PInvoke.GetCursorPos(out var cursor))
+            {
+                mascot.Lean(cursor.X - island.MascotScreenX);
+            }
+            else if (mascot.State == MascotState.Rambler)
+            {
+                mascot.Level = 0.55 + 0.45 * Math.Sin(t * 3.1) * Math.Sin(t * 0.9) + 0.2 * Math.Sin(t * 11);
+            }
+        };
+        timer.Start();
+    }
+
+    private static async Task Step(IslandWindow island, IslandStateMachine machine, StreamWriter? log, (IslandState State, double W, double H, MascotState? React) next)
     {
         try
         {
             var from = machine.State;
             machine.TransitionTo(next.State);
+            island.Mascot.Follow(from, next.State);
+            if (next.React is MascotState react)
+            {
+                island.Mascot.Set(react);
+            }
+
             island.PanelLook = next.State is IslandState.Panels or IslandState.Palette;
             var (monitorW, monitorH) = island.MonitorSize;
             var geometry = IslandGeometry.For(next.State, Math.Min(next.W, 0.6 * monitorW), Math.Min(next.H, 0.5 * monitorH));

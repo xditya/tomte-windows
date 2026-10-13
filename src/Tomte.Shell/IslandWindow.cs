@@ -26,7 +26,8 @@ namespace Tomte.Shell;
 /// Windows.UI.Composition tree. Five springs drive the outline; a worker thread waits on the
 /// compositor clock and the UI thread rebuilds the path once per frame. The window is sized once
 /// per morph to the union of start and target bounds, then shrunk to the shape and given a region
-/// from the same outline when the springs settle. Hidden means SW_HIDE and a parked worker.
+/// from the same outline when the springs settle. Hidden means SW_HIDE and a parked worker. The same tick
+/// steps the mascot; a resting mascot parks the worker too and wakes it with a one-shot timer for its next beat.
 /// </summary>
 internal sealed unsafe class IslandWindow : IDisposable
 {
@@ -62,6 +63,8 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly DispatcherQueueHandler tickHandler;
     private readonly DispatcherQueueHandler finishHandler;
     private readonly Stopwatch clock = Stopwatch.StartNew();
+    private readonly MascotVisual mascotVisual;
+    private readonly DispatcherQueueTimer wakeTimer;
     private double scale;
     private int screenCenterX;
     private int windowX;
@@ -74,6 +77,10 @@ internal sealed unsafe class IslandWindow : IDisposable
     private TaskCompletionSource? settled;
     private double lastTickMs = -1;
     private double morphStartMs;
+    private bool islandMoving;
+    private double leadMs;
+    private IslandGeometry? anchor;
+    private float mascotX;
 
     public IslandWindow()
     {
@@ -169,6 +176,14 @@ internal sealed unsafe class IslandWindow : IDisposable
         ghost.Shapes.Add(ghostFill);
         ghost.Opacity = 0;
 
+        // The mascot sits above the content and outside the clip, so it can be seen before the shape has any depth.
+        Mascot = new Mascot(() => clock.Elapsed.TotalSeconds, () => ForceReduceMotion || !uiSettings.AnimationsEnabled) { Changed = Wake };
+        mascotVisual = new MascotVisual(compositor);
+        live.Children.InsertAtTop(mascotVisual.Visual);
+        wakeTimer = Queue.CreateTimer();
+        wakeTimer.IsRepeating = false;
+        wakeTimer.Tick += (_, _) => Wake();
+
         root.Children.InsertAtBottom(ghost);
         root.Children.InsertAtTop(live);
 
@@ -197,8 +212,14 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     public DispatcherQueue Queue { get; }
 
-    /// <summary>Clipped by the outline and morphing with it. Panel content and the mascot attach here.</summary>
+    /// <summary>Clipped by the outline and morphing with it. Panel content attaches here.</summary>
     public ContainerVisual Content { get; }
+
+    /// <summary>The tomte at the island's left edge. Settings set Enabled and CapColor; features set its reactions.</summary>
+    public Mascot Mascot { get; }
+
+    /// <summary>The mascot's centre in screen pixels, for the Shelf-drop lean.</summary>
+    public double MascotScreenX => windowX + root.Offset.X + mascotX + MascotVisual.SizeDips / 2 * scale;
 
     public IslandGeometry Current => new(width.Value, depth.Value, corner.Value, rampW.Value, rampH.Value);
 
@@ -232,6 +253,11 @@ internal sealed unsafe class IslandWindow : IDisposable
         Rescale(MonitorScale());
         var from = Current;
         targetGeometry = to;
+        double lead = Mascot.TakeIslandLead();
+        // Revealing or retracting, the mascot stays at the open shape's left edge while the outline grows or shrinks.
+        // a retarget mid-reveal drops the anchor and the mascot jumps to the live edge in one frame; give the
+        // mascot its own x spring if that shows.
+        anchor = from.Depth <= 0.5 ? to : to.Depth <= 0.5 ? from : null;
         crossfadeGeneration++; // a crossfade still in flight must not settle this morph
         foreach (var spring in springs)
         {
@@ -258,12 +284,17 @@ internal sealed unsafe class IslandWindow : IDisposable
         {
             Crossfade(to);
         }
-        else if (!ticking.IsSet)
+        else
         {
-            lastTickMs = -1;
-            morphStartMs = clock.Elapsed.TotalMilliseconds;
-            LastMorphTicks = 0;
-            ticking.Set();
+            if (!islandMoving)
+            {
+                islandMoving = true;
+                morphStartMs = clock.Elapsed.TotalMilliseconds;
+                LastMorphTicks = 0;
+                leadMs = lead * 1000;
+            }
+
+            Wake();
         }
 
         return settled.Task;
@@ -272,6 +303,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     public void Dispose()
     {
         ticking.Reset();
+        wakeTimer.Stop();
         PInvoke.DestroyWindow(Hwnd);
         instance = null;
     }
@@ -325,27 +357,74 @@ internal sealed unsafe class IslandWindow : IDisposable
         double now = clock.Elapsed.TotalMilliseconds;
         double dt = lastTickMs < 0 ? 0 : Math.Min(0.05, (now - lastTickMs) / 1000);
         lastTickMs = now;
-        bool done = true;
-        foreach (var spring in springs)
+        bool finished = false;
+        if (islandMoving)
         {
-            spring.Step(dt);
-            done &= spring.Settled;
+            // The tomte drops in from above the edge; the shape starts 70 ms later.
+            double islandDt = now - morphStartMs < leadMs ? 0 : dt;
+            bool done = true;
+            foreach (var spring in springs)
+            {
+                spring.Step(islandDt);
+                done &= spring.Settled;
+            }
+
+            LastMorphTicks++;
+            if (done)
+            {
+                (islandMoving, finished) = (false, true);
+                LastMorphMs = now - morphStartMs;
+            }
         }
 
-        LastMorphTicks++;
-        if (!done)
+        bool mascotActive = Mascot.Step(dt);
+        if (islandMoving)
         {
             Apply(Current);
             return;
         }
 
+        if (finished)
+        {
+            Settle();
+        }
+        else
+        {
+            PlaceMascot(Current);
+        }
+
+        if (visible && mascotActive)
+        {
+            return;
+        }
+
         ticking.Reset();
-        LastMorphMs = now - morphStartMs;
-        Settle();
+        if (visible && Mascot.WakeIn is double wait)
+        {
+            wakeTimer.Interval = TimeSpan.FromSeconds(wait);
+            wakeTimer.Start();
+        }
+    }
+
+    /// <summary>Resume the tick for a morph or a mascot change; nothing runs while the island is hidden.</summary>
+    private void Wake()
+    {
+        if (!visible)
+        {
+            return;
+        }
+
+        wakeTimer.Stop();
+        if (!ticking.IsSet)
+        {
+            lastTickMs = -1;
+            ticking.Set();
+        }
     }
 
     private void FinishWithoutClock()
     {
+        islandMoving = false;
         if (settled is not null)
         {
             Settle();
@@ -361,12 +440,20 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         var g = Current;
+        anchor = null;
+        if (g.Depth <= 0.5)
+        {
+            // Hidden costs nothing: no beat may wake the tick, and the next show starts from a clean tomte.
+            visible = false;
+            wakeTimer.Stop();
+            Mascot.Park();
+        }
+
         Apply(g);
         SizeWindow(Bounds(g));
         root.Offset = new Vector3(Margin, Margin, 0);
-        if (g.Depth <= 0.5)
+        if (!visible)
         {
-            visible = false;
             PInvoke.ShowWindow(Hwnd, SHOW_WINDOW_CMD.SW_HIDE);
         }
         else
@@ -379,11 +466,9 @@ internal sealed unsafe class IslandWindow : IDisposable
         done?.TrySetResult();
     }
 
-    /// <summary>Rebuild the path from the five values. Only the path object is new; every buffer is reused.</summary>
-    private void Apply(in IslandGeometry g)
+    /// <summary>A closed composition path from segments, scaled by <paramref name="s"/>.</summary>
+    internal static CompositionPath BuildPath(ReadOnlySpan<OutlineSegment> segments, float s)
     {
-        IslandOutline.Build(g, segments);
-        float s = (float)scale;
         using var builder = new CanvasPathBuilder(null);
         foreach (var segment in segments)
         {
@@ -405,13 +490,30 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         builder.EndFigure(CanvasFigureLoop.Closed);
-        geometry.Path = new CompositionPath(CanvasGeometry.CreatePath(builder));
+        return new CompositionPath(CanvasGeometry.CreatePath(builder));
+    }
+
+    /// <summary>Rebuild the path from the five values. Only the path object is new; every buffer is reused.</summary>
+    private void Apply(in IslandGeometry g)
+    {
+        IslandOutline.Build(g, segments);
+        geometry.Path = BuildPath(CollectionsMarshal.AsSpan(segments), (float)scale);
 
         var b = Bounds(g);
         root.Offset = new Vector3(b.X - windowX + Margin, Margin, 0);
         var size = new Vector2(b.Width, b.Height);
         fillVisual.Size = size;
         Content.Size = size;
+        PlaceMascot(g);
+    }
+
+    /// <summary>Put the tomte at the left edge of the shape, or of the anchor shape during a reveal or retract.</summary>
+    private void PlaceMascot(in IslandGeometry g)
+    {
+        var a = anchor ?? g;
+        float s = (float)scale;
+        mascotX = (float)(g.OuterWidth / 2 - a.Width / 2 + MascotVisual.InsetX) * s;
+        mascotVisual.Apply(Mascot, new Vector2(mascotX, MascotVisual.InsetY * s), s);
     }
 
     private void ClearRegion()
