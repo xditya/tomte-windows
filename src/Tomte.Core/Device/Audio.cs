@@ -10,6 +10,8 @@ public sealed record OutputDevice(string Id, string Name, bool IsDefault);
 
 // Core Audio on the default endpoints. Each call creates its own enumerator, so nothing is
 // held between calls.
+// the COM wrappers are released by the GC, not Marshal.FinalReleaseComObject; a
+// handful per user action. Release them explicitly if an action ever runs in a loop.
 public static class Audio
 {
     public static ActionResult SetVolume(int percent, bool dryRun = false)
@@ -45,11 +47,11 @@ public static class Audio
     public static ActionResult SetOutputDevice(string name, bool dryRun = false)
     {
         if (string.IsNullOrWhiteSpace(name)) return ActionResult.Fail("Name an output device.");
+        if (dryRun) return ActionResult.DryRun($"switch output to the device matching \"{name}\".");
         var devices = OutputDevices();
         var (device, error) = PickDevice(devices, name);
         if (device is null) return ActionResult.Fail(error!);
         if (device.IsDefault) return ActionResult.Done($"{device.Name} is already the output device.");
-        if (dryRun) return ActionResult.DryRun($"switch output to {device.Name}.");
 
         var previous = devices.FirstOrDefault(d => d.IsDefault);
         SetDefault(device.Id);

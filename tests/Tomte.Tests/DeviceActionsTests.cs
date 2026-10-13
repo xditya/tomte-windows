@@ -39,6 +39,7 @@ public class DeviceActionsTests
         { "volume", () => Audio.SetVolume(30, dryRun: true) },
         { "mute", () => Audio.SetMute(true, dryRun: true) },
         { "mic mute", () => Audio.SetMicMute(true, dryRun: true) },
+        { "output device", () => Audio.SetOutputDevice("headphones", dryRun: true) },
         { "open app", () => Apps.OpenApp("notepad", dryRun: true) },
         { "settings page", () => Apps.OpenSettingsPage("ms-settings:display", dryRun: true) },
         { "lock", () => Power.Lock(dryRun: true) },
