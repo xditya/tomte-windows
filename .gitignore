@@ -7,3 +7,7 @@ obj/
 TestResults/
 *.binlog
 
+
+# signing material: never committed
+*.pfx
+*.cer
