@@ -44,8 +44,23 @@ internal static class ProviderHttp
     public static async Task<JsonDocument> GetJsonAsync(HttpClient http, HttpRequestMessage request, string? key, CancellationToken ct)
     {
         using var response = await SendAsync(http, request, key, ct);
-        await using var stream = await response.Content.ReadAsStreamAsync(ct);
-        return await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+        return ParseJson(await response.Content.ReadAsStringAsync(ct), key);
+    }
+
+    /// <summary>
+    /// Parses a response body or event payload. A 2xx answer that is not JSON (an HTML page at a
+    /// mistyped base URL, a captive portal) becomes a <see cref="ProviderException"/> like any other failure.
+    /// </summary>
+    public static JsonDocument ParseJson(string data, string? key = null)
+    {
+        try
+        {
+            return JsonDocument.Parse(data);
+        }
+        catch (JsonException)
+        {
+            throw new ProviderException(Scrub($"The endpoint did not answer with JSON: {(data.Length > 100 ? data[..100] : data)}", key));
+        }
     }
 
     /// <summary>Yields the data payload of each server-sent event, in order.</summary>
@@ -116,7 +131,8 @@ internal static class ProviderHttp
     {
         try
         {
-            return JsonDocument.Parse(json.Length == 0 ? "{}" : json).RootElement.Clone();
+            using var doc = JsonDocument.Parse(json.Length == 0 ? "{}" : json);
+            return doc.RootElement.Clone();
         }
         catch (JsonException)
         {

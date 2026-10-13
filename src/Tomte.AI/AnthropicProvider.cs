@@ -35,7 +35,7 @@ public sealed class AnthropicProvider(HttpClient http, string key) : IChatProvid
 
         await foreach (var data in ProviderHttp.ReadSseAsync(response, ct))
         {
-            using var doc = JsonDocument.Parse(data);
+            using var doc = ProviderHttp.ParseJson(data, key);
             var e = doc.RootElement;
             switch (e.GetProperty("type").GetString())
             {

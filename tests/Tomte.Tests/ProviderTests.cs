@@ -287,6 +287,17 @@ public class ProviderTests
     }
 
     [Fact]
+    public async Task HtmlInsteadOfJsonIsAProviderError()
+    {
+        var config = new ProviderConfig($"test-{Guid.NewGuid():N}", ProviderKind.OpenAICompatible, "http://192.168.1.1/v1");
+        using var http = RecordedHandler.Client(out _, "html-page.html");
+
+        var e = await Assert.ThrowsAsync<ProviderException>(() => ProviderSetup.TestAndSaveAsync(config, Key, http));
+        Assert.StartsWith("The endpoint did not answer with JSON: <!doctype html>", e.Message);
+        Assert.Null(CredentialStore.Read(config.Id));
+    }
+
+    [Fact]
     public async Task StreamCutOffBeforeTheFinishReasonThrows()
     {
         using var openAi = RecordedHandler.Client(out _, "openai-truncated.sse");

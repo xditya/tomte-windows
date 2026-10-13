@@ -51,7 +51,7 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
         {
             if (data == "[DONE]")
                 break;
-            using var doc = JsonDocument.Parse(data);
+            using var doc = ProviderHttp.ParseJson(data, key);
             var chunk = doc.RootElement;
             if (chunk.TryGetProperty("error", out _))
                 throw new ProviderException(ProviderHttp.Scrub(ProviderHttp.ErrorMessage(data), key));

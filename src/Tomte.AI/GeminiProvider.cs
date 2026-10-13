@@ -33,7 +33,7 @@ public sealed class GeminiProvider(HttpClient http, string key) : IChatProvider
         int input = 0, output = 0, calls = 0;
         await foreach (var data in ProviderHttp.ReadSseAsync(response, ct))
         {
-            using var doc = JsonDocument.Parse(data);
+            using var doc = ProviderHttp.ParseJson(data, key);
             var chunk = doc.RootElement;
             if (chunk.TryGetProperty("error", out _))
                 throw new ProviderException(ProviderHttp.Scrub(ProviderHttp.ErrorMessage(data), key));
