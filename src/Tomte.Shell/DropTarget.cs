@@ -8,10 +8,10 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// The island's OLE drop target: registered once while hidden, so DragEnter arrives the moment the surface is
-/// under a real drag. It accepts nothing yet (effect none); the shelf's drop surface replaces the bodies.
-/// The COM object is one static vtable of UnmanagedCallersOnly functions over a heap cell, built by hand:
-/// the shell runs CsWin32 without marshaling, so the generated IDropTarget is only the vtable layout, and the
-/// runtime's source-generated COM wrappers are not used on this hot, reentrant OLE path.
+/// under a real drag. It accepts nothing yet (effect none). The COM object is one static vtable of
+/// UnmanagedCallersOnly functions over a heap cell, built by hand, since the shell runs CsWin32 without
+/// marshaling and the generated IDropTarget is only the vtable layout. The shelf task replaces this with the
+/// source-generated IDropTarget, because it needs IDataObject and its formats.
 /// </summary>
 internal sealed unsafe class DropTarget : IDisposable
 {

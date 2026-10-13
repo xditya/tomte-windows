@@ -8,75 +8,99 @@ using Windows.Win32.UI.WindowsAndMessaging;
 namespace Tomte.Shell;
 
 /// <summary>
-/// Turns trigger messages into state changes on the UI thread. The suppression check runs before every
-/// MorphTo. Owns the retraction, hover, event, peek, first-run and drag timers, all SetTimer one-shots on
+/// Turns trigger messages into state changes on the UI thread. The pause and the suppression check run before
+/// every MorphTo. Owns the retraction, hover, event, peek, first-run and drag timers, all SetTimer one-shots on
 /// the island window, so nothing runs while nothing happens.
 /// </summary>
 internal sealed unsafe class TriggerController : IDisposable
 {
     private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6;
+    private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
 
+    // Timings that are fixed rather than exposed: Compact opens Panels after a hover dwell, an event shows for
+    // four seconds, window changes are debounced before peek re-checks, the first-run hint stays ten seconds.
+    private const uint HoverDwellMs = 350, EventHoldMs = 4000, PeekDebounceMs = 500, FirstRunHintMs = 10000;
+
     private readonly IslandWindow island;
-    private readonly TriggerSettings settings;
+    private readonly SettingsStore store;
+    private readonly PauseState pause;
     private readonly IslandStateMachine machine = new();
     private readonly TriggerQueue events = new();
     private readonly DesktopWatch watch;
     private readonly DropTarget dropTarget;
     private readonly Action<string>? log;
+    private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
 
-    public TriggerController(IslandWindow island, TriggerSettings settings, Action<string>? log)
+    public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, Action<string>? log)
     {
         this.island = island;
-        this.settings = settings;
+        this.store = store;
+        this.pause = pause;
         this.log = log;
+        settings = store.Current;
         island.Message = HandleMessage;
         island.LayoutChanged = PushZone;
         PushZone();
 
-        watch = new DesktopWatch(island.Hwnd, island.Queue, settings);
+        watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0);
         watch.Changed += OnSuppressionChanged;
         watch.WindowsChanged += SchedulePeek;
         dropTarget = new DropTarget(island.Hwnd);
         dropTarget.Entered += OnDragEnter;
 
-        InputThread.Start(island.Hwnd, settings);
-        Conflicts = HotkeyConflicts.Describe(InputThread.Registrations);
-        log?.Invoke($"input: hotkeys {InputThread.Registrations.Count(r => r.Registered)}/{InputThread.Registrations.Count} registered, mouse hook {(InputThread.HookInstalled ? "on" : "FAILED")}, ui thread {Environment.CurrentManagedThreadId}");
-        foreach (var line in Conflicts)
-        {
-            log?.Invoke("hotkey conflict: " + line);
-        }
+        InputThread.Start(island.Hwnd, store);
+        // Changed arrives on a pool thread; the input thread re-reads the store where it runs.
+        store.Changed += s => island.Queue.TryEnqueue(() => OnSettingsChanged(s));
+        log?.Invoke($"input: mouse hook {(InputThread.HookInstalled ? "on" : "off")}, ui thread {Environment.CurrentManagedThreadId}, all monitors={settings.AllMonitors} (primary only until the island window can move)");
 
         SchedulePeek();
-        if (!File.Exists(FirstRunMarker))
+        if (!settings.FirstRunHintShown)
         {
-            // a marker file until settings storage exists; it absorbs this flag.
-            Directory.CreateDirectory(Path.GetDirectoryName(FirstRunMarker)!);
-            File.WriteAllText(FirstRunMarker, DateTime.Now.ToString("O"));
-            firstRunShowing = Reveal(TriggerKind.FirstRun, IslandState.Compact);
+            firstRunShowing = Reveal(RevealTrigger.Peek, IslandState.Compact);
             if (firstRunShowing)
             {
-                PInvoke.SetTimer(island.Hwnd, FirstRunTimer, (uint)settings.FirstRunHintMs, null);
+                PInvoke.SetTimer(island.Hwnd, FirstRunTimer, FirstRunHintMs, null);
+                settings = settings with { FirstRunHintShown = true };
+                store.Save(settings);
             }
         }
     }
 
     /// <summary>Chords another app holds. Windows says nothing, so the island and settings must.</summary>
-    public IReadOnlyList<string> Conflicts { get; }
+    public IReadOnlyList<string> Conflicts { get; private set; } = [];
 
     public IslandState State => machine.State;
 
-    private static string FirstRunMarker => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "first-run-shown");
+    /// <summary>The one state machine; the palette host drives Palette on it.</summary>
+    internal IslandStateMachine Machine => machine;
 
     /// <summary>An internal event: shows Compact for the hold time, or waits while Focus, DND or fullscreen is on.</summary>
     public void Raise(IslandEvent e)
     {
-        if (events.Offer(e, !Suppression.Allows(TriggerKind.Event, watch.State, settings)))
+        // Focus and quiet hours change with no event to hear, so the notification state is read for each event.
+        watch.ReadNotificationState(() =>
         {
-            ShowEvent();
+            if (events.Offer(e, !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules)))
+            {
+                ShowEvent();
+            }
+        });
+    }
+
+    /// <summary>The tray's "Open island": opens Panels, or retracts. It ignores the pause, not the suppression.</summary>
+    public void Toggle()
+    {
+        if (machine.State == IslandState.Hidden || activity.HasFlag(IslandActivity.Peek))
+        {
+            activity &= ~IslandActivity.Peek;
+            Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Shelf, ignorePause: true);
+        }
+        else
+        {
+            Hide();
         }
     }
 
@@ -93,11 +117,27 @@ internal sealed unsafe class TriggerController : IDisposable
 
     private void PushZone()
     {
-        InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), settings.ZoneFraction, settings.DragBand, island.Scale));
+        var reveal = settings.Reveal;
+        InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), reveal.ZoneFraction, reveal.DragApproachDip, island.Scale));
         if (machine.State != IslandState.Hidden)
         {
-            InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.RetractMargin * island.Scale));
+            InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(reveal.RetractMarginDip * island.Scale));
         }
+    }
+
+    private void OnSettingsChanged(TomteSettings next)
+    {
+        settings = next;
+        log?.Invoke("settings changed");
+        InputThread.ApplySettings();
+        PushZone();
+        watch.Refresh();
+        if (!settings.DesktopPeek && activity.HasFlag(IslandActivity.Peek))
+        {
+            Hide();
+        }
+
+        SchedulePeek();
     }
 
     private bool HandleMessage(uint message, nuint wParam, nint lParam)
@@ -114,7 +154,7 @@ internal sealed unsafe class TriggerController : IDisposable
                 {
                     log?.Invoke(wParam == 1 ? "edge push: dwell" : "edge push: counts");
                     activity &= ~IslandActivity.Peek;
-                    if (Reveal(TriggerKind.EdgePush, IslandState.Compact))
+                    if (Reveal(RevealTrigger.EdgePush, IslandState.Compact))
                     {
                         armed = true;
                     }
@@ -128,11 +168,11 @@ internal sealed unsafe class TriggerController : IDisposable
                 OnDragCandidate(InputThread.Unpack(lParam));
                 return true;
             case InputThread.MsgDragInZone:
-                if (Reveal(TriggerKind.Drag, IslandState.ShelfDrop))
+                if (Reveal(RevealTrigger.Drag, IslandState.ShelfDrop))
                 {
                     activity |= IslandActivity.DragInProgress;
                     dragEntered = false;
-                    PInvoke.SetTimer(island.Hwnd, DragTimer, (uint)settings.DragTimeoutMs, null);
+                    PInvoke.SetTimer(island.Hwnd, DragTimer, (uint)settings.Reveal.DragEnterTimeoutMs, null);
                 }
 
                 return true;
@@ -141,7 +181,7 @@ internal sealed unsafe class TriggerController : IDisposable
                 armed = true;
                 if (machine.State != IslandState.Hidden && !pointerInside)
                 {
-                    PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.RetractDelayMs, null);
+                    PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
                 }
 
                 return true;
@@ -152,7 +192,20 @@ internal sealed unsafe class TriggerController : IDisposable
                 activity &= ~IslandActivity.Rambling;
                 if (machine.State == IslandState.Compact)
                 {
+                    island.Mascot.Set(MascotState.Compact);
                     Hide();
+                }
+
+                return true;
+            case InputThread.MsgHotkeysRegistered:
+                Conflicts = InputThread.Registrations
+                    .Where(r => r.Error != 0)
+                    .Select(r => r.Error == 1409 ? Hotkey.ConflictMessage(r.Action, r.Chord) : $"Tomte could not register {r.Chord} for {Hotkey.Name(r.Action)} (error {r.Error}).")
+                    .ToList();
+                log?.Invoke($"hotkeys: {InputThread.Registrations.Count(r => r.Error == 0)}/{InputThread.Registrations.Count} registered");
+                foreach (var line in Conflicts)
+                {
+                    log?.Invoke("hotkey conflict: " + line);
                 }
 
                 return true;
@@ -179,7 +232,7 @@ internal sealed unsafe class TriggerController : IDisposable
             case EventTimer when eventShowing && machine.State == IslandState.Compact:
                 if (pointerInside)
                 {
-                    PInvoke.SetTimer(island.Hwnd, EventTimer, (uint)settings.EventHoldMs, null);
+                    PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
                 }
                 else
                 {
@@ -211,7 +264,7 @@ internal sealed unsafe class TriggerController : IDisposable
             armed = true;
             if (machine.State == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling))
             {
-                PInvoke.SetTimer(island.Hwnd, HoverTimer, (uint)settings.HoverDwellMs, null);
+                PInvoke.SetTimer(island.Hwnd, HoverTimer, HoverDwellMs, null);
             }
         }
         else
@@ -219,7 +272,7 @@ internal sealed unsafe class TriggerController : IDisposable
             PInvoke.KillTimer(island.Hwnd, HoverTimer);
             if (armed && machine.State != IslandState.Hidden)
             {
-                PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.RetractDelayMs, null);
+                PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
             }
         }
     }
@@ -287,18 +340,19 @@ internal sealed unsafe class TriggerController : IDisposable
                 Hide();
                 break;
             case HotkeyAction.Summon:
-                Reveal(TriggerKind.Hotkey, IslandState.Panels, PanelSize.Shelf);
+                Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Shelf);
                 break;
             case HotkeyAction.Scratchpad:
-                Reveal(TriggerKind.Hotkey, IslandState.Panels, PanelSize.Scratchpad);
+                Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Scratchpad);
                 break;
             case HotkeyAction.Palette:
-                Reveal(TriggerKind.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+                Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
                 break;
             case HotkeyAction.Rambler:
-                if (Reveal(TriggerKind.Hotkey, IslandState.Compact))
+                if (Reveal(RevealTrigger.Hotkey, IslandState.Compact))
                 {
                     activity |= IslandActivity.Rambling;
+                    island.Mascot.Set(MascotState.Rambler);
                 }
 
                 break;
@@ -317,7 +371,7 @@ internal sealed unsafe class TriggerController : IDisposable
             Hide();
         }
 
-        if (events.Count > 0 && Suppression.Allows(TriggerKind.Event, s, settings))
+        if (events.Count > 0 && Suppression.Allows(RevealTrigger.Event, s, settings.AppRules))
         {
             // One digest for everything that waited; its content is the panel work's.
             var waited = events.Release();
@@ -334,11 +388,11 @@ internal sealed unsafe class TriggerController : IDisposable
         }
 
         activity &= ~IslandActivity.Peek;
-        if (Reveal(TriggerKind.Event, IslandState.Compact))
+        if (Reveal(RevealTrigger.Event, IslandState.Compact))
         {
             eventShowing = true;
             armed = true;
-            PInvoke.SetTimer(island.Hwnd, EventTimer, (uint)settings.EventHoldMs, null);
+            PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
         }
     }
 
@@ -347,7 +401,7 @@ internal sealed unsafe class TriggerController : IDisposable
         if (settings.DesktopPeek)
         {
             // Restarted on every window change: moving windows around never makes the pill flicker.
-            PInvoke.SetTimer(island.Hwnd, PeekTimer, (uint)settings.PeekDebounceMs, null);
+            PInvoke.SetTimer(island.Hwnd, PeekTimer, PeekDebounceMs, null);
         }
     }
 
@@ -361,7 +415,7 @@ internal sealed unsafe class TriggerController : IDisposable
         peekWanted = under is null;
         if (peekWanted)
         {
-            if (machine.State == IslandState.Hidden && Reveal(TriggerKind.Peek, IslandState.Compact))
+            if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact))
             {
                 activity |= IslandActivity.Peek;
             }
@@ -372,12 +426,18 @@ internal sealed unsafe class TriggerController : IDisposable
         }
     }
 
-    /// <summary>The suppression check, then the morph. False when nothing was shown.</summary>
-    private bool Reveal(TriggerKind kind, IslandState state, (double W, double H) size = default)
+    /// <summary>The pause, then the suppression check, then the morph. False when nothing was shown.</summary>
+    private bool Reveal(RevealTrigger trigger, IslandState state, (double W, double H) size = default, bool ignorePause = false)
     {
-        if (!Suppression.Allows(kind, watch.State, settings))
+        if (!ignorePause && pause.IsPaused(DateTimeOffset.Now))
         {
-            log?.Invoke($"{kind}: suppressed ({watch.State})");
+            log?.Invoke($"{trigger}: paused");
+            return false;
+        }
+
+        if (!Suppression.Allows(trigger, watch.State, settings.AppRules))
+        {
+            log?.Invoke($"{trigger}: suppressed ({watch.State})");
             return false;
         }
 
@@ -387,7 +447,8 @@ internal sealed unsafe class TriggerController : IDisposable
 
     /// <summary>
     /// One continuous morph to the state. A hop through Hidden keeps the state table honest for paths the
-    /// interaction map adds (Compact to Shelf-drop, Panels to Palette); the shape still retargets directly.
+    /// interaction map adds (Compact to Shelf-drop, Panels to Palette); the shape still retargets directly and
+    /// the mascot follows the real transition.
     /// </summary>
     private void Go(IslandState state, (double W, double H) size = default)
     {
@@ -398,6 +459,7 @@ internal sealed unsafe class TriggerController : IDisposable
         }
 
         machine.TransitionTo(state);
+        island.Mascot.Follow(from, state);
         island.PanelLook = state is IslandState.Panels or IslandState.Palette;
         var (monitorW, monitorH) = island.MonitorSize;
         var geometry = IslandGeometry.For(state, Math.Min(size.W, 0.6 * monitorW), Math.Min(size.H, 0.5 * monitorH));
@@ -414,14 +476,16 @@ internal sealed unsafe class TriggerController : IDisposable
         }
 
         pointerInside = false;
-        InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.RetractMargin * island.Scale));
-        // Esc retracts; it is a global hotkey only while the island shows (peek excluded) and is released on hide.
-        InputThread.SetEscape(!activity.HasFlag(IslandActivity.Peek));
+        InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+        // Esc as a global hotkey only for the states the user opened on purpose. Compact comes from a push, an event,
+        // peek or the first-run hint, where swallowing the user's Esc in their own app would be a surprise. Once the
+        // palette and the scratchpad activate the window they receive WM_KEYDOWN and this hotkey goes.
+        InputThread.SetEscape(state is IslandState.Panels or IslandState.Palette);
     }
 
-    private void Hide()
+    internal void Hide()
     {
-        foreach (nuint id in new[] { RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer })
+        foreach (nuint id in HideTimers)
         {
             PInvoke.KillTimer(island.Hwnd, id);
         }

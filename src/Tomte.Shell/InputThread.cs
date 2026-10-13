@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Tomte.Core;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -16,8 +17,8 @@ namespace Tomte.Shell;
 /// The dedicated input thread: a message-only window that receives raw mouse input (edge push, pointer
 /// tracking for retraction), the WH_MOUSE_LL hook (drag candidates), the registered hotkeys and the raw
 /// keyboard input armed while the Rambler chord is held. Everything here is a few field reads and a
-/// PostMessage to the island window; nothing logs or allocates. The UI thread writes the zone and the
-/// island bounds into the shared fields below.
+/// PostMessage to the island window; nothing logs or allocates. Settings are read on this thread only:
+/// the UI thread posts <see cref="ApplySettings"/> and the thread re-reads the store itself.
 /// </summary>
 internal static unsafe class InputThread
 {
@@ -29,19 +30,26 @@ internal static unsafe class InputThread
     public const uint MsgDragEnd = PInvoke.WM_APP + 5;
     public const uint MsgHotkey = PInvoke.WM_APP + 6;           // wParam = hotkey id
     public const uint MsgHotkeyReleased = PInvoke.WM_APP + 7;   // the Rambler chord came up
+    public const uint MsgHotkeysRegistered = PInvoke.WM_APP + 8; // Registrations holds a new snapshot
 
     public const int EscapeHotkeyId = 100;
-    private const uint MsgSetEscape = PInvoke.WM_APP + 10;      // posted to the input window: wParam 1 registers Esc, 0 releases it
+
+    // Posted to the input window by the UI thread.
+    private const uint MsgSetEscape = PInvoke.WM_APP + 10;      // wParam 1 registers Esc, 0 releases it
+    private const uint MsgApplySettings = PInvoke.WM_APP + 11;  // re-read the store: thresholds, hooks, hotkeys
+    private const uint MsgRawMouse = PInvoke.WM_APP + 12;       // wParam 1 wants raw mouse input for pointer tracking, 0 no longer
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B;
+    private const ushort VkV = 0x56;
     private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, which CsWin32 does not emit
 
     private static HWND island, window;
     private static HHOOK hook;
+    private static SettingsStore store = null!;
+    private static RevealSettings reveal = null!;
     private static EdgePushDetector detector = null!;
-    private static TriggerSettings settings = null!;
     private static readonly ManualResetEventSlim ready = new(false);
-    private static readonly List<HotkeyRegistration> registrations = [];
+    private static Registration[] registrations = [];
     private static readonly Stopwatch clock = Stopwatch.StartNew();
 
     // Shared with the UI thread. Written there, read here; a torn read costs one wrong pointer sample.
@@ -51,26 +59,29 @@ internal static unsafe class InputThread
 
     // Input thread only.
     private static int seenBoundsVersion = -1;
-    private static bool pointerInside;
+    private static bool pointerInside, rawMouseOn;
     private static int dragX, dragY, downX, downY;
     private static bool buttonDown, candidate, rawKeyboardArmed;
 
     // Callback timing, read by the UI thread at exit.
     public static long HookCalls, HookTicksMax, HookTicksSum, InputCalls, InputTicksMax, InputTicksSum;
 
-    public static IReadOnlyList<HotkeyRegistration> Registrations => registrations;
+    /// <summary>What RegisterHotKey said for one action. Error 0 is registered; 1409 means another app holds the chord.</summary>
+    public readonly record struct Registration(HotkeyAction Action, string Chord, int Error);
+
+    /// <summary>A snapshot replaced whole after each (re)registration; MsgHotkeysRegistered says when.</summary>
+    public static IReadOnlyList<Registration> Registrations => registrations;
 
     public static bool HookInstalled => !hook.IsNull;
 
     /// <summary>Starts the thread and returns once the hotkeys are registered, so the conflict report is ready.</summary>
-    public static void Start(HWND islandWindow, TriggerSettings triggerSettings)
+    public static void Start(HWND islandWindow, SettingsStore settings)
     {
         island = islandWindow;
-        settings = triggerSettings;
-        detector = new EdgePushDetector(settings.PushCounts, settings.PushWindowMs);
+        store = settings;
         dragX = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXDRAG);
         dragY = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYDRAG);
-        // The first WM_INPUT otherwise pays the JIT of the whole path (1.8 ms measured).
+        // The first WM_INPUT would otherwise pay the JIT of the whole path, about 2 ms.
         RuntimeHelpers.PrepareMethod(typeof(InputThread).GetMethod(nameof(OnMouseInput), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.MethodHandle);
         RuntimeHelpers.PrepareMethod(typeof(EdgePushDetector).GetMethod(nameof(EdgePushDetector.Feed))!.MethodHandle);
         new Thread(Loop) { IsBackground = true, Name = "tomte-input" }.Start();
@@ -78,6 +89,9 @@ internal static unsafe class InputThread
     }
 
     public static void Stop() => PInvoke.PostMessage(window, PInvoke.WM_CLOSE, default, default);
+
+    /// <summary>The store changed; the input thread re-reads it where it runs.</summary>
+    public static void ApplySettings() => PInvoke.PostMessage(window, MsgApplySettings, 0, 0);
 
     public static void SetZone(RevealZone zone)
     {
@@ -97,9 +111,14 @@ internal static unsafe class InputThread
         boundsMargin = margin;
         Volatile.Write(ref boundsVersion, boundsVersion + 1);
         Volatile.Write(ref trackPointer, 1);
+        PInvoke.PostMessage(window, MsgRawMouse, 1, 0);
     }
 
-    public static void StopTrackingPointer() => Volatile.Write(ref trackPointer, 0);
+    public static void StopTrackingPointer()
+    {
+        Volatile.Write(ref trackPointer, 0);
+        PInvoke.PostMessage(window, MsgRawMouse, 0, 0);
+    }
 
     /// <summary>The button-down window said HTCLIENT: the next move into the drag band inside the zone reports once.</summary>
     public static void ArmDrag() => Volatile.Write(ref dragArmed, 1);
@@ -134,23 +153,63 @@ internal static unsafe class InputThread
             }
         }
 
-        RegisterRaw(PInvoke.HID_USAGE_GENERIC_MOUSE, true);
-        if (settings.DragApproaching)
-        {
-            hook = PInvoke.SetWindowsHookEx(WINDOWS_HOOK_ID.WH_MOUSE_LL, &MouseHook, HINSTANCE.Null, 0);
-        }
-
-        foreach (var (action, chord) in settings.Hotkeys)
-        {
-            bool ok = PInvoke.RegisterHotKey(window, (int)action + 1, (HOT_KEY_MODIFIERS)chord.Modifiers | HOT_KEY_MODIFIERS.MOD_NOREPEAT, chord.VirtualKey);
-            registrations.Add(new HotkeyRegistration(action, chord, ok ? 0 : Marshal.GetLastPInvokeError()));
-        }
-
+        Apply(store.Current);
         ready.Set();
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
         {
             PInvoke.DispatchMessage(&message);
+        }
+    }
+
+    /// <summary>Thresholds, the hook, raw mouse input and the hotkeys, from the current settings.</summary>
+    private static void Apply(TomteSettings settings)
+    {
+        reveal = settings.Reveal;
+        detector = new EdgePushDetector(reveal.PushCounts, reveal.TouchpadPushCounts, reveal.PushWindowMs);
+        PInvoke.KillTimer(window, DwellTimer);
+
+        // Raw mouse input is needed for the push, and otherwise only while the island is shown and the pointer is tracked.
+        RawMouse(reveal.EdgePush || Volatile.Read(ref trackPointer) == 1);
+
+        if (reveal.DragReveal && hook.IsNull)
+        {
+            hook = PInvoke.SetWindowsHookEx(WINDOWS_HOOK_ID.WH_MOUSE_LL, &MouseHook, HINSTANCE.Null, 0);
+        }
+        else if (!reveal.DragReveal && !hook.IsNull)
+        {
+            PInvoke.UnhookWindowsHookEx(hook);
+            hook = HHOOK.Null;
+        }
+
+        foreach (var r in registrations)
+        {
+            PInvoke.UnregisterHotKey(window, (int)r.Action + 1);
+        }
+
+        var next = new List<Registration>(5);
+        foreach (var action in Enum.GetValues<HotkeyAction>())
+        {
+            string chord = settings.Hotkeys[action];
+            if (!Hotkey.TryParse(chord, out var hotkey, out _))
+            {
+                continue; // empty means no shortcut; an unparsable one was refused by the settings window
+            }
+
+            bool ok = PInvoke.RegisterHotKey(window, (int)action + 1, (HOT_KEY_MODIFIERS)hotkey.Modifiers | HOT_KEY_MODIFIERS.MOD_NOREPEAT, hotkey.Key);
+            next.Add(new Registration(action, hotkey.ToString(), ok ? 0 : Marshal.GetLastPInvokeError()));
+        }
+
+        registrations = [.. next];
+        PInvoke.PostMessage(island, MsgHotkeysRegistered, 0, 0);
+    }
+
+    private static void RawMouse(bool on)
+    {
+        if (on != rawMouseOn)
+        {
+            rawMouseOn = on;
+            RegisterRaw(PInvoke.HID_USAGE_GENERIC_MOUSE, on);
         }
     }
 
@@ -169,70 +228,102 @@ internal static unsafe class InputThread
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static LRESULT HandleMessage(HWND hwnd, uint message, WPARAM wParam, LPARAM lParam)
     {
-        switch (message)
+        // An exception leaving an unmanaged callback ends the process.
+        try
         {
-            case PInvoke.WM_INPUT:
-                long t0 = Stopwatch.GetTimestamp();
-                OnInput(new HRAWINPUT(lParam.Value));
-                long ticks = Stopwatch.GetTimestamp() - t0;
-                InputCalls++;
-                InputTicksSum += ticks;
-                if (ticks > InputTicksMax)
-                {
-                    InputTicksMax = ticks;
-                }
+            switch (message)
+            {
+                case PInvoke.WM_INPUT:
+                    long t0 = Stopwatch.GetTimestamp();
+                    OnInput(new HRAWINPUT(lParam.Value));
+                    long ticks = Stopwatch.GetTimestamp() - t0;
+                    InputCalls++;
+                    InputTicksSum += ticks;
+                    if (ticks > InputTicksMax)
+                    {
+                        InputTicksMax = ticks;
+                    }
 
-                break; // DefWindowProc frees the input buffer
-            case PInvoke.WM_TIMER when wParam.Value == DwellTimer:
-                PInvoke.KillTimer(hwnd, DwellTimer);
-                if (detector.DwellElapsed() == EdgePushDetector.Event.Reveal)
-                {
-                    PInvoke.PostMessage(island, MsgEdgeReveal, 1, 0);
-                }
+                    break; // DefWindowProc frees the input buffer
+                case PInvoke.WM_TIMER when wParam.Value == DwellTimer:
+                    PInvoke.KillTimer(hwnd, DwellTimer);
+                    if (detector.DwellElapsed() == EdgePushDetector.Event.Reveal)
+                    {
+                        PInvoke.PostMessage(island, MsgEdgeReveal, 1, 0);
+                    }
 
-                return new LRESULT(0);
-            case PInvoke.WM_HOTKEY:
-                PInvoke.PostMessage(island, MsgHotkey, wParam, 0);
-                if (wParam.Value == (nuint)HotkeyAction.Rambler + 1 && !rawKeyboardArmed)
-                {
-                    // Hold-to-talk: RegisterHotKey gives the press but not the release; raw keyboard input armed only
-                    // while the chord is down sees the first key-up, with no keyboard hook.
-                    rawKeyboardArmed = true;
-                    RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, true);
-                }
+                    return new LRESULT(0);
+                case PInvoke.WM_HOTKEY:
+                    PInvoke.PostMessage(island, MsgHotkey, wParam, 0);
+                    if (wParam.Value == (nuint)HotkeyAction.Rambler + 1 && !rawKeyboardArmed)
+                    {
+                        ArmRelease();
+                    }
 
-                return new LRESULT(0);
-            case MsgSetEscape:
-                if (wParam.Value == 1)
-                {
-                    PInvoke.RegisterHotKey(hwnd, EscapeHotkeyId, HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkEscape);
-                }
-                else
-                {
+                    return new LRESULT(0);
+                case MsgSetEscape:
+                    if (wParam.Value == 1)
+                    {
+                        PInvoke.RegisterHotKey(hwnd, EscapeHotkeyId, HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkEscape);
+                    }
+                    else
+                    {
+                        PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
+                    }
+
+                    return new LRESULT(0);
+                case MsgApplySettings:
+                    Apply(store.Current);
+                    return new LRESULT(0);
+                case MsgRawMouse:
+                    RawMouse(reveal.EdgePush || wParam.Value == 1);
+                    return new LRESULT(0);
+                case PInvoke.WM_CLOSE:
+                    foreach (var r in registrations)
+                    {
+                        PInvoke.UnregisterHotKey(hwnd, (int)r.Action + 1);
+                    }
+
                     PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
-                }
+                    if (!hook.IsNull)
+                    {
+                        PInvoke.UnhookWindowsHookEx(hook);
+                    }
 
-                return new LRESULT(0);
-            case PInvoke.WM_CLOSE:
-                foreach (var r in registrations)
-                {
-                    PInvoke.UnregisterHotKey(hwnd, (int)r.Action + 1);
-                }
-
-                PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
-                if (!hook.IsNull)
-                {
-                    PInvoke.UnhookWindowsHookEx(hook);
-                }
-
-                PInvoke.DestroyWindow(hwnd);
-                return new LRESULT(0);
-            case PInvoke.WM_DESTROY:
-                PInvoke.PostQuitMessage(0);
-                return new LRESULT(0);
+                    PInvoke.DestroyWindow(hwnd);
+                    return new LRESULT(0);
+                case PInvoke.WM_DESTROY:
+                    PInvoke.PostQuitMessage(0);
+                    return new LRESULT(0);
+            }
+        }
+        catch (Exception)
+        {
         }
 
         return PInvoke.DefWindowProc(hwnd, message, wParam, lParam);
+    }
+
+    /// <summary>
+    /// Hold-to-talk: RegisterHotKey gives the press but not the release, so raw keyboard input is armed only while the
+    /// chord is down and sees the first key-up. A tap shorter than WM_HOTKEY's delivery has already released V when
+    /// this runs; the key state check closes that gap.
+    /// </summary>
+    private static void ArmRelease()
+    {
+        rawKeyboardArmed = true;
+        RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, true);
+        if ((PInvoke.GetAsyncKeyState(VkV) & 0x8000) == 0)
+        {
+            Released();
+        }
+    }
+
+    private static void Released()
+    {
+        rawKeyboardArmed = false;
+        RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, false);
+        PInvoke.PostMessage(island, MsgHotkeyReleased, 0, 0);
     }
 
     private static void OnInput(HRAWINPUT handle)
@@ -246,22 +337,21 @@ internal static unsafe class InputThread
 
         if (raw.header.dwType == (uint)RID_DEVICE_INFO_TYPE.RIM_TYPEMOUSE)
         {
-            OnMouseInput(in raw.data.mouse);
+            // A precision touchpad's input arrives with no device handle; so does injected input.
+            OnMouseInput(in raw.data.mouse, raw.header.hDevice.IsNull);
         }
         else if (raw.header.dwType == (uint)RID_DEVICE_INFO_TYPE.RIM_TYPEKEYBOARD && rawKeyboardArmed && (raw.data.keyboard.Flags & PInvoke.RI_KEY_BREAK) != 0)
         {
-            // V, Win or Alt up: the chord is over, raw keyboard input goes away again.
+            // V, Win or Alt up: the chord is over.
             ushort vk = raw.data.keyboard.VKey;
-            if (vk is 0x56 or 0x5B or 0x5C or 0x12 or 0xA4 or 0xA5)
+            if (vk is VkV or 0x5B or 0x5C or 0x12 or 0xA4 or 0xA5)
             {
-                rawKeyboardArmed = false;
-                RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, false);
-                PInvoke.PostMessage(island, MsgHotkeyReleased, 0, 0);
+                Released();
             }
         }
     }
 
-    private static void OnMouseInput(in RAWMOUSE mouse)
+    private static void OnMouseInput(in RAWMOUSE mouse, bool touchpad)
     {
         System.Drawing.Point cursor;
         PInvoke.GetCursorPos(&cursor);
@@ -272,12 +362,16 @@ internal static unsafe class InputThread
             && PInvoke.MonitorFromPoint(new System.Drawing.Point(cursor.X, top - 1), MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONULL) == HMONITOR.Null;
         // Absolute devices (pen, RDP) carry no push; they still get the dwell.
         int dy = (mouse.usFlags & MOUSE_STATE.MOUSE_MOVE_ABSOLUTE) != 0 ? 0 : mouse.lLastY;
-        if (settings.EdgePush)
+        if (reveal.EdgePush)
         {
-            switch (detector.Feed(clock.Elapsed.TotalMilliseconds, dy, atTop, inZone))
+            switch (detector.Feed(clock.Elapsed.TotalMilliseconds, dy, atTop, inZone, touchpad))
             {
                 case EdgePushDetector.Event.EnterZone:
-                    PInvoke.SetTimer(window, DwellTimer, (uint)settings.DwellMs, null);
+                    if (reveal.DwellMs > 0)
+                    {
+                        PInvoke.SetTimer(window, DwellTimer, (uint)reveal.DwellMs, null);
+                    }
+
                     break;
                 case EdgePushDetector.Event.LeaveZone:
                     PInvoke.KillTimer(window, DwellTimer);
@@ -309,47 +403,53 @@ internal static unsafe class InputThread
     private static LRESULT MouseHook(int code, WPARAM wParam, LPARAM lParam)
     {
         long t0 = Stopwatch.GetTimestamp();
-        if (code >= 0)
+        try
         {
-            var info = (MSLLHOOKSTRUCT*)lParam.Value;
-            int x = info->pt.X, y = info->pt.Y;
-            switch ((uint)wParam.Value)
+            if (code >= 0)
             {
-                case PInvoke.WM_LBUTTONDOWN:
-                    buttonDown = true;
-                    candidate = false;
-                    (downX, downY) = (x, y);
-                    break;
-                case PInvoke.WM_MOUSEMOVE:
-                    if (buttonDown && !candidate && (Math.Abs(x - downX) >= dragX || Math.Abs(y - downY) >= dragY))
-                    {
-                        candidate = true;
-                        PInvoke.PostMessage(island, MsgDragCandidate, 0, Pack(downX, downY));
-                    }
-                    else if (candidate && Volatile.Read(ref dragArmed) == 1 && y >= Volatile.Read(ref zoneTop) && y <= Volatile.Read(ref bandBottom)
-                        && x >= Volatile.Read(ref zoneLeft) && x <= Volatile.Read(ref zoneRight))
-                    {
-                        // Once per drag: a retract must not re-show the surface for the rest of it.
-                        Volatile.Write(ref dragArmed, 0);
-                        PInvoke.PostMessage(island, MsgDragInZone, 0, Pack(x, y));
-                    }
-
-                    break;
-                case PInvoke.WM_LBUTTONUP:
-                    if (buttonDown)
-                    {
-                        buttonDown = false;
-                        bool was = candidate;
+                var info = (MSLLHOOKSTRUCT*)lParam.Value;
+                int x = info->pt.X, y = info->pt.Y;
+                switch ((uint)wParam.Value)
+                {
+                    case PInvoke.WM_LBUTTONDOWN:
+                        buttonDown = true;
                         candidate = false;
-                        Volatile.Write(ref dragArmed, 0);
-                        if (was)
+                        (downX, downY) = (x, y);
+                        break;
+                    case PInvoke.WM_MOUSEMOVE:
+                        if (buttonDown && !candidate && (Math.Abs(x - downX) >= dragX || Math.Abs(y - downY) >= dragY))
                         {
-                            PInvoke.PostMessage(island, MsgDragEnd, 0, 0);
+                            candidate = true;
+                            PInvoke.PostMessage(island, MsgDragCandidate, 0, Pack(downX, downY));
                         }
-                    }
+                        else if (candidate && Volatile.Read(ref dragArmed) == 1 && y >= Volatile.Read(ref zoneTop) && y <= Volatile.Read(ref bandBottom)
+                            && x >= Volatile.Read(ref zoneLeft) && x <= Volatile.Read(ref zoneRight))
+                        {
+                            // Once per drag: a retract must not re-show the surface for the rest of it.
+                            Volatile.Write(ref dragArmed, 0);
+                            PInvoke.PostMessage(island, MsgDragInZone, 0, Pack(x, y));
+                        }
 
-                    break;
+                        break;
+                    case PInvoke.WM_LBUTTONUP:
+                        if (buttonDown)
+                        {
+                            buttonDown = false;
+                            bool was = candidate;
+                            candidate = false;
+                            Volatile.Write(ref dragArmed, 0);
+                            if (was)
+                            {
+                                PInvoke.PostMessage(island, MsgDragEnd, 0, 0);
+                            }
+                        }
+
+                        break;
+                }
             }
+        }
+        catch (Exception)
+        {
         }
 
         long ticks = Stopwatch.GetTimestamp() - t0;

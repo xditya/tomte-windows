@@ -25,28 +25,27 @@ internal sealed unsafe class DesktopWatch : IDisposable
     public const uint MsgAppBar = PInvoke.WM_APP + 20;
     private const nuint NotificationStateTimer = 20;
 
-    // QUNS_RUNNING_D3D_FULL_SCREEN lands 0.1 to 1.4 s after the shell's fullscreen notification, so one
-    // more read follows a fullscreen entry after this delay. A one-shot, not a poll.
+    // QUNS_RUNNING_D3D_FULL_SCREEN is set between 0.1 and 1.4 s after the shell's own fullscreen notification, so
+    // one more read follows a fullscreen entry after this delay. A one-shot, not a poll.
     private const uint NotificationStateRecheckMs = 1500;
 
     private static DesktopWatch? instance;
     private readonly HWND island;
-    private readonly TriggerSettings settings;
+    private readonly Func<bool> needsForegroundExe;
     private readonly Windows.System.DispatcherQueue queue;
     private readonly HWINEVENTHOOK[] hooks;
-    private readonly Dictionary<uint, string> exeByPid = [];
     private APPBARDATA appBar;
     private HWINEVENTHOOK locationHook;
     private uint locationPid;
     private bool shellFullscreen, rectFullscreen, qunsBusy, qunsExclusive, qunsQuiet, locked, secureDesktop;
     private string? foregroundExe;
 
-    public DesktopWatch(HWND island, Windows.System.DispatcherQueue queue, TriggerSettings settings)
+    public DesktopWatch(HWND island, Windows.System.DispatcherQueue queue, Func<bool> needsForegroundExe)
     {
         instance = this;
         this.island = island;
         this.queue = queue;
-        this.settings = settings;
+        this.needsForegroundExe = needsForegroundExe;
 
         // ABM_NEW with no ABM_SETPOS reserves no space; it only subscribes to ABN_FULLSCREENAPP.
         appBar = new APPBARDATA { cbSize = (uint)sizeof(APPBARDATA), hWnd = island, uCallbackMessage = MsgAppBar };
@@ -61,7 +60,7 @@ internal sealed unsafe class DesktopWatch : IDisposable
             PInvoke.SetWinEventHook(PInvoke.EVENT_SYSTEM_DESKTOPSWITCH, PInvoke.EVENT_SYSTEM_DESKTOPSWITCH, HMODULE.Null, &OnWinEvent, 0, 0, flags),
         ];
 
-        OnForeground(PInvoke.GetForegroundWindow());
+        Refresh();
         ReadNotificationState();
     }
 
@@ -72,6 +71,9 @@ internal sealed unsafe class DesktopWatch : IDisposable
     public event Action? WindowsChanged;
 
     public SuppressionState State { get; private set; } = SuppressionState.Clear;
+
+    /// <summary>Re-reads the foreground window, for example after the app rules changed.</summary>
+    public void Refresh() => OnForeground(PInvoke.GetForegroundWindow());
 
     /// <summary>Appbar and session messages arrive on the island window; the owner routes them here.</summary>
     public bool HandleMessage(uint message, nuint wParam, nint lParam)
@@ -97,15 +99,41 @@ internal sealed unsafe class DesktopWatch : IDisposable
     }
 
     /// <summary>
+    /// Reads SHQueryUserNotificationState on a pool thread and folds the result in on the UI thread, then runs
+    /// <paramref name="then"/> there. Quiet hours and Focus have no event of their own, so an event asks for a read.
+    /// </summary>
+    public void ReadNotificationState(Action? then = null)
+    {
+        _ = Task.Run(() =>
+        {
+            PInvoke.SHQueryUserNotificationState(out var state);
+            queue.TryEnqueue(() =>
+            {
+                qunsExclusive = state == QUERY_USER_NOTIFICATION_STATE.QUNS_RUNNING_D3D_FULL_SCREEN;
+                qunsBusy = state is QUERY_USER_NOTIFICATION_STATE.QUNS_BUSY or QUERY_USER_NOTIFICATION_STATE.QUNS_PRESENTATION_MODE;
+                qunsQuiet = state == QUERY_USER_NOTIFICATION_STATE.QUNS_QUIET_TIME;
+                Publish();
+                then?.Invoke();
+            });
+        });
+    }
+
+    /// <summary>
     /// Desktop peek's question: does any visible, non-minimised, uncloaked top-level window other than the
-    /// desktop and the taskbar intersect the rectangle the pill would occupy? Returns the class of the first
-    /// window that does, or null when nothing is under the pill.
+    /// desktop, the taskbar and tool windows intersect the rectangle the pill would occupy? Returns the class of
+    /// the first window that does, or null when nothing is under the pill.
     /// </summary>
     public string? WindowUnder(System.Drawing.Rectangle pill)
     {
         var probe = (Zone: new RECT { left = pill.Left, top = pill.Top, right = pill.Right, bottom = pill.Bottom }, Island: island, Covering: HWND.Null);
         PInvoke.EnumWindows(&CheckWindow, (nint)(&probe));
-        return probe.Covering.IsNull ? null : ClassName(probe.Covering);
+        if (probe.Covering.IsNull)
+        {
+            return null;
+        }
+
+        Span<char> name = stackalloc char[64];
+        return name[..PInvoke.GetClassName(probe.Covering, name)].ToString();
     }
 
     public void Dispose()
@@ -143,8 +171,9 @@ internal sealed unsafe class DesktopWatch : IDisposable
             return true;
         }
 
-        string name = ClassName(hwnd);
-        if (IsDesktop(name) || name is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+        var buffer = stackalloc char[64];
+        var name = new ReadOnlySpan<char>(buffer, PInvoke.GetClassName(hwnd, buffer, 64));
+        if (IsDesktop(name) || name.SequenceEqual("Shell_TrayWnd") || name.SequenceEqual("Shell_SecondaryTrayWnd"))
         {
             return true;
         }
@@ -159,13 +188,7 @@ internal sealed unsafe class DesktopWatch : IDisposable
         return true;
     }
 
-    private static string ClassName(HWND hwnd)
-    {
-        var buffer = stackalloc char[64];
-        return new string(buffer, 0, PInvoke.GetClassName(hwnd, buffer, 64));
-    }
-
-    private static bool IsDesktop(string className) => className is "Progman" or "WorkerW";
+    private static bool IsDesktop(ReadOnlySpan<char> className) => className.SequenceEqual("Progman") || className.SequenceEqual("WorkerW");
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static void OnWinEvent(HWINEVENTHOOK hook, uint evt, HWND hwnd, int idObject, int idChild, uint thread, uint time)
@@ -218,7 +241,8 @@ internal sealed unsafe class DesktopWatch : IDisposable
             locationHook = PInvoke.SetWinEventHook(PInvoke.EVENT_OBJECT_LOCATIONCHANGE, PInvoke.EVENT_OBJECT_LOCATIONCHANGE, HMODULE.Null, &OnWinEvent, pid, 0, PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS);
         }
 
-        foregroundExe = settings.AllowApps.Count + settings.DenyApps.Count == 0 ? null : ExeName(pid);
+        // Looked up each time: process ids are reused, so a cache would hand a closed game's rule to the next app.
+        foregroundExe = needsForegroundExe() ? ExeName(pid) : null;
         secureDesktop = !OnDefaultDesktop();
         SetRectFullscreen(foreground);
     }
@@ -233,26 +257,12 @@ internal sealed unsafe class DesktopWatch : IDisposable
         PInvoke.GetClientRect(foreground, out var client);
         var origin = default(System.Drawing.Point);
         PInvoke.ClientToScreen(foreground, &origin);
+        var className = stackalloc char[64];
         rectFullscreen = origin.X == 0 && origin.Y == 0
             && client.right == PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN)
             && client.bottom == PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYSCREEN)
-            && !IsDesktop(ClassName(foreground));
+            && !IsDesktop(new ReadOnlySpan<char>(className, PInvoke.GetClassName(foreground, className, 64)));
         Publish();
-    }
-
-    private void ReadNotificationState()
-    {
-        _ = Task.Run(() =>
-        {
-            PInvoke.SHQueryUserNotificationState(out var state);
-            queue.TryEnqueue(() =>
-            {
-                qunsExclusive = state == QUERY_USER_NOTIFICATION_STATE.QUNS_RUNNING_D3D_FULL_SCREEN;
-                qunsBusy = state is QUERY_USER_NOTIFICATION_STATE.QUNS_BUSY or QUERY_USER_NOTIFICATION_STATE.QUNS_PRESENTATION_MODE;
-                qunsQuiet = state == QUERY_USER_NOTIFICATION_STATE.QUNS_QUIET_TIME;
-                Publish();
-            });
-        });
     }
 
     private void Publish()
@@ -293,31 +303,18 @@ internal sealed unsafe class DesktopWatch : IDisposable
             && new ReadOnlySpan<char>(name, (int)needed / 2 - 1).SequenceEqual("Default");
     }
 
-    private string? ExeName(uint pid)
+    private static string? ExeName(uint pid)
     {
-        if (exeByPid.TryGetValue(pid, out var cached))
-        {
-            return cached;
-        }
-
-        string? name = null;
         using var process = PInvoke.OpenProcess_SafeHandle(PROCESS_ACCESS_RIGHTS.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
-        if (!process.IsInvalid)
+        if (process.IsInvalid)
         {
-            Span<char> buffer = stackalloc char[1024];
-            uint length = 1024;
-            if (PInvoke.QueryFullProcessImageName(process, PROCESS_NAME_FORMAT.PROCESS_NAME_WIN32, buffer, ref length))
-            {
-                name = Path.GetFileName(buffer[..(int)length].ToString()).ToLowerInvariant();
-            }
+            return null;
         }
 
-        if (exeByPid.Count > 256)
-        {
-            exeByPid.Clear();
-        }
-
-        exeByPid[pid] = name!;
-        return name;
+        Span<char> buffer = stackalloc char[1024];
+        uint length = 1024;
+        return PInvoke.QueryFullProcessImageName(process, PROCESS_NAME_FORMAT.PROCESS_NAME_WIN32, buffer, ref length)
+            ? Path.GetFileName(buffer[..(int)length].ToString())
+            : null;
     }
 }
