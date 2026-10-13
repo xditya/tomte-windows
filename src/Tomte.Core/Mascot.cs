@@ -278,7 +278,7 @@ public sealed class Mascot
         To(tipRotate, pose.TipRotate, preset);
         if (peek && !reduce)
         {
-            // The cap tip crosses the edge first; the island's shape follows a beat later.
+            // The tomte drops in from above the edge; the shape starts 70 ms later.
             rootY.Jump(MascotStates.PeekFromY);
             rootY.Target = 0;
             islandLead = enabled ? MascotStates.IslandLeadSeconds : 0;

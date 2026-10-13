@@ -360,7 +360,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         bool finished = false;
         if (islandMoving)
         {
-            // The shape holds still while the mascot's cap leads the reveal.
+            // The tomte drops in from above the edge; the shape starts 70 ms later.
             double islandDt = now - morphStartMs < leadMs ? 0 : dt;
             bool done = true;
             foreach (var spring in springs)
