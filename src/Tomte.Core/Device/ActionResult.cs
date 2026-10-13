@@ -10,10 +10,18 @@ public enum ActionTier
 }
 
 // Outcome of one device action. Undo is one-shot: the second call reports there is nothing left.
-public sealed record ActionResult(bool Ok, string Message)
+public sealed class ActionResult
 {
     private Func<ActionResult>? _undo;
 
+    private ActionResult(bool ok, string message)
+    {
+        Ok = ok;
+        Message = message;
+    }
+
+    public bool Ok { get; }
+    public string Message { get; }
     public bool UndoAvailable => _undo is not null;
 
     public ActionResult Undo() =>
