@@ -13,29 +13,11 @@ namespace Tomte.Shell;
 
 internal static class Program
 {
-    private const int CycleHotKey = 1;
     private const int QuitHotKey = 2;
     private const int MascotHotKey = 3;
 
     // --debug-mascot: Win+Alt+Shift+M steps the reactions the AI layer and the rambler will set.
     private static readonly MascotState[] MascotCycle = [MascotState.Rambler, MascotState.Thinking, MascotState.Result, MascotState.Error, MascotState.Compact];
-
-    // Until the triggers exist, --debug-cycle walks this legal path through the state table, one hotkey press per step.
-    // The palette steps stand in for an AI request: thinking while it opens, the result as the answer grows.
-    private static readonly (IslandState State, double W, double H, MascotState? React)[] DebugCycle =
-    [
-        (IslandState.Compact, 0, 0, null),
-        (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H, null),
-        (IslandState.Panels, PanelSize.Clipboard.W, PanelSize.Clipboard.H, null),
-        (IslandState.Panels, PanelSize.Media.W, PanelSize.Media.H, null),
-        (IslandState.Hidden, 0, 0, null),
-        (IslandState.ShelfDrop, 0, 0, null),
-        (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H, null),
-        (IslandState.Hidden, 0, 0, null),
-        (IslandState.Palette, PanelSize.PaletteWidth, PanelSize.PaletteMinHeight, MascotState.Thinking),
-        (IslandState.Palette, PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight, MascotState.Result),
-        (IslandState.Hidden, 0, 0, null),
-    ];
 
     private static Process? settingsProcess;
 
@@ -48,16 +30,15 @@ internal static class Program
             return 0;
         }
 
-        bool debugAuto = args.Contains("--debug-auto");
         bool debugMascot = args.Contains("--debug-mascot");
         int paletteArg = Array.IndexOf(args, "--palette");
         string? palettePrompt = paletteArg >= 0 && paletteArg + 1 < args.Length ? args[paletteArg + 1] : null;
         bool rambler = args.Contains("--rambler");
-        bool debug = debugAuto || debugMascot || rambler || palettePrompt is not null || args.Contains("--debug-cycle");
+        string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
+        bool debug = debugMascot || rambler || palettePrompt is not null || logArg is not null;
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
-        var machine = new IslandStateMachine();
         // Stand-ins for the settings until they exist: the off switch and a cap colour as RRGGBB hex.
         island.Mascot.Enabled = !args.Contains("--debug-mascot-off");
         int cap = Array.IndexOf(args, "--debug-cap");
@@ -67,22 +48,28 @@ internal static class Program
         }
 
         TextWriter? log = null;
-        int step = 0;
         int reaction = 0;
         if (debug)
         {
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte");
             Directory.CreateDirectory(dir);
-            // Synchronized: the rambler's input thread writes here too.
-            log = TextWriter.Synchronized(OpenLog(dir));
+            // Synchronized: the rambler's capture thread writes here too. --debug-log=path gives this run its own file;
+            // the shared default is opened for shared writing.
+            log = TextWriter.Synchronized(logArg is { Length: > 12 }
+                ? new StreamWriter(new FileStream(logArg["--debug-log=".Length..], FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true }
+                : OpenLog(dir));
             island.Log = log.WriteLine;
-            log.WriteLine($"{DateTime.Now:O} start args=[{string.Join(' ', args)}] scale={island.MonitorSize}");
-            // Win+Alt+Shift+T steps, Win+Alt+Shift+Q quits (Win+Alt+T is taken on the owner's PC). Thread hotkeys arrive
-            // in the loop below with a null window.
+            log.WriteLine($"{DateTime.Now:O} start args=[{string.Join(' ', args)}] scale={island.Scale}");
+            // An exception that escapes a native callback fails fast with no managed trace; this is the only record of it.
+            AppDomain.CurrentDomain.FirstChanceException += (_, e) => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} first chance on thread {Environment.CurrentManagedThreadId}: {e.Exception}");
             const HOT_KEY_MODIFIERS chord = HOT_KEY_MODIFIERS.MOD_WIN | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_SHIFT | HOT_KEY_MODIFIERS.MOD_NOREPEAT;
-            bool cycle = PInvoke.RegisterHotKey(HWND.Null, CycleHotKey, chord, 'T');
-            bool quit = PInvoke.RegisterHotKey(HWND.Null, QuitHotKey, chord, 'Q');
-            log.WriteLine($"hotkeys: Win+Alt+Shift+T cycle={cycle} Win+Alt+Shift+Q quit={quit}");
+            if (logArg is not null)
+            {
+                // Measurement runs need a clean exit so the input-thread timing lands in the log. Thread hotkeys arrive
+                // in the loop below with a null window.
+                log.WriteLine($"hotkeys: Win+Alt+Shift+Q quit={PInvoke.RegisterHotKey(HWND.Null, QuitHotKey, chord, 'Q')}");
+            }
+
             if (debugMascot)
             {
                 log.WriteLine($"hotkeys: Win+Alt+Shift+M mascot={PInvoke.RegisterHotKey(HWND.Null, MascotHotKey, chord, 'M')}");
@@ -90,39 +77,29 @@ internal static class Program
             }
         }
 
+        using var store = new SettingsStore();
+        var pause = new PauseState();
+        var triggers = new TriggerController(island, store, pause, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
         if (rambler)
         {
-            StartRambler(args, island, machine, log!);
+            triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
         }
 
-        if (debugAuto)
+        if (palettePrompt is not null)
         {
-            _ = AutoCycle(island, machine, log!);
-        }
-        else if (palettePrompt is not null)
-        {
-            _ = PaletteRun(island, machine, log!, palettePrompt);
+            _ = PaletteRun(island, triggers, log!, palettePrompt);
         }
 
-        var pause = new PauseState();
         using var tray = new TrayIcon(pause);
-        tray.OpenIsland += () => _ = Step(island, machine, log, machine.State == IslandState.Hidden
-            ? (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H, null)
-            : (IslandState.Hidden, 0, 0, null));
+        tray.OpenIsland += triggers.Toggle;
         tray.OpenSettings += OpenSettings;
-        tray.Paused += () =>
-        {
-            if (machine.State != IslandState.Hidden)
-            {
-                _ = Step(island, machine, log, (IslandState.Hidden, 0, 0, null));
-            }
-        };
+        tray.Paused += triggers.Hide;
         tray.Quit += () => PInvoke.PostQuitMessage(0);
 
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
         {
-            if (message.message == PInvoke.WM_HOTKEY)
+            if (message.message == PInvoke.WM_HOTKEY && message.hwnd == HWND.Null)
             {
                 if (message.wParam.Value == QuitHotKey)
                 {
@@ -133,10 +110,6 @@ internal static class Program
                     var next = MascotCycle[reaction++ % MascotCycle.Length];
                     island.Mascot.Set(next);
                     log!.WriteLine($"{DateTime.Now:HH:mm:ss.fff} mascot {next}");
-                }
-                else
-                {
-                    _ = Step(island, machine, log!, DebugCycle[step++ % DebugCycle.Length]);
                 }
 
                 continue;
@@ -152,6 +125,7 @@ internal static class Program
             settingsProcess.Kill();
         }
 
+        triggers.Dispose();
         log?.Dispose();
         return 0;
     }
@@ -172,28 +146,6 @@ internal static class Program
 
         settingsProcess?.Dispose();
         settingsProcess = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
-    }
-
-    private static async Task AutoCycle(IslandWindow island, IslandStateMachine machine, TextWriter log)
-    {
-        try
-        {
-            await Task.Delay(1000);
-            for (int loop = 0; loop < 3; loop++)
-            {
-                foreach (var next in DebugCycle)
-                {
-                    await Step(island, machine, log, next);
-                    await Task.Delay(350);
-                }
-            }
-
-            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} auto cycle done, staying hidden");
-        }
-        catch (Exception e)
-        {
-            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} auto cycle failed: {e}");
-        }
     }
 
     /// <summary>Debug stand-ins for the drag and the microphone: lean toward the cursor, and a synthetic level at 20 Hz.</summary>
@@ -243,7 +195,7 @@ internal static class Program
     /// Ollama with the window chip on and an in-memory shelf and scratchpad, logs the stream and the tool
     /// steps, then retracts and quits. External-effect tools are allowed once each, as a user would.
     /// </summary>
-    private static async Task PaletteRun(IslandWindow island, IslandStateMachine machine, TextWriter log, string prompt)
+    private static async Task PaletteRun(IslandWindow island, TriggerController triggers, TextWriter log, string prompt)
     {
         try
         {
@@ -288,11 +240,11 @@ internal static class Program
                     log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette tool {step.Tool}: {step.Summary} -> {(step.IsError ? "error: " : "")}{step.Result.ReplaceLineEndings(" | ")}");
                 }
             };
-            await new PaletteHost(island, machine, log.WriteLine).RunAsync(session);
+            await new PaletteHost(island, triggers.Machine, log.WriteLine).RunAsync(session);
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette answer: {session.AnswerText.ReplaceLineEndings(" | ")}");
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory after answer: {Memory()}");
             await Task.Delay(2000);
-            await Step(island, machine, log, (IslandState.Hidden, 0, 0, null));
+            triggers.Hide();
             GC.Collect();
             GC.WaitForPendingFinalizers();
             await Task.Delay(1000);
@@ -306,39 +258,15 @@ internal static class Program
         PInvoke.PostQuitMessage(0);
     }
 
-    private static async Task Step(IslandWindow island, IslandStateMachine machine, TextWriter? log, (IslandState State, double W, double H, MascotState? React) next)
-    {
-        try
-        {
-            var from = machine.State;
-            machine.TransitionTo(next.State);
-            island.Mascot.Follow(from, next.State);
-            if (next.React is MascotState react)
-            {
-                island.Mascot.Set(react);
-            }
-
-            island.PanelLook = next.State is IslandState.Panels or IslandState.Palette;
-            var (monitorW, monitorH) = island.MonitorSize;
-            var geometry = IslandGeometry.For(next.State, Math.Min(next.W, 0.6 * monitorW), Math.Min(next.H, 0.5 * monitorH));
-            await island.MorphTo(geometry, Spring.PresetFor(from, next.State));
-            double rate = island.LastMorphMs > 0 ? island.LastMorphTicks / (island.LastMorphMs / 1000) : 0;
-            log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {from}->{next.State} {geometry.Width}x{geometry.Depth} ticks={island.LastMorphTicks} wall={island.LastMorphMs:F0}ms rate={rate:F1}/s");
-        }
-        catch (Exception e)
-        {
-            log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} step to {next.State} failed: {e}");
-        }
-    }
-
     /// <summary>
-    /// Temporary wiring for --rambler: Win+Alt+V is registered here until the triggers own every hotkey, and the
-    /// provider comes from the command line until settings exist (--provider-id, --provider-kind, --base-url,
-    /// --model; the key is read from Credential Manager under the id). Speech to text is local whisper.cpp when
-    /// tools/whisper/Get-Whisper.ps1 has run, or the provider's /audio/transcriptions with --stt-provider.
-    /// Without a provider the note is the raw transcript.
+    /// --rambler: the hold-to-talk session Win+Alt+V drives. The provider comes from the command line until
+    /// settings carry it (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential
+    /// Manager under the id). Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or
+    /// the provider's /audio/transcriptions with --stt-provider and --stt-model. Without a provider the note is
+    /// the raw transcript. Kept out of Main so Tomte.AI loads only for this switch.
     /// </summary>
-    private static void StartRambler(string[] args, IslandWindow island, IslandStateMachine machine, TextWriter log)
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Rambler? CreateRambler(string[] args, IslandWindow island, IslandStateMachine machine, TextWriter log)
     {
         ProviderConfig? config = Arg(args, "--provider-id") is { } id
             ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
@@ -360,7 +288,7 @@ internal static class Program
         if (speech is null)
         {
             log.WriteLine("rambler: no speech to text. Run tools/whisper/Get-Whisper.ps1, or pass --stt-provider with an OpenAI-compatible provider.");
-            return;
+            return null;
         }
 
         RamblerStructure? structure = null;
@@ -375,8 +303,8 @@ internal static class Program
         var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
-        RamblerHotkey.Start(island.Queue, session.Begin, session.End, log.WriteLine);
         log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"} scratchpad={scratchpad.FilePath}");
+        return session;
     }
 
     private static string? Arg(string[] args, string name)
