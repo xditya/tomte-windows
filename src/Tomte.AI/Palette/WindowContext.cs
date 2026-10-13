@@ -32,15 +32,16 @@ public static unsafe class WindowContext
     }
 
     /// <summary>
-    /// The palette's chip row for one open: selection read now (focus moves once the user clicks
-    /// in), window title read now, screenshot and the app's own data read at send.
+    /// The palette's chip row for one open: UIA selection and window title read now (focus moves
+    /// once the user clicks in), the Ctrl+C fallback only when the user turns the chip on,
+    /// screenshot and the app's own data read at send.
     /// </summary>
     public static List<ContextChip> Chips(nint foreground, IShelf shelf, IScratchpad scratchpad)
     {
         var (app, title) = Describe(foreground);
         return
         [
-            ContextChips.Selection(SelectionReader.Read(foreground)),
+            SelectionReader.Chip(foreground),
             ContextChips.Window(app, title),
             ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct)),
             ContextChips.Shelf(shelf),

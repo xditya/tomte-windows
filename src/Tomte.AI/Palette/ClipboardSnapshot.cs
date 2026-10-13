@@ -21,7 +21,7 @@ internal sealed record ClipFormat(uint Id, byte[]? Bytes, HANDLE Gdi, bool IsMet
 internal static unsafe class ClipboardSnapshot
 {
     private const uint CF_BITMAP = 2, CF_METAFILEPICT = 3, CF_PALETTE = 9, CF_UNICODETEXT = 13, CF_ENHMETAFILE = 14,
-        CF_OWNERDISPLAY = 0x80, CF_DSPBITMAP = 0x82, CF_DSPENHMETAFILE = 0x8E;
+        CF_OWNERDISPLAY = 0x80, CF_DSPBITMAP = 0x82, CF_DSPMETAFILEPICT = 0x83, CF_DSPENHMETAFILE = 0x8E;
 
     private static HWND owner;
 
@@ -62,12 +62,19 @@ internal static unsafe class ClipboardSnapshot
 
         var before = Snapshot();
         uint s0 = Sequence;
-        SendChord(VIRTUAL_KEY.VK_CONTROL, VIRTUAL_KEY.VK_C);
-        var t = Stopwatch.StartNew();
-        // polls the sequence number every 2 ms for at most the timeout; a clipboard listener window is the upgrade.
-        while (Sequence == s0 && t.ElapsedMilliseconds < timeoutMs)
-            Pump(2);
-        if (Sequence == s0)
+        PInvoke.AddClipboardFormatListener(Owner);
+        bool changed;
+        try
+        {
+            SendChord(VIRTUAL_KEY.VK_CONTROL, VIRTUAL_KEY.VK_C);
+            changed = WaitForClipboardUpdate(timeoutMs) || Sequence != s0;
+        }
+        finally
+        {
+            PInvoke.RemoveClipboardFormatListener(Owner);
+        }
+
+        if (!changed)
         {
             Discard(before);
             return null;
@@ -120,8 +127,9 @@ internal static unsafe class ClipboardSnapshot
                     case CF_ENHMETAFILE or CF_DSPENHMETAFILE:
                         list.Add(new(id, null, (HANDLE)PInvoke.CopyEnhMetaFile((HENHMETAFILE)h.Value, null).Value, true));
                         continue;
-                    // Handle-in-struct and private handle formats cannot be copied; Windows re-synthesises CF_METAFILEPICT from CF_ENHMETAFILE.
-                    case CF_METAFILEPICT or CF_PALETTE or CF_OWNERDISPLAY or (>= 0x300 and <= 0x3FF):
+                    // Handle-in-struct formats, palettes, owner-drawn, private (0x200 to 0x2FF) and GDI object (0x300 to 0x3FF)
+                    // formats are not HGLOBALs of plain bytes; Windows re-synthesises CF_METAFILEPICT from CF_ENHMETAFILE.
+                    case CF_METAFILEPICT or CF_DSPMETAFILEPICT or CF_PALETTE or CF_OWNERDISPLAY or (>= 0x200 and <= 0x3FF):
                         continue;
                 }
 
@@ -203,6 +211,31 @@ internal static unsafe class ClipboardSnapshot
         }
 
         throw new InvalidOperationException("The clipboard stayed open in another app for a second.");
+    }
+
+    /// <summary>
+    /// Blocks until WM_CLIPBOARDUPDATE reaches the owner window or the timeout passes, dispatching
+    /// everything else meanwhile. The update is posted, so it is taken off the queue here before any
+    /// window procedure sees it.
+    /// </summary>
+    private static bool WaitForClipboardUpdate(int timeoutMs)
+    {
+        var sw = Stopwatch.StartNew();
+        while (true)
+        {
+            while (PInvoke.PeekMessage(out var m, HWND.Null, 0, 0, PEEK_MESSAGE_REMOVE_TYPE.PM_REMOVE))
+            {
+                if (m.message == PInvoke.WM_CLIPBOARDUPDATE && m.hwnd == owner)
+                    return true;
+                PInvoke.TranslateMessage(in m);
+                PInvoke.DispatchMessage(in m);
+            }
+
+            int left = timeoutMs - (int)sw.ElapsedMilliseconds;
+            if (left <= 0)
+                return false;
+            PInvoke.MsgWaitForMultipleObjects(null, false, (uint)left, QUEUE_STATUS_FLAGS.QS_ALLINPUT);
+        }
     }
 
     /// <summary>Waits while dispatching messages, so a pending WM_DESTROYCLIPBOARD never deadlocks the other app.</summary>

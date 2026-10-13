@@ -7,20 +7,45 @@ public enum ContextKind { Selection, Window, Screenshot, ShelfItem, Scratchpad }
 /// <summary>
 /// One opt-in context attachment. Nothing is read until the chip is on and the user sends; an
 /// off chip never runs its reader. <see cref="Available"/> is false when there is nothing to
-/// attach (no selection, empty shelf) so the renderer can grey the chip out.
+/// attach (no selection, empty shelf) so the renderer can grey the chip out. A chip with an
+/// <c>arm</c> step runs it the first time the user turns it on (the Ctrl+C selection fallback):
+/// that is the user action needed before anything is injected or replaced.
 /// </summary>
-public sealed class ContextChip(ContextKind kind, string label, string attachedName, Func<CancellationToken, Task<IReadOnlyList<ContentPart>>> read, bool available = true, bool on = false)
+public sealed class ContextChip(
+    ContextKind kind,
+    string label,
+    string attachedName,
+    Func<CancellationToken, Task<IReadOnlyList<ContentPart>>> read,
+    bool available = true,
+    bool on = false,
+    Func<(string Label, bool Available)>? arm = null)
 {
+    private Func<(string Label, bool Available)>? _arm = arm;
+    private bool _on = on && available;
+
     public ContextKind Kind { get; } = kind;
 
-    public string Label { get; } = label;
+    public string Label { get; private set; } = label;
 
     /// <summary>What the send log records for this chip, for example a file name.</summary>
     public string AttachedName { get; } = attachedName;
 
-    public bool Available { get; } = available;
+    public bool Available { get; private set; } = available;
 
-    public bool On { get; set; } = on && available;
+    public bool On
+    {
+        get => _on;
+        set
+        {
+            if (value && _arm is { } arm)
+            {
+                (Label, Available) = arm();
+                _arm = null;
+            }
+
+            _on = value && Available;
+        }
+    }
 
     internal Task<IReadOnlyList<ContentPart>> ReadAsync(CancellationToken ct) => read(ct);
 }
@@ -55,20 +80,31 @@ public static class ContextAssembly
 /// <summary>The chips the palette offers, built from what is in front of the user when it opens.</summary>
 public static class ContextChips
 {
-    /// <summary>The selection is read when the palette opens (focus moves once the user clicks in), so the text is already here.</summary>
-    public static ContextChip Selection(string? text)
+    /// <summary>
+    /// The UIA selection is read when the palette opens (focus moves once the user clicks in), so
+    /// <paramref name="text"/> is already here. When UIA could not tell (<paramref name="fallback"/>
+    /// given), the chip offers itself and runs the Ctrl+C fallback only when the user turns it on.
+    /// </summary>
+    public static ContextChip Selection(string? text, Func<string?>? fallback = null)
     {
         bool has = !string.IsNullOrWhiteSpace(text);
+        string LabelFor() => has ? $"Selection · \"{ContextAssembly.Trim(text!)}\"" : "Selection · none";
         return new(ContextKind.Selection,
-            has ? $"Selection · \"{ContextAssembly.Trim(text!)}\"" : "Selection · none",
+            !has && fallback is not null ? "Selection · read on use" : LabelFor(),
             "selection",
             _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("selection", text ?? "")]),
-            available: has,
-            on: has);
+            available: has || fallback is not null,
+            on: has,
+            arm: has || fallback is null ? null : () =>
+            {
+                text = fallback();
+                has = !string.IsNullOrWhiteSpace(text);
+                return (LabelFor(), has);
+            });
     }
 
     public static ContextChip Window(string app, string title) => new(ContextKind.Window,
-        $"Window · {app} — {ContextAssembly.Trim(title, 40)}",
+        $"Window · {app} · {ContextAssembly.Trim(title, 40)}",
         $"window:{app}",
         _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("active_window", title, $"app=\"{app}\"")]),
         available: title.Length > 0 || app.Length > 0);

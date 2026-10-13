@@ -19,6 +19,7 @@ namespace Tomte.AI.Palette;
 public static class WindowCapture
 {
     public const int MaxWidth = 1280;
+    private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(3);
 
     public static async Task<byte[]> CapturePngAsync(nint hwnd, CancellationToken ct)
     {
@@ -35,7 +36,9 @@ public static class WindowCapture
             session.IsCursorCaptureEnabled = false;
             try
             {
-                // Needs the graphicsCaptureWithoutBorder capability, which only the MSIX has.
+                // Without the graphicsCaptureWithoutBorder capability (MSIX only) the request fails or is
+                // ignored and the yellow border shows for the one frame; the capture still works.
+                await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless);
                 session.IsBorderRequired = false;
             }
             catch (Exception e) when (e is UnauthorizedAccessException or COMException)
@@ -57,7 +60,8 @@ public static class WindowCapture
                 }
             };
             session.StartCapture();
-            using var bitmap = await first.Task.WaitAsync(ct);
+            // A minimized window never produces a frame; fail fast instead of spending the request's 120 s.
+            using var bitmap = await first.Task.WaitAsync(FirstFrameTimeout, ct);
             return await EncodePngAsync(bitmap);
         }
         finally

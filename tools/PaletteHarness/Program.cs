@@ -45,7 +45,7 @@ nint foreground = WindowContext.Foreground();
 var (app, title) = WindowContext.Describe(foreground);
 var chips = new List<ContextChip>
 {
-    ContextChips.Selection(chipsWanted.Contains("selection") ? SelectionReader.Read(foreground) : null),
+    chipsWanted.Contains("selection") ? SelectionReader.Chip(foreground) : ContextChips.Selection(null),
     ContextChips.Window(app, title),
     ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct)),
     ContextChips.Shelf(shelf),

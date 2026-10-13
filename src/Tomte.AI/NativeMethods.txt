@@ -39,3 +39,6 @@ D3D11_SDK_VERSION
 CreateDirect3D11DeviceFromDXGIDevice
 IDXGIDevice
 ID3D11Device
+AddClipboardFormatListener
+RemoveClipboardFormatListener
+WM_CLIPBOARDUPDATE

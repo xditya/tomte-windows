@@ -353,7 +353,37 @@ public class PaletteTests : IDisposable
 
         _scratchpad.Text = "todo";
         Assert.Contains("todo", ((TextPart)(await ContextChips.Scratchpad(_scratchpad).ReadAsync(CancellationToken.None))[0]).Text);
-        Assert.Equal("Window · msedge — Top 20 Adventure Games", ContextChips.Window("msedge", "Top 20 Adventure Games").Label);
+        Assert.Equal("Window · msedge · Top 20 Adventure Games", ContextChips.Window("msedge", "Top 20 Adventure Games").Label);
+    }
+
+    [Fact]
+    public async Task SelectionFallbackRunsOnlyWhenTheUserTurnsTheChipOn()
+    {
+        int reads = 0;
+        var chip = ContextChips.Selection(null, () =>
+        {
+            reads++;
+            return "copied text";
+        });
+        Assert.True(chip.Available);
+        Assert.False(chip.On);
+        Assert.Equal("Selection · read on use", chip.Label);
+        Assert.Equal(0, reads);
+
+        chip.On = true;
+        Assert.Equal(1, reads);
+        Assert.True(chip.On);
+        Assert.Equal("Selection · \"copied text\"", chip.Label);
+        Assert.Contains("copied text", ((TextPart)(await chip.ReadAsync(CancellationToken.None))[0]).Text);
+        chip.On = false;
+        chip.On = true;
+        Assert.Equal(1, reads);
+
+        var nothing = ContextChips.Selection(null, () => null);
+        nothing.On = true;
+        Assert.False(nothing.On);
+        Assert.False(nothing.Available);
+        Assert.Equal("Selection · none", nothing.Label);
     }
 }
 

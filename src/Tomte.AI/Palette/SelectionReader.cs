@@ -41,14 +41,24 @@ public static unsafe class SelectionReader
     private static IUIAutomation2? uia;
 
     /// <summary>
-    /// The selected text, or null when nothing is selected or the foreground window moved away from
-    /// <paramref name="expectedForeground"/> (a Ctrl+C would then land in the wrong app).
+    /// The selection chip for the window in front: UIA now (passive), and when UIA could not tell,
+    /// the Ctrl+C fallback armed on the chip so it runs only when the user turns the chip on.
     /// </summary>
-    public static string? Read(nint expectedForeground)
+    public static ContextChip Chip(nint expectedForeground)
     {
         var selection = ReadUia();
         if (!SelectionRule.ShouldFallBack(selection))
-            return string.IsNullOrEmpty(selection.Text) ? null : SelectionRule.Normalize(selection.Text);
+            return ContextChips.Selection(string.IsNullOrEmpty(selection.Text) ? null : SelectionRule.Normalize(selection.Text));
+        return ContextChips.Selection(null, () => Fallback(expectedForeground));
+    }
+
+    /// <summary>
+    /// Simulated Ctrl+C with the clipboard put back. Null when nothing was copied, the copy was VS Code's
+    /// whole-line copy, or the foreground window moved away from <paramref name="expectedForeground"/>
+    /// (the chord would land in the wrong app).
+    /// </summary>
+    public static string? Fallback(nint expectedForeground)
+    {
         if ((nint)PInvoke.GetForegroundWindow().Value != expectedForeground)
             return null;
         var copy = ClipboardSnapshot.CopySelection();

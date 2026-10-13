@@ -210,6 +210,13 @@ internal static class Program
         timer.Start();
     }
 
+    private static string Memory()
+    {
+        using var process = Process.GetCurrentProcess();
+        process.Refresh();
+        return $"ws={process.WorkingSet64 / 1048576.0:F1}MB private={process.PrivateMemorySize64 / 1048576.0:F1}MB";
+    }
+
     /// <summary>Shared with other debug runs; when one holds the file without sharing, this run gets its own.</summary>
     private static StreamWriter OpenLog(string dir)
     {
@@ -251,6 +258,8 @@ internal static class Program
                 ContextChips.Scratchpad(scratchpad),
             };
             chips[1].On = true;
+            chips[2].On = Environment.GetCommandLineArgs().Contains("--screenshot");
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory before: {Memory()}");
             var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
             var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);
             var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(), chips)
@@ -273,8 +282,13 @@ internal static class Program
             };
             await new PaletteHost(island, machine, log.WriteLine).RunAsync(session);
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette answer: {session.AnswerText.ReplaceLineEndings(" | ")}");
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory after answer: {Memory()}");
             await Task.Delay(2000);
             await Step(island, machine, log, (IslandState.Hidden, 0, 0, null));
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            await Task.Delay(1000);
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory hidden again: {Memory()}");
         }
         catch (Exception e)
         {
