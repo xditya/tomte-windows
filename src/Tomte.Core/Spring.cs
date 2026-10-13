@@ -2,10 +2,10 @@ namespace Tomte.Core;
 
 public enum SpringPreset
 {
-    /// <summary>Reveal, retract and the drop surface: settles in about 0.3 s.</summary>
+    /// <summary>420 / 38 / 0.7 (stiffness, damping, mass).</summary>
     Snappy,
 
-    /// <summary>Panel switches and the palette growing: settles in about 0.4 s.</summary>
+    /// <summary>190 / 27 / 0.9.</summary>
     Gentle,
 }
 
@@ -26,7 +26,9 @@ public sealed class Spring
 
     public double Target { get; set; }
 
-    public bool Settled => Math.Abs(Value - Target) < 0.05 && Math.Abs(Velocity) < 1;
+    // Half a pixel at 200%: tight enough that the snap on settle is invisible, loose enough that the window
+    // shrinks and the region lands about when the shape looks still rather than a quarter second later.
+    public bool Settled => Math.Abs(Value - Target) < 0.25 && Math.Abs(Velocity) < 5;
 
     public void Use(SpringPreset preset) =>
         (stiffness, damping, mass) = preset == SpringPreset.Gentle ? (190, 27, 0.9) : (420, 38, 0.7);

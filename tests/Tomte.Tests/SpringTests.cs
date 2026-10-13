@@ -75,7 +75,7 @@ public class SpringTests
             Assert.True(t < 2);
         }
 
-        Assert.InRange(spring.Value, -0.05, 0.05);
+        Assert.InRange(spring.Value, -0.25, 0.25);
     }
 
     [Fact]
