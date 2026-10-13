@@ -8,6 +8,7 @@ namespace Tomte.AI;
 public sealed class GeminiProvider(HttpClient http, string key) : IChatProvider
 {
     private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta";
+    private const string SyntheticId = "tomte_call_";
 
     public ProviderCapabilities Capabilities =>
         ProviderCapabilities.Streaming | ProviderCapabilities.Vision | ProviderCapabilities.ToolUse | ProviderCapabilities.Pdf;
@@ -58,7 +59,7 @@ public sealed class GeminiProvider(HttpClient http, string key) : IChatProvider
                 else if (part.TryGetProperty("functionCall", out var call))
                 {
                     // Gemini sends each call whole. Older models give no id, so number them.
-                    var id = call.TryGetProperty("id", out var callId) ? callId.GetString()! : $"call_{calls}";
+                    var id = call.TryGetProperty("id", out var callId) ? callId.GetString()! : $"{SyntheticId}{calls}";
                     calls++;
                     var args = call.TryGetProperty("args", out var a) ? a.Clone() : ProviderHttp.ParseArguments("", key);
                     var signature = part.TryGetProperty("thoughtSignature", out var sig) ? sig.GetString() : null;
@@ -106,15 +107,15 @@ public sealed class GeminiProvider(HttpClient http, string key) : IChatProvider
         PdfPart p => Inline("application/pdf", p.Data),
         ToolCallPart c => WithSignature(new JsonObject
         {
-            ["functionCall"] = new JsonObject { ["name"] = c.Name, ["args"] = JsonNode.Parse(c.Input.GetRawText()) },
+            ["functionCall"] = WithId(new JsonObject { ["name"] = c.Name, ["args"] = JsonNode.Parse(c.Input.GetRawText()) }, c.Id),
         }, c.Signature),
         ToolResultPart r => new JsonObject
         {
-            ["functionResponse"] = new JsonObject
+            ["functionResponse"] = WithId(new JsonObject
             {
                 ["name"] = r.Name,
                 ["response"] = new JsonObject { [r.IsError ? "error" : "result"] = r.Content },
-            },
+            }, r.CallId),
         },
         OpaquePart => null,
         _ => throw new NotSupportedException(part.GetType().Name),
@@ -122,6 +123,14 @@ public sealed class GeminiProvider(HttpClient http, string key) : IChatProvider
 
     private static JsonObject Inline(string mime, byte[] data) =>
         new() { ["inlineData"] = new JsonObject { ["mimeType"] = mime, ["data"] = Convert.ToBase64String(data) } };
+
+    /// <summary>Echoes the model's own call id; ids this adapter made up for older models stay off.</summary>
+    private static JsonObject WithId(JsonObject node, string id)
+    {
+        if (!id.StartsWith(SyntheticId, StringComparison.Ordinal))
+            node["id"] = id;
+        return node;
+    }
 
     private static JsonObject WithSignature(JsonObject part, string? signature)
     {

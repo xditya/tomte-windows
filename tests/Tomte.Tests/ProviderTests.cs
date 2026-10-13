@@ -180,6 +180,11 @@ public class ProviderTests
         Assert.Equal("c2ln", (string?)model["parts"]![0]!["thoughtSignature"]);
         var response = body["contents"]![2]!["parts"]![0]!["functionResponse"]!;
         Assert.Equal("get_weather", (string?)response["name"]);
+        Assert.Equal("call_0", (string?)response["id"]);
+        Assert.Equal("call_0", (string?)model["parts"]![0]!["functionCall"]!["id"]);
+        var synthetic = GeminiProvider.BuildBody(RoundTrip(call with { Id = "tomte_call_0" }));
+        Assert.Null(synthetic["contents"]![1]!["parts"]![0]!["functionCall"]!["id"]);
+        Assert.Null(synthetic["contents"]![2]!["parts"]![0]!["functionResponse"]!["id"]);
         Assert.Equal("18 C and sunny", (string?)response["response"]!["result"]);
         Assert.Equal("get_weather", (string?)body["tools"]![0]!["functionDeclarations"]![0]!["name"]);
     }
