@@ -58,7 +58,7 @@ public sealed class MicCapture
         try
         {
             var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-            enumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eCommunications, out var device);
+            enumerator.GetDefaultAudioEndpoint(EDataFlow.eCapture, ERole.eConsole, out var device);
             device.Activate(typeof(IAudioClient).GUID, CLSCTX.CLSCTX_ALL, null, out var activated);
             client = (IAudioClient)activated;
 
