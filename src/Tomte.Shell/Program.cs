@@ -43,6 +43,7 @@ internal static class Program
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte");
             Directory.CreateDirectory(dir);
             log = new StreamWriter(Path.Combine(dir, "island-debug.log"), append: true) { AutoFlush = true };
+            island.Log = log.WriteLine;
             log.WriteLine($"{DateTime.Now:O} start args=[{string.Join(' ', args)}] scale={island.MonitorSize}");
             // Win+Alt+Shift+T steps, Win+Alt+Shift+Q quits (Win+Alt+T is taken on the owner's PC). Thread hotkeys arrive
             // in the loop below with a null window.

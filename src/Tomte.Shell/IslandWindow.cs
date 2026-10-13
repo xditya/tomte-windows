@@ -215,6 +215,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>Debug aid: crossfade even when Windows animation effects are on.</summary>
     public bool ForceReduceMotion { get; init; }
 
+    /// <summary>Where a failure inside the window procedure is written; an exception there would otherwise kill the process.</summary>
+    public Action<string>? Log { get; set; }
+
     /// <summary>Ticks and wall time of the last completed morph, for frame-rate checks.</summary>
     public int LastMorphTicks { get; private set; }
 
@@ -541,6 +544,24 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
+    /// <summary>An exception must not unwind through the unmanaged caller: log it and report the message handled.</summary>
+    private static LRESULT GuardedRescale(double? newScale)
+    {
+        try
+        {
+            if (instance is not null && newScale is double s)
+            {
+                instance.Rescale(s);
+            }
+        }
+        catch (Exception e)
+        {
+            instance?.Log?.Invoke($"rescale failed: {e}");
+        }
+
+        return new LRESULT(0);
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static LRESULT HandleMessage(HWND window, uint message, WPARAM wParam, LPARAM lParam)
     {
@@ -549,12 +570,10 @@ internal sealed unsafe class IslandWindow : IDisposable
             case PInvoke.WM_MOUSEACTIVATE:
                 return new LRESULT((nint)PInvoke.MA_NOACTIVATE);
             case PInvoke.WM_DPICHANGED:
-                instance?.Rescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
-                return new LRESULT(0);
+                return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
             case PInvoke.WM_DISPLAYCHANGE:
                 // A scaling change reaches a resting window here before its own WM_DPICHANGED does.
-                instance?.Rescale(instance.MonitorScale());
-                return new LRESULT(0);
+                return GuardedRescale(instance?.MonitorScale());
             case PInvoke.WM_CLOSE:
                 PInvoke.DestroyWindow(window);
                 return new LRESULT(0);
