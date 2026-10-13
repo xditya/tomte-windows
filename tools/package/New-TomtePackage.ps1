@@ -58,7 +58,11 @@ $signtool = Find-SdkTool 'signtool.exe'
 # A copy registered with -Register runs from $stage and locks it, so stop it first.
 Get-Process Tomte.Shell -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$stage\*" } |
     Stop-Process -Force -PassThru | Wait-Process -Timeout 10
-if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
+# Wait-Process can return a few ms before the image sections are unmapped, so retry the delete.
+foreach ($try in 1..10) {
+    try { if (Test-Path $stage) { Remove-Item $stage -Recurse -Force -ErrorAction Stop }; break }
+    catch { if ($try -eq 10) { throw }; Start-Sleep -Milliseconds 300 }
+}
 dotnet publish "$root\src\Tomte.Shell\Tomte.Shell.csproj" -c Release -r win-x64 --self-contained -o $stage --nologo
 if ($LASTEXITCODE) { throw 'dotnet publish failed' }
 
