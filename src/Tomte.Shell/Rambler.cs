@@ -63,9 +63,13 @@ internal sealed class Rambler(
         ShowView();
         if (IslandStateMachine.CanTransition(machine.State, IslandState.Compact))
         {
+            var from = machine.State;
             machine.TransitionTo(IslandState.Compact);
+            island.Mascot.Follow(from, IslandState.Compact);
             _ = island.MorphTo(IslandGeometry.Compact with { Width = PillWidth }, SpringPreset.Snappy);
         }
+
+        island.Mascot.Set(MascotState.Rambler);
         log($"{DateTime.Now:HH:mm:ss.fff} rambler: recording");
     }
 
@@ -76,6 +80,7 @@ internal sealed class Rambler(
             return;
         capture = null;
         transcribing = true;
+        island.Mascot.Set(MascotState.Compact);
         try
         {
             float[] samples = await Task.Run(recording.Stop);
@@ -177,7 +182,9 @@ internal sealed class Rambler(
         view.Scale = new Vector3(s, s, 1);
         // Content is as wide as the current outline, so half its width is the pill's centre at every frame of the morph.
         view.RelativeOffsetAdjustment = new Vector3(0.5f, 0, 0);
-        view.Offset = new Vector3(-GroupWidth / 2 * s, (float)(IslandGeometry.Compact.Depth - GroupHeight) / 2 * s, 0);
+        // With the tomte on, centre the group in the room right of it rather than in the whole pill.
+        float shift = island.Mascot.Enabled ? (MascotVisual.InsetX + MascotVisual.SizeDips) / 2 : 0;
+        view.Offset = new Vector3((shift - GroupWidth / 2) * s, (float)(IslandGeometry.Compact.Depth - GroupHeight) / 2 * s, 0);
 
         var mic = c.CreateRoundedRectangleGeometry();
         mic.Size = new Vector2(6, 11);
@@ -227,6 +234,7 @@ internal sealed class Rambler(
         if (machine.State == IslandState.Compact)
         {
             machine.TransitionTo(IslandState.Hidden);
+            island.Mascot.Follow(IslandState.Compact, IslandState.Hidden);
             await island.MorphTo(IslandGeometry.Hidden, SpringPreset.Snappy);
         }
 

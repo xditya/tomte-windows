@@ -373,6 +373,8 @@ internal static class Program
         var scratchpad = new ScratchpadFile(ScratchpadFile.DefaultPath);
         var sendLog = new SendLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl"));
         var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
+        // Bounce is raised on the island's thread, where the mascot's level must be set.
+        session.Bounce += level => island.Mascot.Level = level;
         RamblerHotkey.Start(island.Queue, session.Begin, session.End, log.WriteLine);
         log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"} scratchpad={scratchpad.FilePath}");
     }
