@@ -1,0 +1,9 @@
+﻿# build output
+bin/
+obj/
+.vs/
+*.user
+*.suo
+TestResults/
+*.binlog
+
