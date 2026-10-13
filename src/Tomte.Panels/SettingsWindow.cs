@@ -242,16 +242,25 @@ public sealed class SettingsWindow : Window
             return;
         }
 
-        if (on)
+        try
         {
-            await startupTask.RequestEnableAsync();
-        }
-        else
-        {
-            startupTask.Disable();
-        }
+            if (on)
+            {
+                await startupTask.RequestEnableAsync();
+            }
+            else
+            {
+                startupTask.Disable();
+            }
 
-        ShowStartup();
+            ShowStartup();
+        }
+        catch (Exception e)
+        {
+            // Called from an async void handler: an exception leaving here would end the settings process.
+            ShowStartup();
+            startupNote.Text = $"Windows did not change the startup setting: {e.Message}";
+        }
     }
 
     private void ShowStartup()
