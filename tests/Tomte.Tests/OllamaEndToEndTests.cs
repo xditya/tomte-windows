@@ -10,19 +10,23 @@ public sealed class OllamaFactAttribute : FactAttribute
 {
     public const string Model = "llama3.2:3b";
 
-    public OllamaFactAttribute()
+    // One probe per test run, not one per test.
+    private static readonly Lazy<string?> SkipReason = new(() =>
     {
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
-            if (!http.GetStringAsync("http://127.0.0.1:11434/api/tags").GetAwaiter().GetResult().Contains($"\"{Model}\""))
-                Skip = $"Ollama is running but {Model} is not pulled (ollama pull {Model}).";
+            return http.GetStringAsync("http://127.0.0.1:11434/api/tags").GetAwaiter().GetResult().Contains($"\"{Model}\"")
+                ? null
+                : $"Ollama is running but {Model} is not pulled (ollama pull {Model}).";
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
         {
-            Skip = "Ollama is not reachable on 127.0.0.1:11434.";
+            return "Ollama is not reachable on 127.0.0.1:11434.";
         }
-    }
+    });
+
+    public OllamaFactAttribute() => Skip = SkipReason.Value;
 }
 
 public class OllamaEndToEndTests
