@@ -341,7 +341,8 @@ public class PaletteTests : IDisposable
         Assert.False(ContextChips.Selection(null).Available);
         Assert.Equal("Selection · none", ContextChips.Selection("   ").Label);
         var selection = ContextChips.Selection("The quick brown fox jumps over the lazy dog");
-        Assert.True(selection.On);
+        Assert.True(selection.Available);
+        Assert.False(selection.On, "every chip starts off; the user opts in per request");
         Assert.Equal("Selection · \"The quick brown fox jumps ov...\"", selection.Label);
         Assert.Equal("<selection>\nThe quick brown fox jumps over the lazy dog\n</selection>",
             ((TextPart)(await selection.ReadAsync(CancellationToken.None))[0]).Text);
@@ -408,6 +409,9 @@ public class AgentToolsTests
     [InlineData(BuiltInTools.WriteScratchpad, """{"text":"x","mode":1}""", "mode")]
     [InlineData(BuiltInTools.CreateShelfFile, """{"name":"..\\x.txt","content":"c"}""", "path separators")]
     [InlineData(BuiltInTools.CreateShelfFile, """{"name":"a/b.txt","content":"c"}""", "path separators")]
+    [InlineData(BuiltInTools.CreateShelfFile, """{"name":"CON","content":"c"}""", "path separators")]
+    [InlineData(BuiltInTools.CreateShelfFile, """{"name":"nul.txt","content":"c"}""", "path separators")]
+    [InlineData(BuiltInTools.CreateShelfFile, """{"name":"com1.log","content":"c"}""", "path separators")]
     [InlineData(BuiltInTools.OpenUrl, """{"url":"ftp://example.com"}""", "http")]
     [InlineData(BuiltInTools.OpenUrl, """{"url":"notaurl"}""", "http")]
     public void RejectsBadArguments(string tool, string json, string expected)
@@ -515,6 +519,20 @@ public class PermissionTests
         Assert.True(grants.NeedsConfirmation("t", ActionTier.ExternalEffect));
         Assert.True(PermissionGrants.CanAlwaysAllow(ActionTier.ExternalEffect));
         Assert.False(PermissionGrants.CanAlwaysAllow(ActionTier.Destructive));
+    }
+}
+
+public class PaletteLayoutTests
+{
+    [Fact]
+    public void HeightGrowsInStepsBetweenTheSpecBounds()
+    {
+        Assert.Equal(150, PanelSize.PaletteHeightFor([]));
+        // A tool step or an empty line is one line; 200 characters wrap to three.
+        Assert.Equal(174, PanelSize.PaletteHeightFor([""]));
+        Assert.Equal(222, PanelSize.PaletteHeightFor([new string('x', 200)]));
+        Assert.Equal(366, PanelSize.PaletteHeightFor(Enumerable.Repeat("line", 10)));
+        Assert.Equal(480, PanelSize.PaletteHeightFor(Enumerable.Repeat("line", 100)));
     }
 }
 

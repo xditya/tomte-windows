@@ -8,8 +8,8 @@ public enum ContextKind { Selection, Window, Screenshot, ShelfItem, Scratchpad }
 /// One opt-in context attachment. Nothing is read until the chip is on and the user sends; an
 /// off chip never runs its reader. <see cref="Available"/> is false when there is nothing to
 /// attach (no selection, empty shelf) so the renderer can grey the chip out. A chip with an
-/// <c>arm</c> step runs it the first time the user turns it on (the Ctrl+C selection fallback):
-/// that is the user action needed before anything is injected or replaced.
+/// <c>arm</c> step runs it the first time the user turns it on (the Ctrl+C selection fallback),
+/// so no input is injected and no clipboard replaced until the user has acted.
 /// </summary>
 public sealed class ContextChip(
     ContextKind kind,
@@ -84,6 +84,8 @@ public static class ContextChips
     /// The UIA selection is read when the palette opens (focus moves once the user clicks in), so
     /// <paramref name="text"/> is already here. When UIA could not tell (<paramref name="fallback"/>
     /// given), the chip offers itself and runs the Ctrl+C fallback only when the user turns it on.
+    /// Every chip starts off, this one included.
+    ///
     /// </summary>
     public static ContextChip Selection(string? text, Func<string?>? fallback = null)
     {
@@ -94,7 +96,7 @@ public static class ContextChips
             "selection",
             _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("selection", text ?? "")]),
             available: has || fallback is not null,
-            on: has,
+            on: false,
             arm: has || fallback is null ? null : () =>
             {
                 text = fallback();

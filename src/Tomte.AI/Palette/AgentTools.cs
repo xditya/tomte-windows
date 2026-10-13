@@ -59,7 +59,7 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         return name switch
         {
             OpenUrl when !IsWebUrl(input.GetProperty("url").GetString()!) => "open_url only opens http and https URLs.",
-            CreateShelfFile when !IsFileName(input.GetProperty("name").GetString()!) => "name must be a plain file name with no path separators.",
+            CreateShelfFile when !IsFileName(input.GetProperty("name").GetString()!) => "name must be a plain file name with no path separators or device names.",
             WriteScratchpad when input.TryGetProperty("mode", out var mode) && mode.GetString() is not ("append" or "replace") => "mode must be \"append\" or \"replace\".",
             _ => null,
         };
@@ -153,8 +153,16 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
     private static bool IsWebUrl(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
 
+    // CON, NUL, COM1 and the like are device names on Windows even with an extension (CON.txt).
+    private static readonly HashSet<string> ReservedNames = new(
+        ["CON", "PRN", "AUX", "NUL", .. Enumerable.Range(1, 9).SelectMany(i => new[] { $"COM{i}", $"LPT{i}" })],
+        StringComparer.OrdinalIgnoreCase);
+
     private static bool IsFileName(string name) =>
-        name.Trim() == name && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && name is not ("." or "..");
+        name.Trim() == name
+        && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
+        && name is not ("." or "..")
+        && !ReservedNames.Contains(name.Split('.')[0]);
 
     private static JsonElement Schema(string[] required, string[] optional)
     {

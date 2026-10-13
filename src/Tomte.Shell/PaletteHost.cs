@@ -16,9 +16,6 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machine, Action<string> log)
 {
-    private const double LineHeight = 21;
-    private const double CharsPerLine = 88;
-    private const double GrowStep = 24;
     private double _targetHeight;
 
     public async Task RunAsync(PaletteSession session)
@@ -58,20 +55,9 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
         }
     }
 
-    /// <summary>Estimated content height, quantised so a streaming answer retargets the spring every few lines, not every token.</summary>
-    internal static double HeightFor(IPaletteSession session)
-    {
-        double lines = 0;
-        foreach (var segment in session.Answer)
-        {
-            lines += segment is TextSegment text
-                ? text.Text.Split('\n').Sum(line => Math.Max(1, Math.Ceiling(line.Length / CharsPerLine)))
-                : 1;
-        }
-
-        double needed = PanelSize.PaletteMinHeight + Math.Ceiling(lines * LineHeight / GrowStep) * GrowStep;
-        return Math.Clamp(needed, PanelSize.PaletteMinHeight, PanelSize.PaletteMaxHeight);
-    }
+    /// <summary>Text segments as their lines, a tool step as one line; the estimate itself lives in Tomte.Core.</summary>
+    private static double HeightFor(IPaletteSession session) =>
+        PanelSize.PaletteHeightFor(session.Answer.SelectMany(segment => segment is TextSegment text ? text.Text.Split('\n') : [""]));
 
     private IslandGeometry Geometry(double height)
     {

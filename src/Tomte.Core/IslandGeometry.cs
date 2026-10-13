@@ -37,4 +37,16 @@ public static class PanelSize
     public const double PaletteWidth = 640;
     public const double PaletteMinHeight = 150;
     public const double PaletteMaxHeight = 480;
+
+    /// <summary>
+    /// Palette height for an answer given as lines of text, until a text renderer measures the real
+    /// height: about 88 characters per line at 640 wide, 21 DIP per line, rounded up to 24 DIP
+    /// steps so a streaming answer retargets the spring every few lines, not every token.
+    /// </summary>
+    public static double PaletteHeightFor(IEnumerable<string> lines)
+    {
+        double count = lines.Sum(line => Math.Max(1, Math.Ceiling(line.Length / 88.0)));
+        double needed = PaletteMinHeight + Math.Ceiling(count * 21 / 24) * 24;
+        return Math.Clamp(needed, PaletteMinHeight, PaletteMaxHeight);
+    }
 }
