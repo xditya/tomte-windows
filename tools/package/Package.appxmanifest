@@ -42,5 +42,7 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
+    <!-- Windows.Devices.Radios: Wi-Fi and Bluetooth on/off. -->
+    <DeviceCapability Name="radios" />
   </Capabilities>
 </Package>
