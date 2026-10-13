@@ -1,0 +1,10 @@
+RegisterClassEx
+CreateWindowEx
+DefWindowProc
+DestroyWindow
+GetMessage
+TranslateMessage
+DispatchMessage
+PostQuitMessage
+WM_CLOSE
+WM_DESTROY
