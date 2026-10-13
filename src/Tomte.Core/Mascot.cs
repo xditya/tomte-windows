@@ -212,7 +212,7 @@ public sealed class Mascot
     /// <summary>Drawn while on and not hidden, and while the retract lift is still moving.</summary>
     public bool Visible => enabled && (State != MascotState.Hidden || !AtRest);
 
-    /// <summary>Microphone level 0..1 for the rambler state, at whatever rate the meter reports.</summary>
+    /// <summary>Microphone level 0..1 for the rambler state, at whatever rate the meter reports. Set it on the island's thread: it wakes the tick's timer.</summary>
     public double Level
     {
         get => level;
