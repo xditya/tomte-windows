@@ -18,26 +18,41 @@ public static class Radios
     {
         if (dryRun) return ActionResult.DryRun($"turn {name} {Display.OnOff(on)}.");
 
-        Radio? radio = null;
         try
         {
-            if (Radio.RequestAccessAsync().AsTask().GetAwaiter().GetResult() == RadioAccessStatus.Allowed)
-                radio = Radio.GetRadiosAsync().AsTask().GetAwaiter().GetResult().FirstOrDefault(r => r.Kind == kind);
-        }
-        catch (Exception e) when (e is UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
-        {
-        }
-        if (radio is null) return Fallback(name, settingsPage, on);
+            var radio = Radio.RequestAccessAsync().AsTask().GetAwaiter().GetResult() == RadioAccessStatus.Allowed
+                ? Radio.GetRadiosAsync().AsTask().GetAwaiter().GetResult().FirstOrDefault(r => r.Kind == kind)
+                : null;
+            if (radio is null) return Fallback(name, settingsPage, on);
 
-        var previous = radio.State;
-        var target = on ? RadioState.On : RadioState.Off;
-        if (radio.SetStateAsync(target).AsTask().GetAwaiter().GetResult() != RadioAccessStatus.Allowed)
+            var previous = radio.State;
+            if (!TrySetState(radio, on ? RadioState.On : RadioState.Off)) return Fallback(name, settingsPage, on);
+            return ActionResult.Done($"{name} {Display.OnOff(on)}.", () =>
+                TrySetState(radio, previous)
+                    ? ActionResult.Done($"{name} back to {previous.ToString().ToLowerInvariant()}.")
+                    : ActionResult.Fail($"Could not set {name} back."));
+        }
+        catch (Exception e) when (IsRadioFailure(e))
+        {
             return Fallback(name, settingsPage, on);
-        return ActionResult.Done($"{name} {Display.OnOff(on)}.", () =>
-            radio.SetStateAsync(previous).AsTask().GetAwaiter().GetResult() == RadioAccessStatus.Allowed
-                ? ActionResult.Done($"{name} back to {previous.ToString().ToLowerInvariant()}.")
-                : ActionResult.Fail($"Could not set {name} back."));
+        }
     }
+
+    // A radio that went away (adapter disabled, dongle unplugged) throws instead of returning a status.
+    private static bool TrySetState(Radio radio, RadioState state)
+    {
+        try
+        {
+            return radio.SetStateAsync(state).AsTask().GetAwaiter().GetResult() == RadioAccessStatus.Allowed;
+        }
+        catch (Exception e) when (IsRadioFailure(e))
+        {
+            return false;
+        }
+    }
+
+    private static bool IsRadioFailure(Exception e) =>
+        e is UnauthorizedAccessException or System.Runtime.InteropServices.COMException;
 
     private static ActionResult Fallback(string name, string settingsPage, bool on)
     {
