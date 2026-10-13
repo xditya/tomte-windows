@@ -245,13 +245,16 @@ internal static unsafe class RamblerHotkey
     private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, a macro CsWin32 does not emit
     private static HoldDetector? detector;
     private static HWND window;
+    private static Action<string>? log;
+    private static int armError; // non-zero when arming raw input failed
 
     /// <summary>Starts the input thread. <paramref name="started"/> and <paramref name="ended"/> are posted to <paramref name="queue"/>.</summary>
     public static void Start(Windows.System.DispatcherQueue queue, Action started, Action<bool> ended, Action<string> log) =>
         new Thread(() => Run(queue, started, ended, log)) { IsBackground = true, Name = "tomte-input" }.Start();
 
-    private static void Run(Windows.System.DispatcherQueue queue, Action started, Action<bool> ended, Action<string> log)
+    private static void Run(Windows.System.DispatcherQueue queue, Action started, Action<bool> ended, Action<string> logLine)
     {
+        log = logLine;
         detector = new HoldDetector(Arm);
         detector.Started += () => queue.TryEnqueue(() => started());
         detector.Ended += keep => queue.TryEnqueue(() => ended(keep));
@@ -267,7 +270,7 @@ internal static unsafe class RamblerHotkey
 
         const HOT_KEY_MODIFIERS chord = HOT_KEY_MODIFIERS.MOD_WIN | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT;
         bool registered = PInvoke.RegisterHotKey(window, HotKeyId, chord, 'V');
-        log($"rambler hotkey: Win+Alt+V {(registered ? "registered" : $"failed, error {Marshal.GetLastPInvokeError()}")}");
+        logLine($"rambler hotkey: Win+Alt+V {(registered ? "registered" : $"failed, error {Marshal.GetLastPInvokeError()}")}");
 
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
@@ -286,7 +289,8 @@ internal static unsafe class RamblerHotkey
             dwFlags = on ? RAWINPUTDEVICE_FLAGS.RIDEV_INPUTSINK : RAWINPUTDEVICE_FLAGS.RIDEV_REMOVE,
             hwndTarget = on ? window : HWND.Null,
         };
-        PInvoke.RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE));
+        if (!PInvoke.RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE)) && on)
+            armError = Math.Max(1, Marshal.GetLastPInvokeError());
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
@@ -297,9 +301,18 @@ internal static unsafe class RamblerHotkey
             if (message == PInvoke.WM_HOTKEY && wParam.Value == HotKeyId)
             {
                 detector!.Press(Environment.TickCount64);
-                // A quick tap can lift V before the press is handled, and then no raw key-up ever comes.
-                if ((PInvoke.GetAsyncKeyState('V') & 0x8000) == 0)
+                // Without raw input no release would ever arrive and the microphone would stay open, so end the hold
+                // as a tap. A quick tap can also lift V before the press is handled, with the same result.
+                if (armError != 0)
+                {
+                    log?.Invoke($"rambler: raw input could not be armed (error {armError}), hold ended");
+                    armError = 0;
                     detector.KeyUp('V', Environment.TickCount64);
+                }
+                else if ((PInvoke.GetAsyncKeyState('V') & 0x8000) == 0)
+                {
+                    detector.KeyUp('V', Environment.TickCount64);
+                }
                 return new LRESULT(0);
             }
 
