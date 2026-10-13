@@ -1,0 +1,53 @@
+using Tomte.Core;
+using Tomte.Core.Triggers;
+using Xunit;
+
+namespace Tomte.Tests;
+
+public class RetractionRulesTests
+{
+    [Theory]
+    [InlineData(IslandState.Compact, IslandActivity.None, true)]
+    [InlineData(IslandState.Panels, IslandActivity.None, true)]
+    [InlineData(IslandState.ShelfDrop, IslandActivity.None, true)]
+    [InlineData(IslandState.Palette, IslandActivity.None, true)]
+    [InlineData(IslandState.Hidden, IslandActivity.None, false)]
+    [InlineData(IslandState.Capture, IslandActivity.None, false)]
+    [InlineData(IslandState.ShelfDrop, IslandActivity.DragInProgress, false)]
+    [InlineData(IslandState.Palette, IslandActivity.Typing, false)]
+    [InlineData(IslandState.Palette, IslandActivity.AiTask, false)]
+    [InlineData(IslandState.Panels, IslandActivity.Pinned, false)]
+    [InlineData(IslandState.Compact, IslandActivity.Peek, false)]
+    [InlineData(IslandState.Compact, IslandActivity.Rambling, false)]
+    public void RetractsOnlyWhenNothingIsInProgress(IslandState state, IslandActivity activity, bool expected)
+    {
+        Assert.Equal(expected, RetractionRules.ShouldRetract(state, activity));
+    }
+
+    [Fact]
+    public void InsideIncludesTheMargin()
+    {
+        // A 240 x 40 px island centred at x = 1280, with the 24 px margin at 100%.
+        const int l = 1160, t = 0, r = 1400, b = 40, m = 24;
+        Assert.True(RetractionRules.Inside(1280, 20, l, t, r, b, m));
+        Assert.True(RetractionRules.Inside(l - m, b + m, l, t, r, b, m));
+        Assert.False(RetractionRules.Inside(l - m - 1, 20, l, t, r, b, m));
+        Assert.False(RetractionRules.Inside(1280, b + m + 1, l, t, r, b, m));
+    }
+
+    [Fact]
+    public void RevealZoneIsTheMiddleThirtyPercentScaledByDpi()
+    {
+        var settings = new TriggerSettings();
+        var zone = RevealZone.For(0, 0, 2560, settings.ZoneFraction, settings.DragBand, 1.5);
+
+        Assert.Equal(896, zone.Left);
+        Assert.Equal(1664, zone.Right);
+        Assert.Equal(72, zone.DragBandBottom);
+        Assert.True(zone.ContainsX(1280));
+        Assert.False(zone.ContainsX(895));
+        Assert.True(zone.InDragBand(1280, 72));
+        Assert.False(zone.InDragBand(1280, 73));
+        Assert.False(zone.InDragBand(800, 10));
+    }
+}
