@@ -10,6 +10,9 @@
     <!-- Unpackaged while developing; the MSIX comes from tools/package. -->
     <WindowsPackageType>None</WindowsPackageType>
     <SelfContained>false</SelfContained>
+    <!-- A self-contained publish also bundles the Windows App SDK runtime. Set here, not on the
+         command line, because the global property would reach the Tomte.Panels class library and fail. -->
+    <WindowsAppSDKSelfContained Condition="'$(SelfContained)' == 'true'">true</WindowsAppSDKSelfContained>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.CsWin32" PrivateAssets="all" />
