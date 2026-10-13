@@ -68,7 +68,9 @@ public static class Display
             key.SetValue("AppsUseLightTheme", apps, RegistryValueKind.DWord);
             key.SetValue("SystemUsesLightTheme", system, RegistryValueKind.DWord);
         }
-        Broadcast("ImmersiveColorSet");
+        // Every top-level window repaints before the broadcast returns (about 3 s measured), so it
+        // runs off the caller's thread. The registry is already written; the repaint follows.
+        _ = Task.Run(() => Broadcast("ImmersiveColorSet"));
     }
 
     private static unsafe void Broadcast(string setting)
