@@ -40,6 +40,16 @@ public class OllamaEndToEndTests
     }
 
     [OllamaFact]
+    public async Task OutputTokenCapIsHonoured()
+    {
+        using var http = new HttpClient();
+        var provider = ProviderSetup.Create(Config, http, null);
+        var events = await ProviderTests.Collect(provider.StreamAsync(new(OllamaFactAttribute.Model,
+            [ChatMessage.User("Write a 500-word essay about the history of bread.")], MaxTokens: 8)));
+        Assert.InRange(((TurnDone)events[^1]).OutputTokens, 1, 8);
+    }
+
+    [OllamaFact]
     public async Task ToolCallRoundTrip()
     {
         using var http = new HttpClient();

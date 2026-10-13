@@ -40,7 +40,7 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
 
     public async IAsyncEnumerable<ChatEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var response = await ProviderHttp.SendAsync(http, Authorize(ProviderHttp.Post($"{_baseUrl}/chat/completions", BuildBody(request))), key, ct);
+        var response = await ProviderHttp.SendAsync(http, Authorize(ProviderHttp.Post($"{_baseUrl}/chat/completions", BuildBody(request, _baseUrl))), key, ct);
 
         // Tool calls stream as fragments keyed by index; the id and name come in the first fragment.
         var calls = new SortedDictionary<int, (string Id, string Name, StringBuilder Args)>();
@@ -96,7 +96,7 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
         yield return new TurnDone(stopReason, input, output);
     }
 
-    internal static JsonObject BuildBody(ChatRequest request)
+    internal static JsonObject BuildBody(ChatRequest request, string baseUrl = "")
     {
         var messages = new JsonArray();
         if (request.System is not null)
@@ -138,7 +138,8 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
         {
             ["model"] = request.Model,
             ["messages"] = messages,
-            ["max_completion_tokens"] = request.MaxTokens,
+            // OpenAI itself rejects max_tokens on newer models; Ollama and other shims read only max_tokens.
+            [IsOpenAI(baseUrl) ? "max_completion_tokens" : "max_tokens"] = request.MaxTokens,
             ["stream"] = true,
             ["stream_options"] = new JsonObject { ["include_usage"] = true },
         };
@@ -168,6 +169,9 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
         },
         _ => throw new NotSupportedException($"{part.GetType().Name} is not supported by OpenAI-compatible endpoints."),
     };
+
+    private static bool IsOpenAI(string baseUrl) =>
+        Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) && uri.Host.Equals("api.openai.com", StringComparison.OrdinalIgnoreCase);
 
     private HttpRequestMessage Authorize(HttpRequestMessage request)
     {

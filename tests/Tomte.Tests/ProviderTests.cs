@@ -215,6 +215,10 @@ public class ProviderTests
         using var http = RecordedHandler.Client(out var handler, "openai-ollama-text.sse");
         await Collect(new OpenAICompatibleProvider(http, "https://api.openai.com/v1", Key).StreamAsync(Hello));
         Assert.Equal($"Bearer {Key}", handler.Request!.Headers.Authorization!.ToString());
+        var body = JsonNode.Parse(handler.Body!)!.AsObject();
+        Assert.True(body.ContainsKey("max_completion_tokens"));
+        Assert.False(body.ContainsKey("max_tokens"));
+        Assert.True(OpenAICompatibleProvider.BuildBody(Hello, "http://127.0.0.1:11434/v1").ContainsKey("max_tokens"));
     }
 
     [Fact]
