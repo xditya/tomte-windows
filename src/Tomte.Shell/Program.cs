@@ -104,7 +104,11 @@ internal static class Program
             PInvoke.DispatchMessage(&message);
         }
 
-        settingsProcess?.CloseMainWindow();
+        if (settingsProcess is { HasExited: false })
+        {
+            settingsProcess.CloseMainWindow();
+        }
+
         log?.Dispose();
         return 0;
     }
