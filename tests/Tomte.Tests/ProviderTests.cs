@@ -312,6 +312,17 @@ public class ProviderTests
     }
 
     [Fact]
+    public async Task EventsSplitAcrossSevenByteReadsStillParse()
+    {
+        using var http = RecordedHandler.Client(out _, "anthropic-tool.sse", readSize: 7);
+        var events = await Collect(new AnthropicProvider(http, Key).StreamAsync(Hello with { Tools = [Weather] }));
+
+        Assert.Equal("Let me check.", Text(events));
+        Assert.Equal("Paris", Assert.Single(events.OfType<ToolCallEvent>()).Call.Input.GetProperty("city").GetString());
+        Assert.Equal(new TurnDone("tool_use", 120, 40), events[^1]);
+    }
+
+    [Fact]
     public async Task SseParserHandlesCrlfAndMultiLineData()
     {
         var response = new HttpResponseMessage { Content = new StringContent("data: a\r\ndata: b\r\n\r\n: comment\r\ndata: c\r\n\r\n") };
