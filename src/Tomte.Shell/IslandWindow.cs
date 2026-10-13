@@ -30,7 +30,8 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed unsafe class IslandWindow : IDisposable
 {
-    // One pixel of room around the outline for the stroke's anti-aliased edge.
+    // One pixel of room around the outline for the stroke's anti-aliased edge. The root sits at (Margin, Margin)
+    // and the region points carry the same inset, so the two agree; the top overhang keeps the shift off-screen.
     private const int Margin = 1;
     private static readonly TimeSpan CrossfadeDuration = TimeSpan.FromMilliseconds(120);
     private static IslandWindow? instance;
@@ -360,7 +361,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         var g = Current;
         Apply(g);
         SizeWindow(Bounds(g));
-        root.Offset = new Vector3(Margin, 0, 0);
+        root.Offset = new Vector3(Margin, Margin, 0);
         if (g.Depth <= 0.5)
         {
             visible = false;
@@ -405,7 +406,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         geometry.Path = new CompositionPath(CanvasGeometry.CreatePath(builder));
 
         var b = Bounds(g);
-        root.Offset = new Vector3(b.X - windowX + Margin, 0, 0);
+        root.Offset = new Vector3(b.X - windowX + Margin, Margin, 0);
         var size = new Vector2(b.Width, b.Height);
         fillVisual.Size = size;
         Content.Size = size;
@@ -504,7 +505,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             var g = Current;
             Apply(g);
             SizeWindow(Bounds(g));
-            root.Offset = new Vector3(Margin, 0, 0);
+            root.Offset = new Vector3(Margin, Margin, 0);
             SetRegion(g);
         }
     }
