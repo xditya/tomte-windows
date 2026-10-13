@@ -102,6 +102,7 @@ public class RamblerTests
     [Fact]
     public async Task TranscriptionPostsAWavAndReadsTheText()
     {
+        // openai-transcription.json is hand-built from the documented response shape, not recorded (no key).
         using var http = RecordedHandler.Client(out var handler, "openai-transcription.json");
         var stt = new OpenAITranscriber(http, "https://api.openai.com/v1/", "sk-test-SECRET");
 
