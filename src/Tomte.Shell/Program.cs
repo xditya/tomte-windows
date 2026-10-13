@@ -353,11 +353,11 @@ internal static class Program
             return;
         }
 
-        Func<string, Task<string>>? structure = null;
+        Func<string, CancellationToken, Task<string>>? structure = null;
         if (config is { DefaultModel: { } model })
         {
             var provider = ProviderSetup.Load(config, http);
-            structure = transcript => RamblerNote.StructureAsync(provider, model, transcript);
+            structure = (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct);
         }
 
         var notes = new ScratchpadFile(ScratchpadFile.DefaultPath);

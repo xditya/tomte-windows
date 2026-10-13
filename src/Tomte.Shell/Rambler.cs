@@ -26,7 +26,7 @@ internal sealed class Rambler(
     IslandWindow island,
     IslandStateMachine machine,
     ISpeechToText speech,
-    Func<string, Task<string>>? structure,
+    Func<string, CancellationToken, Task<string>>? structure,
     INoteTarget notes,
     Action<string> log)
 {
@@ -35,6 +35,9 @@ internal sealed class Rambler(
     private const float GroupWidth = 6 + 8 + Waveform.Bars * Waveform.BarWidth + (Waveform.Bars - 1) * Waveform.Gap;
     private const float GroupHeight = Waveform.MinHeight + Waveform.Swing;
     private static readonly Color Mic = Color.FromArgb(255, 0xFF, 0x6B, 0x6B);
+
+    // A slow or stuck provider must not hold the rambler: every later hold waits for this one to finish.
+    private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(30);
 
     private readonly Stopwatch clock = new();
     private readonly List<double> latencies = new(4096);
@@ -86,7 +89,9 @@ internal sealed class Rambler(
 
             ShowTranscribing();
             var watch = Stopwatch.StartNew();
-            string text = await speech.TranscribeAsync(samples);
+            // whisper.cpp cannot be stopped mid-run; the timeout only bounds the provider path.
+            using var speechTimeout = new CancellationTokenSource(SendTimeout);
+            string text = await speech.TranscribeAsync(samples, speechTimeout.Token);
             log($"{DateTime.Now:HH:mm:ss.fff} rambler: transcribed {samples.Length / (double)MicCapture.SampleRate:F1} s in {watch.ElapsedMilliseconds} ms");
             // whisper.cpp writes [BLANK_AUDIO] and similar for silence.
             if (text.Length == 0 || (text.StartsWith('[') && text.EndsWith(']')))
@@ -100,9 +105,10 @@ internal sealed class Rambler(
             {
                 try
                 {
-                    note = await structure(text);
+                    using var timeout = new CancellationTokenSource(SendTimeout);
+                    note = await structure(text, timeout.Token);
                 }
-                catch (ProviderException e)
+                catch (Exception e) when (e is ProviderException or OperationCanceledException)
                 {
                     // The transcript is kept as it is; losing what the user said is worse than an untidy note.
                     log($"{DateTime.Now:HH:mm:ss.fff} rambler: structuring failed, raw transcript kept: {e.Message}");
