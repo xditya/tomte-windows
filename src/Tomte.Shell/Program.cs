@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using Tomte.Core;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -27,9 +29,17 @@ internal static class Program
         (IslandState.Hidden, 0, 0),
     ];
 
+    private static Process? settingsProcess;
+
     [STAThread]
     private static unsafe int Main(string[] args)
     {
+        if (args.Contains("--settings"))
+        {
+            RunSettings();
+            return 0;
+        }
+
         bool debugAuto = args.Contains("--debug-auto");
         bool debug = debugAuto || args.Contains("--debug-cycle");
 
@@ -58,6 +68,21 @@ internal static class Program
             _ = AutoCycle(island, machine, log!);
         }
 
+        var pause = new PauseState();
+        using var tray = new TrayIcon(pause);
+        tray.OpenIsland += () => _ = Step(island, machine, log, machine.State == IslandState.Hidden
+            ? (IslandState.Panels, PanelSize.Shelf.W, PanelSize.Shelf.H)
+            : (IslandState.Hidden, 0, 0));
+        tray.OpenSettings += OpenSettings;
+        tray.Paused += () =>
+        {
+            if (machine.State != IslandState.Hidden)
+            {
+                _ = Step(island, machine, log, (IslandState.Hidden, 0, 0));
+            }
+        };
+        tray.Quit += () => PInvoke.PostQuitMessage(0);
+
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
         {
@@ -79,8 +104,32 @@ internal static class Program
             PInvoke.DispatchMessage(&message);
         }
 
+        // In its first few hundred milliseconds the child has no window to close.
+        if (settingsProcess is { HasExited: false } && !settingsProcess.CloseMainWindow())
+        {
+            settingsProcess.Kill();
+        }
+
         log?.Dispose();
         return 0;
+    }
+
+    // Kept out of Main so the WinUI assemblies load only in the settings process.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void RunSettings() => Tomte.Panels.SettingsWindow.Run();
+
+    // The settings window runs in its own process and exits when closed, so none of its memory stays in the shell.
+    private static void OpenSettings()
+    {
+        if (settingsProcess is { HasExited: false })
+        {
+            settingsProcess.Refresh();
+            PInvoke.SetForegroundWindow(new HWND(settingsProcess.MainWindowHandle));
+            return;
+        }
+
+        settingsProcess?.Dispose();
+        settingsProcess = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
     }
 
     private static async Task AutoCycle(IslandWindow island, IslandStateMachine machine, StreamWriter log)
@@ -105,7 +154,7 @@ internal static class Program
         }
     }
 
-    private static async Task Step(IslandWindow island, IslandStateMachine machine, StreamWriter log, (IslandState State, double W, double H) next)
+    private static async Task Step(IslandWindow island, IslandStateMachine machine, StreamWriter? log, (IslandState State, double W, double H) next)
     {
         try
         {
@@ -116,11 +165,11 @@ internal static class Program
             var geometry = IslandGeometry.For(next.State, Math.Min(next.W, 0.6 * monitorW), Math.Min(next.H, 0.5 * monitorH));
             await island.MorphTo(geometry, Spring.PresetFor(from, next.State));
             double rate = island.LastMorphMs > 0 ? island.LastMorphTicks / (island.LastMorphMs / 1000) : 0;
-            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {from}->{next.State} {geometry.Width}x{geometry.Depth} ticks={island.LastMorphTicks} wall={island.LastMorphMs:F0}ms rate={rate:F1}/s");
+            log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {from}->{next.State} {geometry.Width}x{geometry.Depth} ticks={island.LastMorphTicks} wall={island.LastMorphMs:F0}ms rate={rate:F1}/s");
         }
         catch (Exception e)
         {
-            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} step to {next.State} failed: {e}");
+            log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} step to {next.State} failed: {e}");
         }
     }
 

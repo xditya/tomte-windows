@@ -19,5 +19,10 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Tomte.Core\Tomte.Core.csproj" />
+    <!-- Loaded only by the settings process (Tomte.Shell.exe with the settings switch). -->
+    <ProjectReference Include="..\Tomte.Panels\Tomte.Panels.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Assets\tomte.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

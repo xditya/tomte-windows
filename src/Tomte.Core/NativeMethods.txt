@@ -17,3 +17,5 @@ PropVariantToStringAlloc
 CoTaskMemFree
 CLSCTX
 PropVariantClear
+RegisterHotKey
+UnregisterHotKey
