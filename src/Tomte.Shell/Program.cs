@@ -104,9 +104,10 @@ internal static class Program
             PInvoke.DispatchMessage(&message);
         }
 
-        if (settingsProcess is { HasExited: false })
+        // In its first few hundred milliseconds the child has no window to close.
+        if (settingsProcess is { HasExited: false } && !settingsProcess.CloseMainWindow())
         {
-            settingsProcess.CloseMainWindow();
+            settingsProcess.Kill();
         }
 
         log?.Dispose();
