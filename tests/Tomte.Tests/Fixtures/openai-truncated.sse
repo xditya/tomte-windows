@@ -1,0 +1,2 @@
+data: {"id":"chatcmpl-3","object":"chat.completion.chunk","created":1791916825,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"The answer is"},"finish_reason":null}]}
+

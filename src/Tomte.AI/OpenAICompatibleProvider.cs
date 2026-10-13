@@ -88,6 +88,9 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
             }
         }
 
+        // A dropped connection before finish_reason must not look like a short, finished answer.
+        if (stopReason is null)
+            throw new ProviderException("The stream ended before the message finished.");
         foreach (var (index, (id, name, args)) in calls)
             yield return new ToolCallEvent(new ToolCallPart(id.Length > 0 ? id : $"call_{index}", name, ProviderHttp.ParseArguments(args.ToString(), key)));
         yield return new TurnDone(stopReason, input, output);

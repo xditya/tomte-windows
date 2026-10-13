@@ -282,6 +282,15 @@ public class ProviderTests
     }
 
     [Fact]
+    public async Task StreamCutOffBeforeTheFinishReasonThrows()
+    {
+        using var openAi = RecordedHandler.Client(out _, "openai-truncated.sse");
+        await Assert.ThrowsAsync<ProviderException>(() => Collect(new OpenAICompatibleProvider(openAi, "http://127.0.0.1:11434/v1", null).StreamAsync(Hello)));
+        using var gemini = RecordedHandler.Client(out _, "gemini-truncated.sse");
+        await Assert.ThrowsAsync<ProviderException>(() => Collect(new GeminiProvider(gemini, Key).StreamAsync(Hello)));
+    }
+
+    [Fact]
     public async Task SseParserHandlesCrlfAndMultiLineData()
     {
         var response = new HttpResponseMessage { Content = new StringContent("data: a\r\ndata: b\r\n\r\n: comment\r\ndata: c\r\n\r\n") };

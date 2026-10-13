@@ -66,6 +66,8 @@ public sealed class GeminiProvider(HttpClient http, string key) : IChatProvider
                 }
             }
         }
+        if (stopReason is null)
+            throw new ProviderException("The stream ended before the message finished.");
         yield return new TurnDone(stopReason, input, output);
     }
 

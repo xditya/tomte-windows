@@ -52,7 +52,7 @@ internal static class ProviderHttp
             await using var stream = await response.Content.ReadAsStreamAsync(ct);
             using var reader = new StreamReader(stream, Encoding.UTF8);
             var data = new StringBuilder();
-            while (await reader.ReadLineAsync(ct) is { } line)
+            while (await ReadLineAsync(reader, ct) is { } line)
             {
                 if (line.Length == 0)
                 {
@@ -69,6 +69,18 @@ internal static class ProviderHttp
             }
             if (data.Length > 0)
                 yield return data.ToString();
+        }
+    }
+
+    private static async Task<string?> ReadLineAsync(StreamReader reader, CancellationToken ct)
+    {
+        try
+        {
+            return await reader.ReadLineAsync(ct);
+        }
+        catch (IOException e)
+        {
+            throw new ProviderException($"The connection dropped mid-stream: {e.Message}");
         }
     }
 
