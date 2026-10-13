@@ -340,12 +340,13 @@ internal static class Program
     /// </summary>
     private static void StartRambler(string[] args, IslandWindow island, IslandStateMachine machine, TextWriter log)
     {
-        var http = new HttpClient();
         ProviderConfig? config = Arg(args, "--provider-id") is { } id
             ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
             : null;
+        // Only a configured provider needs HTTP; local whisper with raw notes never opens a connection.
+        var http = config is null ? null : new HttpClient();
         ISpeechToText? speech = args.Contains("--stt-provider") && config is { Kind: ProviderKind.OpenAICompatible, BaseUrl: { } url }
-            ? new OpenAITranscriber(http, url, CredentialStore.Read(config.Id), Arg(args, "--stt-model") ?? "whisper-1")
+            ? new OpenAITranscriber(http!, url, CredentialStore.Read(config.Id), Arg(args, "--stt-model") ?? "whisper-1")
             : WhisperTranscriber.IsInstalled(WhisperTranscriber.DefaultDirectory) ? new WhisperTranscriber(WhisperTranscriber.DefaultDirectory) : null;
         if (speech is null)
         {
@@ -356,7 +357,7 @@ internal static class Program
         Func<string, CancellationToken, Task<string>>? structure = null;
         if (config is { DefaultModel: { } model })
         {
-            var provider = ProviderSetup.Load(config, http);
+            var provider = ProviderSetup.Load(config, http!);
             structure = (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct);
         }
 
