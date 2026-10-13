@@ -28,6 +28,13 @@ public static class WindowCapture
         var item = GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId((ulong)hwnd))
             ?? throw new InvalidOperationException("The window cannot be captured.");
 
+        using var bitmap = await FirstFrameAsync(item, ct);
+        return await EncodePngAsync(bitmap);
+    }
+
+    /// <summary>One frame, then the session and pool are gone before the encode starts, so no later frame is copied.</summary>
+    private static async Task<SoftwareBitmap> FirstFrameAsync(GraphicsCaptureItem item, CancellationToken ct)
+    {
         var device = CreateDevice();
         try
         {
@@ -48,6 +55,9 @@ public static class WindowCapture
             var first = new TaskCompletionSource<SoftwareBitmap>(TaskCreationOptions.RunContinuationsAsynchronously);
             pool.FrameArrived += async (sender, _) =>
             {
+                // Frames keep arriving at the monitor's rate until the session is disposed; only the first one is wanted.
+                if (first.Task.IsCompleted)
+                    return;
                 try
                 {
                     using var frame = sender.TryGetNextFrame();
@@ -61,8 +71,7 @@ public static class WindowCapture
             };
             session.StartCapture();
             // A minimized window never produces a frame; fail fast instead of spending the request's 120 s.
-            using var bitmap = await first.Task.WaitAsync(FirstFrameTimeout, ct);
-            return await EncodePngAsync(bitmap);
+            return await first.Task.WaitAsync(FirstFrameTimeout, ct);
         }
         finally
         {
