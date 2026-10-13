@@ -111,13 +111,11 @@ public sealed class AnthropicProvider(HttpClient http, string key) : IChatProvid
             body["system"] = request.System;
         if (request.Tools is { Count: > 0 } tools)
         {
-            // Arguments stream as generated; the adapter parses the finished JSON and fails loudly if it is not valid.
             body["tools"] = new JsonArray([.. tools.Select(t => (JsonNode)new JsonObject
             {
                 ["name"] = t.Name,
                 ["description"] = t.Description,
                 ["input_schema"] = JsonNode.Parse(t.InputSchema.GetRawText()),
-                ["eager_input_streaming"] = true,
             })]);
         }
         return body;
