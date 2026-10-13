@@ -26,6 +26,8 @@
     <ProjectReference Include="..\Tomte.Core\Tomte.Core.csproj" />
     <!-- Loaded only by the settings process (Tomte.Shell.exe with the settings switch). -->
     <ProjectReference Include="..\Tomte.Panels\Tomte.Panels.csproj" />
+    <!-- Loaded only when the palette opens. -->
+    <ProjectReference Include="..\Tomte.AI\Tomte.AI.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="Assets\tomte.ico" CopyToOutputDirectory="PreserveNewest" />
