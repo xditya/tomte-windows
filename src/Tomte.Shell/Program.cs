@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using Tomte.AI;
+using Tomte.AI.Palette;
 using Tomte.Core;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -47,7 +49,9 @@ internal static class Program
 
         bool debugAuto = args.Contains("--debug-auto");
         bool debugMascot = args.Contains("--debug-mascot");
-        bool debug = debugAuto || debugMascot || args.Contains("--debug-cycle");
+        int paletteArg = Array.IndexOf(args, "--palette");
+        string? palettePrompt = paletteArg >= 0 && paletteArg + 1 < args.Length ? args[paletteArg + 1] : null;
+        bool debug = debugAuto || debugMascot || palettePrompt is not null || args.Contains("--debug-cycle");
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
@@ -67,7 +71,7 @@ internal static class Program
         {
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte");
             Directory.CreateDirectory(dir);
-            log = new StreamWriter(Path.Combine(dir, "island-debug.log"), append: true) { AutoFlush = true };
+            log = OpenLog(dir);
             island.Log = log.WriteLine;
             log.WriteLine($"{DateTime.Now:O} start args=[{string.Join(' ', args)}] scale={island.MonitorSize}");
             // Win+Alt+Shift+T steps, Win+Alt+Shift+Q quits (Win+Alt+T is taken on the owner's PC). Thread hotkeys arrive
@@ -86,6 +90,10 @@ internal static class Program
         if (debugAuto)
         {
             _ = AutoCycle(island, machine, log!);
+        }
+        else if (palettePrompt is not null)
+        {
+            _ = PaletteRun(island, machine, log!, palettePrompt);
         }
 
         var pause = new PauseState();
@@ -200,6 +208,80 @@ internal static class Program
             }
         };
         timer.Start();
+    }
+
+    /// <summary>Shared with other debug runs; when one holds the file without sharing, this run gets its own.</summary>
+    private static StreamWriter OpenLog(string dir)
+    {
+        try
+        {
+            return new StreamWriter(new FileStream(Path.Combine(dir, "island-debug.log"), FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
+        }
+        catch (IOException)
+        {
+            return new StreamWriter(Path.Combine(dir, $"island-debug-{Environment.ProcessId}.log"), append: true) { AutoFlush = true };
+        }
+    }
+
+    /// <summary>
+    /// --palette "prompt": the debug driver. Opens the palette on the island, runs the prompt against local
+    /// Ollama with the window chip on and an in-memory shelf and scratchpad, logs the stream and the tool
+    /// steps, then retracts and quits. External-effect tools are allowed once each, as a user would.
+    /// </summary>
+    private static async Task PaletteRun(IslandWindow island, IslandStateMachine machine, StreamWriter log, string prompt)
+    {
+        try
+        {
+            // The island is still hidden, so the foreground is the window the user had in front; Tomte.AI
+            // loads here, not in Main, so a normal start never touches it.
+            nint foreground = WindowContext.Foreground();
+            await Task.Delay(500);
+            var config = new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", "llama3.2:3b");
+            using var http = new HttpClient();
+            var shelf = new InMemoryShelf();
+            shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at 10.");
+            var scratchpad = new InMemoryScratchpad();
+            var (app, title) = WindowContext.Describe(foreground);
+            var chips = new List<ContextChip>
+            {
+                ContextChips.Selection(null),
+                ContextChips.Window(app, title),
+                ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct)),
+                ContextChips.Shelf(shelf),
+                ContextChips.Scratchpad(scratchpad),
+            };
+            chips[1].On = true;
+            var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
+            var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);
+            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(), chips)
+            {
+                Prompt = prompt,
+                ConfirmTool = (request, _) =>
+                {
+                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette confirm {request.Tier}: {request.Summary} -> allow once");
+                    return Task.FromResult(PermissionAnswer.AllowOnce);
+                },
+            };
+            int steps = 0;
+            session.Changed += () =>
+            {
+                foreach (var step in session.Answer.OfType<ToolStepSegment>().Skip(steps))
+                {
+                    steps++;
+                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette tool {step.Tool}: {step.Summary} -> {(step.IsError ? "error: " : "")}{step.Result.ReplaceLineEndings(" | ")}");
+                }
+            };
+            await new PaletteHost(island, machine, log.WriteLine).RunAsync(session);
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette answer: {session.AnswerText.ReplaceLineEndings(" | ")}");
+            await Task.Delay(2000);
+            await Step(island, machine, log, (IslandState.Hidden, 0, 0, null));
+        }
+        catch (Exception e)
+        {
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette run failed: {e}");
+        }
+
+        PInvoke.PostQuitMessage(0);
     }
 
     private static async Task Step(IslandWindow island, IslandStateMachine machine, StreamWriter? log, (IslandState State, double W, double H, MascotState? React) next)

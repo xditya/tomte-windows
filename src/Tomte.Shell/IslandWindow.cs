@@ -221,6 +221,11 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>The mascot's centre in screen pixels, for the Shelf-drop lean.</summary>
     public double MascotScreenX => windowX + root.Offset.X + mascotX + MascotVisual.SizeDips / 2 * scale;
 
+    /// <summary>For content visuals; the tree is in physical pixels, so content scales by <see cref="Scale"/>.</summary>
+    public Compositor Compositor => compositor;
+
+    public double Scale => scale;
+
     public IslandGeometry Current => new(width.Value, depth.Value, corner.Value, rampW.Value, rampH.Value);
 
     /// <summary>Primary monitor in DIPs at the window's DPI, for the 60% x 50% panel cap.</summary>
