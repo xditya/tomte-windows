@@ -70,6 +70,7 @@ public static class Display
         }
         // Every top-level window repaints before the broadcast returns (about 3 s measured), so it
         // runs off the caller's thread. The registry is already written; the repaint follows.
+        // The calling process must stay alive a few seconds after the call, or the broadcast is cut short.
         _ = Task.Run(() => Broadcast("ImmersiveColorSet"));
     }
 
@@ -88,10 +89,13 @@ public static class Display
         }
     }
 
+    // Reads the first built-in panel only, while WriteBrightness sets every panel. On a device with
+    // two built-in panels, undo restores both to the first panel's old level.
     private static int ReadBrightness()
     {
         using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT CurrentBrightness FROM WmiMonitorBrightness");
-        foreach (var monitor in searcher.Get())
+        using var found = searcher.Get();
+        foreach (var monitor in found)
             using (monitor) return (byte)monitor["CurrentBrightness"];
         throw new ManagementException("No WmiMonitorBrightness instance.");
     }
@@ -99,8 +103,9 @@ public static class Display
     private static void WriteBrightness(int percent)
     {
         using var searcher = new ManagementObjectSearcher(@"root\wmi", "SELECT * FROM WmiMonitorBrightnessMethods");
+        using var found = searcher.Get();
         var any = false;
-        foreach (ManagementObject monitor in searcher.Get())
+        foreach (ManagementObject monitor in found)
             using (monitor)
             {
                 monitor.InvokeMethod("WmiSetBrightness", [(uint)1, (byte)percent]);
