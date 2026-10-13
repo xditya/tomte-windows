@@ -40,14 +40,12 @@ internal sealed class Rambler(
     private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(30);
 
     private readonly Stopwatch clock = new();
-    private readonly List<double> latencies = new(4096);
     private readonly float[] heights = new float[Waveform.Bars];
     private MicCapture? capture;
     private ShapeVisual? view;
     private CompositionRoundedRectangleGeometry[]? bars;
     private CompositionSpriteShape[]? barShapes;
     private bool transcribing;
-    private float peakRms;
 
     /// <summary>Microphone level 0..1, once per capture packet while recording, on the UI thread. The mascot bounces to it.</summary>
     public event Action<double>? Bounce;
@@ -56,11 +54,9 @@ internal sealed class Rambler(
     {
         if (transcribing || capture is not null)
             return;
-        latencies.Clear();
-        peakRms = 0;
         clock.Restart();
         // The capture thread posts each packet's level; the bars change when a packet arrives, with no timer.
-        capture = MicCapture.Start((rms, at) => island.Queue.TryEnqueue(() => Level(rms, at)));
+        capture = MicCapture.Start(rms => island.Queue.TryEnqueue(() => Level(rms)));
         ShowView();
         if (IslandStateMachine.CanTransition(machine.State, IslandState.Compact))
         {
@@ -80,7 +76,6 @@ internal sealed class Rambler(
         try
         {
             float[] samples = await Task.Run(recording.Stop);
-            LogLatency(samples.Length);
             if (!keep || samples.Length < MicCapture.SampleRate / 4)
             {
                 log($"{DateTime.Now:HH:mm:ss.fff} rambler: tap, nothing kept");
@@ -129,15 +124,13 @@ internal sealed class Rambler(
         }
     }
 
-    private void Level(float rms, long capturedAt)
+    private void Level(float rms)
     {
         if (capture is null || bars is null || barShapes is null)
             return;
-        peakRms = Math.Max(peakRms, rms);
         double level = Waveform.Level(rms);
         Waveform.Heights(level, clock.Elapsed.TotalSeconds, heights);
         SetBars(heights);
-        latencies.Add((Stopwatch.GetTimestamp() - capturedAt) * 1000.0 / Stopwatch.Frequency);
         Bounce?.Invoke(level);
     }
 
@@ -227,16 +220,6 @@ internal sealed class Rambler(
         fade.DelayTime = TimeSpan.FromMilliseconds(delayMs);
         fade.Duration = TimeSpan.FromMilliseconds(durationMs);
         return fade;
-    }
-
-    /// <summary>Capture-to-bars latency: from the first sample of a packet, by the device clock, to the bars being set.</summary>
-    private void LogLatency(int samples)
-    {
-        if (latencies.Count == 0)
-            return;
-        latencies.Sort();
-        double P(double q) => latencies[(int)Math.Min(latencies.Count - 1, q * latencies.Count)];
-        log($"{DateTime.Now:HH:mm:ss.fff} rambler: {samples / (double)MicCapture.SampleRate:F1} s, {latencies.Count} packets, capture->bars p50={P(0.5):F1} ms p95={P(0.95):F1} ms max={latencies[^1]:F1} ms, peak {20 * Math.Log10(Math.Max(peakRms, 1e-6f)):F0} dBFS");
     }
 }
 

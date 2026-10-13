@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -19,12 +18,12 @@ public sealed class MicCapture
 
     // the whole recording stays in memory, 64 KB per second; a ten-minute ramble is 38 MB. Stream to disk past that.
     private readonly List<float> samples = new(SampleRate * 30);
-    private readonly Action<float, long> onBuffer;
+    private readonly Action<float> onBuffer;
     private readonly ManualResetEventSlim stopping = new(false);
     private readonly Thread thread;
     private Exception? failure;
 
-    private MicCapture(Action<float, long> onBuffer)
+    private MicCapture(Action<float> onBuffer)
     {
         this.onBuffer = onBuffer;
         thread = new Thread(Run) { IsBackground = true, Name = "tomte-mic" };
@@ -32,9 +31,9 @@ public sealed class MicCapture
 
     /// <summary>
     /// Starts recording. <paramref name="onBuffer"/> runs on the capture thread once per packet (about 10 ms)
-    /// with the packet's RMS and the Stopwatch timestamp of its first sample, as the device clock reports it.
+    /// with the packet's RMS.
     /// </summary>
-    public static MicCapture Start(Action<float, long> onBuffer)
+    public static MicCapture Start(Action<float> onBuffer)
     {
         var capture = new MicCapture(onBuffer);
         capture.thread.Start();
@@ -132,8 +131,7 @@ public sealed class MicCapture
                 return;
 
             byte* data;
-            ulong qpc;
-            captureClient.GetBuffer(&data, out uint frames, out uint bufferFlags, null, &qpc);
+            captureClient.GetBuffer(&data, out uint frames, out uint bufferFlags, null, null);
             var packet = new ReadOnlySpan<float>(data, (int)frames);
             bool silent = (bufferFlags & (uint)_AUDCLNT_BUFFERFLAGS.AUDCLNT_BUFFERFLAGS_SILENT) != 0;
             int start = samples.Count;
@@ -148,9 +146,7 @@ public sealed class MicCapture
             }
             captureClient.ReleaseBuffer(frames);
 
-            // The device position is in 100 ns units on the QPC clock, which is Stopwatch's clock.
-            long timestamp = (long)(qpc * (double)Stopwatch.Frequency / 10_000_000);
-            onBuffer(silent ? 0 : Waveform.Rms(CollectionsMarshal.AsSpan(samples)[start..]), timestamp);
+            onBuffer(silent ? 0 : Waveform.Rms(CollectionsMarshal.AsSpan(samples)[start..]));
         }
     }
 }
