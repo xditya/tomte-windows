@@ -32,6 +32,8 @@ public sealed class OpenAITranscriber(HttpClient http, string baseUrl, string? k
         if (!string.IsNullOrEmpty(key))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
 
+        // This send is not in the send log yet: the log comes with the palette work, and Rambler.End records
+        // each rambler send there once it lands. The user's hold is the visible action until then.
         using var doc = await ProviderHttp.GetJsonAsync(http, request, key, ct);
         return doc.RootElement.TryGetProperty("text", out var text)
             ? text.GetString()?.Trim() ?? ""

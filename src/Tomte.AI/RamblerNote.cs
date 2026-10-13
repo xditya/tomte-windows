@@ -18,6 +18,8 @@ public static class RamblerNote
     public static async Task<string> StructureAsync(IChatProvider provider, string model, string transcript, CancellationToken ct = default)
     {
         var reply = new System.Text.StringBuilder();
+        // This send is not in the send log yet: the log comes with the palette work, and Rambler.End records
+        // each rambler send there once it lands. The user's hold is the visible action until then.
         await foreach (var e in provider.StreamAsync(Request(model, transcript), ct))
         {
             if (e is TextDelta t)
