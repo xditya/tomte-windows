@@ -142,7 +142,13 @@ internal static class FileAttachments
                 // An encrypted PDF opens here with its empty password, but the providers take only unencrypted ones.
                 if (facts.NativePdf && size <= facts.MaxPdfBytes && pdf.Pages <= facts.MaxPdfPages && !pdf.Encrypted)
                 {
-                    byte[] bytes = await File.ReadAllBytesAsync(path, ct);
+                    byte[] bytes;
+                    await using (var stream = Open(path))
+                    {
+                        bytes = new byte[stream.Length];
+                        await stream.ReadExactlyAsync(bytes, ct);
+                    }
+
                     int textTokens = pdf.Cut && pdf.PagesRead > 0
                         ? (int)((long)facts.TextTokens(pdf.Text) * pdf.Pages / pdf.PagesRead)
                         : facts.TextTokens(pdf.Text);
