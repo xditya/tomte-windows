@@ -14,7 +14,7 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed unsafe partial class TriggerController : IDisposable
 {
-    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6;
+    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6, TimerDoneTimer = 7;
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
 
@@ -30,6 +30,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private readonly DesktopWatch watch;
     private readonly DropTarget dropTarget;
     private readonly Action<string>? log;
+    private readonly IslandTimer timer;
+    private readonly TimerRing ring;
+    private TimerRun? finished;
     private Rambler? rambler;
     private CaptureOverlay? overlay;
     private bool capturing;
@@ -37,12 +40,18 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
 
-    public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, Action<string>? log)
+    public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
     {
         this.island = island;
         this.store = store;
         this.pause = pause;
+        this.timer = timer;
         this.log = log;
+        ring = new TimerRing(island.Compositor, island.Content);
+        island.Content.Children.InsertAtTop(ring.Visual);
+        // The palette's tool may start or cancel it from another thread; the one-shot lives on this one.
+        timer.Changed += () => island.Queue.TryEnqueue(ArmTimer);
+        ArmTimer();
         settings = store.Current;
         island.Message = HandleMessage;
         island.LayoutChanged = PushZone;
@@ -273,6 +282,21 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case PeekTimer:
                 EvaluatePeek();
                 break;
+            case TimerDoneTimer:
+                var run = timer.Run;
+                if (timer.TryComplete(DateTimeOffset.Now))
+                {
+                    finished = run;
+                    log?.Invoke($"timer: done, ended {run!.EndsAt:O}");
+                    Raise(new IslandEvent("Timer done", DateTimeOffset.Now));
+                }
+                else
+                {
+                    // Early: the wall clock was set back, or the wait was capped. Wait for what is left.
+                    ArmTimer();
+                }
+
+                break;
         }
     }
 
@@ -382,6 +406,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     // Begin opens the 262 wide pill and sets the mascot itself.
                     rambler.Begin();
+                    ring.Hide();
                     activity |= IslandActivity.Rambling;
                     pointerInside = false;
                     InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
@@ -445,6 +470,39 @@ internal sealed unsafe partial class TriggerController : IDisposable
             eventShowing = true;
             armed = true;
             PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
+            island.Mascot.Set(MascotState.Result);
+            UpdateRing();
+        }
+    }
+
+    /// <summary>
+    /// One SetTimer one-shot at the end time, or none. Called at start-up, so a timer whose end passed while the
+    /// app was down fires at once. Simplification: relies on the one-shot firing on time across sleep and wall-clock
+    /// changes (an early fire re-arms); listen for WM_TIMECHANGE and resume if a late fire shows.
+    /// </summary>
+    private void ArmTimer()
+    {
+        PInvoke.KillTimer(island.Hwnd, TimerDoneTimer);
+        if (timer.DueIn(DateTimeOffset.Now) is TimeSpan due)
+        {
+            PInvoke.SetTimer(island.Hwnd, TimerDoneTimer, (uint)Math.Clamp(Math.Ceiling(due.TotalMilliseconds), 0, int.MaxValue), null);
+            log?.Invoke($"timer: ends {timer.Run!.EndsAt:O}, in {due}");
+        }
+
+        UpdateRing();
+    }
+
+    /// <summary>The ring shows in Compact while a timer runs, and full while that timer's done event holds the pill.</summary>
+    private void UpdateRing()
+    {
+        var run = timer.Run ?? (eventShowing ? finished : null);
+        if (machine.State == IslandState.Compact && run is not null)
+        {
+            ring.Show(run, DateTimeOffset.Now, island.Scale);
+        }
+        else
+        {
+            ring.Hide();
         }
     }
 
@@ -547,6 +605,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var geometry = IslandGeometry.For(state, Math.Min(size.W, 0.6 * monitorW), Math.Min(size.H, 0.5 * monitorH));
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
+        // After MorphTo, which picks up a new monitor scale.
+        UpdateRing();
         if (log is not null)
         {
             morph.ContinueWith(_ => log($"{from}->{state} settled in {island.LastMorphMs:F0}ms, {island.LastMorphTicks} ticks"), TaskScheduler.FromCurrentSynchronizationContext());
@@ -575,6 +635,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         bool wasPeek = activity.HasFlag(IslandActivity.Peek);
         activity = IslandActivity.None;
         armed = eventShowing = firstRunShowing = dragEntered = false;
+        finished = null;
         InputThread.StopTrackingPointer();
         InputThread.SetEscape(false);
         if (machine.State != IslandState.Hidden)

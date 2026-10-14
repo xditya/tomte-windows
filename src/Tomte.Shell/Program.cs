@@ -39,8 +39,10 @@ internal static class Program
         bool rambler = args.Contains("--rambler");
         // No prompt box renders yet, so circle-to-ask takes its typed question from here.
         string? captureQuestion = Arg(args, "--debug-capture");
+        // --debug-timer <minutes>: starts the timer until the island takes input.
+        double? debugTimer = Arg(args, "--debug-timer") is { } minutes ? double.Parse(minutes, System.Globalization.CultureInfo.InvariantCulture) : null;
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
-        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || logArg is not null;
+        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null;
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
@@ -84,7 +86,13 @@ internal static class Program
 
         using var store = new SettingsStore();
         var pause = new PauseState();
-        var triggers = new TriggerController(island, store, pause, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
+        var timer = new IslandTimer(IslandTimer.DefaultPath);
+        var triggers = new TriggerController(island, store, pause, timer, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
+        if (debugTimer is double m)
+        {
+            timer.Run = TimerRun.Starting(DateTimeOffset.Now, TimeSpan.FromMinutes(m));
+        }
+
         if (rambler)
         {
             triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
