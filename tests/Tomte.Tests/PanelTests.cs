@@ -172,4 +172,20 @@ public class PanelTests
     {
         Assert.Equal(expected, PanelSpace.OnShape(new Vector2(x, y), IslandGeometry.Panel(380, 140)));
     }
+
+    [Theory]
+    // A notch away from the user is the previous tab, toward the user the next.
+    [InlineData(0, 120, false, -1, 0)]
+    [InlineData(0, -120, false, 1, 0)]
+    // A touchpad's small deltas add up to a notch.
+    [InlineData(60, 40, false, 0, 100)]
+    [InlineData(100, 40, false, -1, 0)]
+    // Until the new panel starts to show, the rest of the scroll is dropped, carry and all.
+    [InlineData(100, 120, true, 0, 0)]
+    [InlineData(0, -240, true, 0, 0)]
+    public void TheStripStepsOneTabANotchOnceThePanelShows(int carry, int delta, bool settling, int step, int carried)
+    {
+        Assert.Equal(step, PanelSpace.TabStep(ref carry, delta, settling));
+        Assert.Equal(carried, carry);
+    }
 }

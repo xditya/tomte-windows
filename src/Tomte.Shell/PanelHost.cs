@@ -47,7 +47,6 @@ internal sealed class PanelHost
 {
     // Content fades in over 0.15 s and out over 0.1 s.
     public const int FadeInMs = 150, FadeOutMs = 100;
-    private const int WheelNotch = 120;
 
     private readonly IslandWindow island;
     private readonly IslandStateMachine machine;
@@ -218,9 +217,9 @@ internal sealed class PanelHost
     }
 
     /// <summary>
-    /// Over the tab strip the wheel switches tabs: a notch away from the user is the previous tab, toward
-    /// the user the next, and a touchpad's small deltas add up. Over the body it is the panel's, for its
-    /// lists to scroll.
+    /// Over the tab strip the wheel switches tabs (<see cref="PanelSpace.TabStep"/>). Over the body it is the
+    /// panel's, for its lists to scroll. Until the new body starts to show, the wheel is nobody's: one notch
+    /// comes as several messages, and the Compact pill that a scroll opens Panels from sits over the strip.
     /// </summary>
     private void OnWheel(Vector2 point, int delta)
     {
@@ -230,22 +229,16 @@ internal sealed class PanelHost
             return;
         }
 
-        if (point.Y >= PanelSpace.TabStripHeight)
+        if (point.Y < PanelSpace.TabStripHeight)
         {
-            wheel = 0;
-            if (InBody(point, out var at))
-            {
-                shown.Wheel(at, delta);
-            }
-
+            Step(PanelSpace.TabStep(ref wheel, delta, fadeInPending));
             return;
         }
 
-        wheel += delta;
-        while (Math.Abs(wheel) >= WheelNotch)
+        wheel = 0;
+        if (!fadeInPending && InBody(point, out var at))
         {
-            Step(wheel > 0 ? -1 : 1);
-            wheel -= Math.Sign(wheel) * WheelNotch;
+            shown.Wheel(at, delta);
         }
     }
 

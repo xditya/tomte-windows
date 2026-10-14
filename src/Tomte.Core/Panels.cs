@@ -85,4 +85,23 @@ public static class PanelSpace
     /// </summary>
     public static bool OnShape(Vector2 island, in IslandGeometry shape) =>
         Math.Abs(island.X) <= shape.Width / 2 && island.Y >= 0 && island.Y <= shape.Depth;
+
+    /// <summary>
+    /// The wheel over the tab strip as a tab step: -1 for a notch (120) away from the user, +1 toward, else 0.
+    /// A touchpad's small deltas add up in <paramref name="carry"/>. While the new panel's content has not
+    /// started to show, the strip ignores the wheel, so the rest of the scroll that opened Panels or switched a
+    /// tab does not switch another.
+    /// </summary>
+    public static int TabStep(ref int carry, int delta, bool settling)
+    {
+        carry = settling ? 0 : carry + delta;
+        if (Math.Abs(carry) < 120)
+        {
+            return 0;
+        }
+
+        int step = carry > 0 ? -1 : 1;
+        carry = 0;
+        return step;
+    }
 }
