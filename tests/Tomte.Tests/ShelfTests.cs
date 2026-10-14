@@ -711,6 +711,34 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    public void TextTheShelfKeepsDragsOutAsItsWordsAndItsFile()
+    {
+        var note = Item(ShelfKind.Content, @"C:\shelf\a\Call Mom.txt");
+        var md = Item(ShelfKind.Content, @"C:\shelf\b\summary.MD");
+        var image = Item(ShelfKind.Content, @"C:\shelf\c\pasted.png");
+        var mine = Item(ShelfKind.Reference, @"C:\docs\mine.txt");
+        // A fake reader: the words each file holds, and none for one it cannot read.
+        string? Read(ShelfItem i) => i.Name switch { "Call Mom.txt" => "Call Mom", "summary.MD" => "# Q3", _ => null };
+
+        Assert.Equal("Call Mom", ShelfFormats.DragText([note], Read));
+        Assert.Equal("Call Mom" + Environment.NewLine + "# Q3", ShelfFormats.DragText([note, md], Read));
+        // Not text the shelf keeps, or a mixed drag: files only.
+        Assert.Null(ShelfFormats.DragText([mine], Read));
+        Assert.Null(ShelfFormats.DragText([note, image], Read));
+        Assert.Null(ShelfFormats.DragText([note with { Name = "big.txt" }], Read));
+
+        // The text first, then the file formats kept as they were.
+        Assert.Equal([DragFormat.UnicodeText, DragFormat.Text, DragFormat.Descriptor, DragFormat.Contents], ShelfFormats.DragFormats([note], text: true));
+        Assert.Equal([DragFormat.Descriptor, DragFormat.Contents], ShelfFormats.DragFormats([note, image], text: false));
+        Assert.Equal([DragFormat.HDrop], ShelfFormats.DragFormats([mine, note], text: false));
+
+        Assert.Equal("é!\0", Encoding.Unicode.GetString(ShelfFormats.UnicodeText("é!")));
+        // Windows-1252: é is one byte, a character it lacks becomes "?", and the null closes it.
+        Assert.Equal(new byte[] { 0xE9, (byte)'?', 0 }, ShelfFormats.AnsiText("é→", 1252));
+        Assert.Equal("é→\0"u8.ToArray(), ShelfFormats.AnsiText("é→", 65001));
+    }
+
+    [Fact]
     public void WhatLeavesTheShelfAfterADragOut()
     {
         var moved = Item(ShelfKind.Reference, @"C:\gone.txt");

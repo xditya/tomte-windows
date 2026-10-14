@@ -38,11 +38,12 @@ internal static unsafe class ShelfDrag
         var effects = ShelfFormats.Effects(present);
         long started = Stopwatch.GetTimestamp();
         previous?.Dispose();
-        var data = previous = new ShelfDataObject(present);
+        // Text the shelf keeps goes as its words too, read now: at most a megabyte from the shelf's own folder.
+        var data = previous = new ShelfDataObject(present, ShelfFormats.DragText(present, i => shelf.ReadText(i.Name)));
         bool image = SetImage(data.Inner, present[0].Path, (int)Math.Round(DragImageDips * island.Scale));
         var dataObject = OleObjects.Wrap<IDataObject>(data);
         var source = OleObjects.Wrap<IDropSource>(new DropSource());
-        log?.Invoke($"drag out: {present.Count} items as {(data.VirtualFiles ? "virtual files" : "CF_HDROP")}, effects {effects}, image {image}, ready in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
+        log?.Invoke($"drag out: {present.Count} items as {string.Join(", ", data.Formats)}, effects {effects}, image {image}, ready in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
 
         if (log is not null)
         {
@@ -153,17 +154,20 @@ internal static unsafe class ShelfDrag
 /// </summary>
 internal sealed unsafe class ShelfDataObject : IDataObject.Interface, IDisposable
 {
-    private const ushort CfHDrop = 15;
+    private const ushort CfText = 1, CfUnicodeText = 13, CfHDrop = 15;
     private static readonly ushort CfDescriptor = (ushort)PInvoke.RegisterClipboardFormat("FileGroupDescriptorW");
     private static readonly ushort CfContents = (ushort)PInvoke.RegisterClipboardFormat("FileContents");
     private static readonly ushort CfPerformed = (ushort)PInvoke.RegisterClipboardFormat("Performed DropEffect");
     private readonly IReadOnlyList<ShelfItem> items;
+    private readonly string? text;
     private readonly FORMATETC[] offered;
 
-    public ShelfDataObject(IReadOnlyList<ShelfItem> items)
+    /// <param name="text">The words to offer before the files, or null for files alone.</param>
+    public ShelfDataObject(IReadOnlyList<ShelfItem> items, string? text = null)
     {
         this.items = items;
-        VirtualFiles = ShelfFormats.AsVirtualFiles(items);
+        this.text = text;
+        Formats = ShelfFormats.DragFormats(items, text is not null);
         IDataObject* shell;
         fixed (Guid* iid = &IDataObject.IID_Guid)
         {
@@ -171,14 +175,19 @@ internal sealed unsafe class ShelfDataObject : IDataObject.Interface, IDisposabl
         }
 
         Inner = shell;
-        offered = VirtualFiles
-            ? [Format(CfDescriptor, -1, TYMED.TYMED_HGLOBAL), Format(CfContents, -1, TYMED.TYMED_ISTREAM | TYMED.TYMED_HGLOBAL)]
-            : [Format(CfHDrop, -1, TYMED.TYMED_HGLOBAL)];
+        offered = [.. Formats.Select(f => f switch
+        {
+            DragFormat.UnicodeText => Format(CfUnicodeText, -1, TYMED.TYMED_HGLOBAL),
+            DragFormat.Text => Format(CfText, -1, TYMED.TYMED_HGLOBAL),
+            DragFormat.Descriptor => Format(CfDescriptor, -1, TYMED.TYMED_HGLOBAL),
+            DragFormat.Contents => Format(CfContents, -1, TYMED.TYMED_ISTREAM | TYMED.TYMED_HGLOBAL),
+            _ => Format(CfHDrop, -1, TYMED.TYMED_HGLOBAL),
+        })];
     }
 
     public IDataObject* Inner { get; private set; }
 
-    public bool VirtualFiles { get; }
+    public IReadOnlyList<DragFormat> Formats { get; }
 
     public void Dispose()
     {
@@ -248,9 +257,13 @@ internal sealed unsafe class ShelfDataObject : IDataObject.Interface, IDisposabl
             return Global(File.ReadAllBytes(items[index].Path), medium);
         }
 
-        return Global(format->cfFormat == CfHDrop
-            ? ShelfFormats.DropFiles([.. items.Select(i => i.Path)])
-            : ShelfFormats.Descriptor([.. items.Select(i => (i.Name, i.Size ?? 0))]), medium);
+        return Global(format->cfFormat switch
+        {
+            CfUnicodeText => ShelfFormats.UnicodeText(text!),
+            CfText => ShelfFormats.AnsiText(text!, (int)PInvoke.GetACP()),
+            CfHDrop => ShelfFormats.DropFiles([.. items.Select(i => i.Path)]),
+            _ => ShelfFormats.Descriptor([.. items.Select(i => (i.Name, i.Size ?? 0))]),
+        }, medium);
     }
 
     public HRESULT GetDataHere(FORMATETC* format, STGMEDIUM* medium) =>
