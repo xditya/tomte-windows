@@ -32,6 +32,19 @@ internal interface IInteractive
     /// content that shows on hover, such as a tile's action row; the host draws the state layer itself.
     /// </summary>
     void Hovered(string? id) { }
+
+    /// <summary>
+    /// A key while the island has the keys and one of this view's targets has focus, before the host's own Tab, arrow,
+    /// Enter and Space handling. True when the view took it: Delete on a row, Left and Right on a seek bar.
+    /// </summary>
+    bool KeyDown(string id, int virtualKey) => false;
+
+    /// <summary>
+    /// The pointer moved over one of this view's targets, at this point of the view's own space. Not called during a
+    /// press the host holds or a <see cref="TryDrag"/> loop. For content that follows the pointer, such as the time
+    /// under it on a seek bar.
+    /// </summary>
+    void PointerMoved(string id, Vector2 at) { }
 }
 
 /// <summary>
