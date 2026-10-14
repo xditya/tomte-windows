@@ -181,9 +181,9 @@ public static class MediaSessions
 }
 
 /// <summary>
-/// Where things sit in the Media panel's body (380 x 98 DIPs under the tab strip), after the design:
-/// art on the left, then title, artist, the progress row and the transport row. The text slots are
-/// where a text renderer draws; the buttons are what a press is tested against.
+/// Where things sit in the Media panel's body (380 x 98 DIPs under the tab strip): art on the left,
+/// then title, artist, the progress row and the transport row. The text slots are where a text
+/// renderer draws; the buttons are what a press is tested against.
 /// </summary>
 public static class MediaPanelLayout
 {

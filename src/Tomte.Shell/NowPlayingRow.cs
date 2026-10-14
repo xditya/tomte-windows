@@ -10,12 +10,12 @@ using Color = Windows.UI.Color;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Compact pill's now-playing row, after the design: the art, the title and four bars that move
-/// while something plays. It shows when the pill is up for an edge push, desktop peek or the
-/// track-change event, and only while something plays. The media tracker is watched from the moment
-/// the pill opens until it closes; the visuals exist only while the row shows.
+/// The Compact pill's now-playing row: the art, the title and four bars that move while something
+/// plays. It shows when the pill is up for an edge push, desktop peek or the track-change event, and
+/// only while something plays. The media tracker is watched from the moment the pill opens until it
+/// closes; the visuals exist only while the row shows.
 /// the row assumes it has the pill's one line to itself. When the timer ring or the shelf
-/// count land, something has to rank them (the design's order is timer, media, shelf count).
+/// count land, something has to rank them (a running timer first, then media, then the shelf count).
 /// </summary>
 internal sealed class NowPlayingRow
 {
@@ -25,7 +25,7 @@ internal sealed class NowPlayingRow
     private static readonly RectangleF Art = new(-67, 8, 22, 22);
     private static readonly RectangleF Title = new(-36, 9, 107, 20);
 
-    // The design's four bars: how far each one reaches and how long one of its breaths takes.
+    // The four bars: how far each one reaches and how long one of its breaths takes.
     private static readonly float[] Reach = [.35f, .62f, .85f, 1f];
     private static readonly double[] Period = [.9, 1.07, 1.24, .9];
 
@@ -108,7 +108,7 @@ internal sealed class NowPlayingRow
         if (view is null)
         {
             Release();
-            // The design's peek pill carries no bars.
+            // The peek pill is ambient and can stay up for hours, so nothing moves in it: no bars.
             view = new View(island.Compositor, bars: reason != CompactReason.Peek);
             view.Root.Opacity = 0;
             island.Dips.Children.InsertAtTop(view.Root);

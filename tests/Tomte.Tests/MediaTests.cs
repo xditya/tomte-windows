@@ -13,7 +13,7 @@ public class MediaTests
 
     private static TimeSpan S(double seconds) => TimeSpan.FromSeconds(seconds);
 
-    // A 195 s track reported at 48 s as of T0, as the design shows it.
+    // A 195 s track reported at 48 s as of T0.
     private static NowPlaying Playing(double rate = 1) =>
         NowPlaying.For("Spotify.exe")
             .WithPlayback(true, rate, All, T0)

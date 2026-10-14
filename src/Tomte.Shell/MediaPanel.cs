@@ -76,7 +76,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func
 
     private sealed class View : IDisposable
     {
-        // The design's icons: a 24 unit box drawn 14 DIPs wide, centred in its button.
+        // The icons are drawn in a 24 unit box, 14 DIPs wide, centred in their button.
         private const float GlyphBox = 24, GlyphSize = 14;
         private const float TitleBarHeight = 10;
 

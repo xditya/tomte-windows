@@ -18,7 +18,7 @@ public class PanelTests
     }
 
     [Fact]
-    public void TabsSitInSpecOrderWhateverOrderTheyRegisterIn()
+    public void TabsSitInStripOrderWhateverOrderTheyRegisterIn()
     {
         var tabs = new PanelTabs();
         tabs.Register(PanelId.Media);
@@ -90,7 +90,7 @@ public class PanelTests
     }
 
     [Fact]
-    public void EveryPanelHasItsSpecSize()
+    public void EveryPanelHasItsSize()
     {
         Assert.Equal((380, 140), PanelSize.Of(PanelId.Media));
         Assert.Equal((520, 300), PanelSize.Of(PanelId.Shortcuts));
