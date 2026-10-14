@@ -40,7 +40,8 @@ public sealed class MediaTracker
     private Manager? manager;
     private Session? picked;
     private NowPlaying? announced;
-    private int watchers, viewers, changePending;
+    private readonly MediaWatchers watchers = new();
+    private int changePending;
     private bool listening, requesting, trackKnown, trackReading, trackStale;
 
     public MediaTracker(Action<Action> notify, Func<DateTimeOffset> now, Action<string>? log = null)
@@ -75,50 +76,69 @@ public sealed class MediaTracker
     public event Action<NowPlaying>? TrackChanged;
 
     /// <summary>
-    /// Start listening. A view watches with the timeline. The track-change event watches without it: some
-    /// apps report their position every second, and every report would run code here while the island is
-    /// hidden.
+    /// Start listening, for position reports and for art as asked. The Media panel wants both; the Compact
+    /// row wants art and no positions, since it draws none; the track-change event wants neither. Some
+    /// apps report their position every second, and every report would run code here for nobody.
     /// </summary>
-    public void Watch(bool timeline = true) => Post(() =>
+    public void Watch(bool timeline = true, bool art = true) => Post(() =>
     {
-        if (timeline && viewers++ == 0 && listening)
+        var flipped = watchers.Add(timeline, art);
+        if (flipped.HasFlag(MediaWatchers.Flip.Listening))
+        {
+            if (manager is not null)
+            {
+                Listen();
+            }
+            else if (!requesting)
+            {
+                requesting = true;
+                _ = RequestAsync();
+            }
+
+            return;
+        }
+
+        // Still asking for the manager: Listen reads what is wanted once it is there.
+        if (!listening)
+        {
+            return;
+        }
+
+        if (flipped.HasFlag(MediaWatchers.Flip.Timeline))
         {
             HookTimeline(true);
         }
 
-        if (watchers++ > 0)
+        if (flipped.HasFlag(MediaWatchers.Flip.Art))
         {
-            return;
-        }
-
-        if (manager is not null)
-        {
-            Listen();
-        }
-        else if (!requesting)
-        {
-            requesting = true;
-            _ = RequestAsync();
+            ReadTrack();
         }
     });
 
-    public void Unwatch(bool timeline = true) => Post(() =>
+    /// <summary>Takes back one <see cref="Watch"/> with the same arguments.</summary>
+    public void Unwatch(bool timeline = true, bool art = true) => Post(() =>
     {
-        if (timeline && --viewers == 0 && listening)
-        {
-            HookTimeline(false);
-        }
-
-        if (--watchers > 0 || !listening)
+        var flipped = watchers.Remove(timeline, art);
+        if (!listening)
         {
             return;
         }
 
-        listening = false;
-        manager!.SessionsChanged -= onSessions;
-        manager.CurrentSessionChanged -= onCurrent;
-        // The last state stays, so a new watch of the same track still has its art.
-        Unhook();
+        if (flipped.HasFlag(MediaWatchers.Flip.Listening))
+        {
+            listening = false;
+            Quietly(() =>
+            {
+                manager!.SessionsChanged -= onSessions;
+                manager.CurrentSessionChanged -= onCurrent;
+            });
+            // The last state stays, so a new watch of the same track still has its art.
+            Unhook();
+        }
+        else if (flipped.HasFlag(MediaWatchers.Flip.Timeline))
+        {
+            HookTimeline(false);
+        }
     });
 
     /// <summary>
@@ -202,7 +222,7 @@ public sealed class MediaTracker
         {
             requesting = false;
             manager ??= requested;
-            if (manager is not null && watchers > 0 && !listening)
+            if (manager is not null && watchers.Listening && !listening)
             {
                 Listen();
             }
@@ -328,7 +348,7 @@ public sealed class MediaTracker
             }
 
             session.MediaPropertiesChanged += onProperties;
-            if (viewers > 0)
+            if (watchers.Timeline)
             {
                 session.TimelinePropertiesChanged += onTimeline;
             }
@@ -340,7 +360,7 @@ public sealed class MediaTracker
 
         // Playback before the timeline: the position is extrapolated with the state it was reported in.
         ReadPlayback();
-        if (viewers > 0)
+        if (watchers.Timeline)
         {
             ReadTimeline();
         }
@@ -348,10 +368,7 @@ public sealed class MediaTracker
         ReadTrack();
     }
 
-    /// <summary>
-    /// The first view came or the last one went: the followed session's position reports and its art are
-    /// wanted, or not.
-    /// </summary>
+    /// <summary>The first watcher that wants positions came or the last one went: listen to the followed session's, or stop.</summary>
     private void HookTimeline(bool on)
     {
         if (picked is not { } session)
@@ -373,7 +390,6 @@ public sealed class MediaTracker
         if (on)
         {
             ReadTimeline();
-            ReadTrack();
         }
     }
 
@@ -438,8 +454,8 @@ public sealed class MediaTracker
         }
 
         trackReading = true;
-        // Art is for a view. The track-change event alone decodes nothing while the island is hidden.
-        _ = ReadTrackAsync(session, current.SessionId, current.Thumbnail, withArt: viewers > 0);
+        // Art only for a watcher that draws it: the track-change event alone decodes nothing while hidden.
+        _ = ReadTrackAsync(session, current.SessionId, current.Thumbnail, withArt: watchers.Art);
     }
 
     private async Task ReadTrackAsync(Session session, string? id, MediaThumbnail? cached, bool withArt)

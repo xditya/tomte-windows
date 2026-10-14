@@ -12,8 +12,8 @@ namespace Tomte.Shell;
 /// <summary>
 /// The Compact pill's now-playing row: the art, the title and four bars that move while something
 /// plays. It shows when the pill is up for an edge push, desktop peek or the track-change event, and
-/// only while something plays. The media tracker is watched from the moment the pill opens until it
-/// closes; the visuals exist only while the row shows.
+/// only while something plays. The media tracker is watched while such a pill is up; the visuals
+/// exist only while the row shows.
 /// the row assumes it has the pill's one line to itself. When the timer ring or the shelf
 /// count land, something has to rank them (a running timer first, then media, then the shelf count).
 /// </summary>
@@ -54,43 +54,51 @@ internal sealed class NowPlayingRow
     /// <summary>The track-change event raised last. The pill that shows for it is this row's to fill.</summary>
     public IslandEvent? Announced { get; set; }
 
+    // Why the pill is up is settled once it is up, so the row decides at ContentReady whether to watch.
+    private bool Mine =>
+        triggers.Compact is CompactReason.Summary or CompactReason.Peek
+        || (triggers.Compact == CompactReason.Event && Announced is not null && ReferenceEquals(triggers.ShownEvent, Announced));
+
     private void OnState(IslandState from, IslandState to)
     {
-        if (to == IslandState.Compact)
-        {
-            ready = false;
-            if (!watching)
-            {
-                watching = true;
-                tracker.Changed += Update;
-                tracker.Watch();
-            }
-        }
-        else if (watching)
+        ready = false;
+        if (watching)
         {
             watching = false;
             tracker.Changed -= Update;
-            tracker.Unwatch();
-            Update();
+            tracker.Unwatch(timeline: false, art: true);
         }
+
+        Update();
     }
 
+    /// <summary>
+    /// Watch only for the row's own pills: the first-run hint, the rambler or another feature's event
+    /// never ask for the media session manager. Art yes, positions no: the row draws no bar.
+    /// </summary>
     private void OnContentReady()
     {
-        if (watching)
+        if (triggers.Machine.State != IslandState.Compact || !Mine)
         {
-            ready = true;
-            Update();
+            return;
         }
+
+        ready = true;
+        if (!watching)
+        {
+            watching = true;
+            tracker.Changed += Update;
+            tracker.Watch(timeline: false, art: true);
+        }
+
+        Update();
     }
 
     private void Update()
     {
         var playing = tracker.Current;
         var reason = triggers.Compact;
-        bool mine = reason is CompactReason.Summary or CompactReason.Peek
-            || (reason == CompactReason.Event && Announced is not null && ReferenceEquals(triggers.ShownEvent, Announced));
-        if (!(watching && ready && mine && playing.IsPlaying))
+        if (!(watching && ready && Mine && playing.IsPlaying))
         {
             if (view is not null)
             {

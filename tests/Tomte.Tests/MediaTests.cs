@@ -197,6 +197,48 @@ public class MediaTests
         Assert.Equal(expected, NowPlaying.Clock(S(seconds)));
     }
 
+    [Fact]
+    public void WatchersStartAndStopListeningPositionsAndArtEachOnce()
+    {
+        var watchers = new MediaWatchers();
+        const MediaWatchers.Flip None = MediaWatchers.Flip.None, Listening = MediaWatchers.Flip.Listening,
+            Timeline = MediaWatchers.Flip.Timeline, Art = MediaWatchers.Flip.Art;
+
+        // The track-change event: titles only, while the island is hidden.
+        Assert.Equal(Listening, watchers.Add(wantsTimeline: false, wantsArt: false));
+        Assert.True(watchers.Listening);
+        Assert.False(watchers.Timeline || watchers.Art);
+
+        // The Compact row: art, no positions. Then the Media panel: both.
+        Assert.Equal(Art, watchers.Add(false, true));
+        Assert.Equal(Timeline, watchers.Add(true, true));
+        Assert.True(watchers.Timeline && watchers.Art);
+
+        // The row goes first: the panel still wants art. The panel goes: positions and art stop, listening goes on.
+        Assert.Equal(None, watchers.Remove(false, true));
+        Assert.Equal(Timeline | Art, watchers.Remove(true, true));
+        Assert.True(watchers.Listening);
+
+        // The event is turned off: nothing listens.
+        Assert.Equal(Listening, watchers.Remove(false, false));
+        Assert.False(watchers.Listening);
+
+        // From nothing, the panel alone starts all three.
+        Assert.Equal(Listening | Timeline | Art, watchers.Add(true, true));
+        Assert.Equal(Listening | Timeline | Art, watchers.Remove(true, true));
+    }
+
+    [Fact]
+    public void TakingBackAWatchThatWasNeverMadeIsAnError()
+    {
+        var watchers = new MediaWatchers();
+        Assert.Throws<InvalidOperationException>(() => watchers.Remove(false, false));
+
+        watchers.Add(false, true);
+        Assert.Throws<InvalidOperationException>(() => watchers.Remove(true, true));
+        Assert.True(watchers.Listening && watchers.Art);
+    }
+
     [Theory]
     // The system's current session wins while it plays.
     [InlineData(new[] { true, true }, 1, 1)]

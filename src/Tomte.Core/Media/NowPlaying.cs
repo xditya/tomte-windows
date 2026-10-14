@@ -181,6 +181,54 @@ public static class MediaSessions
 }
 
 /// <summary>
+/// Who watches the media tracker and what for. Listening, position reports and art each start with the
+/// first watcher that wants them and stop with the last. Add and Remove say which of the three flipped.
+/// </summary>
+public sealed class MediaWatchers
+{
+    private int all, timeline, art;
+
+    [Flags]
+    public enum Flip
+    {
+        None = 0,
+        Listening = 1,
+        Timeline = 2,
+        Art = 4,
+    }
+
+    public bool Listening => all > 0;
+
+    public bool Timeline => timeline > 0;
+
+    public bool Art => art > 0;
+
+    public Flip Add(bool wantsTimeline, bool wantsArt) => Count(1, wantsTimeline, wantsArt);
+
+    /// <summary>Takes back one <see cref="Add"/> with the same arguments.</summary>
+    public Flip Remove(bool wantsTimeline, bool wantsArt)
+    {
+        if (all == 0 || (wantsTimeline && timeline == 0) || (wantsArt && art == 0))
+        {
+            throw new InvalidOperationException("A watch was taken back that was never made.");
+        }
+
+        return Count(-1, wantsTimeline, wantsArt);
+    }
+
+    private Flip Count(int by, bool wantsTimeline, bool wantsArt)
+    {
+        var (wasListening, hadTimeline, hadArt) = (Listening, Timeline, Art);
+        all += by;
+        timeline += wantsTimeline ? by : 0;
+        art += wantsArt ? by : 0;
+        return (wasListening != Listening ? Flip.Listening : 0)
+            | (hadTimeline != Timeline ? Flip.Timeline : 0)
+            | (hadArt != Art ? Flip.Art : 0);
+    }
+}
+
+/// <summary>
 /// Where things sit in the Media panel's body (380 x 98 DIPs under the tab strip): art on the left,
 /// then title, artist, the progress row and the transport row. The text slots are where a text
 /// renderer draws; the buttons are what a press is tested against.

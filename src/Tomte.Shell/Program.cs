@@ -223,14 +223,14 @@ internal static class Program
             }
 
             announcing = settings.MediaTrackChangeEvent;
-            // Without the timeline: a source that reports its position every second must not wake a hidden island.
+            // No positions and no art: a hidden island needs only the title to know the track changed.
             if (announcing)
             {
-                media.Watch(timeline: false);
+                media.Watch(timeline: false, art: false);
             }
             else
             {
-                media.Unwatch(timeline: false);
+                media.Unwatch(timeline: false, art: false);
             }
         }
     }
@@ -475,6 +475,10 @@ internal static class Program
         }
 
         public void Press(System.Numerics.Vector2 point)
+        {
+        }
+
+        public void Wheel(System.Numerics.Vector2 point, int delta)
         {
         }
     }
