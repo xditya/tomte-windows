@@ -13,6 +13,13 @@ public static class ProviderSetup
         _ => throw new ArgumentOutOfRangeException(nameof(config)),
     };
 
+    /// <summary>
+    /// What the configured model is, where the endpoint says so without a cloud call: a local Ollama's vision and context.
+    /// Null for everything else, which then keeps the provider's defaults.
+    /// </summary>
+    public static async Task<ModelInfo?> DescribeAsync(IChatProvider provider, ProviderConfig config, CancellationToken ct = default) =>
+        provider is OpenAICompatibleProvider local && config.DefaultModel is { } model ? await local.DescribeAsync(model, ct) : null;
+
     /// <summary>Builds the provider with the key from Credential Manager, or none for a local endpoint.</summary>
     public static IChatProvider Load(ProviderConfig config, HttpClient http) =>
         Create(config, http, CredentialStore.Read(config.Id));

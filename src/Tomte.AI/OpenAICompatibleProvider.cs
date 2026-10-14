@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -11,7 +12,7 @@ namespace Tomte.AI;
 /// <paramref name="baseUrl"/> ends before <c>/chat/completions</c>, for example
 /// <c>http://localhost:11434/v1</c>. Local servers need no key.
 /// </summary>
-public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, string? key) : IChatProvider
+public sealed partial class OpenAICompatibleProvider(HttpClient http, string baseUrl, string? key) : IChatProvider
 {
     private readonly string _baseUrl = baseUrl.TrimEnd('/');
 
@@ -32,9 +33,12 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
         }
         using (doc)
         {
+            // OpenRouter says what a model reads; plain OpenAI-compatible lists do not.
             return [.. doc.RootElement.GetProperty("data").EnumerateArray().Select(m => new ModelInfo(
                 m.GetProperty("id").GetString()!,
-                m.TryGetProperty("context_length", out var max) && max.ValueKind == JsonValueKind.Number ? max.GetInt32() : null))];
+                m.TryGetProperty("context_length", out var max) && max.ValueKind == JsonValueKind.Number ? max.GetInt32() : null,
+                m.TryGetProperty("architecture", out var a) && a.TryGetProperty("input_modalities", out var input) && input.ValueKind == JsonValueKind.Array
+                    ? input.EnumerateArray().Any(x => x.GetString() == "image") : null))];
         }
     }
 
@@ -158,6 +162,63 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
         }
         return body;
     }
+
+    // What a local Ollama said about each model, kept for the process: base URL and model id, then the answer.
+    private static readonly ConcurrentDictionary<string, ModelInfo> Described = new();
+
+    /// <summary>
+    /// What a local Ollama says about a model: vision from its capabilities (Ollama 0.6 and later) and the context it
+    /// runs the model with: the num_ctx its Modelfile sets, else its default of 4,096 (or the model's own length when
+    /// that is shorter), since the OpenAI endpoint cannot ask for more. Asked only of a loopback endpoint, with a 3 s
+    /// limit; an answer is kept for the process, a miss is asked again. Null for any other server, an unknown model, or an
+    /// Ollama that does not answer.
+    /// </summary>
+    public async Task<ModelInfo?> DescribeAsync(string model, CancellationToken ct = default)
+    {
+        if (!Uri.TryCreate(_baseUrl, UriKind.Absolute, out var uri) || !uri.IsLoopback)
+            return null;
+        string cacheKey = _baseUrl + "\n" + model;
+        if (Described.TryGetValue(cacheKey, out var known))
+            return known;
+
+        string root = _baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? _baseUrl[..^3] : _baseUrl;
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            using var doc = await ProviderHttp.GetJsonAsync(http, ProviderHttp.Post($"{root}/api/show", new JsonObject { ["model"] = model }), key, limit.Token);
+            var show = doc.RootElement;
+            bool? vision = show.TryGetProperty("capabilities", out var caps) && caps.ValueKind == JsonValueKind.Array
+                ? caps.EnumerateArray().Any(c => c.GetString() == "vision") : null;
+            int? trained = show.TryGetProperty("model_info", out var info) && info.ValueKind == JsonValueKind.Object
+                ? info.EnumerateObject().Where(p => p.Name.EndsWith(".context_length", StringComparison.Ordinal) && p.Value.ValueKind == JsonValueKind.Number)
+                    .Select(p => p.Value.TryGetInt32(out int n) ? n : (int?)null).FirstOrDefault()
+                : null;
+            int context = show.TryGetProperty("parameters", out var parameters) && parameters.ValueKind == JsonValueKind.String
+                && NumCtx().Match(parameters.GetString()!) is { Success: true } set
+                    ? int.Parse(set.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)
+                    : Math.Min(trained ?? OllamaDefaultContext, OllamaDefaultContext);
+            var described = new ModelInfo(model, context, vision);
+            Described[cacheKey] = described;
+            return described;
+        }
+        catch (InvalidOperationException)
+        {
+            // An answer in a shape this does not know (a capability that is not a string): the plain answer.
+            return new ModelInfo(model, OllamaDefaultContext, null);
+        }
+        catch (Exception e) when (e is ProviderException or OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            // Another server's 404, a model not pulled yet, Ollama not running or too slow: asked again next time.
+            return null;
+        }
+    }
+
+    // The context Ollama runs a model with when nothing sets num_ctx.
+    private const int OllamaDefaultContext = 4096;
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^num_ctx\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline)]
+    private static partial System.Text.RegularExpressions.Regex NumCtx();
 
     private static JsonNode UserPart(ContentPart part) => part switch
     {

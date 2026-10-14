@@ -19,16 +19,33 @@
 // --automation offers the UI Automation tools (list a window's controls, click, type, select), with the allow and
 // deny lists from the user's settings. Every list and every action asks; type y or n (--yes answers them no). The
 // window in front is this console, so name the window in the prompt ("In Calculator, ...").
+// --file path (repeatable) puts that file on the shelf instead of notes.txt and turns the shelf chip
+// on, so the last file given is read, sized and sent as the palette would; --chip shelf attaches the
+// seeded shelf. --vision marks the model as one that reads images, --context n gives its context size
+// (local endpoints do not say). A send too large for the model asks truncate, chunk or cancel on stdin,
+// or takes --size truncate|chunk|cancel. --provider anthropic|gemini sends to that cloud provider instead,
+// with the key saved in Credential Manager under that name and the model given with --model, which it needs.
+// Without --vision or --context, a local Ollama is asked what the model reads and takes.
 using System.Diagnostics;
 using Tomte.AI;
 using Tomte.AI.Automation;
+using Tomte.AI.Files;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 
+// The palette starts this program again to read a PDF or Word file in a process of its own.
+if (args is ["--extract"])
+    return ChildExtractor.Run();
+
 string? prompt = null, model = "llama3.2:3b";
+bool modelGiven = false;
 decimal? cap = 2m;
-bool yes = false, dry = false, undoAll = false, automationOn = false;
+bool yes = false, dry = false, undoAll = false, vision = false, automationOn = false;
+int? context = null;
+string? size = null;
+var files = new List<string>();
+var kind = ProviderKind.OpenAICompatible;
 var chipsWanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 for (int i = 0; i < args.Length; i++)
 {
@@ -39,23 +56,32 @@ for (int i = 0; i < args.Length; i++)
         case "--dry": dry = true; break;
         case "--undo": undoAll = true; break;
         case "--automation": automationOn = true; break;
-        case "--model": model = args[++i]; break;
+        case "--model": (model, modelGiven) = (args[++i], true); break;
         case "--cap": cap = decimal.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+        case "--file": files.Add(Path.GetFullPath(args[++i])); break;
+        case "--vision": vision = true; break;
+        case "--context": context = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+        case "--size": size = args[++i]; break;
+        case "--provider": kind = Enum.Parse<ProviderKind>(args[++i], ignoreCase: true); break;
         default: prompt = args[i]; break;
     }
 }
 
-if (prompt is null)
+// A cloud provider gets only the model named for it, never the local default.
+if (prompt is null || (kind != ProviderKind.OpenAICompatible && !modelGiven))
 {
-    Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--automation] [--model id] [--cap usd]");
+    Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--automation] [--model id] [--cap usd] [--file path]... [--vision] [--context tokens] [--size truncate|chunk|cancel] [--provider anthropic|gemini]");
     return 1;
 }
 
-var config = new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", model);
+var config = kind == ProviderKind.OpenAICompatible
+    ? new ProviderConfig("ollama", kind, "http://127.0.0.1:11434/v1", model)
+    : new ProviderConfig(kind.ToString().ToLowerInvariant(), kind, null, model);
 using var http = new HttpClient();
-var provider = ProviderSetup.Create(config, http, null);
-var shelf = new InMemoryShelf();
-shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at 10.\nRenew the library card.");
+var provider = kind == ProviderKind.OpenAICompatible ? ProviderSetup.Create(config, http, null) : ProviderSetup.Load(config, http);
+var seeded = new InMemoryShelf();
+seeded.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at 10.\nRenew the library card.");
+IShelf shelf = files.Count == 0 ? seeded : new DiskShelf(files);
 var scratchpad = new InMemoryScratchpad { Text = "Ideas:\n- a quieter alarm" };
 var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
     dry ? (name, input) => BuiltInTools.RunDevice(name, input, dryRun: true) : null);
@@ -77,7 +103,8 @@ var chips = new List<ContextChip>
 };
 foreach (var chip in chips)
 {
-    chip.On = chipsWanted.Contains(chip.Kind.ToString()) || (chip.Kind == ContextKind.Selection && chip.On);
+    chip.On = chipsWanted.Contains(chip.Kind.ToString()) || (chip.Kind == ContextKind.Selection && chip.On)
+        || (chip.Kind == ContextKind.ShelfItem && (chipsWanted.Contains("shelf") || files.Count > 0));
     Console.WriteLine($"chip  {(chip.On ? "[x]" : "[ ]")} {chip.Label}{(chip.Available ? "" : " (unavailable)")}");
 }
 
@@ -87,6 +114,15 @@ var session = new PaletteSession(provider, config, new PaletteOptions { DailyCap
     Prompt = prompt,
     Mcp = mcp,
     Automation = automation,
+    Model = vision || context is not null ? new ModelInfo(model, context, vision ? true : null) : await ProviderSetup.DescribeAsync(provider, config),
+    ChooseSize = (question, _) =>
+    {
+        Console.WriteLine($"\nsize  {question.Reason}");
+        Console.WriteLine($"      [t] {question.Truncate ?? "(cannot truncate)"}\n      [c] {question.Chunk ?? "(cannot chunk)"}\n      [n] {question.Cancel}");
+        var answer = size ?? Console.ReadLine()?.Trim().Trim('\uFEFF').ToLowerInvariant();
+        Console.WriteLine($"      ({(size is null ? "stdin" : "--size")}: {answer ?? "<closed>"})");
+        return Task.FromResult(answer switch { "t" or "truncate" => SizeChoice.Truncate, "c" or "chunk" => SizeChoice.Chunk, _ => SizeChoice.Cancel });
+    },
     ConfirmTool = (request, _) =>
     {
         Console.WriteLine();
@@ -121,8 +157,17 @@ session.DeviceActionExecuted += e =>
     events.Add(e);
     Console.WriteLine($"\n[{clock.ElapsedMilliseconds,6} ms] compact event (4 s): {e.Line}{(e.Undo is null ? "" : "  [undo]")}");
 };
+TokenEstimate? estimate = null;
 session.Changed += () =>
 {
+    if (session.Estimate is { } now && now != estimate)
+    {
+        estimate = now;
+        Console.WriteLine($"\n[{clock.ElapsedMilliseconds,6} ms] estimate: {now.Line}");
+        foreach (var file in now.Files)
+            Console.WriteLine($"         file {file}");
+    }
+
     if (session.ProviderIndicator != indicator)
     {
         indicator = session.ProviderIndicator;
@@ -161,3 +206,19 @@ Console.WriteLine($"scratchpad now: {scratchpad.Text.ReplaceLineEndings(" | ")}"
 Console.WriteLine($"shelf now: {string.Join(", ", shelf.ItemNames)}");
 Console.WriteLine($"send log: {logPath}");
 return session.Status == PaletteStatus.Done ? 0 : 2;
+
+/// <summary>Files from disk as shelf items, the last one given newest, as the shelf lists a drop.</summary>
+internal sealed class DiskShelf(List<string> paths) : IShelf
+{
+    public IReadOnlyList<string> ItemNames => [.. paths.Select(Path.GetFileName).Reverse()!];
+
+    public string? ReadText(string name) => null;
+
+    public string? PathOf(string name) => paths.LastOrDefault(p => string.Equals(Path.GetFileName(p), name, StringComparison.OrdinalIgnoreCase));
+
+    public void CreateFile(string name, string content) => Console.WriteLine($"(the harness does not write {name} to disk)");
+
+    public void Remove(string name)
+    {
+    }
+}

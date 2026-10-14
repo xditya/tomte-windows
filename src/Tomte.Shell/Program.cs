@@ -40,6 +40,9 @@ internal static class Program
     [STAThread]
     private static unsafe int Main(string[] args)
     {
+        if (args is ["--extract"])
+            return RunExtractor();
+
         if (args.Contains("--settings"))
         {
             // --settings [path]: the shell passes the settings file it uses, so both open the same folder.
@@ -215,6 +218,11 @@ internal static class Program
         log?.Dispose();
         return 0;
     }
+
+    // The PDF and Word reader the palette starts: no window, one file from stdin, then exit. Kept out of Main so Tomte.AI
+    // and PdfPig load only in that process.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int RunExtractor() => Tomte.AI.Files.ChildExtractor.Run();
 
     // Kept out of Main so the WinUI assemblies load only in the settings process.
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -424,7 +432,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// --palette "prompt" [--screenshot] [--dry]: the debug driver. Opens the palette on the island, runs the
+    /// --palette "prompt" [--screenshot] [--shelf] [--dry]: the debug driver. Opens the palette on the island, runs the
     /// prompt against local Ollama with the window chip on, an in-memory shelf and the real scratchpad note, logs the
     /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
     /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
@@ -465,6 +473,8 @@ internal static class Program
             };
             chips[1].On = true;
             chips[2].On = Environment.GetCommandLineArgs().Contains("--screenshot");
+            // The read tool reads only a shelf the user attached; --shelf attaches the driver's, with notes.txt.
+            chips[3].On = Environment.GetCommandLineArgs().Contains("--shelf");
             if (lasso is not null)
             {
                 chips.Insert(0, lasso);
@@ -482,8 +492,11 @@ internal static class Program
             await using var mcp = McpTools.For(store.Current.McpServers);
             // --automation offers the UI Automation tools in this run; without it nothing of them is made.
             using var automation = AutomationTools.For(Environment.GetCommandLineArgs().Contains("--automation"), store.Current.UiAutomation, store.Current.AppRules, foreground, () => triggers.OnSecureSurface);
-            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
+            var provider = ProviderSetup.Create(config, http, null);
+            var session = new PaletteSession(provider, config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
             {
+                // Whether the model reads images and how much it takes, from a local Ollama; other servers keep the defaults.
+                Model = await ProviderSetup.DescribeAsync(provider, config),
                 Prompt = prompt,
                 Mcp = mcp,
                 Skills = skills,

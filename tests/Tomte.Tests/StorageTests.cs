@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Reflection;
 using Microsoft.Data.Sqlite;
+using Tomte.AI.Files;
 using Tomte.Core.Storage;
 using Xunit;
 
@@ -643,6 +644,21 @@ internal static class SecondProcess
                 db.Open("slow", StorageTests.Slow).Dispose();
                 Console.WriteLine($"{before} {afterOne} {Timer.ActiveCount}");
                 return 0;
+            case "--extract":
+                // The reader process, as the shell runs it, for the tests that read PDF and Word files.
+                return ChildExtractor.Run();
+            case "spew":
+                // A reader that sends without end, for the test that the parent stops it at the output cap.
+                using (var stdout = Console.OpenStandardOutput())
+                {
+                    var chunk = new byte[1 << 16];
+                    while (true)
+                        stdout.Write(chunk);
+                }
+            case "prepare":
+                return FileTests.PrepareInAnotherProcess(args[1]).GetAwaiter().GetResult();
+            case "measure-child":
+                return FileTests.MeasureChild(args[1], args[2], args[3], int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture)).GetAwaiter().GetResult();
             default:
                 return 2;
         }

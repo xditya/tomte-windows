@@ -282,7 +282,7 @@ public sealed class SkillTests : IDisposable
 
         Assert.Equal(_provider.Requests[1].System, _provider.Requests[0].System);
         Assert.DoesNotContain("notes", _provider.Requests[0].System);
-        Assert.Equal(BuiltInTools.Definitions.Count, _provider.Requests[0].Tools!.Count);
+        Assert.Equal(BuiltInTools.Definitions.Count - 1, _provider.Requests[0].Tools!.Count);  // read_shelf_item waits for the shelf chip.
     }
 
     [Fact]
@@ -479,7 +479,7 @@ public sealed class SkillTests : IDisposable
         Assert.Empty(_devices);
         Assert.Empty(_grants.AlwaysAllowed);
         Assert.True(_grants.NeedsConfirmation(BuiltInTools.OpenUrl, BuiltInTools.Tiers[BuiltInTools.OpenUrl]));
-        Assert.Equal(BuiltInTools.Definitions.Count + 1, _provider.Requests[0].Tools!.Count);
+        Assert.Equal(BuiltInTools.Definitions.Count - 1 + 1, _provider.Requests[0].Tools!.Count);  // read_shelf_item waits for the shelf chip.
         Assert.Contains("allowed-tools", Load("notes").Skills.Single().IgnoredKeys);
     }
 

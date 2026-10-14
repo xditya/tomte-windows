@@ -277,6 +277,8 @@ public sealed class ShelfStore : IShelf
     public string? ReadText(string name) =>
         Items.FirstOrDefault(i => Same(i.Name, name)) is { } item ? ReadTextFile(item.Path) : null;
 
+    public string? PathOf(string name) => Items.FirstOrDefault(i => Same(i.Name, name))?.Path;
+
     /// <summary>A text file on the shelf as content. Replaces an item of the same name. Queued; returns at once.</summary>
     public void CreateFile(string name, string content)
     {

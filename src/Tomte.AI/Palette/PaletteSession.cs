@@ -83,6 +83,9 @@ public interface IPaletteSession
     /// <summary>Palette commands from the skills the user turned on. Picking one puts its Text in Prompt.</summary>
     IReadOnlyList<SkillCommand> Commands { get; }
 
+    /// <summary>The size of the send, set after its files are read and before anything is sent; null before that.</summary>
+    Files.TokenEstimate? Estimate { get; }
+
     event Action? Changed;
 
     Task SendAsync();
@@ -95,7 +98,7 @@ public interface IPaletteSession
 /// palette opens and dropped when it closes; it owns no timers or threads beyond the in-flight
 /// request (whose timeout is the only timer, and it dies with the request).
 /// </summary>
-public sealed class PaletteSession : IPaletteSession
+public sealed partial class PaletteSession : IPaletteSession
 {
     private const string SystemPrompt =
         "You are Tomte, a quiet helper on the user's Windows PC. Answer briefly and plainly. " +
@@ -258,9 +261,17 @@ public sealed class PaletteSession : IPaletteSession
                 tools = [.. tools, .. (await Mcp.ListAsync(ct)).Where(d => !BuiltInTools.Tiers.ContainsKey(d.Name))];
             }
 
+            tools = OfferShelf(tools);
             _offered = [.. tools.Select(t => t.Name)];
 
-            var messages = new List<ChatMessage> { new(ChatRole.User, parts) };
+            // Attached files are read, checked against the model and sized before anything is sent. Each read has its
+            // own limit and the user may take their time over the size question, so the request's time starts after.
+            timeout.CancelAfter(Timeout.InfiniteTimeSpan);
+            if (await PrepareFilesAsync(parts, attached, tools, ct) is not { } first)
+                return;
+            timeout.CancelAfter(_options.Timeout);
+
+            var messages = new List<ChatMessage> { new(ChatRole.User, first) };
             while (true)
             {
                 _indicator = $"Sending to {_config.Id} · {_model}";
@@ -271,7 +282,12 @@ public sealed class PaletteSession : IPaletteSession
                 outputTokens += usage.OutputTokens;
                 messages.Add(new ChatMessage(ChatRole.Assistant, assistant));
                 if (calls.Count == 0)
-                    break;
+                {
+                    // A chunked send goes on with its next part, as a request of its own.
+                    if (!NextPart(messages, timeout))
+                        break;
+                    continue;
+                }
 
                 var results = new List<ContentPart>();
                 bool capped = false;
@@ -290,7 +306,7 @@ public sealed class PaletteSession : IPaletteSession
 
                 if (capped)
                     break;
-                messages.Add(new ChatMessage(ChatRole.User, results));
+                messages.Add(new ChatMessage(ChatRole.User, [.. results, .. TakeReadFiles()]));
             }
 
             Finish(PaletteStatus.Done, null);
@@ -312,7 +328,7 @@ public sealed class PaletteSession : IPaletteSession
             if (sent)
             {
                 var cost = SendLog.Estimate(_options.Prices, _model, inputTokens, outputTokens);
-                _log.Append(new SendLogEntry(Now(), _config.Id, _model, inputTokens, outputTokens, cost, [.. attached, .. _skillFiles],
+                _log.Append(new SendLogEntry(Now(), _config.Id, _model, inputTokens, outputTokens, cost, [.. attached, .. _skillFiles, .. _fileReads],
                     _options.LogContent ? $"{Prompt}\n---\n{AnswerText}" : null));
                 SpentTodayUsd += cost;
             }
@@ -332,7 +348,7 @@ public sealed class PaletteSession : IPaletteSession
     private async Task<(List<ContentPart> Assistant, List<ToolCallPart> Calls, TurnDone Usage)> StreamTurnAsync(List<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken ct)
     {
         // A copy: the list keeps growing, and a request must not change after it was sent.
-        var request = new ChatRequest(_model, [.. messages], Voice ? VoicePrompt : SystemPrompt + Skills?.Prompt + (Automation is null ? null : AutomationTools.Prompt), tools,
+        var request = new ChatRequest(_model, [.. messages], SystemText, tools,
             Voice ? Math.Min(_options.MaxTokens, VoiceMaxTokens) : _options.MaxTokens);
         var assistant = new List<ContentPart>();
         var calls = new List<ToolCallPart>();
@@ -451,6 +467,10 @@ public sealed class PaletteSession : IPaletteSession
             // A long result is cut before the model gets it; the step says so without the user opening it.
             return Step(call, cut == 0 ? summary : $"{summary} {McpTools.CutNote(cut)}", mcpResult.Content, mcpResult.IsError);
         }
+
+        // Shelf files go through the file readers, on the pool.
+        if (call.Name == BuiltInTools.ReadShelfItem)
+            return await ReadShelfFileAsync(call, summary, ct);
 
         // Device actions and the shortcut launcher block; the pool runs them so the island's thread keeps animating. Every
         // other tool stays on the calling thread: the clipboard's owner window belongs to the thread that first used it,
