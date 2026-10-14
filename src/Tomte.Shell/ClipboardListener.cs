@@ -53,8 +53,14 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
         return listener;
     }
 
+    // Without a window there is no thread to post to; posting to no window would land on the caller's own queue.
     public void Put(string text)
     {
+        if (window == HWND.Null)
+        {
+            return;
+        }
+
         lock (gate)
         {
             toPut = text;
@@ -66,6 +72,11 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
     /// <summary>Stops listening and ends the thread. Waits a moment for it, not for an app that hangs on a render.</summary>
     public void Dispose()
     {
+        if (window == HWND.Null)
+        {
+            return;
+        }
+
         PInvoke.PostMessage(window, PInvoke.WM_CLOSE, 0, 0);
         thread.Join(500);
     }
@@ -91,6 +102,12 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
         {
             // Start waits for this; it must come even if the window could not be made.
             ready.Set();
+        }
+
+        // No window, nothing to listen with: the thread ends here rather than wait for a message that cannot come.
+        if (window == HWND.Null)
+        {
+            return;
         }
 
         MSG message;
