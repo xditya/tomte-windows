@@ -372,7 +372,10 @@ internal static partial class Program
     private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, TextRenderer text, Action<string>? log)
     {
         string dir = Path.GetDirectoryName(store.FilePath)!;
-        var shelf = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log);
+        var shelf = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log)
+        {
+            RemoveAfterDragOut = () => store.Current.RemoveAfterDragOut,
+        };
         Jobs.Shelf = shelf;
         // Virtual files are written into the shelf folder as the drop reads them; the drop then goes to the shelf.
         triggers.Drops.Receive = shelf.Receive;

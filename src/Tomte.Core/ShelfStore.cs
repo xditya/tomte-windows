@@ -308,16 +308,26 @@ public sealed class ShelfStore : IShelf
         return Run(() => RemoveAll(ids));
     }
 
-    /// <summary>After a drag out: the references a target moved away leave the shelf. The disk is looked at on the worker.</summary>
-    public Task ForgetMovedAway(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed) => Run(() =>
+    /// <summary>The "Remove from the shelf after dragging out" setting, read as each drag ends.</summary>
+    public Func<bool> RemoveAfterDragOut { get; set; } = () => true;
+
+    /// <summary>
+    /// After a drag out: what <see cref="ShelfFormats.LeaveAfterDrag"/> says leaves the shelf does. The disk is looked at
+    /// on the worker.
+    /// </summary>
+    public Task AfterDragOut(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed)
     {
-        var gone = ShelfFormats.MovedAway(dragged, returned, performed, p => File.Exists(p) || Directory.Exists(p));
-        if (gone.Count > 0)
+        bool removeAfter = RemoveAfterDragOut();
+        return Run(() =>
         {
-            log?.Invoke($"shelf: {gone.Count} moved away by the target, off the shelf");
-            RemoveAll(gone.Select(i => i.Id).ToHashSet());
-        }
-    });
+            var gone = ShelfFormats.LeaveAfterDrag(dragged, returned, performed, removeAfter, p => File.Exists(p) || Directory.Exists(p));
+            if (gone.Count > 0)
+            {
+                log?.Invoke($"shelf: {gone.Count} off the shelf after the drag out");
+                RemoveAll(gone.Select(i => i.Id).ToHashSet());
+            }
+        });
+    }
 
     /// <summary>The item's text: a file of at most 1 MB that is UTF-8, or Unicode with a byte order mark.</summary>
     public string? ReadText(string name) =>

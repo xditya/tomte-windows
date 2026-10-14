@@ -510,13 +510,39 @@ public sealed class ShelfTests : IDisposable
         string moved = Write(user, "moved.txt", "m");
         string stayed = Write(user, "stayed.txt", "s");
         var shelf = Store();
+        shelf.RemoveAfterDragOut = () => false;
         await shelf.Accept(new DroppedItems([moved, stayed], [], null, KeepCopy: false));
         File.Move(moved, Path.Combine(temp, "moved.txt"));
 
-        await shelf.ForgetMovedAway(shelf.Items, ShelfEffect.None, ShelfEffect.Move);
+        await shelf.AfterDragOut(shelf.Items, ShelfEffect.None, ShelfEffect.Move);
         Assert.Equal(["stayed.txt"], shelf.ItemNames);
-        await shelf.ForgetMovedAway(shelf.Items, ShelfEffect.Copy, ShelfEffect.None);
+        await shelf.AfterDragOut(shelf.Items, ShelfEffect.Copy, ShelfEffect.None);
         Assert.Equal(["stayed.txt"], shelf.ItemNames);
+    }
+
+    [Fact]
+    public async Task ADragTheTargetTookTakesItsItemsOffTheShelfAndNeverTheUsersFiles()
+    {
+        string mine = Write(user, "mine.txt", "mine");
+        string stick = Write(usb, "stick.txt", "stick");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([mine, stick], [], "a note", KeepCopy: false));
+        var copy = shelf.Items.Single(i => i.Kind == ShelfKind.Copy);
+        var note = shelf.Items.Single(i => i.Kind == ShelfKind.Content);
+
+        // Refused or cancelled: everything stays.
+        await shelf.AfterDragOut(shelf.Items, ShelfEffect.None, ShelfEffect.None);
+        Assert.Equal(3, shelf.Items.Count);
+
+        await shelf.AfterDragOut(shelf.Items, ShelfEffect.Copy, ShelfEffect.None);
+        Assert.Empty(shelf.Items);
+        Assert.True(File.Exists(mine) && File.Exists(stick));
+        // The shelf's own files stay for this process, as a target may read them later; the next one deletes them.
+        Assert.True(File.Exists(copy.Path) && File.Exists(note.Path));
+        var next = Store();
+        await next.Load();
+        Assert.False(File.Exists(copy.Path) || File.Exists(note.Path));
+        Assert.True(File.Exists(mine) && File.Exists(stick));
     }
 
     [Fact]
@@ -685,17 +711,22 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
-    public void OnlyAReferenceTheTargetMovedAwayLeavesTheShelf()
+    public void WhatLeavesTheShelfAfterADragOut()
     {
         var moved = Item(ShelfKind.Reference, @"C:\gone.txt");
         var stayed = Item(ShelfKind.Reference, @"C:\here.txt");
         var copy = Item(ShelfKind.Copy, @"C:\shelf\copy.txt");
-        bool Exists(string p) => p != @"C:\gone.txt" && p != @"C:\shelf\copy.txt";
+        bool Exists(string p) => p != @"C:\gone.txt";
 
-        // Explorer's same-volume move: DoDragDrop says none, "Performed DropEffect" says move.
-        Assert.Equal([moved], ShelfFormats.MovedAway([moved, stayed, copy], ShelfEffect.None, ShelfEffect.Move, Exists));
-        Assert.Equal([moved], ShelfFormats.MovedAway([moved, stayed], ShelfEffect.Move, ShelfEffect.None, Exists));
-        Assert.Empty(ShelfFormats.MovedAway([moved, stayed], ShelfEffect.Copy, ShelfEffect.Copy, Exists));
+        // Off: only a reference the target moved away. Explorer's same-volume move says none, "Performed DropEffect" says move.
+        Assert.Equal([moved], ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.None, ShelfEffect.Move, false, Exists));
+        Assert.Equal([moved], ShelfFormats.LeaveAfterDrag([moved, stayed], ShelfEffect.Move, ShelfEffect.None, false, Exists));
+        Assert.Empty(ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.Copy, ShelfEffect.Copy, false, Exists));
+
+        // On: everything a target took, copied or moved; nothing when it took nothing.
+        Assert.Equal([moved, stayed, copy], ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        Assert.Equal([moved, stayed], ShelfFormats.LeaveAfterDrag([moved, stayed], ShelfEffect.None, ShelfEffect.Move, true, Exists));
+        Assert.Empty(ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.None, ShelfEffect.None, true, Exists));
     }
 
     [Fact]

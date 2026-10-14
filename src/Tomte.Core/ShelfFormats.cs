@@ -202,11 +202,22 @@ public static class ShelfFormats
         items.All(i => i.Kind == ShelfKind.Reference) ? ShelfEffect.Copy | ShelfEffect.Move : ShelfEffect.Copy;
 
     /// <summary>
-    /// The items that left the shelf with a drag: references the target moved away. Explorer's same-volume move returns
-    /// none and writes "Performed DropEffect" instead, so both are read; the file being gone is what decides.
+    /// The items that leave the shelf after a drag out. Explorer's same-volume move returns none from DoDragDrop and
+    /// writes "Performed DropEffect" instead, so both are read. With <paramref name="removeAfter"/> on, every item of a
+    /// drop the target took: for a reference only its entry, its file stays where it is; the shelf's own copy goes with
+    /// its entry, as the drop copied it (nothing the shelf keeps itself is offered for a move). Off, or when the target
+    /// took nothing, only references the target moved away, whose files are gone.
     /// </summary>
-    public static List<ShelfItem> MovedAway(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed, Func<string, bool> exists) =>
-        ((returned | performed) & ShelfEffect.Move) == 0 ? [] : [.. dragged.Where(i => i.Kind == ShelfKind.Reference && !exists(i.Path))];
+    public static List<ShelfItem> LeaveAfterDrag(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed, bool removeAfter, Func<string, bool> exists)
+    {
+        var effect = returned | performed;
+        if (removeAfter && effect != ShelfEffect.None)
+        {
+            return [.. dragged];
+        }
+
+        return (effect & ShelfEffect.Move) == 0 ? [] : [.. dragged.Where(i => i.Kind == ShelfKind.Reference && !exists(i.Path))];
+    }
 }
 
 /// <summary>
