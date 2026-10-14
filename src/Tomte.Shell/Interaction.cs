@@ -21,6 +21,12 @@ internal interface IInteractive
     void Activate(string id);
 
     /// <summary>
+    /// The same, saying how: the host calls this one. A view where a click, a double click and Enter mean different
+    /// things (a shelf tile: select, open, open) answers it; any other leaves it to <see cref="Activate(string)"/>.
+    /// </summary>
+    void Activate(string id, ActivateBy by) => Activate(id);
+
+    /// <summary>
     /// A press on a <see cref="Target.Draggable"/> target, at this point of the view's own space. Runs DragDetect and the
     /// drag itself and returns true if a drag happened; false means the button came up without one, and the host takes
     /// it as a click.

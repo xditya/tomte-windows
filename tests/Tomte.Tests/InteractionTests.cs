@@ -61,6 +61,27 @@ public class InteractionTests
     }
 
     [Fact]
+    public void AGroupIsOneTabStopEnteredAtItsFirstMember()
+    {
+        // A prompt, three chips in group 1 (the first one disabled), and a Send button.
+        Target[] list =
+        [
+            At("prompt", 0, 0), At("chip-a", 0, 40, enabled: false, group: 1), At("chip-b", 40, 40, group: 1),
+            At("chip-c", 80, 40, group: 1), At("send", 120, 0),
+        ];
+
+        // Tab from the prompt enters the group at its first enabled chip; Tab from any chip leaves the group.
+        Assert.Equal(2, Target.Next(list, 0, 1));
+        Assert.Equal(4, Target.Next(list, 2, 1));
+        Assert.Equal(4, Target.Next(list, 3, 1));
+        // Shift+Tab from Send enters the group at its first enabled chip too; from a chip it goes back to the prompt.
+        Assert.Equal(2, Target.Next(list, 4, -1));
+        Assert.Equal(0, Target.Next(list, 3, -1));
+        // A list that is one group: Tab keeps the focus where it is.
+        Assert.Equal(1, Target.Next([At("a", 0, 0, group: 2), At("b", 30, 0, group: 2)], 1, 1));
+    }
+
+    [Fact]
     public void ArrowsMoveWithinAGroupByWhereTargetsAre()
     {
         // Two rows of three tiles in group 1, a disabled tile at the end of the second row and a button in no group.
