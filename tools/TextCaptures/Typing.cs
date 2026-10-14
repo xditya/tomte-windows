@@ -11,6 +11,7 @@ using Windows.UI.Composition;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Direct3D11;
+using Windows.Win32.UI.Controls.RichEdit;
 using Windows.Win32.System.ProcessStatus;
 using Windows.Win32.System.WinRT;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
@@ -53,15 +54,23 @@ internal static unsafe class Typing
 
     /// <summary>
     /// A text box for a capture: the services sized for <paramref name="box"/> at the scale, holding the text, and with
-    /// the keys and the caret at <paramref name="caret"/> when one is given.
+    /// the keys and the caret at <paramref name="caret"/> when one is given, its Markdown styled as the note's is when
+    /// <paramref name="markdown"/>.
     /// </summary>
-    public static TextServices Captured(string text, float fontDips, RectangleF box, double scale, int? caret)
+    public static TextServices Captured(string text, float fontDips, RectangleF box, double scale, int? caret, bool markdown = false)
     {
         Prepare();
-        var services = new TextServices(window, multiline: true, fontDips);
+        var services = new TextServices(window, multiline: true, fontDips) { Rich = markdown };
         services.Resize(PixelGrid.Cover(box.Width, scale), PixelGrid.Cover(box.Height, scale), EditorScale.Zoom(scale, TextServices.SystemDpi));
         services.Activate();
         services.Text = text;
+        if (markdown)
+        {
+            // As the note styles itself; the looks stay in the services after the styling is let go.
+            using var style = new NoteStyle(services);
+            style.Apply(services.Text, 0, services.Text.Length);
+        }
+
         if (caret is int at)
         {
             services.Focus();
@@ -104,6 +113,12 @@ internal static unsafe class Typing
 
         Prompt(queue, graphics);
         Note(queue, graphics, dir);
+        Styled(queue, graphics, dir);
+        if (measure)
+        {
+            StyleTimes(queue, graphics, dir);
+        }
+
         Paints(queue, graphics);
         Undo(queue, graphics);
         Pump();
@@ -222,6 +237,254 @@ internal static unsafe class Typing
         Check("a key after it lands where the caret is", note.Text == "one!\ntwo\nthree", Esc(note.Text));
         note.FlushAsync().GetAwaiter().GetResult();
         Log($"note in the store: \"{Esc(note.Text)}\"");
+    }
+
+    // The note's Markdown styled in place: every construct looks as it should, the text stays what was typed, the caret
+    // and the selection stay, an edit restyles its lines, undo only undoes text, and the box's own shortcuts do nothing.
+    private static void Styled(Windows.System.DispatcherQueue queue, CompositionGraphicsDevice graphics, string dir)
+    {
+        const string text = "# Plan\nSome **bold**, *it*, ~~old~~ and `code`.\n- [x] done item\n- [ ] open item\n"
+            + "1. [link](https://x.y) and https://example.com\n```\nfenced\n```\nafter";
+        var note = new ScratchpadNote(new TomteDb(Path.Combine(dir, "note-db", "styled.db")));
+        note.LoadAsync().GetAwaiter().GetResult();
+        note.Text = text;
+        using var box = Box(queue, graphics, new RectangleF(0, 0, 468, 220), 1.5);
+        using var binding = new NoteEditor(box, note, queue, new StringBuilder());
+        box.Focus();
+        Pump();
+        var s = box.Services;
+        int At(string what) => text.IndexOf(what, StringComparison.Ordinal);
+        Check("styling leaves the text as typed", s.Text == text, Esc(s.Text));
+        var hash = Look(s, 0);
+        var heading = Look(s, At("Plan"));
+        Check("a heading is larger and semibold, its # dimmed", heading.Size == 18 && heading.Weight == 600 && heading.Fore == White && hash.Fore == Dim && hash.Size == 18, $"{heading} / {hash}");
+        Check("**bold** is bold with its markers dimmed", Look(s, At("bold")).Weight == 700 && Look(s, At("**bold")).Fore == Dim, $"{Look(s, At("bold"))}");
+        Check("*italic* is italic", Look(s, At("it*")).Italic && !Look(s, At("*it")).Italic, $"{Look(s, At("it*"))}");
+        Check("~~strike~~ is struck", Look(s, At("old~~")).Struck && Look(s, At("~~old")).Fore == Dim, $"{Look(s, At("old~~"))}");
+        var code = Look(s, At("code`"));
+        Check("`code` is monospace on a faint background", code.Font == "Consolas" && code.Back == CodeBack && code.Fore == CodeText, $"{code}");
+        var done = Look(s, At("done"));
+        var box1 = Look(s, At("- [x]"));
+        Check("a checked task is dimmed and struck, its box dimmed only", done.Struck && done.Fore == Dim && box1.Fore == Dim && !box1.Struck, $"{done} / {box1}");
+        var open = Look(s, At("open"));
+        Check("an open task is plain, a list item hangs", !open.Struck && open.Fore == White && open.Hang > 10, $"{open}");
+        var link = Look(s, At("link"));
+        var address = Look(s, At("x.y"));
+        var bare = Look(s, At("example.com"));
+        Check("a link's text is a link, its address dimmed; a bare address is a link", link.Fore == LinkColor && address.Fore == Dim && bare.Fore == LinkColor, $"{link} / {address} / {bare}");
+        var fenced = Look(s, At("fenced"));
+        var fence = Look(s, At("```"));
+        Check("a fenced block is monospace, its fences dimmed", fenced.Font == "Consolas" && fence.Font == "Consolas" && fence.Fore == Dim, $"{fenced} / {fence}");
+        var plain = Look(s, At("after"));
+        Check("plain text is the box's own look", plain is { Font: TextStyle.Ui, Size: 13, Weight: 400, Italic: false, Struck: false, Fore: White, Hang: 0 }, $"{plain}");
+
+        // An edit restyles its lines as it is typed, a key and a paint at a time, and leaves the caret after it.
+        var keys = new Keys(box);
+        s.Selection = (text.Length, text.Length);
+        foreach (char c in " **x**")
+        {
+            keys.Type(c.ToString());
+            Pump();
+        }
+
+        Check("typing **x** makes it bold at once and the caret stays at the end", Look(s, s.Text.Length - 3).Weight == 700 && s.Selection == (s.Text.Length, s.Text.Length) && note.Text == s.Text, $"{Look(s, s.Text.Length - 3)} caret {s.Selection}");
+
+        // Undo undoes text only: the styling between the keys is no step of its own, and the typing is one step, as
+        // in a box with nothing styled.
+        keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+        Pump();
+        Check("one Ctrl+Z takes the typed run out, and its look with it", s.Text == text && Look(s, At("after")) == plain, Esc(s.Text[^12..]));
+        s.Selection = (0, 0);
+        keys.Press(VIRTUAL_KEY.VK_DELETE);
+        Pump();
+        keys.Press(VIRTUAL_KEY.VK_DELETE);
+        Pump();
+        Check("taking the # away makes the heading plain", Look(s, 0) is { Size: 13, Weight: 400 } && s.Text.StartsWith("Plan\n", StringComparison.Ordinal), $"{Look(s, 0)}");
+        keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+        keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+        Pump();
+        Check("Ctrl+Z puts the # back, a heading again", s.Text == text && Look(s, At("Plan")) == heading, $"\"{Esc(s.Text[..8])}\" {Look(s, At("Plan"))}");
+
+        // The box's own formatting shortcuts do nothing in the note; a rich box without the note's keys takes them. The
+        // selection keeps its place.
+        VIRTUAL_KEY[] shortcuts = [VIRTUAL_KEY.VK_E, VIRTUAL_KEY.VK_R, VIRTUAL_KEY.VK_2, VIRTUAL_KEY.VK_OEM_PLUS, VIRTUAL_KEY.VK_B];
+        using (var other = Box(queue, graphics, new RectangleF(0, 0, 468, 220), 1.5))
+        {
+            other.Services.Rich = true;
+            other.Services.Text = "after";
+            other.Focus();
+            var took = new List<VIRTUAL_KEY>();
+            foreach (var vk in shortcuts)
+            {
+                string before = Format(other.Services, 0);
+                other.Services.Selection = (0, 5);
+                new Keys(other).Press(vk, ctrl: true);
+                if (Format(other.Services, 0) != before)
+                {
+                    took.Add(vk);
+                }
+            }
+
+            Log($"a rich box without the note's keys formats on Ctrl with: {string.Join(", ", took)}");
+        }
+
+        int after = At("after");
+        string unformatted = Format(s, after);
+        foreach (var vk in shortcuts)
+        {
+            s.Selection = (after, after + 5);
+            keys.Press(vk, ctrl: true);
+        }
+
+        Pump();
+        Check("in the note those shortcuts change nothing", Format(s, after) == unformatted && s.Text == text && s.Selection == (after, after + 5), $"{Format(s, after)} {s.Selection}");
+
+        // A fence opened above turns what follows into code; closing it again turns it back.
+        s.Selection = (At("after"), At("after"));
+        keys.Type("```\n");
+        Pump();
+        Check("a new fence makes the lines after it code", Look(s, s.Text.IndexOf("after", StringComparison.Ordinal)).Font == "Consolas", $"{Look(s, s.Text.IndexOf("after", StringComparison.Ordinal))}");
+        keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+        Pump();
+        Check("undoing it makes them plain again", s.Text == text && Look(s, At("after")) == plain, $"{Look(s, At("after"))}");
+
+        // Nothing is restyled while an input method composes. Offscreen there is no input method: the services start a
+        // composition on WM_IME_STARTCOMPOSITION, take no typed characters then and never end it, so the text changes
+        // as a rambler note would change it, and the next key the input method did not take ends the composition.
+        box.Key(PInvoke.WM_IME_STARTCOMPOSITION, 0, 0, out _);
+        Log($"WM_IME_STARTCOMPOSITION offscreen: the services report a composition: {s.Composing}");
+        s.Replace(new Splice(s.Text.Length, 0, " **y**"));
+        Pump();
+        bool unstyled = Look(s, s.Text.Length - 3).Weight != 700;
+        box.Key(PInvoke.WM_IME_ENDCOMPOSITION, 0, 0, out _);
+        keys.Press(VIRTUAL_KEY.VK_END);
+        Pump();
+        Check("nothing is restyled while composing, a key after it restyles", s.Text.EndsWith(" **y**", StringComparison.Ordinal) && unstyled && !s.Composing && Look(s, s.Text.Length - 3).Weight == 700,
+            $"\"{Esc(s.Text[^8..])}\" unstyled while composing {unstyled}, composing {s.Composing}, {Look(s, s.Text.Length - 3)}");
+
+        // The services zoom the text for the monitor's scale but not the indents: on a 100% monitor they are set again.
+        box.Place(box.Box, 1);
+        Pump();
+        float zoomed = Look(s, At("open")).Hang;
+        Check("at another scale a list item's hang follows the zoom", MathF.Abs(zoomed - open.Hang * s.Zoom) < 0.2f, $"{zoomed} at zoom {s.Zoom:F3}, {open.Hang} at 1");
+    }
+
+    // How long styling takes on the island's thread, in a note of 2,000 lines of Markdown: opening it, a key in its
+    // middle, and a fence typed there, which restyles everything after it.
+    private static void StyleTimes(Windows.System.DispatcherQueue queue, CompositionGraphicsDevice graphics, string dir)
+    {
+        var lines = Enumerable.Range(0, 2000).Select(i => (i % 5) switch
+        {
+            0 => $"## Section {i}",
+            1 => $"- item {i} with **bold** and `code`",
+            2 => $"Plain line {i} with *italic* and a [link](https://example.com/{i})",
+            3 => $"1. [ ] task {i}",
+            _ => "",
+        });
+        // A box bound to a note of this text, opened and painted, with each paint's styling timed.
+        (EditorView, NoteEditor, List<double>) Opened(string text, string name)
+        {
+            var note = new ScratchpadNote(new TomteDb(Path.Combine(dir, "note-db", name)));
+            note.LoadAsync().GetAwaiter().GetResult();
+            note.Text = text;
+            var box = Box(queue, graphics, new RectangleF(0, 0, 468, 182), 1.5);
+            var times = new List<double>();
+            var binding = new NoteEditor(box, note, queue, new StringBuilder());
+            var restyle = box.BeforePaint!;
+            box.BeforePaint = () =>
+            {
+                long t = Stopwatch.GetTimestamp();
+                restyle();
+                times.Add(Stopwatch.GetElapsedTime(t).TotalMilliseconds);
+            };
+            box.Focus();
+            Pump();
+            Log($"styling: a note of {text.Count(c => c == '\n') + 1:N0} lines ({text.Length:N0} characters) styled on open in {times.Max():F1} ms");
+            return (box, binding, times);
+        }
+
+        var (smallBox, small, _) = Opened(string.Join("\n", lines.Take(100)), "times-100.db");
+        small.Dispose();
+        smallBox.Dispose();
+        string text = string.Join("\n", lines);
+        var (box, binding, times) = Opened(text, "times.db");
+        using var disposeBox = box;
+        using var disposeBinding = binding;
+        int middle = text.IndexOf("Plain line 1002", StringComparison.Ordinal) + "Plain line 1002".Length;
+        box.Services.Selection = (middle, middle);
+        var keys = new Keys(box);
+        times.Clear();
+        string typed = " and a **few** more words with `code` in them, typed one key at a time.";
+        foreach (char c in typed)
+        {
+            keys.Type(c.ToString());
+            Pump();
+        }
+
+        var each = times.Where(t => t > 0).Order().ToList();
+        Log($"styling: per key in the middle of it, {each.Count} keys: median {each[each.Count / 2]:F3} ms, p95 {each[(int)(each.Count * 0.95)]:F3} ms, max {each[^1]:F3} ms");
+        Check("styling after a key in a 2,000-line note takes under 2 ms (median)", each[each.Count / 2] < 2, $"{each[each.Count / 2]:F3} ms");
+        times.Clear();
+        keys.Type("\n```");
+        Pump();
+        Log($"styling: a fence typed in the middle, which restyles the 1,000 lines after it: {times.Max():F1} ms");
+    }
+
+    // COLORREF, as the note's styling sets them.
+    private const int White = 0xFFFFFF, Dim = 0xA3A3A3, LinkColor = 0xFFA86F, CodeText = 0xDED6D6, CodeBack = 0x2C2A2A;
+
+    private readonly record struct CharLook(string Font, float Size, int Weight, bool Italic, bool Struck, int Fore, int Back, float Hang);
+
+    // What a formatting shortcut can change at a place: its look, and its line's alignment and spacing, its subscript.
+    private static string Format(TextServices services, int at)
+    {
+        var document = services.Document();
+        ITextRange* range;
+        document->Range(at, at + 1, &range);
+        ITextFont* font;
+        ITextPara* para;
+        range->GetFont(&font);
+        range->GetPara(&para);
+        int align, sub;
+        float spacing;
+        para->GetAlignment(&align);
+        para->GetLineSpacing(&spacing);
+        font->GetSubscript(&sub);
+        para->Release();
+        font->Release();
+        range->Release();
+        document->Release();
+        return $"{Look(services, at)}, alignment {align}, spacing {spacing}, subscript {sub}";
+    }
+
+    // How the character at a place in a box looks, sizes in DIPs, and how far its line's wrapped lines hang.
+    private static CharLook Look(TextServices services, int at)
+    {
+        var document = services.Document();
+        ITextRange* range;
+        document->Range(at, at + 1, &range);
+        ITextFont* font;
+        ITextPara* para;
+        range->GetFont(&font);
+        range->GetPara(&para);
+        BSTR name;
+        float size, hang;
+        int weight, italic, struck, fore, back;
+        font->GetName(&name);
+        font->GetSize(&size);
+        font->GetWeight(&weight);
+        font->GetItalic(&italic);
+        font->GetStrikeThrough(&struck);
+        font->GetForeColor(&fore);
+        font->GetBackColor(&back);
+        para->GetLeftIndent(&hang);
+        var look = new CharLook(name.ToString() ?? "", MathF.Round(size / 0.75f, 1), weight, italic != 0, struck != 0, fore, back, MathF.Round(hang / 0.75f, 1));
+        PInvoke.SysFreeString(name);
+        para->Release();
+        font->Release();
+        range->Release();
+        document->Release();
+        return look;
     }
 
     // Typed before the note could be read: kept, and in once it opens, Backspace included.

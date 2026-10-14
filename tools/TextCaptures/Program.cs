@@ -238,6 +238,7 @@ internal static unsafe partial class Program
             new("shelf-drop", IslandGeometry.ShelfDrop, ShelfDrop),
             new("shortcuts", Panel(PanelSize.Shortcuts), Shortcuts),
             new("scratchpad", Panel(PanelSize.Scratchpad), c => Scratchpad(c, "Call Mom\nSubscribe to the newsletter about small tools, the one with the long name that wraps over two lines\nGym 6:00 PM")),
+            new("scratchpad-markdown", Panel(PanelSize.Scratchpad), c => Scratchpad(c, MarkdownNote)),
             new("palette-prompt", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, "What does this error mean?", Chips(false), "Nothing sent", [], 0, 0.03m)),
             new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, StreamingHeight()), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m)),
             new("palette-ai-off", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0)),
@@ -480,9 +481,12 @@ internal static unsafe partial class Program
         }
 
         c.RoundRect(Offset(layout.Note, body), ScratchpadPanelLayout.Corner, 0x0FFFFFFF);
-        using var editor = Typing.Captured(note, ScratchpadPanelLayout.NoteSize, layout.Editor, c.Scale, note.Length);
+        using var editor = Typing.Captured(note, ScratchpadPanelLayout.NoteSize, layout.Editor, c.Scale, note.Length, markdown: true);
         c.Editor(editor, layout.Editor, body);
     }
+
+    private const string MarkdownNote = "# Saturday\n- [x] Milk and **eggs**\n- [ ] Bread, ~~rye~~ the *sourdough* one from the bakery on the corner, before it sells out at ten\n"
+        + "\t- if it is gone, the rye\n## Calls\n1. Dentist `555 0100`, see [the clinic](https://example.com/clinic)\n```\ngit pull --rebase\n```";
 
     private static (string, bool)[] Chips(bool selection) =>
     [
