@@ -17,19 +17,47 @@ namespace Tomte.Shell;
 /// Text on the island. Views ask it for <see cref="TextVisual"/>s and place them in DIPs inside a container that
 /// hangs off <see cref="IslandWindow.Dips"/> (a panel body, a Compact view's root). Each visual is a sprite whose
 /// surface is drawn once per run and scale, never per frame. The Direct2D device behind them lives while any
-/// visual does: it is made off the UI thread when the first one appears and released when the last one goes,
-/// which is when the island hides. A scale change redraws every visual at the new scale.
+/// visual does: it is made off the UI thread when the first one appears and released a turn after the last one
+/// goes, which is when the island hides (a view that rebuilds keeps it). A scale change redraws every visual.
 /// </summary>
 internal sealed class TextRenderer
 {
     private readonly List<TextVisual> live = [];
     private readonly Action<string>? log;
-    private Task<TextDevice>? making;
+    private readonly SharedDevice<TextDevice> device;
+    private double madeInMs;
 
     public TextRenderer(IslandWindow island, Action<string>? log)
     {
         Island = island;
         this.log = log;
+        device = new SharedDevice<TextDevice>(
+            () => Task.Run(() =>
+            {
+                long started = Stopwatch.GetTimestamp();
+                var made = new TextDevice(island.Compositor);
+                madeInMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+                return made;
+            }),
+            release => island.Queue.TryEnqueue(() =>
+            {
+                bool had = device!.Value is not null;
+                release();
+                if (had && device.Value is null)
+                {
+                    log?.Invoke("text: device released");
+                }
+            }));
+        device.Ready += () =>
+        {
+            log?.Invoke($"text: device in {madeInMs:F1} ms, off the UI thread");
+            foreach (var visual in live.ToArray())
+            {
+                visual.Draw();
+            }
+        };
+        // No device: the text stays undrawn and the rest of the island works.
+        device.Failed += e => log?.Invoke($"text: no device: {e.Message}");
         // The first layout in a process takes about 25 ms (the DirectWrite factory, the font, the interop code).
         // Paid here, at start-up with nothing on screen, instead of in the middle of the first reveal; the
         // factory and the formats then stay for the life of the process, about 1 MB.
@@ -48,18 +76,14 @@ internal sealed class TextRenderer
     internal IslandWindow Island { get; }
 
     /// <summary>Null until the device has been made, and again once the last visual is gone.</summary>
-    internal TextDevice? Device { get; private set; }
+    internal TextDevice? Device => device.Value;
 
     /// <summary>A text visual inside <paramref name="host"/>, empty until shown. Dispose it with the view.</summary>
     public TextVisual Create(ContainerVisual host)
     {
         var visual = new TextVisual(this, host);
         live.Add(visual);
-        if (Device is null)
-        {
-            Make();
-        }
-
+        device.Add();
         return visual;
     }
 
@@ -68,51 +92,7 @@ internal sealed class TextRenderer
     internal void Released(TextVisual visual)
     {
         live.Remove(visual);
-        if (live.Count == 0 && Device is not null)
-        {
-            Device.Dispose();
-            Device = null;
-            log?.Invoke("text: device released");
-        }
-    }
-
-    private async void Make()
-    {
-        if (making is not null)
-        {
-            return;
-        }
-
-        long started = Stopwatch.GetTimestamp();
-        TextDevice made;
-        try
-        {
-            making = Task.Run(() => new TextDevice(Island.Compositor));
-            made = await making;
-        }
-        catch (Exception e)
-        {
-            // No device: the text stays undrawn and the rest of the island works.
-            log?.Invoke($"text: no device: {e.Message}");
-            return;
-        }
-        finally
-        {
-            making = null;
-        }
-
-        if (live.Count == 0)
-        {
-            made.Dispose();
-            return;
-        }
-
-        Device = made;
-        log?.Invoke($"text: device in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1} ms, off the UI thread");
-        foreach (var visual in live.ToArray())
-        {
-            visual.Draw();
-        }
+        device.Remove();
     }
 }
 

@@ -217,4 +217,87 @@ public class TextTests
         Assert.Equal((0, 0), block.Pixels);
         Assert.False(block.Set(new TextRun("", Title, 272), 1.5));
     }
+
+    [Fact]
+    public void TheDeviceLivesWhileTextShowsAndGoesATurnAfterTheLastRun()
+    {
+        var turns = new Queue<Action>();
+        int made = 0;
+        var device = new SharedDevice<Fake>(() => Task.FromResult(new Fake(++made)), turns.Enqueue);
+
+        // A panel shows with three runs: one device.
+        device.Add();
+        device.Add();
+        device.Add();
+        var first = device.Value!;
+        Assert.Equal(1, made);
+        // It rebuilds its rows in one turn, every run going and new ones coming: the same device stays.
+        device.Remove();
+        device.Remove();
+        device.Remove();
+        device.Add();
+        device.Add();
+        Run(turns);
+        Assert.Same(first, device.Value);
+        Assert.False(first.Disposed);
+        // It hides: every run goes, and a turn later so does the device.
+        device.Remove();
+        device.Remove();
+        Assert.False(first.Disposed);
+        Run(turns);
+        Assert.True(first.Disposed);
+        Assert.Null(device.Value);
+        Assert.Equal(0, device.Users);
+        // The next show makes a new one.
+        device.Add();
+        Assert.Equal(2, device.Value!.Number);
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            device.Remove();
+            device.Remove();
+        });
+
+        static void Run(Queue<Action> turns)
+        {
+            while (turns.TryDequeue(out var turn))
+            {
+                turn();
+            }
+        }
+    }
+
+    [Fact]
+    public void ADeviceThatLandsAfterTheLastRunWentIsReleasedAtOnce()
+    {
+        var saved = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(null);
+        try
+        {
+            var landing = new TaskCompletionSource<Fake>();
+            var device = new SharedDevice<Fake>(() => landing.Task, _ => { });
+            int ready = 0;
+            device.Ready += () => ready++;
+            device.Add();
+            device.Remove();
+            var late = new Fake(1);
+            landing.SetResult(late);
+
+            Assert.True(late.Disposed);
+            Assert.Null(device.Value);
+            Assert.Equal(0, ready);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(saved);
+        }
+    }
+
+    private sealed class Fake(int number) : IDisposable
+    {
+        public int Number => number;
+
+        public bool Disposed { get; private set; }
+
+        public void Dispose() => Disposed = true;
+    }
 }
