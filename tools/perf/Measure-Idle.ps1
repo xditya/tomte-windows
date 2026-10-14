@@ -16,6 +16,8 @@ param(
     [int]$IntervalSeconds = 5,
     [int]$WarmupSeconds = 10,
     [string]$Out = 'idle.json',
+    # The window class that gets WM_CLOSE at the end; the process is killed only if that does not end it.
+    [string]$CloseClass = 'TomteIsland',
     [switch]$SelfTest
 )
 $Out = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Out)
@@ -99,5 +101,19 @@ try {
     [IO.File]::WriteAllText($Out, ($result | ConvertTo-Json -Depth 4))
     $result.summary | Format-List
 } finally {
-    if (-not $proc.HasExited) { Stop-Process $proc -Force }
+    # WM_CLOSE to the island window first, so the shell quits as it would for the user: hotkeys released,
+    # listeners removed, the tray icon taken down. Killing it is the fallback.
+    if (-not $proc.HasExited) {
+        Add-Type -Namespace MeasureIdle -Name Win -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+[DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr w, IntPtr l);
+'@
+        $h = [IntPtr]::Zero
+        while (($h = [MeasureIdle.Win]::FindWindowEx([IntPtr]::Zero, $h, $CloseClass, $null)) -ne [IntPtr]::Zero) {
+            $owner = 0; [void][MeasureIdle.Win]::GetWindowThreadProcessId($h, [ref]$owner)
+            if ($owner -eq $proc.Id) { [void][MeasureIdle.Win]::PostMessage($h, 0x10, [IntPtr]::Zero, [IntPtr]::Zero) }
+        }
+        if ($proc.WaitForExit(5000)) { 'closed with WM_CLOSE' } else { Stop-Process $proc -Force; 'killed: WM_CLOSE did not end it' }
+    }
 }
