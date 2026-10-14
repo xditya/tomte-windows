@@ -1,19 +1,11 @@
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Numerics;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Rambler;
 using Windows.UI;
 using Windows.UI.Composition;
-using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.UI.Input;
-using Windows.Win32.UI.Input.KeyboardAndMouse;
-using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
 
@@ -52,6 +44,9 @@ internal sealed class Rambler(
 
     /// <summary>Microphone level 0..1, once per capture packet while recording, on the UI thread. The mascot bounces to it.</summary>
     public event Action<double>? Bounce;
+
+    /// <summary>The pill is gone after a hold; the triggers release pointer tracking and the Esc hotkey here.</summary>
+    public event Action? Retracted;
 
     public void Begin()
     {
@@ -243,6 +238,8 @@ internal sealed class Rambler(
             island.Content.Children.Remove(gone);
             gone.Dispose();
         }
+
+        Retracted?.Invoke();
     }
 
     private static ScalarKeyFrameAnimation Fade(Compositor c, float to, int delayMs, int durationMs)
@@ -260,107 +257,3 @@ internal sealed record ProviderSend(string Provider, string Model);
 
 /// <summary>The structuring step: where it sends, and the call that turns a transcript into a note.</summary>
 internal sealed record RamblerStructure(ProviderSend Send, Func<string, CancellationToken, Task<RamblerNote.Structured>> Run);
-
-/// <summary>
-/// Temporary Win+Alt+V registration for <c>--rambler</c>, until the triggers (A2) own every hotkey.
-/// A dedicated input thread with a message-only window: RegisterHotKey reports the press, raw keyboard
-/// input is registered only while the chord is held and reports the release. No keyboard hook.
-/// </summary>
-internal static unsafe class RamblerHotkey
-{
-    private const int HotKeyId = 0x5256;
-    private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, a macro CsWin32 does not emit
-    private static HoldDetector? detector;
-    private static HWND window;
-    private static Action<string>? log;
-    private static int armError; // non-zero when arming raw input failed
-
-    /// <summary>Starts the input thread. <paramref name="started"/> and <paramref name="ended"/> are posted to <paramref name="queue"/>.</summary>
-    public static void Start(Windows.System.DispatcherQueue queue, Action started, Action<bool> ended, Action<string> log) =>
-        new Thread(() => Run(queue, started, ended, log)) { IsBackground = true, Name = "tomte-input" }.Start();
-
-    private static void Run(Windows.System.DispatcherQueue queue, Action started, Action<bool> ended, Action<string> logLine)
-    {
-        log = logLine;
-        detector = new HoldDetector(Arm);
-        detector.Started += () => queue.TryEnqueue(() => started());
-        detector.Ended += keep => queue.TryEnqueue(() => ended(keep));
-
-        var hInstance = new HINSTANCE(Marshal.GetHINSTANCE(typeof(RamblerHotkey).Module));
-        fixed (char* className = "TomteRamblerInput")
-        {
-            var windowClass = new WNDCLASSEXW { cbSize = (uint)sizeof(WNDCLASSEXW), lpfnWndProc = &HandleMessage, hInstance = hInstance, lpszClassName = className };
-            if (PInvoke.RegisterClassEx(in windowClass) == 0)
-                throw new Win32Exception();
-            window = PInvoke.CreateWindowEx(0, className, null, 0, 0, 0, 0, 0, MessageOnlyParent, HMENU.Null, hInstance, null);
-        }
-
-        const HOT_KEY_MODIFIERS chord = HOT_KEY_MODIFIERS.MOD_WIN | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT;
-        bool registered = PInvoke.RegisterHotKey(window, HotKeyId, chord, 'V');
-        logLine($"rambler hotkey: Win+Alt+V {(registered ? "registered" : $"failed, error {Marshal.GetLastPInvokeError()}")}");
-
-        MSG message;
-        while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
-        {
-            PInvoke.TranslateMessage(&message);
-            PInvoke.DispatchMessage(&message);
-        }
-    }
-
-    private static void Arm(bool on)
-    {
-        var device = new RAWINPUTDEVICE
-        {
-            usUsagePage = PInvoke.HID_USAGE_PAGE_GENERIC,
-            usUsage = PInvoke.HID_USAGE_GENERIC_KEYBOARD,
-            dwFlags = on ? RAWINPUTDEVICE_FLAGS.RIDEV_INPUTSINK : RAWINPUTDEVICE_FLAGS.RIDEV_REMOVE,
-            hwndTarget = on ? window : HWND.Null,
-        };
-        if (!PInvoke.RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE)) && on)
-            armError = Math.Max(1, Marshal.GetLastPInvokeError());
-    }
-
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
-    private static LRESULT HandleMessage(HWND hwnd, uint message, WPARAM wParam, LPARAM lParam)
-    {
-        try
-        {
-            if (message == PInvoke.WM_HOTKEY && wParam.Value == HotKeyId)
-            {
-                detector!.Press(Environment.TickCount64);
-                // Without raw input no release would ever arrive and the microphone would stay open, so end the hold
-                // as a tap. A quick tap can also lift V before the press is handled, with the same result.
-                if (armError != 0)
-                {
-                    log?.Invoke($"rambler: raw input could not be armed (error {armError}), hold ended");
-                    armError = 0;
-                    detector.KeyUp('V', Environment.TickCount64);
-                }
-                else if ((PInvoke.GetAsyncKeyState('V') & 0x8000) == 0)
-                {
-                    detector.KeyUp('V', Environment.TickCount64);
-                }
-                return new LRESULT(0);
-            }
-
-            if (message == PInvoke.WM_INPUT)
-            {
-                RAWINPUT raw;
-                uint size = (uint)sizeof(RAWINPUT);
-                if (PInvoke.GetRawInputData(new HRAWINPUT(lParam.Value), RAW_INPUT_DATA_COMMAND_FLAGS.RID_INPUT, &raw, &size, (uint)sizeof(RAWINPUTHEADER)) != unchecked((uint)-1)
-                    && raw.header.dwType == (uint)RID_DEVICE_INFO_TYPE.RIM_TYPEKEYBOARD
-                    && (raw.data.keyboard.Flags & PInvoke.RI_KEY_BREAK) != 0)
-                {
-                    detector!.KeyUp(raw.data.keyboard.VKey, Environment.TickCount64);
-                }
-                // DefWindowProc below frees the raw input buffer.
-            }
-        }
-        catch (Exception)
-        {
-            // An exception must not unwind into user32; the hold simply does not register.
-        }
-
-        return PInvoke.DefWindowProc(hwnd, message, wParam, lParam);
-    }
-}

@@ -1,0 +1,48 @@
+namespace Tomte.Core.Triggers;
+
+/// <summary>Things that hold the island open after the pointer has left it.</summary>
+[Flags]
+public enum IslandActivity
+{
+    None = 0,
+    DragInProgress = 1,
+    Typing = 2,
+    AiTask = 4,
+    Pinned = 8,
+
+    /// <summary>Desktop peek retracts when a window enters the zone, not when the pointer leaves.</summary>
+    Peek = 16,
+    Rambling = 32,
+}
+
+public static class RetractionRules
+{
+    /// <summary>
+    /// Called when the pointer has stayed outside the island's bounds plus the margin for the retract delay.
+    /// Hidden has nothing to retract and Capture keeps the island hidden under its overlay.
+    /// </summary>
+    public static bool ShouldRetract(IslandState state, IslandActivity activity) =>
+        state is not (IslandState.Hidden or IslandState.Capture) && activity == IslandActivity.None;
+
+    /// <summary>Pointer inside a window rectangle grown by the margin on every side, in physical pixels.</summary>
+    public static bool Inside(int x, int y, int left, int top, int right, int bottom, int margin) =>
+        x >= left - margin && x <= right + margin && y >= top - margin && y <= bottom + margin;
+}
+
+/// <summary>
+/// The reveal zone of one monitor in physical pixels: the middle fraction of its top edge, plus the drag band
+/// below it. Each monitor measures it in its own DPI.
+/// </summary>
+public readonly record struct RevealZone(int Left, int Right, int Top, int DragBandBottom)
+{
+    public static RevealZone For(int monitorLeft, int monitorTop, int monitorRight, double fraction, double dragBandDip, double scale)
+    {
+        int width = monitorRight - monitorLeft;
+        int inset = (int)Math.Round(width * (1 - fraction) / 2);
+        return new RevealZone(monitorLeft + inset, monitorRight - inset, monitorTop, monitorTop + (int)Math.Round(dragBandDip * scale));
+    }
+
+    public bool ContainsX(int x) => x >= Left && x <= Right;
+
+    public bool InDragBand(int x, int y) => ContainsX(x) && y >= Top && y <= DragBandBottom;
+}
