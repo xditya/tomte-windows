@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Tomte.Core.Storage;
 
@@ -5,9 +6,10 @@ namespace Tomte.Core.Clipboard;
 
 /// <summary>
 /// How much history is kept: the newest pieces of text and, counted apart, the newest images; none older than the
-/// age; no text longer than the size, and no image over its size on the clipboard or as a bitmap.
+/// age; no text longer than the size. An image is read only up to <see cref="MaxImageReadBytes"/> on the clipboard
+/// and as a bitmap (a full 5K screen fits), and kept only up to <see cref="MaxImageBytes"/> as a PNG.
 /// </summary>
-public sealed record ClipboardRetention(int MaxItems = 50, int MaxDays = 7, int MaxChars = 65536, int MaxImages = 50, int MaxImageBytes = 20 << 20);
+public sealed record ClipboardRetention(int MaxItems = 50, int MaxDays = 7, int MaxChars = 65536, int MaxImages = 50, int MaxImageBytes = 20 << 20, int MaxImageReadBytes = 64 << 20);
 
 /// <summary>
 /// One history row as the panel shows it: never the whole item, only its start, on one line. An image row has its
@@ -54,11 +56,13 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
     private static readonly string[] Schema =
     [
         "CREATE TABLE clipboard_entries(id INTEGER PRIMARY KEY, text TEXT NOT NULL, copied_at INTEGER NOT NULL)",
-        // Images: empty text, a width, and the PNG last, so a query of the other columns never walks the PNG's pages.
+        // Images: empty text, a width, the PNG's SHA-256, and the PNG last, so a query of the other columns never walks
+        // the PNG's pages.
         """
         ALTER TABLE clipboard_entries ADD COLUMN width INTEGER;
         ALTER TABLE clipboard_entries ADD COLUMN height INTEGER;
         ALTER TABLE clipboard_entries ADD COLUMN thumb BLOB;
+        ALTER TABLE clipboard_entries ADD COLUMN sha BLOB;
         ALTER TABLE clipboard_entries ADD COLUMN png BLOB;
         """,
     ];
@@ -81,7 +85,10 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
         transaction.Commit();
     }
 
-    /// <summary>Keeps the image as the newest image. One over the size is not kept.</summary>
+    /// <summary>
+    /// Keeps the image as the newest image; the same PNG copied again moves its row up instead, without writing the
+    /// PNG twice. One over the size is not kept.
+    /// </summary>
     public void AddImage(KeptImage image, DateTimeOffset at)
     {
         if (image.Png.Length > Retention.MaxImageBytes)
@@ -89,10 +96,18 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
             return;
         }
 
+        byte[] sha = SHA256.HashData(image.Png);
         using var connection = db.Open("clipboard", Schema);
         using var transaction = connection.BeginTransaction();
-        Run(connection, "INSERT INTO clipboard_entries(text, copied_at, width, height, thumb, png) VALUES ('', $at, $width, $height, $thumb, $png)",
-            ("$at", at.ToUnixTimeMilliseconds()), ("$width", image.Width), ("$height", image.Height), ("$thumb", image.Thumb), ("$png", image.Png));
+        using (var moved = Command(connection, "UPDATE clipboard_entries SET copied_at = $at WHERE sha = $sha", ("$at", at.ToUnixTimeMilliseconds()), ("$sha", sha)))
+        {
+            if (moved.ExecuteNonQuery() == 0)
+            {
+                Run(connection, "INSERT INTO clipboard_entries(text, copied_at, width, height, thumb, sha, png) VALUES ('', $at, $width, $height, $thumb, $sha, $png)",
+                    ("$at", at.ToUnixTimeMilliseconds()), ("$width", image.Width), ("$height", image.Height), ("$thumb", image.Thumb), ("$sha", sha), ("$png", image.Png));
+            }
+        }
+
         Prune(connection, at);
         transaction.Commit();
     }
@@ -373,7 +388,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
         KeptImage? kept;
         try
         {
-            kept = ClipboardImages.Keep(image, history.Retention.MaxImageBytes);
+            kept = ClipboardImages.Keep(image, history.Retention.MaxImageReadBytes);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
@@ -383,7 +398,13 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
 
         if (kept is null)
         {
-            log?.Invoke($"clipboard: skipped: an image over the {history.Retention.MaxImageBytes >> 20} MB kept as a bitmap");
+            log?.Invoke($"clipboard: skipped: an image over the {history.Retention.MaxImageReadBytes >> 20} MB read as a bitmap");
+            return;
+        }
+
+        if (kept.Png.Length > history.Retention.MaxImageBytes)
+        {
+            log?.Invoke($"clipboard: skipped: an image of {kept.Png.Length} bytes as a PNG, over the {history.Retention.MaxImageBytes} kept");
             return;
         }
 

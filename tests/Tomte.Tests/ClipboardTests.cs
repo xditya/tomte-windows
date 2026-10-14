@@ -377,10 +377,15 @@ public sealed class ClipboardTests : IDisposable
     [Fact]
     public void AnImageOverTheSizeIsNeverRead()
     {
-        var huge = new FakeClipboard { ImageBytes = new byte[Limits.MaxImageBytes + 1] };
-        Assert.Equal($"skipped: an image of {Limits.MaxImageBytes + 1} bytes, over the {Limits.MaxImageBytes} kept", Read(huge).Outcome);
+        var limits = new ClipboardRetention(MaxImageReadBytes: 100);
+        var huge = new FakeClipboard { ImageBytes = new byte[101] };
+        Assert.Equal("skipped: an image of 101 bytes, over the 100 kept", ClipboardReader.Read(huge, false, [], limits).Outcome);
         Assert.False(huge.ImageTouched);
-        Assert.NotNull(Read(new FakeClipboard { ImageBytes = new byte[Limits.MaxImageBytes] }).Image);
+        Assert.NotNull(ClipboardReader.Read(new FakeClipboard { ImageBytes = new byte[100] }, false, [], limits).Image);
+
+        // A full 5K screen as a 32-bit bitmap is read; what is kept is a PNG of at most 20 MB.
+        Assert.True(Limits.MaxImageReadBytes >= 40 + 5120 * 2880 * 4);
+        Assert.Equal(20 << 20, Limits.MaxImageBytes);
     }
 
     [Fact]
@@ -425,7 +430,7 @@ public sealed class ClipboardTests : IDisposable
     [InlineData(32)]
     public void ACopiedBitmapIsKeptAsAPngAndPutBackPixelForPixel(int bits)
     {
-        var kept = ClipboardImages.Keep(new CopiedImage(Dib(5, 3, bits, Colour), Png: false), Limits.MaxImageBytes)!;
+        var kept = ClipboardImages.Keep(new CopiedImage(Dib(5, 3, bits, Colour), Png: false), Limits.MaxImageReadBytes)!;
         Assert.Equal((5, 3), (kept.Width, kept.Height));
         Assert.Equal("\u0089PNG", Encoding.Latin1.GetString(kept.Png, 0, 4));
 
@@ -442,8 +447,9 @@ public sealed class ClipboardTests : IDisposable
             }
         }
 
-        // A PNG that came as one is kept as it came.
-        Assert.Same(kept.Png, ClipboardImages.Keep(new CopiedImage(kept.Png, Png: true), Limits.MaxImageBytes)!.Png);
+        // A PNG that came as one is kept as it came, less what the clipboard's memory held after its end.
+        Assert.Same(kept.Png, ClipboardImages.Keep(new CopiedImage(kept.Png, Png: true), Limits.MaxImageReadBytes)!.Png);
+        Assert.Equal(kept.Png, ClipboardImages.Keep(new CopiedImage([.. kept.Png, 7, 7, 7], Png: true), Limits.MaxImageReadBytes)!.Png);
     }
 
     [Fact]
@@ -451,7 +457,7 @@ public sealed class ClipboardTests : IDisposable
     {
         // Green at both ends, red then blue between: a centred 3:2 cut shows red on its left and blue on its right.
         static (byte, byte, byte) Bands(int x, int y) => x < 50 || x >= 350 ? ((byte)0, (byte)255, (byte)0) : x < 200 ? ((byte)0, (byte)0, (byte)255) : ((byte)255, (byte)0, (byte)0);
-        var kept = ClipboardImages.Keep(new CopiedImage(Dib(400, 100, 24, Bands), Png: false), Limits.MaxImageBytes)!;
+        var kept = ClipboardImages.Keep(new CopiedImage(Dib(400, 100, 24, Bands), Png: false), Limits.MaxImageReadBytes)!;
         Assert.Equal(ClipboardImages.ThumbWidth * ClipboardImages.ThumbHeight * 4, ClipboardImages.Thumbnail(kept.Thumb, ClipboardImages.ThumbWidth, ClipboardImages.ThumbHeight).Length);
 
         foreach (double scale in (double[])[1, 1.25, 1.5])
@@ -472,7 +478,7 @@ public sealed class ClipboardTests : IDisposable
         Assert.Null(ClipboardImages.Keep(copied, 64 * 64 * 4 - 1));
         Assert.NotNull(ClipboardImages.Keep(copied, 64 * 64 * 4));
 
-        Assert.ThrowsAny<Exception>(() => ClipboardImages.Keep(new CopiedImage([1, 2, 3], Png: true), Limits.MaxImageBytes));
+        Assert.ThrowsAny<Exception>(() => ClipboardImages.Keep(new CopiedImage([1, 2, 3], Png: true), Limits.MaxImageReadBytes));
         Assert.Throws<ArgumentException>(() => ClipboardImages.BmpHeader([40, 0, 0]));
     }
 
@@ -526,6 +532,44 @@ public sealed class ClipboardTests : IDisposable
         var history = new ClipboardHistory(new TomteDb(DbPath));
         history.AddImage(new KeptImage([1], 4, 3, [2]), Now.AddSeconds(1));
         Assert.Equal(["Image · 4 x 3", "from before"], history.Rows(Now.AddSeconds(2)).Select(r => r.Display));
+    }
+
+    [Fact]
+    public void TheSameImageCopiedAgainMovesUp()
+    {
+        var history = new ClipboardHistory(new TomteDb(DbPath));
+        history.AddImage(new KeptImage([1, 1], 1, 1, [9]), Now);
+        history.AddImage(new KeptImage([2, 2], 2, 2, [9]), Now.AddSeconds(1));
+        long first = history.Rows(Now).Single(r => r.Display == "Image · 1 x 1").Id;
+
+        history.AddImage(new KeptImage([1, 1], 1, 1, [9]), Now.AddSeconds(2));
+
+        var rows = history.Rows(Now.AddSeconds(3));
+        Assert.Equal(["Image · 1 x 1", "Image · 2 x 2"], rows.Select(r => r.Display));
+        Assert.Equal(first, rows[0].Id);
+    }
+
+    [Fact]
+    public async Task TheSameBitmapCopiedTwiceIsOneRow()
+    {
+        var listeners = new List<FakeListener>();
+        var watch = Watch(listeners);
+        watch.Apply(true);
+        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+        Assert.Single(await watch.RowsAsync(Now));
+    }
+
+    [Fact]
+    public async Task ACopiedImageWhosePngIsOverTheSizeIsNotKept()
+    {
+        var listeners = new List<FakeListener>();
+        var watch = Watch(listeners, new ClipboardRetention(MaxImageBytes: 50));
+        watch.Apply(true);
+        listeners[0].Copy(new CopiedImage(Dib(64, 64, 24, (x, y) => ((byte)(x * 7), (byte)(y * 13), (byte)(x * y))), Png: false));
+
+        Assert.Empty(await watch.RowsAsync(Now));
+        Assert.Contains(log, line => line.StartsWith("clipboard: skipped: an image of", StringComparison.Ordinal) && line.EndsWith("as a PNG, over the 50 kept", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -621,8 +665,8 @@ public sealed class ClipboardTests : IDisposable
 
     private static ClipboardRead Read(FakeClipboard clipboard) => ClipboardReader.Read(clipboard, paused: false, [], Limits);
 
-    private ClipboardWatch Watch(List<FakeListener> listeners) =>
-        new(new ClipboardHistory(new TomteDb(DbPath)), captured =>
+    private ClipboardWatch Watch(List<FakeListener> listeners, ClipboardRetention? retention = null) =>
+        new(new ClipboardHistory(new TomteDb(DbPath), retention), captured =>
         {
             var listener = new FakeListener { Captured = captured };
             listeners.Add(listener);

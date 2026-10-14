@@ -125,7 +125,7 @@ public static class ClipboardReader
             int length = clipboard.TextLength;
             if (length < 0)
             {
-                return ReadImage(clipboard, limits.MaxImageBytes);
+                return ReadImage(clipboard, limits.MaxImageReadBytes);
             }
 
             if (length > maxChars + 1)

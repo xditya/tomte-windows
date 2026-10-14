@@ -29,6 +29,9 @@ public static class ClipboardImages
 
     private const int InfoHeader = 40;
 
+    // A PNG ends with its empty IEND chunk, whose checksum never changes.
+    private static readonly byte[] PngEnd = [0, 0, 0, 0, (byte)'I', (byte)'E', (byte)'N', (byte)'D', 0xAE, 0x42, 0x60, 0x82];
+
     /// <summary>
     /// What history keeps of a copied image, or null when its bitmap (4 bytes a pixel, as a pick puts it
     /// back) would be over <paramref name="maxBytes"/>. A PNG is kept as it came; a bitmap becomes one.
@@ -52,7 +55,7 @@ public static class ClipboardImages
             return null;
         }
 
-        byte[] png = copied.Png ? copied.Bytes : WholeAsPng(decoder);
+        byte[] png = copied.Png ? Trimmed(copied.Bytes) : WholeAsPng(decoder);
         using var thumb = Bitmap(decoder, BitmapAlphaMode.Straight, Cover(decoder, ThumbWidth, ThumbHeight));
         return new KeptImage(png, width, height, Png(thumb));
     }
@@ -115,6 +118,14 @@ public static class ClipboardImages
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(2), 14 + dib.Length);
         BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(10), (int)offset);
         return header;
+    }
+
+    // The clipboard's memory can run past the file it holds; what follows the end is dropped, so the same image
+    // copied twice is the same bytes.
+    private static byte[] Trimmed(byte[] png)
+    {
+        int end = png.AsSpan().LastIndexOf(PngEnd) + PngEnd.Length;
+        return end < PngEnd.Length || end == png.Length ? png : png[..end];
     }
 
     // The whole image as a PNG; a bitmap without alpha (most are) stays without it.

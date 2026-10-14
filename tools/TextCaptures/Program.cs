@@ -940,7 +940,7 @@ internal static unsafe partial class Program
             }
         }
 
-        return ClipboardImages.Keep(new CopiedImage(dib, Png: false), new ClipboardRetention().MaxImageBytes)!;
+        return ClipboardImages.Keep(new CopiedImage(dib, Png: false), new ClipboardRetention().MaxImageReadBytes)!;
     }
 
     // The Clipboard history: on with rows, on and empty, or off; Clear all at rest or asking; optionally where presses land.
