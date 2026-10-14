@@ -29,6 +29,7 @@ internal sealed class DropResultView
     private Parts? shapes;
     private string shapesKey = "";
     private DropResultLayout? layout;
+    private DropResult? shown;
     private IReadOnlyList<ShelfItem> files = [];
     private bool fadeInPending = true;
 
@@ -77,7 +78,7 @@ internal sealed class DropResultView
             return;
         }
 
-        files = items;
+        (shown, files) = (result, items);
         var next = new DropResultLayout(result, width, island.Mascot.Enabled, maxHeight);
         layout = next;
         while (slots.Count < next.Slots.Count)
@@ -167,8 +168,23 @@ internal sealed class DropResultView
             PInvoke.GetCursorPos(out var at);
             if (PInvoke.DragDetect(island.Hwnd, at))
             {
-                ShelfDrag.Run(island, triggers, shelf, [files[tile]], log);
+                // A drag the target took may take the file off the shelf; its tile then says so.
+                _ = ShelfDrag.Run(island, triggers, shelf, [files[tile]], log).ContinueWith(_ => island.Queue.TryEnqueue(OffShelf), TaskScheduler.Default);
             }
+        }
+    }
+
+    private void OffShelf()
+    {
+        if (!Open || shown is null)
+        {
+            return;
+        }
+
+        var tiles = shown.Tiles.Select((t, i) => i < files.Count && !shelf.Items.Any(s => s.Id == files[i].Id) ? t with { Meta = ResultTile.OffShelf } : t).ToList();
+        if (!tiles.SequenceEqual(shown.Tiles))
+        {
+            Show(shown with { Tiles = tiles }, files);
         }
     }
 

@@ -26,13 +26,13 @@ internal static unsafe class ShelfDrag
     // DoDragDrop returns.
     private static ShelfDataObject? previous;
 
-    /// <summary>Runs the drag and returns when it is over. Missing items stay behind; what the target took may leave the shelf.</summary>
-    public static void Run(IslandWindow island, TriggerController triggers, ShelfStore shelf, IReadOnlyList<ShelfItem> items, Action<string>? log)
+    /// <summary>Runs the drag and returns when it is over. Missing items stay behind; what the target took may leave the shelf, and the task ends once it has.</summary>
+    public static Task Run(IslandWindow island, TriggerController triggers, ShelfStore shelf, IReadOnlyList<ShelfItem> items, Action<string>? log)
     {
         var present = items.Where(i => !i.Missing).ToList();
         if (present.Count == 0)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         var effects = ShelfFormats.Effects(present);
@@ -70,7 +70,7 @@ internal static unsafe class ShelfDrag
         var performed = data.Performed();
         log?.Invoke($"drag out: DoDragDrop 0x{result.Value:X8} effect {effect} performed {performed} after {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0}ms");
         // Whether the files are still there is asked on the shelf's worker, not here: a network path can take seconds.
-        _ = shelf.AfterDragOut(present, (ShelfEffect)effect, performed);
+        return shelf.AfterDragOut(present, (ShelfEffect)effect, performed);
     }
 
     /// <summary>The item's thumbnail, or its icon when no thumbnail is cached, as a 32-bit bitmap; default when the shell has neither.</summary>
