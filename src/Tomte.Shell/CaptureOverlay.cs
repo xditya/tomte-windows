@@ -104,7 +104,14 @@ internal sealed unsafe class CaptureOverlay : IDisposable
 
         BOOL disableTransitions = true;
         PInvoke.DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &disableTransitions, (uint)sizeof(BOOL));
-        PInvoke.SetWindowDisplayAffinity(hwnd, WINDOW_DISPLAY_AFFINITY.WDA_EXCLUDEFROMCAPTURE);
+        if (!PInvoke.SetWindowDisplayAffinity(hwnd, WINDOW_DISPLAY_AFFINITY.WDA_EXCLUDEFROMCAPTURE))
+        {
+            // Without the exclusion the dim lands in the crop; no overlay beats a wrong image.
+            var error = new Win32Exception();
+            current = null;
+            PInvoke.DestroyWindow(hwnd);
+            throw error;
+        }
 
         target = IslandWindow.CreateDesktopWindowTarget(compositor, hwnd);
         visual = compositor.CreateShapeVisual();
