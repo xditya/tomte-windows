@@ -50,6 +50,12 @@ internal static partial class Program
     /// <summary>The provider set up in settings, with its key from Credential Manager and its daily cap; null when none is.</summary>
     private static PaletteSession? ConfiguredSession(TriggerController triggers, SettingsStore store, Action<string>? log)
     {
+        // With no provider there is no HTTP client either.
+        if (store.Current.Provider is null)
+        {
+            return null;
+        }
+
         (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options)? palette;
         try
         {
