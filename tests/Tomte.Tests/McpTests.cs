@@ -207,6 +207,31 @@ public class McpToolsTests
     }
 
     [Fact]
+    public void TheKeyFollowsWhatASchemaSaysNotHowItIsWritten()
+    {
+        static string Key(string schema, string description = "Reads a file.") =>
+            McpTools.Key(Files, new Tool { Name = "read", Description = description, InputSchema = JsonDocument.Parse(schema).RootElement });
+
+        string key = Key("""{"type":"object","properties":{"path":{"type":"string","description":"Where"},"lines":{"type":"integer"}},"required":["path"]}""");
+
+        // A server that writes its properties in another order, or with other spacing, is the same tool:
+        // otherwise its tiers and grants would never hold, and Settings would drop them on every listing.
+        Assert.Equal(key, Key("""
+            {
+              "required": ["path"],
+              "properties": { "lines": { "type": "integer" }, "path": { "description": "Where", "type": "string" } },
+              "type": "object"
+            }
+            """));
+
+        // A change in what it says is another tool.
+        Assert.NotEqual(key, Key("""{"type":"object","properties":{"path":{"type":"string","description":"Where"},"lines":{"type":"string"}},"required":["path"]}"""));
+        Assert.NotEqual(key, Key("""{"type":"object","properties":{"path":{"type":"string","description":"Where"},"lines":{"type":"integer"}},"required":["path","lines"]}"""));
+        Assert.NotEqual(key, Key("""{"type":"object","properties":{"path":{"type":"string","description":"Where"},"lines":{"type":"integer"}},"required":["path"]}""", "Deletes a file."));
+        Assert.Equal("""{"a":[2,{"x":1,"y":"z"}],"b":null}""", McpTools.Canonical(JsonDocument.Parse("""{ "b": null, "a": [2, { "y": "z", "x": 1 }] }""").RootElement));
+    }
+
+    [Fact]
     public async Task ToolsThatWouldShareANameMakeTheServerUnusable()
     {
         // Both become files__read_file. Taking the first one listed would let the server choose which tool a permission belongs to.

@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
@@ -279,15 +280,55 @@ public sealed class McpTools : IAsyncDisposable
     /// <summary>
     /// What a tier override and an "always allow" are stored under: the name the model sees plus a hash
     /// of what the tool is. A server pointed at another command or URL, or a tool whose name,
-    /// description or arguments changed, gets another key, so it is an External effect again and asks.
+    /// description or arguments changed, gets another key, so it asks again. The key does not cover
+    /// the header, the program a command resolves to, a package that updates without changing what
+    /// its tools say, or the environment.
     /// </summary>
     internal static string Key(McpServerSettings server, Tool tool)
     {
         var identity = new StringBuilder();
         // Each part with its length in front, so no two different sets of parts make the same text.
-        foreach (string part in (string[])[server.Target, tool.Name, tool.Description ?? "", tool.InputSchema.GetRawText()])
+        foreach (string part in (string[])[server.Target, tool.Name, tool.Description ?? "", Canonical(tool.InputSchema)])
             identity.Append(part.Length).Append(':').Append(part);
         return ModelName(server, tool.Name) + "#" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity.ToString())), 0, 8);
+    }
+
+    /// <summary>
+    /// A JSON value as one fixed text: every object's properties in name order, no spacing. A server
+    /// that sends the same schema with its properties in another order still gets the same key.
+    /// </summary>
+    internal static string Canonical(JsonElement value)
+    {
+        var buffer = new ArrayBufferWriter<byte>();
+        using (var writer = new Utf8JsonWriter(buffer))
+            Write(writer, value);
+        return Encoding.UTF8.GetString(buffer.WrittenSpan);
+
+        static void Write(Utf8JsonWriter writer, JsonElement value)
+        {
+            switch (value.ValueKind)
+            {
+                case JsonValueKind.Object:
+                    writer.WriteStartObject();
+                    foreach (var property in value.EnumerateObject().OrderBy(p => p.Name, StringComparer.Ordinal))
+                    {
+                        writer.WritePropertyName(property.Name);
+                        Write(writer, property.Value);
+                    }
+
+                    writer.WriteEndObject();
+                    break;
+                case JsonValueKind.Array:
+                    writer.WriteStartArray();
+                    foreach (var item in value.EnumerateArray())
+                        Write(writer, item);
+                    writer.WriteEndArray();
+                    break;
+                default:
+                    value.WriteTo(writer);
+                    break;
+            }
+        }
     }
 
     /// <summary>
