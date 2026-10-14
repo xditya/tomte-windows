@@ -43,8 +43,6 @@ internal sealed class McpProcess : IAsyncDisposable
     /// <summary>The server's stdout.</summary>
     public Stream Output => _process.StandardOutput.BaseStream;
 
-    public int Id => _process.Id;
-
     public static McpProcess Start(McpServerSettings server)
     {
         string path = Find(server.Command)
