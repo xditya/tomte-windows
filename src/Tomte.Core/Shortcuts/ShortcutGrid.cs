@@ -47,15 +47,16 @@ public static class ShortcutGrid
     public static int IconPixels(double scale) => (int)Math.Round(IconSize * scale, MidpointRounding.AwayFromZero);
 
     /// <summary>
-    /// The icon's square in a cell, in DIPs, placed on whole pixels at this scale so each of the shell's pixels
-    /// lands on one screen pixel. That holds while the body itself starts on a whole pixel, which it does once the
-    /// island has settled (its width and the tab strip are whole pixels at 100%, 125% and 150%).
+    /// The icon's square in a cell, in body DIPs, placed on whole pixels at this scale so each of the shell's pixels
+    /// lands on one screen pixel. <paramref name="bodyTop"/> is how far the body starts below the island's top edge
+    /// (the tab strip, 42 DIP, which is 52.5 pixels at 125%); the snap is to the island's pixels. Horizontally the
+    /// body starts on a whole pixel at 520 DIP wide, so no offset is needed there.
     /// </summary>
-    public static RectangleF Icon(RectangleF cell, double scale)
+    public static RectangleF Icon(RectangleF cell, double scale, float bodyTop)
     {
         int pixels = IconPixels(scale);
         float x = (float)(Math.Round((cell.X + (cell.Width - IconSize) / 2) * scale) / scale);
-        float y = (float)(Math.Round((cell.Y + IconTop) * scale) / scale);
+        float y = (float)(Math.Round((bodyTop + cell.Y + IconTop) * scale) / scale) - bodyTop;
         return new(x, y, (float)(pixels / scale), (float)(pixels / scale));
     }
 

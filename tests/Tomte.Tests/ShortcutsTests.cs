@@ -335,6 +335,25 @@ public sealed class ShortcutsTests : IDisposable
     }
 
     [Fact]
+    public void WhatIsStoredIsCheckedAgainAtTheClick()
+    {
+        // Rows written behind the store's back (an edited file, an older build): refused when clicked, not started.
+        var store = Store();
+        Assert.Empty(store.Load());
+        using (var db = new TomteDb(DbPath).Open("shortcuts", ["unused: the table exists, so no step runs"]))
+        using (var insert = db.CreateCommand())
+        {
+            insert.CommandText = "INSERT INTO shortcuts_tiles(name, target) VALUES ('mail', 'mailto:someone@example.com'), ('share', $share), ('settings', 'ms-settings:display')";
+            insert.Parameters.AddWithValue("$share", @"\\server\share\tool.exe");
+            insert.ExecuteNonQuery();
+        }
+
+        Assert.All(store.Load(), tile => Assert.Equal(ShortcutOutcome.Blocked, store.Launch(tile.Id).Outcome));
+        Assert.Equal(3, store.Load().Count);
+        Assert.Empty(started);
+    }
+
+    [Fact]
     public void LaunchByNameOpensTheNamedTileButNeverAScript()
     {
         scriptsOn = true;
@@ -427,13 +446,15 @@ public sealed class ShortcutsTests : IDisposable
     public void IconsSitOnWholePixels(double scale, int pixels)
     {
         Assert.Equal(pixels, ShortcutGrid.IconPixels(scale));
+        // The body starts under the 42 DIP tab strip, 52.5 pixels down at 125%; the icons snap to the island's pixels.
+        const float top = 42;
         var body = new System.Numerics.Vector2(520, 258);
         for (int i = 0; i < 8; i++)
         {
-            var icon = ShortcutGrid.Icon(ShortcutGrid.Cell(i, body), scale);
+            var icon = ShortcutGrid.Icon(ShortcutGrid.Cell(i, body), scale, top);
             Assert.Equal(pixels, icon.Width * scale, 3);
             Assert.Equal(Math.Round(icon.X * scale), icon.X * scale, 3);
-            Assert.Equal(Math.Round(icon.Y * scale), icon.Y * scale, 3);
+            Assert.Equal(Math.Round((top + icon.Y) * scale), (top + icon.Y) * scale, 3);
         }
     }
 

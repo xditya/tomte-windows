@@ -21,6 +21,9 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
 {
     private const string Web = "web:";
 
+    // How far the body starts below the island's top: the host's tab strip.
+    private const float BodyTop = 42;
+
     // kept for the session and never refreshed, so an app whose icon changed on update shows the old one until restart.
     private readonly Dictionary<(string Source, int Pixels), ShellImage?> icons = [];
     private IReadOnlyList<Tile> tiles = [];
@@ -216,7 +219,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
                 cards.Add(card);
                 Rounded(shapes, new RectangleF(0, 0, cell.Width, cell.Height), ShortcutGrid.Corner, card);
                 // A neutral square under the icon: what shows while the icon loads, for a missing target, or with no icon.
-                var icon = ShortcutGrid.Icon(cell, scale);
+                var icon = ShortcutGrid.Icon(cell, scale, BodyTop);
                 Rounded(shapes, new RectangleF(icon.X - cell.X, icon.Y - cell.Y, icon.Width, icon.Height), 8, Brush(Placeholder));
                 Label(shapes, cell, tile.Row.Name.Length);
                 if (ShortcutStore.Gate(tile.Row, tile.Target, scriptsOn) is not null)
@@ -321,7 +324,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
             var (_, shapes) = Shapes(new Vector2(cell.Width, cell.Height), new Vector2(cell.X, cell.Y));
             var outline = Rounded(shapes, new RectangleF(0.5f, 0.5f, cell.Width - 1, cell.Height - 1), ShortcutGrid.Corner, null);
             Dashed(outline, Faint);
-            var icon = ShortcutGrid.Icon(cell, scale);
+            var icon = ShortcutGrid.Icon(cell, scale, BodyTop);
             float x = icon.X - cell.X, y = icon.Y - cell.Y;
             Dashed(Rounded(shapes, new RectangleF(x + 0.5f, y + 0.5f, icon.Width - 1, icon.Height - 1), 8, null), Faint);
             var plus = Brush(Glyph);
