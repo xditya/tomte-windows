@@ -36,7 +36,7 @@ internal sealed unsafe class EditorView : IDisposable
     private RectangleF box;
     private double scale;
     private int width, height;
-    private bool queued, caretMoved, disposed;
+    private bool queued, idleQueued, caretMoved, disposed;
 
     /// <param name="dips">Island space: the container whose children are laid out in DIPs; offsets are summed up to it to land on whole pixels.</param>
     /// <param name="window">The window that has keyboard focus while the box is typed in.</param>
@@ -116,6 +116,27 @@ internal sealed unsafe class EditorView : IDisposable
 
     /// <summary>Runs first in each paint; what it changes in the services is drawn by that same paint (the note's styling).</summary>
     public Action? BeforePaint { get; set; }
+
+    /// <summary>
+    /// A paint even with nothing invalidated, so <see cref="BeforePaint"/> runs: on the next turn, or when
+    /// <paramref name="idle"/> at low priority, after input and the dispatcher's other work.
+    /// </summary>
+    public void Repaint(bool idle = false)
+    {
+        if (!idle)
+        {
+            Queue();
+        }
+        else if (!idleQueued && !disposed)
+        {
+            idleQueued = true;
+            queue.TryEnqueue(DispatcherQueuePriority.Low, () =>
+            {
+                idleQueued = false;
+                Paint(idle: true);
+            });
+        }
+    }
 
     /// <summary>The graphics device the surface comes from, once there is one; the whole box is drawn then.</summary>
     public void Use(CompositionGraphicsDevice? device)
@@ -260,19 +281,21 @@ internal sealed unsafe class EditorView : IDisposable
         if (!queued && !disposed)
         {
             queued = true;
-            queue.TryEnqueue(Paint);
+            queue.TryEnqueue(() => Paint(idle: false));
         }
     }
 
-    private void Paint()
+    private void Paint(bool idle)
     {
         if (disposed)
         {
-            queued = false;
+            queued &= idle;
             return;
         }
 
-        // Before the paint is no longer queued, so what this invalidates joins this paint instead of queueing another.
+        // While it runs a paint counts as queued, so what it invalidates joins this paint instead of queueing another.
+        bool wasQueued = queued;
+        queued = true;
         try
         {
             BeforePaint?.Invoke();
@@ -282,7 +305,7 @@ internal sealed unsafe class EditorView : IDisposable
             Failed?.Invoke(e);
         }
 
-        queued = false;
+        queued = idle && wasQueued;
         if (caretMoved)
         {
             caretMoved = false;

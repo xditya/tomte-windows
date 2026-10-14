@@ -25,12 +25,18 @@ namespace Tomte.Shell;
 internal sealed unsafe class NoteEditor : IDisposable
 {
     private const uint Char = 0x0102, UnicodeText = 13;
+
+    // Lines styled at once around the caret, and then per paint at low priority: about 4 and 2 ms (measured offscreen).
+    private const int AtOnce = 300, Piece = 100;
     private readonly EditorView editor;
     private readonly ScratchpadNote note;
     private readonly DispatcherQueue queue;
     private readonly StringBuilder kept;
     private readonly NoteBinding binding;
     private readonly NoteStyle style;
+
+    // Line ranges (from a line's start) not styled yet since the note opened, kept in step with every edit.
+    private readonly List<(int From, int To)> unstyled = [];
 
     // The box's text as it was last styled; null until the first styling after the note opens.
     private string? styled;
@@ -159,13 +165,23 @@ internal sealed unsafe class NoteEditor : IDisposable
         queue.TryEnqueue(Sync);
     }
 
+    /// <summary>The island's shape is moving: styling waits, as it would drop frames of the morph.</summary>
+    public Func<bool>? Moving { get; set; }
+
+    /// <summary>Pieces of the note not styled yet since it opened; 0 once all of it is.</summary>
+    public int Unstyled => unstyled.Count;
+
+    /// <summary>The island came to rest: what waited is styled now.</summary>
+    public void Settled() => editor.Repaint();
+
     // Before each paint: the lines that changed since the last styling get their look, so what is drawn never shows a
-    // character in the look it took from the one before it. Not while an input method composes: the composition keeps
-    // its own look, and its end styles what it left.
+    // character in the look it took from the one before it. Not while an input method composes (the composition keeps
+    // its own look, and its end styles what it left) and not while the island moves (its rest does). A note that opens
+    // gets the lines around the caret at once and the rest a piece per paint at low priority, so no paint takes long.
     private void Restyle()
     {
         var services = editor.Services;
-        if (!open || disposed || services.Composing)
+        if (!open || disposed || services.Composing || Moving?.Invoke() == true)
         {
             return;
         }
@@ -176,36 +192,101 @@ internal sealed unsafe class NoteEditor : IDisposable
             (styled, restyle) = (null, true);
         }
 
-        if (!restyle)
+        if (restyle)
         {
-            return;
+            restyle = false;
+            string now = services.Text;
+            if (styled is null)
+            {
+                var (from, to) = NoteMarkdown.Around(now, services.Selection.End, AtOnce);
+                unstyled.Clear();
+                if (from > 0)
+                {
+                    unstyled.Add((0, from - 1));
+                }
+
+                if (to < now.Length)
+                {
+                    unstyled.Add((to + 1, now.Length));
+                }
+
+                Apply(now, from, to);
+                // Lines that grew or shrank must not leave the caret out of view.
+                services.Send(PInvoke.EM_SCROLLCARET);
+            }
+            else
+            {
+                if (unstyled.Count > 0)
+                {
+                    var splice = Splice.Between(styled, now);
+                    for (int i = unstyled.Count - 1; i >= 0; i--)
+                    {
+                        var (from, to) = (splice.Map(unstyled[i].From), splice.Map(unstyled[i].To));
+                        if (from > to || from > now.Length)
+                        {
+                            unstyled.RemoveAt(i);
+                        }
+                        else
+                        {
+                            unstyled[i] = (from, to);
+                        }
+                    }
+                }
+
+                if (NoteMarkdown.Changed(styled, now) is var (start, end))
+                {
+                    // A fence restyles every line after it: the first ones now, the rest a piece at a time.
+                    var first = NoteMarkdown.Lines(now, start, AtOnce);
+                    if (first.To < end)
+                    {
+                        unstyled.Insert(0, (first.To + 1, end));
+                    }
+
+                    Apply(now, start, Math.Min(first.To, end));
+                }
+            }
+
+            styled = now;
+        }
+        else if (unstyled.Count > 0)
+        {
+            var (from, to) = unstyled[0];
+            var piece = NoteMarkdown.Lines(styled!, from, Piece);
+            Apply(styled!, piece.From, piece.To);
+            if (piece.To >= to)
+            {
+                unstyled.RemoveAt(0);
+            }
+            else
+            {
+                unstyled[0] = (piece.To + 1, to);
+            }
         }
 
-        restyle = false;
-        // the first styling after the note opens takes all of it, about 50 ms for 2,000 lines on the island's
-        // thread; style the lines in view first if that ever shows in the panel's morph.
-        string now = services.Text;
-        if ((styled is null ? (0, now.Length) : NoteMarkdown.Changed(styled, now)) is var (from, to))
+        if (unstyled.Count > 0)
         {
-            styling = true;
-            try
-            {
-                style.Apply(now, from, to);
-            }
-            finally
-            {
-                styling = false;
-            }
+            editor.Repaint(idle: true);
         }
-
-        styled = now;
     }
 
-    // Raised inside the services' notification: styled on the next turn.
+    private void Apply(string text, int from, int to)
+    {
+        styling = true;
+        try
+        {
+            style.Apply(text, from, to);
+        }
+        finally
+        {
+            styling = false;
+        }
+    }
+
+    // Raised inside the services' notification: styled in the next paint.
     private void OnComposed()
     {
         restyle = true;
-        queue.TryEnqueue(Restyle);
+        editor.Repaint();
     }
 
     // Copy, cut and paste of plain text only, whatever is on the clipboard or selected; line breaks on the clipboard as
@@ -215,7 +296,12 @@ internal sealed unsafe class NoteEditor : IDisposable
         var services = editor.Services;
         if (key == NoteKey.Paste)
         {
-            services.Send(PInvoke.EM_PASTESPECIAL, UnicodeText);
+            // The clipboard's Unicode text, put in as the user's own insertion: never read as RTF or any other format.
+            if (Get(services.Window) is { } pasted)
+            {
+                services.Insert(pasted);
+            }
+
             return;
         }
 
@@ -262,6 +348,40 @@ internal sealed unsafe class NoteEditor : IDisposable
             }
 
             return true;
+        }
+        finally
+        {
+            PInvoke.CloseClipboard();
+        }
+    }
+
+    private static string? Get(HWND owner)
+    {
+        if (!PInvoke.OpenClipboard(owner))
+        {
+            return null;
+        }
+
+        try
+        {
+            var data = (HGLOBAL)PInvoke.GetClipboardData(UnicodeText).Value;
+            char* p = data.IsNull ? null : (char*)PInvoke.GlobalLock(data);
+            if (p is null)
+            {
+                return null;
+            }
+
+            try
+            {
+                // Up to the terminating null, never past the memory's own size.
+                var text = new ReadOnlySpan<char>(p, (int)Math.Min(int.MaxValue, PInvoke.GlobalSize(data) / 2));
+                int end = text.IndexOf('\0');
+                return (end < 0 ? text : text[..end]).ToString();
+            }
+            finally
+            {
+                PInvoke.GlobalUnlock(data);
+            }
         }
         finally
         {

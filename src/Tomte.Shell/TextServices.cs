@@ -122,8 +122,18 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
         get => (bits & PInvoke.TXTBIT_RICHTEXT) != 0;
         set
         {
+            // The call throws when the services refuse the change; the box then stays what it was.
+            uint was = bits;
             bits = value ? bits | PInvoke.TXTBIT_RICHTEXT : bits & ~PInvoke.TXTBIT_RICHTEXT;
-            services->OnTxPropertyBitsChange(PInvoke.TXTBIT_RICHTEXT, bits & PInvoke.TXTBIT_RICHTEXT);
+            try
+            {
+                services->OnTxPropertyBitsChange(PInvoke.TXTBIT_RICHTEXT, bits & PInvoke.TXTBIT_RICHTEXT);
+            }
+            catch
+            {
+                bits = was;
+                throw;
+            }
         }
     }
 
@@ -286,10 +296,22 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
         Selection = (change.Map(start), change.Map(end));
     }
 
+    /// <summary>
+    /// The user's own insertion at the selection (a paste): one undo step, the caret after it, and in a rich box never
+    /// read as RTF.
+    /// </summary>
+    public void Insert(string text)
+    {
+        var (start, end) = Selection;
+        Write(start, end, text, undoable: true);
+        int after = start + EditorText.Lines(text).Length;
+        Selection = (after, after);
+    }
+
     // Rich text set through the services' own calls is read as RTF when it starts with {\rtf, so a note that does would
-    // change under the user; the object model's SetText takes it as it is. No undo step, and the undo stack emptied, as
-    // a replacement the user cannot undo empties it in a plain box.
-    private void Write(int start, int end, string text)
+    // change under the user; the object model's SetText takes it as it is. Not undoable: no undo step, and the undo
+    // stack emptied, as a replacement the user cannot undo empties it in a plain box.
+    private void Write(int start, int end, string text, bool undoable = false)
     {
         var document = Document();
         ITextRange* range = null;
@@ -297,6 +319,12 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
         try
         {
             document->Range(start, end, &range);
+            if (undoable)
+            {
+                range->SetText(new BSTR((char*)bstr));
+                return;
+            }
+
             document->Undo((int)tomConstants.tomSuspend, null);
             try
             {
