@@ -450,13 +450,16 @@ public sealed class VoiceTests : IDisposable
     [Fact]
     public async Task AnAnswerReachesOnlyTheQuestionItWasGivenFor()
     {
-        var question = new ToolQuestion();
+        long now = 0;
+        var question = new ToolQuestion { Clock = () => now };
         var first = new ToolRequest(BuiltInTools.SetVolume, "Set volume to 20%", ActionTier.ExternalEffect, false);
         var second = new ToolRequest(BuiltInTools.SetVolume, "Set volume to 20%", ActionTier.ExternalEffect, false);
         Assert.False(question.Answer(allow: true));
 
         var a = question.AskAsync(first, CancellationToken.None);
         Assert.Same(first, question.Asked);
+        // The user has read the card.
+        now += ToolQuestion.ReadMs;
         Assert.True(question.Answer(allow: true, to: first));
         Assert.Equal(PermissionAnswer.AllowOnce, await a);
         Assert.Null(question.Asked);

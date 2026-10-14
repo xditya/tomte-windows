@@ -178,10 +178,10 @@ internal sealed unsafe class EditorView : IDisposable
     public void SendOnEnter(Action<string> send)
     {
         var keys = new PromptKeys();
-        BeforeKey = (message, wParam, _) =>
+        BeforeKey = (message, wParam, lParam) =>
         {
             bool shift = PInvoke.GetKeyState((int)Windows.Win32.UI.Input.KeyboardAndMouse.VIRTUAL_KEY.VK_SHIFT) < 0;
-            if (keys.Sends(message, wParam, shift, out bool swallow))
+            if (keys.Sends(message, wParam, shift, out bool swallow, lParam))
             {
                 send(Services.Text);
             }

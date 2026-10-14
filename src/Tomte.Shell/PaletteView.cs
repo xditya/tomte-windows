@@ -57,6 +57,7 @@ internal sealed class PaletteView : IDisposable
     private Action? retract;
     private bool fadeInPending = true, disposed;
     private ToolRequest? laidAsk;
+    private ConfirmKeys laidKeys;
     private Confirmation? confirm;
     private (string Text, float Height) said = ("", 0);
     private CompositionRoundedRectangleGeometry? askCard;
@@ -139,6 +140,12 @@ internal sealed class PaletteView : IDisposable
             question.Changed += Update;
         }
 
+        if (prompt is not null)
+        {
+            // An open question's line drops "Enter runs it" once the box no longer has the keys.
+            focus!.Lost += Update;
+        }
+
         Update();
     }
 
@@ -161,6 +168,9 @@ internal sealed class PaletteView : IDisposable
 
     /// <summary>The prompt takes the keys, after the palette hotkey or a click on the tomte. False when there is no prompt or Windows refused.</summary>
     public bool TakeKeys() => prompt is not null && focus!.Take(prompt);
+
+    /// <summary>The question the card shows now, which a yes from the chord may answer; null with none.</summary>
+    public ToolRequest? Shown => laidAsk;
 
     /// <summary>The palette goes when it loses the keys while nothing is being sent.</summary>
     public void RetractOnFocusLoss(Action hide)
@@ -191,10 +201,12 @@ internal sealed class PaletteView : IDisposable
         float promptText = prompt?.ContentHeight ?? Said();
         List<(string, bool)> chips = session is null ? [] : [.. session.Chips.Select(chip => (chip.Label, chip.On && chip.Available))];
         var asked = question?.Asked;
-        if (promptText != laidText || !chips.SequenceEqual(laidChips) || !ReferenceEquals(asked, laidAsk))
+        // Enter answers only while the prompt box has the keys; the line says so.
+        var keys = !typed ? ConfirmKeys.Voice : prompt is not null && focus?.Focused == prompt ? ConfirmKeys.Prompt : ConfirmKeys.Pointer;
+        if (promptText != laidText || !chips.SequenceEqual(laidChips) || !ReferenceEquals(asked, laidAsk) || keys != laidKeys)
         {
-            (laidText, laidChips, laidAsk) = (promptText, chips, asked);
-            confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, typed), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive);
+            (laidText, laidChips, laidAsk, laidKeys) = (promptText, chips, asked, keys);
+            confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, keys), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive);
             layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm);
         }
 
@@ -281,6 +293,11 @@ internal sealed class PaletteView : IDisposable
         if (question is not null)
         {
             question.Changed -= Update;
+        }
+
+        if (prompt is not null)
+        {
+            focus!.Lost -= Update;
         }
 
         if (retract is not null)
@@ -387,14 +404,15 @@ internal sealed class PaletteView : IDisposable
         }
     }
 
-    // The open question's answer from a button, Enter or Esc; false when no question is open.
+    // The answer from a button, Enter or Esc, for the question the card shows: never for one that opened after it was
+    // drawn. False when none is shown, or when a yes comes before the card has shown for long enough to be read.
     private bool Answer(ConfirmButton button) =>
-        question?.Asked is { } asked && question.Answer(button switch
+        laidAsk is { } shown && question!.Answer(button switch
         {
             ConfirmButton.Run => PermissionAnswer.AllowOnce,
             ConfirmButton.AlwaysAllow => PermissionAnswer.AlwaysAllow,
             _ => PermissionAnswer.Deny,
-        }, asked);
+        }, shown);
 
     /// <summary>The answer as blocks: the model's text, each tool step on its own line, and an error last.</summary>
     internal static List<(string Text, TextStyle Style)> Blocks(IPaletteSession session)
@@ -493,6 +511,8 @@ internal sealed class PaletteView : IDisposable
 
         if (session.Status == PaletteStatus.Sending)
         {
+            // The typing focus saw the press first: a click into the box gave it the keys back, and the line says so.
+            Update();
             return;
         }
 

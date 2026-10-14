@@ -146,22 +146,27 @@ public static class IslandKeys
 /// <summary>
 /// The palette's prompt keys: Enter sends, Shift+Enter is a new line. A send swallows the Enter key and the carriage
 /// return the message loop makes from it, so the prompt never gets the line break. Keys an input method is composing
-/// with arrive as VK_PROCESSKEY, never as Enter, so committing a composition never sends.
+/// with arrive as VK_PROCESSKEY, never as Enter, so committing a composition never sends. A held Enter sends once: its
+/// autorepeat is swallowed, so it cannot also run a question that opens while the key is down.
 /// </summary>
 public sealed class PromptKeys
 {
     public const uint KeyDown = 0x0100, Char = 0x0102;
+
+    /// <summary>A key message's lParam bit 30: the key was already down, so this one is autorepeat.</summary>
+    public const nint WasDown = 1 << 30;
+
     private const int Return = 0x0D;
     private bool swallowReturn;
 
     /// <summary>What to do with a key message: false passes it to the editor.</summary>
-    public bool Sends(uint message, nuint wParam, bool shift, out bool swallow)
+    public bool Sends(uint message, nuint wParam, bool shift, out bool swallow, nint lParam = 0)
     {
         swallow = false;
         if (message == KeyDown && (int)wParam == Return && !shift)
         {
             swallowReturn = swallow = true;
-            return true;
+            return (lParam & WasDown) == 0;
         }
 
         // Ctrl+Enter makes a line feed instead of a carriage return.

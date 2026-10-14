@@ -10,20 +10,31 @@ namespace Tomte.Core;
 public enum ConfirmButton { AlwaysAllow, Cancel, Run }
 
 /// <summary>
+/// Which keys answer a question: Enter while the prompt box has them, the Win+Alt+Enter chord by voice, or none but Esc
+/// once the typed palette has lost them.
+/// </summary>
+public enum ConfirmKeys { Prompt, Voice, Pointer }
+
+/// <summary>
 /// A tool's question as the palette draws it: what will run, why it asks and which keys answer, whether "Always
 /// allow" is offered, and whether Run takes the warning colour because the action can never be always allowed.
 /// </summary>
 public sealed record Confirmation(string Summary, string Line, bool AlwaysAllow, bool Destructive)
 {
-    /// <summary>Why a tool asks, in plain words, then the keys: Enter in the typed palette, Win+Alt+Enter by voice, where the island has no keys.</summary>
-    public static string LineFor(ActionTier tier, bool typed) =>
+    /// <summary>Why a tool asks, in plain words, then the keys that answer it.</summary>
+    public static string LineFor(ActionTier tier, ConfirmKeys keys) =>
         (tier switch
         {
             ActionTier.Read => "Sends what it reads to the AI",
             ActionTier.AppLocalWrite => "Changes Tomte's own data",
             ActionTier.ExternalEffect => "Reaches outside Tomte",
             _ => "Asks every time",
-        }) + (typed ? " · Enter runs it, Esc cancels" : " · Win+Alt+Enter runs it, Esc cancels");
+        }) + keys switch
+        {
+            ConfirmKeys.Prompt => " · Enter runs it, Esc cancels",
+            ConfirmKeys.Voice => " · Win+Alt+Enter runs it, Esc cancels",
+            _ => " · Esc cancels",
+        };
 }
 
 /// <summary>

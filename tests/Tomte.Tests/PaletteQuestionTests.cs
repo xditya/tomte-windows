@@ -3,6 +3,7 @@ using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
+using Tomte.Core.Text;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -17,7 +18,10 @@ public sealed class PaletteQuestionTests : IDisposable
     private readonly ScriptedProvider _provider = new();
     private readonly List<string> _opened = [], _copied = [];
     private readonly PermissionGrants _grants = new();
-    private readonly ToolQuestion _question = new();
+    private readonly ToolQuestion _question;
+    private long _now = 10_000;
+
+    public PaletteQuestionTests() => _question = new ToolQuestion { Clock = () => _now };
 
     public void Dispose()
     {
@@ -36,15 +40,16 @@ public sealed class PaletteQuestionTests : IDisposable
         };
     }
 
-    // Completes with the request once the question is open.
-    private Task<ToolRequest> Opened()
+    // Completes with the request once the question is open, and the user has read it: the clock moves past the wait.
+    private Task<ToolRequest> Opened(ToolRequest? after = null)
     {
         var opened = new TaskCompletionSource<ToolRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
         void Changed()
         {
-            if (_question.Asked is { } asked)
+            if (_question.Asked is { } asked && !ReferenceEquals(asked, after))
             {
                 _question.Changed -= Changed;
+                _now += ToolQuestion.ReadMs;
                 opened.TrySetResult(asked);
             }
         }
@@ -140,6 +145,7 @@ public sealed class PaletteQuestionTests : IDisposable
         var request = new ToolRequest(BuiltInTools.ShutDownPc, "Shut down the PC", ActionTier.Destructive, OfferAlwaysAllow: false);
         var asked = _question.AskAsync(request, CancellationToken.None);
         Assert.Equal(1, changes);
+        _now += ToolQuestion.ReadMs;
         Assert.True(_question.Answer(PermissionAnswer.AlwaysAllow, request));
         Assert.Equal(PermissionAnswer.AllowOnce, await asked);
         Assert.Equal(2, changes);
@@ -147,10 +153,73 @@ public sealed class PaletteQuestionTests : IDisposable
     }
 
     [Fact]
+    public async Task AYesBeforeTheQuestionHasShownForReadMsIsNotTakenAndANoAlwaysIs()
+    {
+        var power = new ToolRequest(BuiltInTools.ShutDownPc, "Shut down the PC", ActionTier.Destructive, OfferAlwaysAllow: false);
+        var asked = _question.AskAsync(power, CancellationToken.None);
+        // A second Enter, a double click or a second chord a moment after the last question was answered.
+        _now += ToolQuestion.ReadMs - 1;
+        Assert.False(_question.Answer(PermissionAnswer.AllowOnce, power));
+        Assert.False(_question.Answer(PermissionAnswer.AlwaysAllow, power));
+        Assert.Same(power, _question.Asked);
+        _now += 1;
+        Assert.True(_question.Answer(PermissionAnswer.AllowOnce, power));
+        Assert.Equal(PermissionAnswer.AllowOnce, await asked);
+
+        // Cancel and Esc count at once.
+        var again = _question.AskAsync(power with { }, CancellationToken.None);
+        Assert.True(_question.Answer(PermissionAnswer.Deny, _question.Asked));
+        Assert.Equal(PermissionAnswer.Deny, await again);
+    }
+
+    [Fact]
+    public async Task ARunForTheCardThatWasShownNeverRunsTheNextOne()
+    {
+        // Two calls in one turn: the second question opens as soon as the first tool has run.
+        _provider.Turns.Add([.. ScriptedProvider.Call(BuiltInTools.OpenUrl, """{"url":"https://example.com/a"}""", "c1").SkipLast(1),
+            .. ScriptedProvider.Call(BuiltInTools.OpenUrl, """{"url":"https://example.com/b"}""", "c2")]);
+        _provider.Turns.Add(ScriptedProvider.Text(deltas: "Done."));
+        var session = Session();
+        var send = session.SendAsync();
+        var first = await Opened();
+        Assert.True(_question.Answer(PermissionAnswer.AllowOnce, first));
+        var second = await Opened(after: first);
+        Assert.NotSame(first, second);
+        // The same press again, still meant for the first card, reaches nothing; the second card is answered on its own.
+        Assert.False(_question.Answer(PermissionAnswer.AllowOnce, first));
+        Assert.True(_question.Answer(PermissionAnswer.Deny, second));
+        await send;
+        Assert.Equal(["https://example.com/a"], _opened);
+    }
+
+    [Fact]
+    public void AHeldEnterSendsOrRunsOnceAndItsRepeatsAreSwallowed()
+    {
+        var keys = new PromptKeys();
+        Assert.True(keys.Sends(PromptKeys.KeyDown, 0x0D, shift: false, out bool swallow));
+        Assert.True(swallow);
+        Assert.False(keys.Sends(PromptKeys.Char, '\r', shift: false, out swallow));
+        Assert.True(swallow);
+        // Autorepeat (lParam bit 30): neither sent nor typed, while the card that just opened waits for a real press.
+        Assert.False(keys.Sends(PromptKeys.KeyDown, 0x0D, shift: false, out swallow, PromptKeys.WasDown | 1));
+        Assert.True(swallow);
+        Assert.False(keys.Sends(PromptKeys.Char, '\r', shift: false, out swallow, PromptKeys.WasDown | 1));
+        Assert.True(swallow);
+    }
+
+    [Fact]
+    public void TheLineOnlyOffersEnterWhileThePromptHasTheKeys()
+    {
+        Assert.Equal("Reaches outside Tomte · Enter runs it, Esc cancels", Confirmation.LineFor(ActionTier.ExternalEffect, ConfirmKeys.Prompt));
+        Assert.Equal("Reaches outside Tomte · Esc cancels", Confirmation.LineFor(ActionTier.ExternalEffect, ConfirmKeys.Pointer));
+        Assert.Equal("Changes Tomte's own data · Win+Alt+Enter runs it, Esc cancels", Confirmation.LineFor(ActionTier.AppLocalWrite, ConfirmKeys.Voice));
+    }
+
+    [Fact]
     public void TheQuestionSitsAboveTheFooterWithRunLastAndAlwaysAllowOnlyWhereOffered()
     {
         var plain = new PaletteLayout(640, mascot: true);
-        var confirm = new Confirmation("Turn dark mode on", Confirmation.LineFor(ActionTier.ExternalEffect, typed: true), AlwaysAllow: true, Destructive: false);
+        var confirm = new Confirmation("Turn dark mode on", Confirmation.LineFor(ActionTier.ExternalEffect, ConfirmKeys.Prompt), AlwaysAllow: true, Destructive: false);
         var layout = new PaletteLayout(640, mascot: true, confirm: confirm);
         Assert.Null(plain.Ask(150));
         Assert.Null(plain.ButtonAt(new Vector2(600, 120), 150));
@@ -182,7 +251,7 @@ public sealed class PaletteQuestionTests : IDisposable
         Assert.Null(layout.ButtonAt(new Vector2(ask.Card.X + 4, ask.Card.Y + 4), height));
 
         // A tier that never offers it shows Cancel and Run only; by voice the keys are the chord.
-        var power = new PaletteLayout(640, mascot: true, confirm: confirm with { AlwaysAllow = false, Line = Confirmation.LineFor(ActionTier.Destructive, typed: false) });
+        var power = new PaletteLayout(640, mascot: true, confirm: confirm with { AlwaysAllow = false, Line = Confirmation.LineFor(ActionTier.Destructive, ConfirmKeys.Voice) });
         var asked = power.Ask(power.Height(0))!.Value;
         Assert.Equal([ConfirmButton.Cancel, ConfirmButton.Run], asked.Buttons.Select(b => b.Button));
         Assert.Equal("Asks every time · Win+Alt+Enter runs it, Esc cancels", asked.Line.Text);

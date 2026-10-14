@@ -16,8 +16,13 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
 {
     private double _targetHeight;
 
+    private PaletteView? running;
+
     /// <summary>Device actions the session ran, in order. The shell raises them as island events once the palette has retracted.</summary>
     public List<DeviceEvent> Events { get; } = [];
+
+    /// <summary>The question the running palette's card shows now; null with none.</summary>
+    public ToolRequest? Shown => running?.Shown;
 
     /// <param name="question">The question the session asks through, drawn with its buttons; null for a driven run that answers itself.</param>
     public async Task RunAsync(PaletteSession session, ToolQuestion? question = null)
@@ -33,7 +38,7 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
         island.PanelLook = true;
         // Esc closes the palette, as it does every state the user opened on purpose.
         InputThread.SetEscape(true);
-        var view = new PaletteView(island, machine, text, focus, session, (float)Width, null, question);
+        var view = running = new PaletteView(island, machine, text, focus, session, (float)Width, null, question);
         void Rest() => RestWhileAsked(question!);
         if (question is not null)
             question.Changed += Rest;

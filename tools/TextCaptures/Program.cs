@@ -515,9 +515,9 @@ internal static unsafe partial class Program
 
     private static readonly (string, TextStyle)[] Asked = [("I can open it in your browser.", PaletteLayout.AnswerText)];
 
-    private static readonly Confirmation Asking = new("Open https://example.com/tomte/releases", Confirmation.LineFor(Tomte.Core.Device.ActionTier.ExternalEffect, typed: true), AlwaysAllow: true, Destructive: false);
+    private static readonly Confirmation Asking = new("Open https://example.com/tomte/releases", Confirmation.LineFor(Tomte.Core.Device.ActionTier.ExternalEffect, ConfirmKeys.Prompt), AlwaysAllow: true, Destructive: false);
 
-    private static readonly Confirmation PowerAsking = new("Shut down the PC", Confirmation.LineFor(Tomte.Core.Device.ActionTier.Destructive, typed: false), AlwaysAllow: false, Destructive: true);
+    private static readonly Confirmation PowerAsking = new("Shut down the PC", Confirmation.LineFor(Tomte.Core.Device.ActionTier.Destructive, ConfirmKeys.Voice), AlwaysAllow: false, Destructive: true);
 
     // The palette's height with a question open, from the prompt's own height (the text box's at 150%, or what was
     // said by voice) and the answer, as the view lays it out.

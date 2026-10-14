@@ -64,9 +64,14 @@ internal sealed class Rambler(
 
     /// <summary>
     /// The answer to the palette's question (Win+Alt+Enter is yes, Esc no); with <paramref name="to"/>, only while that
-    /// is still the question. False when nothing was answered.
+    /// is still the question. Without it a yes goes to the question the card shows, never to one that opened after the
+    /// press; a no ends whatever is asked. False when nothing was answered.
     /// </summary>
-    public bool Answer(bool allow, ToolRequest? to = null) => question.Answer(allow, to);
+    public bool Answer(bool allow, ToolRequest? to = null)
+    {
+        to ??= palette?.Shown;
+        return (to is not null || !allow) && question.Answer(allow, to);
+    }
 
     /// <summary>The palette is going away under a voice command: what it was about to ask or run never runs.</summary>
     public void Cancel()
