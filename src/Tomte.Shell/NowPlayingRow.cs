@@ -3,6 +3,7 @@ using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
+using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
@@ -22,6 +23,7 @@ internal sealed class NowPlayingRow
     private const float BarsLeft = 80, BarsTop = 9, BarsHeight = 20;
     private static readonly RectangleF Art = new(-67, 8, 22, 22);
     private static readonly RectangleF Title = new(-36, 9, 107, 20);
+    private static readonly TextStyle TitleStyle = new(13, 600);
 
     // The four bars: how far each one reaches and how long one of its breaths takes.
     private static readonly float[] Reach = [.35f, .62f, .85f, 1f];
@@ -30,17 +32,19 @@ internal sealed class NowPlayingRow
     private readonly IslandWindow island;
     private readonly TriggerController triggers;
     private readonly MediaTracker tracker;
+    private readonly TextRenderer text;
     private readonly Action<string>? log;
     private readonly ScalarKeyFrameAnimation fadeIn, fadeOut;
     private readonly Windows.System.DispatcherQueueTimer release;
     private View? view, leaving;
     private bool watching, ready;
 
-    public NowPlayingRow(IslandWindow island, TriggerController triggers, MediaTracker tracker, Action<string>? log)
+    public NowPlayingRow(IslandWindow island, TriggerController triggers, MediaTracker tracker, TextRenderer text, Action<string>? log)
     {
         this.island = island;
         this.triggers = triggers;
         this.tracker = tracker;
+        this.text = text;
         this.log = log;
         fadeIn = PanelHost.Fade(island.Compositor, 1, PanelHost.FadeInMs);
         fadeOut = PanelHost.Fade(island.Compositor, 0, PanelHost.FadeOutMs);
@@ -112,7 +116,7 @@ internal sealed class NowPlayingRow
         {
             Release();
             // The peek pill is ambient and can stay up for hours, so nothing moves in it: no bars.
-            view = new View(island.Compositor, bars: reason != CompactReason.Peek);
+            view = new View(island.Compositor, text, bars: reason != CompactReason.Peek);
             view.Root.Opacity = 0;
             island.Dips.Children.InsertAtTop(view.Root);
             view.Root.StartAnimation("Opacity", fadeIn);
@@ -135,28 +139,21 @@ internal sealed class NowPlayingRow
 
     private sealed class View : IDisposable
     {
-        private const float TitleBarHeight = 10;
         private readonly ShapeVisual shapes;
-        private readonly CompositionRoundedRectangleGeometry titleBar;
+        private readonly TextVisual title;
 
-        public View(Compositor compositor, bool bars)
+        public View(Compositor compositor, TextRenderer text, bool bars)
         {
             Root = compositor.CreateContainerVisual();
             Art = new ArtVisual(compositor, NowPlayingRow.Art, 6);
             Root.Children.InsertAtTop(Art.Visual);
+            title = text.Create(Root);
 
             // One shape visual from the title slot's left edge to the pill's right padding.
             shapes = compositor.CreateShapeVisual();
             shapes.Offset = new Vector3(Title.X, 0, 0);
             shapes.Size = new Vector2(BarsLeft + Reach.Length * (Waveform.BarWidth + Waveform.Gap) - Title.X, (float)IslandGeometry.Compact.Depth);
             Root.Children.InsertAtTop(shapes);
-
-            titleBar = compositor.CreateRoundedRectangleGeometry();
-            titleBar.Offset = new Vector2(0, Title.Y + (Title.Height - TitleBarHeight) / 2);
-            titleBar.CornerRadius = new Vector2(TitleBarHeight / 2);
-            var title = compositor.CreateSpriteShape(titleBar);
-            title.FillBrush = compositor.CreateColorBrush(Color.FromArgb(28, 255, 255, 255));
-            shapes.Shapes.Add(title);
 
             if (!bars)
             {
@@ -204,15 +201,12 @@ internal sealed class NowPlayingRow
 
         public ArtVisual Art { get; }
 
-        /// <summary>
-        /// TEXT SEAM. Nothing draws text on the island yet; which text surface to use is an open owner
-        /// decision. The renderer draws one run here, clipped to the Title slot: playing.Title, 13 DIP
-        /// semibold, white, one line, ellipsis. Until then a neutral bar stands where the title goes.
-        /// </summary>
-        public void DrawTextRuns(NowPlaying playing) => titleBar.Size = new Vector2(playing.Title.Length > 0 ? 84 : 0, TitleBarHeight);
+        /// <summary>The title in its slot: 13 DIP semibold, white, one line, ellipsis.</summary>
+        public void DrawTextRuns(NowPlaying playing) => title.Show(playing.Title, TitleStyle, Title);
 
         public void Dispose()
         {
+            title.Dispose();
             Art.Dispose();
             shapes.Dispose();
             Root.Dispose();

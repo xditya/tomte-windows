@@ -2,18 +2,20 @@ using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Media;
+using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Media tab: album art, a progress bar and previous, play or pause, next, all composition visuals
-/// laid out by <see cref="MediaPanelLayout"/>. It exists only while the tab shows. The bar moves as one
-/// compositor animation from the position now to the end over the time left, restarted whenever the
-/// app reports something; nothing in this process ticks for it.
+/// The Media tab: album art, title, artist, the two clocks, a progress bar and previous, play or pause,
+/// next, all composition visuals laid out by <see cref="MediaPanelLayout"/>. It exists only while the tab
+/// shows. The bar moves as one compositor animation from the position now to the end over the time left,
+/// restarted whenever the app reports something; the elapsed clock is drawn again once a second while
+/// something plays, and nothing else in this process ticks for it.
 /// </summary>
-internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func<DateTimeOffset> now, Action<string>? log) : IPanel
+internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, TextRenderer text, Func<DateTimeOffset> now, Action<string>? log) : IPanel
 {
     private View? view;
     private bool drooped;
@@ -22,7 +24,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
-        view = new View(island.Compositor, body, size, log);
+        view = new View(island, text, body, size, now, log);
         tracker.Changed += Update;
         tracker.Watch();
         Update();
@@ -73,7 +75,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func
     {
         var playing = tracker.Current;
         var at = now();
-        view?.Update(playing, at);
+        view?.Update(playing, tracker.Failure, at);
         log?.Invoke(playing.HasSession
             ? $"media: {playing.App} {(playing.IsPlaying ? "playing" : "paused")} \"{playing.Title}\" at {(playing.PositionAt(at) is { } p ? NowPlaying.Clock(p) : "no timeline")}"
             : "media: nothing playing");
@@ -83,27 +85,37 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func
     {
         // The icons are drawn in a 24 unit box, 14 DIPs wide, centred in their button.
         private const float GlyphBox = 24, GlyphSize = 14;
-        private const float TitleBarHeight = 10;
 
         private static readonly Color White = Color.FromArgb(255, 255, 255, 255);
         private static readonly Color Dim = Color.FromArgb(97, 255, 255, 255);
         private static readonly Color Black = Color.FromArgb(255, 0, 0, 0);
         private static readonly Color Clear = Color.FromArgb(0, 0, 0, 0);
 
+        private static readonly TextStyle TitleStyle = new(14, 600);
+        private static readonly TextStyle ArtistStyle = new(12, Color: TextStyle.Secondary);
+        private static readonly TextStyle FailedStyle = new(12, Color: TextStyle.Warn);
+        private static readonly TextStyle ElapsedStyle = new(11, Color: TextStyle.Tertiary, Tabular: true);
+        private static readonly TextStyle TotalStyle = ElapsedStyle with { Align = TextAlign.Trailing };
+
         private readonly Compositor compositor;
+        private readonly Func<DateTimeOffset> now;
         private readonly Action<string>? log;
         private readonly ArtVisual art;
         private readonly ShapeVisual shapes;
+        private readonly TextVisual title, artist, elapsed, total;
+        private readonly Windows.System.DispatcherQueueTimer clock;
+        private NowPlaying shown = NowPlaying.None;
 
         // One brush per part, recoloured as the state changes. A brush taken off its last shape and put back
         // later does not draw again (seen on Windows 11 26200), so brushes are never swapped or removed.
         private readonly CompositionColorBrush previous, next, circle, play, pause, track, fill;
-        private readonly CompositionRoundedRectangleGeometry fillShape, titleBar;
+        private readonly CompositionRoundedRectangleGeometry fillShape;
         private readonly Vector2KeyFrameAnimation advance;
 
-        public View(Compositor compositor, ContainerVisual body, Vector2 size, Action<string>? log)
+        public View(IslandWindow island, TextRenderer text, ContainerVisual body, Vector2 size, Func<DateTimeOffset> now, Action<string>? log)
         {
-            this.compositor = compositor;
+            compositor = island.Compositor;
+            this.now = now;
             this.log = log;
             art = new ArtVisual(compositor, MediaPanelLayout.Art, MediaPanelLayout.ArtCorner);
             body.Children.InsertAtTop(art.Visual);
@@ -112,9 +124,10 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func
             shapes.Size = size;
             body.Children.InsertAtTop(shapes);
 
-            var slot = MediaPanelLayout.Title;
-            titleBar = Rounded(new RectangleF(slot.X, slot.Y + (slot.Height - TitleBarHeight) / 2, 0, TitleBarHeight), TitleBarHeight / 2);
-            Add(shapes.Shapes, titleBar, compositor.CreateColorBrush(Color.FromArgb(28, 255, 255, 255)));
+            (title, artist, elapsed, total) = (text.Create(body), text.Create(body), text.Create(body), text.Create(body));
+            clock = island.Queue.CreateTimer();
+            clock.IsRepeating = false;
+            clock.Tick += (_, _) => ShowClocks();
 
             var bar = MediaPanelLayout.Bar;
             track = Add(shapes.Shapes, Rounded(bar, bar.Height / 2), compositor.CreateColorBrush());
@@ -145,7 +158,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func
             Add(glyph.Shapes, Triangle(new(4, 4), new(15, 12), new(4, 20)), next);
         }
 
-        public void Update(NowPlaying playing, DateTimeOffset at)
+        public void Update(NowPlaying playing, string? failure, DateTimeOffset at)
         {
             art.Show(playing.Thumbnail, log);
 
@@ -171,29 +184,52 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func
                 }
             }
 
-            DrawTextRuns(playing);
+            DrawTextRuns(playing, failure);
         }
 
         public void Dispose()
         {
+            clock.Stop();
             fillShape.StopAnimation("Size");
             art.Dispose();
             shapes.Dispose();
+            title.Dispose();
+            artist.Dispose();
+            elapsed.Dispose();
+            total.Dispose();
         }
 
         /// <summary>
-        /// TEXT SEAM. Nothing draws text on the island yet; which text surface to use is an open owner
-        /// decision. The renderer draws these runs here, each clipped to its slot in MediaPanelLayout:
-        ///   Title:   playing.Title, or NowPlaying.NothingPlaying when there is no session. 14 DIP semibold,
-        ///            white, one line, ellipsis.
-        ///   Artist:  playing.Artist, or playing.App when the artist is empty; tracker.Failure instead
-        ///            while a command has just failed. 12 DIP, 60% white.
-        ///   Elapsed: NowPlaying.Clock(playing.PositionAt(now)). 11 DIP tabular, 38% white. It changes
-        ///            every second while playing, so the renderer needs one redraw a second while this shows.
-        ///   Total:   NowPlaying.Clock(playing.Duration). Both clock slots stay empty with no timeline.
-        /// Until then a neutral bar stands where the title goes, shorter when nothing plays.
+        /// Each run one line in its slot, cut with an ellipsis. The title reads "Nothing playing" with no
+        /// session; the artist line falls back to the app's name, and a command that just failed says so in
+        /// its place, in the warn colour.
         /// </summary>
-        private void DrawTextRuns(NowPlaying playing) => titleBar.Size = new Vector2(playing.HasSession ? 140 : 96, TitleBarHeight);
+        private void DrawTextRuns(NowPlaying playing, string? failure)
+        {
+            title.Show(playing.HasSession ? playing.Title : NowPlaying.NothingPlaying, TitleStyle, MediaPanelLayout.Title);
+            artist.Show(failure ?? (playing.Artist.Length > 0 ? playing.Artist : playing.App), failure is null ? ArtistStyle : FailedStyle, MediaPanelLayout.Artist);
+            shown = playing;
+            ShowClocks();
+        }
+
+        /// <summary>
+        /// Elapsed and total, both empty with no timeline. While the position moves, a one-shot timer comes
+        /// back as it passes the next whole second, which is when the elapsed clock reads differently.
+        /// </summary>
+        private void ShowClocks()
+        {
+            clock.Stop();
+            var at = now();
+            var timeline = shown.Timeline;
+            elapsed.Show(timeline is { } t ? NowPlaying.Clock(t.PositionAt(at)) : "", ElapsedStyle, MediaPanelLayout.Elapsed);
+            total.Show(timeline is { } d ? NowPlaying.Clock(d.Duration) : "", TotalStyle, MediaPanelLayout.Total);
+            if (timeline is { Playing: true, Rate: > 0 } moving && moving.PositionAt(at) < moving.End)
+            {
+                double seconds = moving.PositionAt(at).TotalSeconds;
+                clock.Interval = TimeSpan.FromSeconds((Math.Floor(seconds) + 1 - seconds) / moving.Rate + 0.01);
+                clock.Start();
+            }
+        }
 
         private CompositionColorBrush Add(CompositionShapeCollection into, CompositionGeometry geometry, CompositionColorBrush brush)
         {

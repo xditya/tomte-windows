@@ -274,18 +274,19 @@ internal static class Program
     private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ShortcutStore shortcuts, ClipboardWatch clipboard, Action<string>? log)
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
+        var text = new TextRenderer(island, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, log));
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
-        panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
+        panels.Register(new MediaPanel(island, media, text, () => DateTimeOffset.UtcNow, log));
         panels.Register(new ScratchpadPanel(island, Scratchpad, log));
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
         panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), log));
         triggers.Panels = panels;
         // The row lives on the state changes and ContentReady it listens to.
-        _ = new NowPlayingRow(island, triggers, media, log);
+        _ = new NowPlayingRow(island, triggers, media, text, log);
 
         bool announcing = false;
         media.TrackChanged += playing =>
