@@ -115,15 +115,14 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ADictatedNoteLandsOnTheScratchpadOnceConfirmed()
+    public async Task ADictatedNoteIsSavedWithoutAsking()
     {
         var (session, _) = Recorded("note", 2);
 
         Assert.False(await VoiceCommand.RouteAsync("remember to buy milk and eggs, and call the dentist on Monday at ten", Keep, session, Run));
 
-        var asked = Assert.Single(_asked);
-        Assert.Equal(ActionTier.AppLocalWrite, asked.Tier);
-        Assert.StartsWith("Save a note to the scratchpad: \"## Shopping - [ ] Buy milk", asked.Summary);
+        Assert.Empty(_asked);
+        Assert.StartsWith("Save a note to the scratchpad: \"## Shopping - [ ] Buy milk", Assert.Single(session.Answer.OfType<ToolStepSegment>()).Summary);
         Assert.Empty(_ran);
         // The model escaped its line breaks twice; the note has real ones under the rambler's time heading.
         Assert.Matches(@"^## \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n\n## Shopping\n- \[ \] Buy milk\n- \[ \] Buy eggs\nCall dentist on Monday at 10\n\n$", _pad.Text);
@@ -144,18 +143,64 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AnUnclearRequestRunsNothingAndKeepsNothing()
+    public void ANoteInACodeFenceIsSavedWithoutTheFence()
+    {
+        var input = JsonDocument.Parse("""{"note":"```markdown\n### Plan\n- [ ] Call Ana\n```\n"}""").RootElement;
+        Assert.Equal("Save a note to the scratchpad: \"### Plan - [ ] Call Ana\"", BuiltInTools.Describe(BuiltInTools.SaveNote, input));
+        var (result, _) = Tools().Run(new ToolCallPart("c1", BuiltInTools.SaveNote, input));
+
+        Assert.False(result.IsError);
+        Assert.EndsWith("\n\n### Plan\n- [ ] Call Ana\n\n", _pad.Text);
+    }
+
+    [Fact]
+    public async Task AnEmptyNoteKeepsTheTranscriptAsTheRawNote()
+    {
+        var provider = new ScriptedProvider();
+        provider.Turns.Add(ScriptedProvider.Call(BuiltInTools.SaveNote, """{"note":"```\n```"}"""));
+        provider.Turns.Add(ScriptedProvider.Text(1, 1, "Saved."));
+
+        Assert.True(await VoiceCommand.RouteAsync("call Ana at five", Keep, Session(provider), Run));
+
+        Assert.Empty(_asked);
+        Assert.Matches(@"^## \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n\ncall Ana at five\n\n$", _pad.Text);
+    }
+
+    [Fact]
+    public void TheNoteUndoTakesOffOnlyTheNoteAndNothingTypedAfterIt()
+    {
+        static ToolCallPart Note(string text) => new("c1", BuiltInTools.SaveNote, JsonDocument.Parse($$"""{"note":"{{text}}"}""").RootElement);
+
+        _pad.Text = "Ideas:\n- a quieter alarm\n";
+        var (_, undo) = Tools().Run(Note("buy milk"));
+        // An edit above the note stays when the note goes.
+        _pad.Text = _pad.Text.Replace("quieter", "softer", StringComparison.Ordinal);
+        Assert.Equal("Note taken off the scratchpad.", undo!().Message);
+        Assert.Equal("Ideas:\n- a softer alarm\n", _pad.Text);
+
+        var (_, second) = Tools().Run(Note("call Ana"));
+        _pad.Text += "typed after the note\n";
+        var refused = second!();
+        Assert.False(refused.Ok);
+        Assert.Equal("The scratchpad changed after the note, so the note stays.", refused.Message);
+        Assert.Contains("call Ana", _pad.Text);
+        Assert.EndsWith("typed after the note\n", _pad.Text);
+    }
+
+    [Fact]
+    public async Task AnUnclearRequestRunsNothingAndKeepsTheRawNote()
     {
         var (session, _) = Recorded("unclear", 1);
 
-        Assert.False(await VoiceCommand.RouteAsync("hmm", Keep, session, Run));
+        Assert.True(await VoiceCommand.RouteAsync("hmm", Keep, session, Run));
 
         Assert.Empty(_asked);
         Assert.Empty(_ran);
         Assert.Empty(_events);
         Assert.Equal(PaletteStatus.Done, session.Status);
         Assert.Equal("Since the user didn't give a question, no action can be performed.", session.AnswerText);
-        Assert.Equal("", _pad.Text);
+        // The model answered in text; the words are kept, as they are when there is no provider.
+        Assert.Matches(@"^## \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n\nhmm\n\n$", _pad.Text);
     }
 
     [Fact]
@@ -208,34 +253,48 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
-    public async Task EveryVoiceCallAsksEvenWhenAlwaysAllowedAndAnAlwaysAnswerGrantsNothing()
+    public async Task EveryVoiceCallButTheNoteAsksEvenWhenAlwaysAllowedAndAnAlwaysAnswerGrantsNothing()
     {
         var grants = new PermissionGrants();
         grants.AlwaysAllow(BuiltInTools.SetDarkMode);
-        static ScriptedProvider FourCalls()
+        static ScriptedProvider FiveCalls()
         {
             var provider = new ScriptedProvider();
             provider.Turns.Add([
                 .. ScriptedProvider.Call(BuiltInTools.SetDarkMode, """{"on":true}""", "c1")[..^1],
                 .. ScriptedProvider.Call(BuiltInTools.SetVolume, """{"percent":20}""", "c2")[..^1],
                 .. ScriptedProvider.Call(BuiltInTools.SetTimer, """{"minutes":5}""", "c3")[..^1],
-                .. ScriptedProvider.Call(BuiltInTools.ReadShelfItem, """{"name":"x"}""", "c4")]);
+                .. ScriptedProvider.Call(BuiltInTools.ReadShelfItem, """{"name":"x"}""", "c4")[..^1],
+                .. ScriptedProvider.Call(BuiltInTools.SaveNote, """{"note":"buy milk"}""", "c5")]);
             provider.Turns.Add(ScriptedProvider.Text(1, 1, "Done."));
             return provider;
         }
 
-        // Typed, the granted tool runs on its own, and so do the app-local and the read.
-        await Session(FourCalls(), voice: false, grants: grants).SendAsync();
+        // Typed, the granted tool runs on its own, and so do the app-local and the read; the note is not offered.
+        await Session(FiveCalls(), voice: false, grants: grants).SendAsync();
         Assert.Equal([BuiltInTools.SetVolume], _asked.Select(a => a.Tool));
         Assert.True(_asked[0].OfferAlwaysAllow);
+        Assert.Equal("", _pad.Text);
 
-        // Spoken, every one of them asks, none offers "always allow", and answering it anyway grants nothing.
+        // Spoken, all but the note ask, none offers "always allow", and answering it anyway grants nothing.
         _asked.Clear();
         _answer = PermissionAnswer.AlwaysAllow;
-        await Session(FourCalls(), grants: grants).SendAsync();
+        await Session(FiveCalls(), grants: grants).SendAsync();
         Assert.Equal([BuiltInTools.SetDarkMode, BuiltInTools.SetVolume, BuiltInTools.SetTimer, BuiltInTools.ReadShelfItem], _asked.Select(a => a.Tool));
         Assert.All(_asked, a => Assert.False(a.OfferAlwaysAllow));
         Assert.Equal([BuiltInTools.SetDarkMode], grants.AlwaysAllowed);
+        Assert.Contains("buy milk", _pad.Text);
+    }
+
+    [Fact]
+    public async Task AVoiceTurnIsCappedAt1024Tokens()
+    {
+        var provider = new ScriptedProvider();
+        provider.Turns.Add(ScriptedProvider.Text(1, 1, "ok"));
+        await Session(provider).SendAsync();
+        await Session(provider, voice: false).SendAsync();
+
+        Assert.Equal([1024, new PaletteOptions().MaxTokens], provider.Requests.Select(r => r.MaxTokens));
     }
 
     [Fact]

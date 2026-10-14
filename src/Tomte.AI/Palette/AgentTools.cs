@@ -160,9 +160,10 @@ public sealed class BuiltInTools(
             CreateShelfFile when !IsFileName(Arg(input, "name")) => "name must be a plain file name with no path separators or device names.",
             WriteScratchpad when input.TryGetProperty("mode", out var mode) && mode.GetString() is not ("append" or "replace") => "mode must be \"append\" or \"replace\".",
             SetBrightness or SetVolume when Int(input.GetProperty("percent")) is < 0 or > 100 => "percent must be between 0 and 100.",
-            // Written so NaN fails both comparisons.
-            SetTimer when Number(input.GetProperty("minutes")) is not { } m || !(m * 60 >= TimerRun.MinDuration.TotalSeconds && m <= TimerRun.MaxDuration.TotalMinutes) =>
+            SetTimer when Duration(input) is null =>
                 FormattableString.Invariant($"minutes must be between {TimerRun.MinDuration.TotalMinutes:0.###} (one second) and {TimerRun.MaxDuration.TotalMinutes:0} (one day)."),
+            // With nothing left inside its fence, the note says nothing; the transcript is kept as the raw note instead.
+            SaveNote when NoteText(input).Length == 0 => "note is empty.",
             OpenApp => Apps.ValidateAppTarget(Arg(input, "name")),
             OpenSettingsPage when !Apps.IsSettingsUri(Arg(input, "uri")) => "A settings page looks like ms-settings:display.",
             _ => null,
@@ -193,7 +194,7 @@ public sealed class BuiltInTools(
         SleepPc => "Put the PC to sleep",
         RestartPc => "Restart the PC",
         ShutDownPc => "Shut down the PC",
-        SetTimer => FormattableString.Invariant($"Set a timer for {Minutes(input):0.##} minute{(Minutes(input) == 1 ? "" : "s")}"),
+        SetTimer => Duration(input)?.TotalMinutes is { } minutes ? FormattableString.Invariant($"Set a timer for {minutes:0.##} minute{(minutes == 1 ? "" : "s")}") : "Set a timer",
         SaveNote => $"Save a note to the scratchpad: \"{Preview(NoteText(input))}\"",
         OpenShortcut => $"Open the shortcut \"{Arg(input, "name")}\"",
         _ => name,
@@ -304,7 +305,7 @@ public sealed class BuiltInTools(
         if (timer is null)
             return (new ToolResultPart(call.Id, call.Name, "The timer is not available here.", IsError: true), null);
         var previous = timer.Run;
-        var run = TimerRun.Starting(DateTimeOffset.Now, TimeSpan.FromMinutes(Minutes(call.Input)));
+        var run = TimerRun.Starting(DateTimeOffset.Now, Duration(call.Input)!.Value);
         timer.Run = run;
         return (new ToolResultPart(call.Id, call.Name, $"Timer set; it ends at {run.EndsAt.LocalDateTime:HH:mm:ss}."), () =>
         {
@@ -314,15 +315,24 @@ public sealed class BuiltInTools(
         );
     }
 
-    /// <summary>The rambler's note: added at the end of the scratchpad under a time heading.</summary>
+    /// <summary>
+    /// The rambler's note: added at the end of the scratchpad under a time heading. The undo takes off only the note,
+    /// and only while it is still the end of the scratchpad, so an edit made since is never lost.
+    /// </summary>
     private (ToolResultPart, Func<ActionResult>?) Note(ToolCallPart call)
     {
         var before = scratchpad.Text;
         scratchpad.Text = RamblerNotes.Append(before, NoteText(call.Input), DateTime.Now);
+        // Appending keeps the text up to its trailing line breaks; everything after that is the note's.
+        int kept = before.TrimEnd('\r', '\n').Length;
+        string added = scratchpad.Text[kept..];
         return (new ToolResultPart(call.Id, call.Name, "Note saved to the scratchpad."), () =>
         {
-            scratchpad.Text = before;
-            return ActionResult.Done("Scratchpad put back.");
+            var now = scratchpad.Text;
+            if (!now.EndsWith(added, StringComparison.Ordinal))
+                return ActionResult.Fail("The scratchpad changed after the note, so the note stays.");
+            scratchpad.Text = now[..^added.Length] + before[kept..];
+            return ActionResult.Done("Note taken off the scratchpad.");
         }
         );
     }
@@ -363,9 +373,28 @@ public sealed class BuiltInTools(
     };
 
     // llama3.2:3b escapes the note's line breaks twice and once wrote terminal colour codes into one. A dictated
-    // note never means a backslash and an n, or a control character other than a line break or a tab.
-    private static string NoteText(JsonElement input) =>
-        string.Concat(Arg(input, "note").Replace("\\n", "\n", StringComparison.Ordinal).Where(c => !char.IsControl(c) || c is '\n' or '\t'));
+    // note never means a backslash and an n, or a control character other than a line break or a tab. A model may
+    // also wrap the note in a code fence, as it did when the rambler asked for the note on its own.
+    private static string NoteText(JsonElement input)
+    {
+        var note = string.Concat(Arg(input, "note").Replace("\\n", "\n", StringComparison.Ordinal).Where(c => !char.IsControl(c) || c is '\n' or '\t')).Trim();
+        if (note.StartsWith("```", StringComparison.Ordinal))
+        {
+            int firstLine = note.IndexOf('\n');
+            note = firstLine < 0 ? "" : note[(firstLine + 1)..].TrimEnd();
+            if (note.EndsWith("```", StringComparison.Ordinal))
+                note = note[..^3];
+            note = note.Trim();
+        }
+
+        return note;
+    }
+
+    private static TimeSpan? Duration(JsonElement input) =>
+        input.ValueKind == JsonValueKind.Object && input.TryGetProperty("minutes", out var v)
+            && TimerRun.TryParseMinutes(v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText(), out var duration)
+            ? duration
+            : null;
 
     private static double? Number(JsonElement v) => v.ValueKind switch
     {
@@ -373,9 +402,6 @@ public sealed class BuiltInTools(
         JsonValueKind.String when double.TryParse(v.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) => d,
         _ => null,
     };
-
-    private static double Minutes(JsonElement input) =>
-        input.ValueKind == JsonValueKind.Object && input.TryGetProperty("minutes", out var v) ? Number(v) ?? 0 : 0;
 
     private static bool Bool(JsonElement input, string name) => input.TryGetProperty(name, out var v) && Bool(v) == true;
 
