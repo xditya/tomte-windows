@@ -6,6 +6,7 @@ using Tomte.Core.Media;
 using Windows.UI.Composition;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.System.SystemServices;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
 using Color = Windows.UI.Color;
@@ -29,9 +30,12 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
     private IReadOnlyList<Target> targets = [];
     private Vector2? pressAt;
 
-    // The last seek sent: until the app reports another timeline, or for 2 s, the bar and the keys count from it.
+    // The last seek shown: until the app reports another timeline, or for 2 s, the bar and the keys count from it.
     private PendingSeek? sought;
-    private Windows.System.DispatcherQueueTimer? settle;
+
+    // A key's seek waiting for the gap after the last one sent to pass.
+    private TimeSpan? queued;
+    private Windows.System.DispatcherQueueTimer? settle, keyGap;
     private bool drooped;
 
     public PanelId Id => PanelId.Media;
@@ -44,6 +48,9 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
     {
         view = new View(island, text, body, size, now, log);
         bodyWidth = size.X;
+        // With no report 2 s after a seek, the bar goes back to the last position the app gave.
+        settle ??= OneShot(PendingSeek.Wait, Update);
+        keyGap ??= OneShot(PendingSeek.KeyGap, SendQueued);
         tracker.Changed += Update;
         tracker.Watch();
         Update();
@@ -55,8 +62,9 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         tracker.Unwatch();
         view?.Dispose();
         view = null;
-        (drooped, pressAt, sought) = (false, null, null);
+        (drooped, pressAt, sought, queued) = (false, null, null, null);
         settle?.Stop();
+        keyGap?.Stop();
         targets = [];
         TargetsChanged?.Invoke();
     }
@@ -78,7 +86,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         {
             Send(MediaPanelLayout.Command(id, tracker.Current));
         }
-        else if (pressAt is { } at && tracker.Current.Timeline is { } timeline)
+        else if (pressAt is { } at && tracker.Current is { CanSeek: true, Timeline: { } timeline })
         {
             Seek(MediaPanelLayout.SeekAt(at.X, timeline));
         }
@@ -93,10 +101,22 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
     public bool TryDrag(string id, Vector2 at)
     {
         pressAt = at;
-        if (id != MediaPanelLayout.SeekId || view is null || tracker.Current.Timeline is not { } timeline
-            || !PInvoke.GetCursorPos(out var screen) || !PInvoke.DragDetect(island.Hwnd, screen))
+        if (id != MediaPanelLayout.SeekId || view is null || tracker.Current is not { CanSeek: true, Timeline: { } timeline }
+            || !PInvoke.GetCursorPos(out var screen))
         {
             return false;
+        }
+
+        if (!PInvoke.DragDetect(island.Hwnd, screen))
+        {
+            // Esc ends the wait with the button still down, which is no click.
+            if (PInvoke.GetKeyState((int)VIRTUAL_KEY.VK_LBUTTON) >= 0)
+            {
+                return false;
+            }
+
+            pressAt = null;
+            return true;
         }
 
         pressAt = null;
@@ -141,7 +161,16 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         }
 
         view?.Label(MediaPanelLayout.BarX(position, timeline), position);
-        Seek(position);
+        if (Show(position))
+        {
+            // A held key sends at most one seek per gap; the last position wins.
+            queued = position;
+            if (keyGap?.IsRunning != true)
+            {
+                SendQueued();
+            }
+        }
+
         return true;
     }
 
@@ -163,6 +192,13 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
                 {
                     // The app is quitting: the island's own loop has to see it too.
                     PInvoke.PostQuitMessage((int)message.wParam.Value);
+                    return null;
+                }
+
+                // The island is never the foreground window, so a button let go off it can go unseen: a move with
+                // the button up ends the drag with nothing to seek to.
+                if (message.message == PInvoke.WM_MOUSEMOVE && (message.wParam.Value & (nuint)MODIFIERKEYS_FLAGS.MK_LBUTTON) == 0)
+                {
                     return null;
                 }
 
@@ -192,31 +228,60 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         }
         finally
         {
-            PInvoke.ReleaseCapture();
+            if (PInvoke.GetCapture() == hwnd)
+            {
+                PInvoke.ReleaseCapture();
+            }
+
             view?.Scrubbed();
         }
     }
 
-    private async void Seek(TimeSpan position)
+    /// <summary>A click or a drag seeks at once.</summary>
+    private void Seek(TimeSpan position)
     {
-        if (tracker.Current.Timeline is not { } timeline)
+        if (Show(position))
         {
-            return;
+            SendSeek(position);
+        }
+    }
+
+    /// <summary>The bar shows a seek before the app reports it; false when the app takes no position now.</summary>
+    private bool Show(TimeSpan position)
+    {
+        if (tracker.Current is not { CanSeek: true, Timeline: { } timeline })
+        {
+            return false;
         }
 
         sought = new PendingSeek(position, timeline, now());
         view?.Hold(MediaPanelLayout.BarX(position, timeline));
-        // With no report by then, the bar goes back to the last position the app gave.
-        if (settle is null)
-        {
-            settle = island.Queue.CreateTimer();
-            settle.IsRepeating = false;
-            settle.Interval = PendingSeek.Wait;
-            settle.Tick += (_, _) => Update();
-        }
+        settle?.Stop();
+        settle?.Start();
+        return true;
+    }
 
-        settle.Stop();
-        settle.Start();
+    private void SendQueued()
+    {
+        if (queued is { } position)
+        {
+            queued = null;
+            SendSeek(position);
+            keyGap?.Start();
+        }
+    }
+
+    private Windows.System.DispatcherQueueTimer OneShot(TimeSpan interval, Action tick)
+    {
+        var timer = island.Queue.CreateTimer();
+        timer.IsRepeating = false;
+        timer.Interval = interval;
+        timer.Tick += (_, _) => tick();
+        return timer;
+    }
+
+    private async void SendSeek(TimeSpan position)
+    {
         bool accepted = await tracker.SeekAsync(position);
         if (!accepted)
         {

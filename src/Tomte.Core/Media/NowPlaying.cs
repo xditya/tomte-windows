@@ -243,6 +243,9 @@ public readonly record struct PendingSeek(TimeSpan To, MediaTimeline From, DateT
 {
     public static readonly TimeSpan Wait = TimeSpan.FromSeconds(2);
 
+    /// <summary>Keys held on the seek bar send at most one seek this often; the last position wins.</summary>
+    public static readonly TimeSpan KeyGap = TimeSpan.FromMilliseconds(150);
+
     public bool Holds(MediaTimeline? reported, DateTimeOffset now) => reported == From && now - At < Wait;
 }
 
