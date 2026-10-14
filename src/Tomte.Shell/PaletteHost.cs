@@ -31,8 +31,10 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
         var placeholder = island.Compositor.CreateSpriteVisual();
         placeholder.Brush = island.Compositor.CreateColorBrush(Color.FromArgb(28, 255, 255, 255));
         float s = (float)island.Scale;
-        placeholder.Offset = new Vector3((24 + 14) * s, 12 * s, 0);
+        // From the middle of the content box, so it sits the same in the pill and in the notch with its ramps.
+        placeholder.RelativeOffsetAdjustment = new Vector3(0.5f, 0, 0);
         placeholder.Size = new Vector2((float)(PanelSize.PaletteWidth - 28) * s, 36 * s);
+        placeholder.Offset = new Vector3(-placeholder.Size.X / 2, 12 * s, 0);
         island.Content.Children.InsertAtTop(placeholder);
         try
         {

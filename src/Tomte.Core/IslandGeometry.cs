@@ -1,20 +1,33 @@
 namespace Tomte.Core;
 
 /// <summary>
-/// The five values the island outline is built from, in DIPs at 100% scale. Each one is driven by
-/// its own spring, so any change of state is one continuous morph of the same shape.
+/// The values the island outline is built from, in DIPs at 100% scale. Each one is driven by its own
+/// spring, so any change of state is one continuous morph of the same shape. The floating pill is
+/// width, depth and corner. The two ramps are the fillets of the attached silhouette and stay 0 otherwise.
 /// </summary>
-public readonly record struct IslandGeometry(double Width, double Depth, double Corner, double RampW, double RampH)
+public readonly record struct IslandGeometry(double Width, double Depth, double Corner, double RampW = 0, double RampH = 0)
 {
-    public static readonly IslandGeometry Hidden = new(120, 0, 0, 0, 0);
-    public static readonly IslandGeometry Compact = new(220, 38, 16, 10, 12);
-    public static readonly IslandGeometry ShelfDrop = new(420, 96, 20, 16, 18);
+    public static readonly IslandGeometry Hidden = new(120, 0, 0);
 
-    /// <summary>Panels and the palette share one corner and ramp; only the size differs.</summary>
-    public static IslandGeometry Panel(double width, double height) => new(width, height, 22, 24, 24);
+    // Corner 19, half the depth: the floating Compact is a capsule. The table says 16, which the notch keeps.
+    public static readonly IslandGeometry Compact = new(220, 38, 19);
+    public static readonly IslandGeometry ShelfDrop = new(420, 96, 20);
+
+    /// <summary>Panels and the palette share one corner; only the size differs.</summary>
+    public static IslandGeometry Panel(double width, double height) => new(width, height, 22);
 
     /// <summary>Width of the outline including both ramps.</summary>
     public double OuterWidth => Width + 2 * RampW;
+
+    /// <summary>The same state as the attached silhouette: the corner and fillet ramps for it.</summary>
+    // keyed by the corner, which no two states share; give the table a state column if two ever do.
+    public IslandGeometry Attached() => Corner switch
+    {
+        19 => this with { Corner = 16, RampW = 10, RampH = 12 },
+        20 => this with { RampW = 16, RampH = 18 },
+        22 => this with { RampW = 24, RampH = 24 },
+        _ => this,
+    };
 
     /// <summary>Capture keeps the island hidden under the overlay, so it shares Hidden's geometry.</summary>
     public static IslandGeometry For(IslandState state, double panelWidth, double panelHeight) => state switch
