@@ -31,15 +31,20 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 /// <summary>
 /// The drop zone's panel in the Palette state, in the panel's own DIPs (x = 0 at its left edge, y = 0 at its top):
 /// a head row right of the tomte with the zone and file on the left and where the request went on the right, a line
-/// under it, then the answer, the size question's choices as full-width rows and the result files as tiles. The panel
-/// is the palette's width and grows with what it shows, up to the palette's height or the monitor's cap, whichever is less.
+/// under it, then the answer, the choices as full-width buttons with their words centred, the last of them (the
+/// default) filled, and the result files as tiles. The panel is the palette's width and grows with what it shows, up to
+/// the palette's height or the monitor's cap, whichever is less.
 /// The answer is read as Markdown (<see cref="Markdown"/>): paragraphs, bold, headings as bold lines, list items with
 /// their marker hanging left of the text, code as it is. It wraps to the panel and scrolls in its band when it is longer.
 /// </summary>
 public sealed class DropResultLayout
 {
     public const float Pad = 16, HeadTop = 12, HeadHeight = 18, LineTop = 34, LineHeight = 14, BodyTop = 58;
-    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 30, Gap = 8, Corner = 8;
+    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8, Corner = 8;
+
+    /// <summary>A choice's words, and the default's on its filled button.</summary>
+    public static readonly TextStyle ChoiceStyle = TextStyle.Secondary with { Color = TextStyle.WhiteColor, Align = TextAlign.Center };
+    public static readonly TextStyle DefaultChoiceStyle = ChoiceStyle with { Color = 0xFF000000, Weight = 600 };
 
     /// <summary>A list level's indent, which is also how far a bullet's text hangs right of the bullet.</summary>
     public const float Indent = 16;
@@ -103,7 +108,8 @@ public sealed class DropResultLayout
         {
             var row = new RectangleF(Pad, y, inner, ChoiceHeight);
             choices.Add(row);
-            slots.Add(new(choice, TextStyle.Secondary with { Color = TextStyle.WhiteColor }, new(row.X + 12, row.Y, row.Width - 24, row.Height)));
+            var style = choices.Count == result.Choices.Count ? DefaultChoiceStyle : ChoiceStyle;
+            slots.Add(new(choice, style, new(row.X + 12, row.Y, row.Width - 24, row.Height)));
             y += ChoiceHeight + Gap;
         }
 

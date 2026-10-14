@@ -738,6 +738,28 @@ public sealed class DropZoneTests : IDisposable
         Assert.Same(kept, kept.Closable());
     }
 
+    // Buttons, not fields: at least 32 DIP tall, their words centred inside, the default's (the last) on its filled look.
+    [Fact]
+    public void ChoicesAreButtonsWithTheirWordsCentredAndTheLastIsTheDefault()
+    {
+        string[] choices = ["Truncate: send the start.", "Chunk: send it in parts.", "Cancel: send nothing."];
+        var layout = new DropResultLayout(DropResult.Empty with { Title = "Summarize · server.log", Indicator = "Nothing sent", Choices = choices }, 640, true);
+        for (int i = 0; i < choices.Length; i++)
+        {
+            var row = layout.Choices[i];
+            var words = layout.Slots.Single(s => s.Text == choices[i]);
+            Assert.True(row.Height >= 32);
+            Assert.True(row.Contains(words.Slot));
+            Assert.Equal(TextAlign.Center, words.Style.Align);
+            Assert.Equal(row.X + row.Width / 2, words.Slot.X + words.Slot.Width / 2, 3);
+            Assert.Equal(i == choices.Length - 1 ? DropResultLayout.DefaultChoiceStyle : DropResultLayout.ChoiceStyle, words.Style);
+            if (i > 0)
+            {
+                Assert.True(row.Y - layout.Choices[i - 1].Bottom >= DropResultLayout.Gap);
+            }
+        }
+    }
+
     [Fact]
     public async Task AskAboutItAttachesTheFileAndSendsNothing()
     {

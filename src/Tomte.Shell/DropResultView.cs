@@ -120,7 +120,10 @@ internal sealed class DropResultView
         Shapes(next, result);
     }
 
-    /// <summary>Cards for the choices (the last, cancel, outlined as the default) and the tiles; built again only when they move.</summary>
+    /// <summary>
+    /// Buttons for the choices, a fill and a hairline, the last (cancel, the default) filled with the accent, and cards
+    /// for the tiles; built again only when they move.
+    /// </summary>
     private void Shapes(DropResultLayout next, DropResult result)
     {
         string key = string.Join(';', next.Choices.Concat(next.Tiles).Select(r => $"{r.X},{r.Y},{r.Width},{r.Height}")) + string.Join(';', result.Tiles.Select(t => t.Color));
@@ -139,7 +142,7 @@ internal sealed class DropResultView
         for (int i = 0; i < next.Choices.Count; i++)
         {
             bool cancel = i == next.Choices.Count - 1;
-            p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(ShelfColors.Card), p.Brush(cancel ? ShelfColors.Info : ShelfColors.Dash), 1);
+            p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Info : ShelfColors.Card), cancel ? null : p.Brush(ShelfColors.Line), 1);
         }
 
         for (int i = 0; i < next.Tiles.Count; i++)
