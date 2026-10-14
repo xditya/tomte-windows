@@ -63,6 +63,7 @@ TASK_LOGON_TYPE
 FindWindowEx
 GetProp
 SetProp
+RemoveProp
 PostMessage
 WM_APP
 GetCurrentPackageFullName

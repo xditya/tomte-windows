@@ -102,7 +102,10 @@ internal static class Jobs
         }
     }
 
-    /// <summary>Ahead of the controller on the island window: the jobs' one-shot, a handed-over --run-job, clock and sleep changes.</summary>
+    /// <summary>
+    /// Ahead of the controller on the island window: the jobs' one-shot, a handed-over --run-job, clock and sleep
+    /// changes, and the folder tag coming off as the window goes.
+    /// </summary>
     private static bool OnMessage(JobContext c, uint message, nuint wParam, nint lParam)
     {
         switch (message)
@@ -123,6 +126,9 @@ internal static class Jobs
             case JobTask.MsgRunJob:
                 _ = RunDueAsync(c, (long)wParam);
                 return true;
+            case PInvoke.WM_DESTROY:
+                JobTask.Untag((nint)c.Island.Hwnd);
+                return false;
             case PInvoke.WM_TIMECHANGE:
             case PInvoke.WM_POWERBROADCAST when wParam == PInvoke.PBT_APMRESUMEAUTOMATIC:
                 // A time zone change arrives as a clock change too: drop the cached zone so times are worked out in the new one.

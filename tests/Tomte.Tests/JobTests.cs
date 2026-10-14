@@ -715,6 +715,9 @@ public sealed class JobTests : IDisposable
         Assert.True(JobTask.HandOff(_dir, 42));
         // No Tomte runs on another folder, so a start there is not handed over: it runs the job itself.
         Assert.False(JobTask.HandOff(Path.Combine(_dir, "other"), 42));
+        // The island takes its tag off as it is destroyed.
+        await tomte.UntagAsync();
+        Assert.False(JobTask.HandOff(_dir, 42));
     }
 
     [Fact]
@@ -813,6 +816,7 @@ public sealed class JobTests : IDisposable
     private sealed class TaggedWindow : IAsyncDisposable
     {
         private readonly DispatcherQueueController _thread = DispatcherQueueController.CreateOnDedicatedThread();
+        private nint _hwnd;
 
         public static async Task<TaggedWindow> OpenAsync(string dataFolder)
         {
@@ -820,13 +824,25 @@ public sealed class JobTests : IDisposable
             var made = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             window._thread.DispatcherQueue.TryEnqueue(() =>
             {
-                nint hwnd = Create();
-                if (hwnd != 0)
-                    JobTask.Tag(hwnd, dataFolder);
-                made.SetResult(hwnd != 0);
+                window._hwnd = Create();
+                if (window._hwnd != 0)
+                    JobTask.Tag(window._hwnd, dataFolder);
+                made.SetResult(window._hwnd != 0);
             });
             Assert.True(await made.Task);
             return window;
+        }
+
+        /// <summary>On the window's own thread, as the island does it.</summary>
+        public Task UntagAsync()
+        {
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _thread.DispatcherQueue.TryEnqueue(() =>
+            {
+                JobTask.Untag(_hwnd);
+                done.SetResult();
+            });
+            return done.Task;
         }
 
         // The window goes with its thread.

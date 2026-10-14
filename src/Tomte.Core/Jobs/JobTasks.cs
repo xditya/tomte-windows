@@ -91,6 +91,15 @@ public static class JobTask
         }
     }
 
+    /// <summary>Takes the mark off again; a window must lose its properties before it is destroyed.</summary>
+    public static unsafe void Untag(nint window)
+    {
+        fixed (char* name = FolderProperty)
+        {
+            PInvoke.RemoveProp(new HWND(window), name);
+        }
+    }
+
     /// <summary>
     /// Hands a --run-job start to the Tomte already running on <paramref name="dataFolder"/>: posts the id to the
     /// top-level window tagged with that folder. False when none is running there; the caller then runs the job itself.
