@@ -43,6 +43,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     // Where the pointer was last seen on a tile or a button, in body DIPs: the point it heads for the band from.
     private Vector2? last;
 
+    // The target the host says is hovered now, or null over empty grid.
+    private string? hovering;
+
     private readonly RemoveQuestion question = new();
 
     public event Action? TargetsChanged;
@@ -69,7 +72,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         (parts, band, body) = (null, null, null);
         selected.Clear();
         bandWait?.Stop();
-        (shown, last) = (null, null);
+        (shown, last, hovering) = (null, null, null);
         Drop();
         first = wheel = 0;
         targets = [];
@@ -209,10 +212,11 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     public void Hovered(string? id)
     {
-        // Off every target, onto empty grid: the band stays while the pointer is on its way to the buttons.
+        hovering = id;
+        // Off every target, onto empty grid: the band waits longer while the pointer is on its way to the buttons.
         bool aiming = id is null && last is { } from && PInvoke.GetCursorPos(out var cursor)
             && ShelfLayout.Aiming(from, PanelSpace.ToBody(island.ScreenToIsland(cursor.X, cursor.Y), size.X), ShelfLayout.BandRow(size));
-        var (change, owner) = ShelfLayout.Hover(shown, id, aiming);
+        var (change, owner) = ShelfLayout.Hover(shown, id);
         switch (change)
         {
             case BandChange.Now:
@@ -225,15 +229,20 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
                 if (bandWait is null)
                 {
                     bandWait = island.Queue.CreateTimer();
-                    bandWait.Interval = TimeSpan.FromMilliseconds(ShelfLayout.BandGraceMs);
                     bandWait.IsRepeating = false;
                     bandWait.Tick += (_, _) =>
                     {
-                        Show(pending);
-                        Band();
+                        // The band goes once the wait is over, unless the pointer is on one of the targets by then.
+                        if (pending is not null || hovering is null)
+                        {
+                            Show(pending);
+                            Band();
+                        }
                     };
                 }
 
+                bandWait.Stop();
+                bandWait.Interval = TimeSpan.FromMilliseconds(ShelfLayout.Wait(aiming));
                 bandWait.Start();
                 break;
             default:

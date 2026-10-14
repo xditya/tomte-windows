@@ -126,22 +126,30 @@ public static class ShelfLayout
     public const int BandGraceMs = 300;
 
     /// <summary>
+    /// How long the band waits once the pointer left the targets for empty grid on its way to the buttons
+    /// (<see cref="Aiming"/>): long enough to cross the panel, once. A pointer that stops short of them loses the band.
+    /// </summary>
+    public const int BandAimMs = 800;
+
+    /// <summary>
     /// What the hovered target (or the focused one) changing does to the band showing <paramref name="shown"/>'s actions:
     /// a first tile shows at once; another tile takes over after <see cref="BandGraceMs"/> (the panel starts that wait over
     /// while the pointer moves on the tile, so only a rest there takes the band); the band's own buttons or the tile it is
-    /// for keep it, and cancel what was waiting. Leaving the targets for empty grid keeps the band too while the pointer
-    /// is <paramref name="aiming"/> at it (<see cref="Aiming"/>), and otherwise takes it after the wait. The owner is an
-    /// item id.
+    /// for keep it, and cancel what was waiting; nothing takes it after the wait (<see cref="Wait"/>), unless a target is
+    /// hovered by then. The owner is an item id.
     /// </summary>
-    public static (BandChange Change, long? Owner) Hover(long? shown, string? hovered, bool aiming = false)
+    public static (BandChange Change, long? Owner) Hover(long? shown, string? hovered)
     {
         if (hovered?.StartsWith("tile:", StringComparison.Ordinal) == true && long.TryParse(hovered.AsSpan(5), System.Globalization.CultureInfo.InvariantCulture, out long id))
         {
             return shown is null ? (BandChange.Now, id) : shown == id ? (BandChange.Keep, id) : (BandChange.Later, id);
         }
 
-        return hovered is null && !aiming ? (BandChange.Later, null) : (BandChange.Keep, shown);
+        return hovered is null ? (BandChange.Later, null) : (BandChange.Keep, shown);
     }
+
+    /// <summary>How long a Later change waits: one aim's worth while the pointer heads for the buttons, else the grace.</summary>
+    public static int Wait(bool aiming) => aiming ? BandAimMs : BandGraceMs;
 
     /// <summary>The band's row, in body DIPs: where its buttons sit, with the gaps between them.</summary>
     public static RectangleF BandRow(Vector2 body) => new(PadX, BandTop, body.X - 2 * PadX, ActionHeight);
