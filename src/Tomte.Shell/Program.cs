@@ -127,9 +127,10 @@ internal static class Program
         Scratchpad = new ScratchpadNote(db, Path.Combine(data, "scratchpad.md"));
         var history = new ClipboardHistory(db);
         var clipboard = new ClipboardWatch(history, captured => ClipboardListener.Start(captured, () => pause.IsPaused(DateTimeOffset.Now), () => store.Current.AppRules, history.Retention.MaxChars, logLine), logLine);
-        // Off means no listener at all. Changed arrives on a pool thread.
+        // Off means no listener at all. Changed arrives on a pool thread and Apply stays there: starting the listener
+        // waits for its window and stopping it waits for its thread, neither of which belongs on the island's thread.
         clipboard.Apply(store.Current.KeepClipboardHistory);
-        store.Changed += s => island.Queue.TryEnqueue(() => clipboard.Apply(s.KeepClipboardHistory));
+        store.Changed += s => clipboard.Apply(s.KeepClipboardHistory);
         StartPanels(island, triggers, store, db, clipboard, logLine, args.Contains("--debug-tabs"));
 
         if (rambler)

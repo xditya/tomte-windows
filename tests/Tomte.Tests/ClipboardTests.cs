@@ -258,6 +258,32 @@ public sealed class ClipboardTests : IDisposable
     }
 
     [Fact]
+    public async Task TheSwitchCanBeFlippedFromAnyThreadAtOnce()
+    {
+        // The shell applies settings changes on the pool thread they arrive on, so flips can overlap.
+        var listeners = new List<FakeListener>();
+        var watch = new ClipboardWatch(new ClipboardHistory(new TomteDb(DbPath)), captured =>
+        {
+            var listener = new FakeListener { Captured = captured };
+            lock (listeners)
+            {
+                listeners.Add(listener);
+            }
+
+            return listener;
+        });
+
+        await Task.WhenAll(Enumerable.Range(0, 200).Select(i => Task.Run(() => watch.Apply(i % 2 == 0))));
+        watch.Apply(true);
+
+        Assert.True(watch.On);
+        // Every listener but the one now running was stopped; none was started twice over another.
+        Assert.Single(listeners, l => !l.Disposed);
+        listeners.Single(l => !l.Disposed).Copy("after the flips");
+        Assert.Equal(["after the flips"], (await watch.RowsAsync(Now)).Select(r => r.Display));
+    }
+
+    [Fact]
     public async Task HistoryLeftBehindWhileOffIsClearedWhenItIsShown()
     {
         // Stored by a run with history on; turned off since while Tomte was not running.
