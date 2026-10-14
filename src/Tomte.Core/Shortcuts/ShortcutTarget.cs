@@ -195,7 +195,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
     }
 
     // ".." would step out of the Applications folder into the rest of the shell's namespace.
-    private static bool IsApp(string target) =>
+    internal static bool IsApp(string target) =>
         target.StartsWith(AppsFolder, StringComparison.OrdinalIgnoreCase) && target.Length > AppsFolder.Length && !target.Contains("..", StringComparison.Ordinal);
 
     private static Func<string, string, (string, string)> WindowsScriptHost => (script, tail) => (InSystem32("wscript.exe"), $"\"{script}\"{tail}");
@@ -259,10 +259,10 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
     }
 
     /// <summary>
-    /// An app from Start's list is what its entry starts today, read from the shell. A packaged app or a shell
-    /// object (File Explorer, Control Panel) has no file behind it and opens through the shell by its ID. An entry
-    /// that names a plain path reads as that path, so an app that moved on an update is followed. An entry that
-    /// passes arguments is a command line, so it reads as a link that passes them: a script.
+    /// An app from Start's list opens as Start opens it: the shell starts its entry by ID, with whatever arguments
+    /// or scheme its installer gave it (Task Manager, browser web apps, Steam games). The user picked it by name from
+    /// Start's list, so it is an app, not a script. A desktop app with no arguments opens or comes to the front by
+    /// the exe its entry names today, so an app that moved on an update is followed.
     /// <paramref name="entry"/> is the entry's target and arguments as the shell reports them, null for no such app.
     /// </summary>
     internal static ShortcutTarget ReadApp(string target, (string Target, string Arguments)? entry)
@@ -273,23 +273,24 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
         }
 
         var (raw, arguments) = entry.Value;
-        if (raw.Length == 0 || raw.StartsWith("::", StringComparison.Ordinal))
+        // Its icon and its start would make Windows reach that server each time the grid shows.
+        if (OnNetwork(raw))
         {
-            return new(ShortcutKind.App, target, Icon: target);
+            return new(ShortcutKind.Blocked, target, Problem: $"This app is on a network path, {raw}, which Tomte does not open.");
         }
 
-        return arguments.Length == 0 && Refuse(raw) is null && !IsApp(raw) ? Read(raw) : Linked(target, raw, arguments, "", "");
+        return arguments.Length == 0 && Path.GetExtension(raw).Equals(".exe", StringComparison.OrdinalIgnoreCase) && Refuse(raw) is null
+            ? Read(raw)
+            : new(ShortcutKind.App, target, Icon: target);
     }
+
+    /// <summary>The app is in Start's list now. Reads the shell, so call it from a worker thread.</summary>
+    internal static bool InStartList(string target) => IsApp(target) && AppEntry(target) is not null;
 
     /// <summary>A .lnk is what it points at. The link itself is what starts, unless it is a script, which runs as the command shown.</summary>
     private static ShortcutTarget ReadLink(string link)
     {
         var (raw, arguments, folder, iconFile) = Link(link);
-        return Linked(link, raw, arguments, folder, iconFile);
-    }
-
-    private static ShortcutTarget Linked(string link, string raw, string arguments, string folder, string iconFile)
-    {
         // The shell starts the target in the link's working folder, which connects to the server when that is remote.
         if (folder.Length > 0 && OnNetwork(Environment.ExpandEnvironmentVariables(folder)))
         {

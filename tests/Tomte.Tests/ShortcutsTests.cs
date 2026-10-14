@@ -619,28 +619,25 @@ public sealed class ShortcutsTests : IDisposable
     public void AStartAppReadsAsWhatItsEntryStarts()
     {
         const string app = @"shell:AppsFolder\Vendor.App_0000000000000!App";
-        // A packaged app, or a shell object such as File Explorer: no file behind it, so the shell opens it by its ID.
-        Assert.Equal(new ShortcutTarget(ShortcutKind.App, app, Icon: app), ShortcutTarget.ReadApp(app, ("", "")));
-        Assert.Equal(new ShortcutTarget(ShortcutKind.App, app, Icon: app), ShortcutTarget.ReadApp(app, ("::{52205FD8-5DFB-447D-801A-D0B52F2E83E1}", "")));
+        var byShell = new ShortcutTarget(ShortcutKind.App, app, Icon: app);
+        // Opened as Start opens it, by its ID: a packaged app, a shell object such as File Explorer, an entry with
+        // arguments (Task Manager, a browser web app), a game through its launcher's scheme, a script or a page.
+        string exe = Touch("tool.exe"), bat = Touch("build.bat");
+        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, ("", "")));
+        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, ("::{52205FD8-5DFB-447D-801A-D0B52F2E83E1}", "")));
+        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, (exe, "--profile 2")));
+        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, ("steam://rungameid/431960", "")));
+        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, (bat, "release")));
+        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, ("https://example.com/", "")));
+        Assert.Null(ShortcutStore.Gate(new Shortcut(1, "tool", app, null), ShortcutTarget.ReadApp(app, (exe, "--profile 2")), scriptsOn: false));
 
-        // A desktop app is its target, read now: open or focus the exe, as an .exe tile does.
-        string exe = Touch("tool.exe");
+        // A desktop app with no arguments is its exe, read now: open or focus it, as an .exe tile does.
         Assert.Equal(new ShortcutTarget(ShortcutKind.App, exe, Icon: exe), ShortcutTarget.ReadApp(app, (exe, "")));
-        Assert.Equal(ShortcutKind.Url, ShortcutTarget.ReadApp(app, ("https://example.com/", "")).Kind);
-
-        // Arguments make the entry a command line: a script, gated like a link that passes them.
-        var script = ShortcutTarget.ReadApp(app, (exe, "--profile 2"));
-        Assert.Equal(ShortcutKind.Script, script.Kind);
-        Assert.Equal((exe, "--profile 2", dir), (script.Script!.Exe, script.Script.Arguments, script.Script.Folder));
-        Assert.Equal(app, script.Icon);
-        Assert.Equal(ShortcutOutcome.ScriptsOff, ShortcutStore.Gate(new Shortcut(1, "tool", app, null), script, scriptsOn: false));
-        string bat = Touch("build.bat");
-        Assert.Equal($"/d /s /c \"\"{bat}\" release\"", ShortcutTarget.ReadApp(app, (bat, "release")).Script!.Arguments);
-
-        // What a link may not point at, an entry may not either; an app that is gone is missing, never thrown.
-        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, ("steam://rungameid/431960", "")).Kind);
-        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (@"\\server\share\app.exe", "")).Kind);
         Assert.True(ShortcutTarget.ReadApp(app, (Path.Combine(dir, "gone.exe"), "")).Missing);
+
+        // A network path stays refused; an app that is gone is missing, never thrown.
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (@"\\server\share\app.exe", "")).Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (@"\\server\share\app.exe", "-x")).Kind);
         Assert.Equal(new ShortcutTarget(ShortcutKind.App, app, Missing: true), ShortcutTarget.ReadApp(app, null));
         Assert.Equal(new ShortcutTarget(ShortcutKind.App, app, Missing: true), ShortcutTarget.Read(app));
         // The shell resolves only the folder's own entries: This PC or a path behind the prefix is no app.
@@ -669,6 +666,17 @@ public sealed class ShortcutsTests : IDisposable
         Assert.Equal(ShortcutTarget.Read(app.Target), Assert.Single(started));
         Assert.True(store.LaunchByName(app.Name.ToUpperInvariant()));
         Assert.True(Apps.OpenApp(app.Target, dryRun: true).Ok);
+    }
+
+    [Fact]
+    public void OpenAppTakesOnlyAnIdThatIsInStartsList()
+    {
+        Assert.Equal("That app is not in Start's list.", Apps.OpenApp(@"shell:AppsFolder\Vendor.Gone_0000000000000!App", dryRun: true).Message);
+        Assert.False(Apps.OpenApp(@"shell:AppsFolder\::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", dryRun: true).Ok);
+        Assert.NotNull(Apps.ValidateAppTarget(@"shell:AppsFolder\..\Startup"));
+        Assert.NotNull(Apps.ValidateAppTarget(@"shell:AppsFolder\"));
+        // An ID may hold a scheme of its own, as a Steam game's does.
+        Assert.Null(Apps.ValidateAppTarget(@"shell:AppsFolder\steam://rungameid/431960"));
     }
 
     [Fact]
