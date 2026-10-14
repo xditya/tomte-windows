@@ -26,6 +26,9 @@ public sealed record TomteSettings
 
     /// <summary>The ten-second "push your cursor up here" pill has been shown; replaying the tour clears it.</summary>
     public bool FirstRunHintShown { get; init; }
+
+    /// <summary>AI tools the user answered "always allow" for, by tool name; the AI layer reads and writes it, the settings window lists and removes.</summary>
+    public IReadOnlyList<string> AlwaysAllowedTools { get; init; } = [];
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>
@@ -165,7 +168,7 @@ public sealed class SettingsStore : IDisposable
         string text = Serialize(settings);
         string temp = FilePath + ".tmp";
         File.WriteAllText(temp, text);
-        File.Move(temp, FilePath, overwrite: true);
+        Retry(() => File.Move(temp, FilePath, overwrite: true));
         Publish(settings, text);
     }
 
@@ -175,13 +178,33 @@ public sealed class SettingsStore : IDisposable
     {
         try
         {
-            var settings = JsonSerializer.Deserialize<TomteSettings>(File.ReadAllText(FilePath), Json) ?? new();
+            string text = "";
+            Retry(() => text = File.ReadAllText(FilePath));
+            var settings = JsonSerializer.Deserialize<TomteSettings>(text, Json) ?? new();
             Publish(settings, Serialize(settings));
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
         {
             // A write still in progress, or a hand edit that does not parse: keep the current settings.
             // The next write raises another event.
+        }
+    }
+
+    // The other process holds the file for a moment during its own replace or reload; the shell and
+    // the settings window write and watch the same file, so a few short retries cover that window.
+    private static void Retry(Action io)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                io();
+                return;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < 5)
+            {
+                Thread.Sleep(20 * attempt);
+            }
         }
     }
 
