@@ -433,7 +433,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     // Begin opens the 262 wide pill and sets the mascot itself.
                     rambler.Begin();
-                    activity |= IslandActivity.Rambling;
+                    // A hold started on the peek pill is no longer peek: an event, a window under the zone or an edge
+                    // push would otherwise take the pill away mid-recording.
+                    activity = (activity & ~IslandActivity.Peek) | IslandActivity.Rambling;
                     // The rambler's pill has no room for the ring, and it changes state without Go.
                     UpdateRing();
                     pointerInside = false;
