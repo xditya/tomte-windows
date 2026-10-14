@@ -34,9 +34,23 @@ public class RetractionRulesTests
     [InlineData(IslandState.Compact, IslandActivity.Peek, false)]
     [InlineData(IslandState.Compact, IslandActivity.Rambling, false)]
     [InlineData(IslandState.Palette, IslandActivity.Result, false)]
+    [InlineData(IslandState.Panels, IslandActivity.Pressing, false)]
     public void RetractsOnlyWhenNothingIsInProgress(IslandState state, IslandActivity activity, bool expected)
     {
         Assert.Equal(expected, RetractionRules.ShouldRetract(state, activity));
+    }
+
+    [Fact]
+    public void APressLetGoOutsideTheIslandHoldsNothingWhenTheDelayIsUp()
+    {
+        var held = IslandActivity.Pressing | IslandActivity.Typing;
+
+        Assert.Equal(held, RetractionRules.Released(held, buttonDown: true));
+        Assert.Equal(IslandActivity.Typing, RetractionRules.Released(held, buttonDown: false));
+        Assert.True(RetractionRules.ShouldRetract(IslandState.Panels, RetractionRules.Released(IslandActivity.Pressing, buttonDown: false)));
+        Assert.False(RetractionRules.ShouldRetract(IslandState.Panels, RetractionRules.Released(IslandActivity.Pressing, buttonDown: true)));
+        // A drag coming in is not a press: the button being up does not drop it here.
+        Assert.Equal(IslandActivity.DragInProgress, RetractionRules.Released(IslandActivity.DragInProgress, buttonDown: false));
     }
 
     [Theory]
@@ -44,6 +58,7 @@ public class RetractionRulesTests
     [InlineData(IslandState.Compact, IslandActivity.Peek, true)]
     [InlineData(IslandState.Compact, IslandActivity.Rambling, false)]
     [InlineData(IslandState.Compact, IslandActivity.DragInProgress, false)]
+    [InlineData(IslandState.Compact, IslandActivity.Pressing, false)]
     [InlineData(IslandState.Panels, IslandActivity.None, false)]
     [InlineData(IslandState.Hidden, IslandActivity.None, false)]
     [InlineData(IslandState.Palette, IslandActivity.None, false)]

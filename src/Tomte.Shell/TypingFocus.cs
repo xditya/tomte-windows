@@ -1,20 +1,23 @@
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
 
 /// <summary>
 /// Who has the keys. The island never activates on its own (WS_EX_NOACTIVATE and MA_NOACTIVATE stay): only a typing
-/// hotkey, a click into a text box or a click on the tomte (which opens the palette) makes it the foreground window,
-/// which Windows allows because that input was the last one and went to this process. The window that was in front is remembered, and a hide or Esc hands the
-/// foreground back to it. When the user moves the foreground elsewhere themselves, nothing is handed back.
-/// The boxes are made here, so each one draws on the text device and is known for clicks and the cursor.
-/// Island thread only.
+/// hotkey, the summon hotkey, a click into a text box or a click on the tomte (which opens the palette) makes it the
+/// foreground window, which Windows allows because that input was the last one and went to this process. The window that
+/// was in front is remembered, and a hide or Esc hands the foreground back to it. When the user moves the foreground
+/// elsewhere themselves, nothing is handed back. With the keys and no box taking them (the summon hotkey, Tab out of the
+/// prompt) they go to the island's targets. The boxes are made here, so each one draws on the text device and is known
+/// for clicks and the cursor. Island thread only.
 /// </summary>
 internal sealed class TypingFocus
 {
@@ -24,9 +27,10 @@ internal sealed class TypingFocus
     private readonly TextRenderer text;
     private readonly Action<string>? log;
     private readonly List<EditorView> editors = [];
+    private readonly Dictionary<EditorView, IInteractive> owners = [];
     private EditorView? focused, dragging;
     private HWND previous;
-    private bool handBackQueued;
+    private bool keys, handBackQueued;
     private long lastPress;
     private Vector2 lastPressAt;
 
@@ -66,8 +70,12 @@ internal sealed class TypingFocus
 
     public EditorView? Focused => focused;
 
-    /// <summary>A text box in <paramref name="host"/>, drawn on the text device. Dispose it with its view.</summary>
-    public EditorView Create(ContainerVisual host, bool multiline, float fontDips)
+    /// <summary>
+    /// A text box in <paramref name="host"/>, drawn on the text device. Dispose it with its view. A box with an
+    /// <paramref name="owner"/> (the palette's prompt) gives Tab and Shift+Tab to that view's targets, and takes the keys
+    /// back when Tab comes round to it again.
+    /// </summary>
+    public EditorView Create(ContainerVisual host, bool multiline, float fontDips, IInteractive? owner = null)
     {
         var editor = new EditorView(island.Compositor, island.Queue, host, island.Dips, island.Hwnd, multiline, fontDips)
         {
@@ -86,6 +94,7 @@ internal sealed class TypingFocus
             text.DeviceReady -= Ready;
             text.Let();
             editors.Remove(editor);
+            owners.Remove(editor);
             if (dragging == editor)
             {
                 dragging = null;
@@ -97,11 +106,21 @@ internal sealed class TypingFocus
             }
         };
         editors.Add(editor);
+        if (owner is not null)
+        {
+            owners[editor] = owner;
+        }
+
         return editor;
     }
 
     /// <summary>A typing hotkey or a click into the box or on the tomte: the island takes the foreground and the box the keys. False when Windows refused.</summary>
-    public bool Take(EditorView editor)
+    public bool Take(EditorView editor) => TakeFor(editor);
+
+    /// <summary>The summon hotkey: the island takes the foreground with no box, so its targets take the keys. False when Windows refused.</summary>
+    public bool TakeKeys() => TakeFor(null);
+
+    private bool TakeFor(EditorView? editor)
     {
         handBackQueued = false;
         if (focused != editor)
@@ -126,12 +145,18 @@ internal sealed class TypingFocus
             previous = PInvoke.IsWindowVisible(front) ? front : default;
         }
 
+        keys = true;
         PInvoke.SetFocus(island.Hwnd);
-        editor.Focus();
+        if (editor is not null)
+        {
+            editor.Focus();
+            island.Interaction.ClearFocus();
+        }
+
         Typing?.Invoke(true);
         // Esc now reaches the window as a key, where an input method can still use it to cancel a composition.
         InputThread.SetEscape(false);
-        log?.Invoke("typing: the island has the keys");
+        log?.Invoke(editor is null ? "typing: the island has the keys for its targets" : "typing: the island has the keys");
         return true;
     }
 
@@ -139,11 +164,14 @@ internal sealed class TypingFocus
     public void Release()
     {
         dragging = null;
-        if (focused is { } was)
+        if (keys)
         {
+            keys = false;
+            var was = focused;
             focused = null;
-            was.Blur();
+            was?.Blur();
             Typing?.Invoke(false);
+            island.Interaction.ClearFocus();
         }
 
         if (!previous.IsNull && !handBackQueued)
@@ -193,7 +221,7 @@ internal sealed class TypingFocus
         switch (message)
         {
             case PInvoke.WM_ACTIVATE:
-                if ((wParam & 0xFFFF) == PInvoke.WA_INACTIVE && focused is not null)
+                if ((wParam & 0xFFFF) == PInvoke.WA_INACTIVE && keys)
                 {
                     // The user went elsewhere: their choice of window stands, and Esc goes back to being a hotkey for
                     // as long as the island shows. Before Lost, which may hide the island and release Esc after this.
@@ -239,10 +267,13 @@ internal sealed class TypingFocus
 
         // Alt+F4 whenever the island has the keys, a box or not (the turn before the hand-back, a previous window that is
         // gone, a tab switch away from the note): it would close the island's window, and Tomte with it.
-        if (IslandKeys.Hides(message, wParam, focused is not null))
+        int key = (int)(wParam & 0xFFFF);
+        bool down = message == IslandKeys.KeyDown, ctrl = Down(VIRTUAL_KEY.VK_CONTROL);
+        if (IslandKeys.Hides(message, wParam, keys))
         {
-            // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel.
-            if (message != IslandKeys.KeyDown || focused?.Escape?.Invoke() != true)
+            // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel. With no box, the
+            // focused target's view may take it.
+            if (!down || (focused is { } box ? box.Escape?.Invoke() != true : !island.Interaction.Key(key, false, ctrl, false)))
             {
                 Escape?.Invoke();
             }
@@ -250,16 +281,30 @@ internal sealed class TypingFocus
             return new LRESULT(0);
         }
 
-        if (focused is not { } editor)
+        bool shift = Down(VIRTUAL_KEY.VK_SHIFT), repeat = (lParam & PromptKeys.WasDown) != 0;
+        if (focused is { } editor)
         {
-            return null;
+            // Tab out of the prompt moves to its view's targets, when there are any, and Ctrl+Tab switches the panel tab;
+            // either way the box lets go, and the island keeps the keys for the targets.
+            var owner = owners.GetValueOrDefault(editor);
+            if (down && NavKeys.LeavesBox(key, ctrl, owner is not null)
+                && (ctrl ? island.Interaction.Key(key, shift, ctrl, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor))))
+            {
+                focused = null;
+                editor.Blur();
+                return new LRESULT(0);
+            }
+
+            if (editor.BeforeKey?.Invoke(message, wParam, lParam) == true)
+            {
+                return new LRESULT(0);
+            }
+
+            return editor.Key(message, wParam, lParam, out var result) ? result : null;
         }
 
-        if (editor.BeforeKey?.Invoke(message, wParam, lParam) == true)
-        {
-            return new LRESULT(0);
-        }
-
-        return editor.Key(message, wParam, lParam, out var result) ? result : null;
+        return keys && down && island.Interaction.Key(key, shift, ctrl, repeat) ? new LRESULT(0) : null;
     }
+
+    private static bool Down(VIRTUAL_KEY key) => PInvoke.GetKeyState((int)key) < 0;
 }

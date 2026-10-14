@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
 using Tomte.Core.Shortcuts;
@@ -244,6 +245,13 @@ internal static unsafe partial class Program
             }),
             new("strip-ask-widest", IslandGeometry.Panel(PanelSize.Shelf.W, 64), c => Strip(c, PanelId.Shelf, PanelSize.Shelf)),
             new("strip-ask-narrowest", IslandGeometry.Panel(PanelSize.Media.W, 64), c => Strip(c, PanelId.Media, PanelSize.Media)),
+            // The interaction host's looks over the strip: hover and pressed on a tab, the focus ring on the current one,
+            // the Ask pill's tooltip and a "Copied" acknowledgement.
+            new("strip-hover", StripLooks, c => StripLook(c, layer: StateLook.Hover)),
+            new("strip-pressed", StripLooks, c => StripLook(c, layer: StateLook.Pressed)),
+            new("strip-focus", StripLooks, c => StripLook(c, ring: true)),
+            new("strip-tip", StripLooks, c => StripLook(c, tip: "Ask Tomte anything")),
+            new("strip-acknowledged", StripLooks, c => StripLook(c, tip: "Copied", tick: true)),
             new("shelf", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems)),
             new("shelf-empty", Panel(PanelSize.Shelf), c => Shelf(c, [])),
             new("shelf-drop", IslandGeometry.ShelfDrop, ShelfDrop),
@@ -379,6 +387,45 @@ internal static unsafe partial class Program
         c.Pill();
         c.Mascot();
         Tabs(c, current, size);
+    }
+
+    private static readonly IslandGeometry StripLooks = IslandGeometry.Panel(PanelSize.Shelf.W, 110);
+
+    // The strip on the Shelf tab with what the interaction host draws over it, from the numbers it draws with: a state
+    // layer on the Shortcuts tab, the focus ring on the current one, or a card under the Ask pill (a tooltip) or under
+    // the Shortcuts tab (an acknowledgement with its tick).
+    private static void StripLook(Canvas c, uint? layer = null, bool ring = false, string? tip = null, bool tick = false)
+    {
+        var size = PanelSize.Shelf;
+        Strip(c, PanelId.Shelf, size);
+        var strip = new Vector2((float)(-size.W / 2), 0);
+        var labels = TabStrip.Labels(Enum.GetValues<PanelId>(), PanelId.Shelf, (float)size.W, mascot: true);
+        var shortcuts = Offset(labels[1].Slot, strip);
+        if (layer is { } fill)
+        {
+            c.RoundRect(shortcuts, TabStrip.Corner, fill);
+        }
+
+        if (ring)
+        {
+            var (line, corner) = StateLook.FocusRing(Offset(labels[0].Slot, strip), TabStrip.Corner);
+            c.Stroke(line, corner, StateLook.Accent, StateLook.FocusWidth);
+        }
+
+        if (tip is not null)
+        {
+            var target = tick ? shortcuts : Offset(TabStrip.AskPill((float)size.W).Card, strip);
+            var g = StripLooks;
+            var (card, mark, label) = StateLook.Tip(tip, tick, target, new RectangleF((float)(-g.Width / 2), 0, (float)g.Width, (float)g.Depth));
+            c.RoundRect(card, StateLook.TipCorner, StateLook.TipFill);
+            c.StrokeRect(card, StateLook.TipCorner, StateLook.TipLine);
+            if (tick)
+            {
+                c.Shape(StateLook.Tick, new Vector2(mark.X, mark.Y), StateLook.Accent);
+            }
+
+            c.Text(label, Vector2.Zero);
+        }
     }
 
     private static Vector2 Body((double W, double H) size) => new((float)size.W, (float)size.H - PanelSpace.TabStripHeight);
@@ -960,6 +1007,18 @@ internal static unsafe partial class Program
                 runs.Add((caret, cw, caretHeight, at + new Vector2((float)(x / scale), (float)(y / scale)), 1, Clip));
             }
         }
+
+        /// <summary>A rounded outline this many DIPs wide, centred on the rectangle's edge, as a composition stroke is.</summary>
+        public void Stroke(RectangleF r, float radius, uint argb, float width)
+        {
+            var brush = Brush(argb);
+            var round = new D2D1_ROUNDED_RECT { rect = Rect(r), radiusX = radius, radiusY = radius };
+            dc->DrawRoundedRectangle(&round, (ID2D1Brush*)brush, width, null);
+            brush->Release();
+        }
+
+        /// <summary>A filled figure in DIPs, its origin at <paramref name="at"/>.</summary>
+        public void Shape(ReadOnlySpan<OutlineSegment> segments, Vector2 at, uint argb) => Fill(segments, at, 1, argb);
 
         /// <summary>A rounded outline one pixel wide, inside the rectangle.</summary>
         public void StrokeRect(RectangleF r, float radius, uint argb)

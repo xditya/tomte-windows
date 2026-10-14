@@ -169,6 +169,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>After the scratchpad hotkey opened its tab: the note takes the keys.</summary>
     public Action? ScratchpadOpened { get; set; }
 
+    /// <summary>After the summon hotkey opened Panels: the island takes the keys, so Tab and the arrows reach its targets.</summary>
+    public Action? SummonOpened { get; set; }
+
     /// <summary>Which panel the Panels state shows and how large it is. Without one, Panels is an empty Shelf-sized shape.</summary>
     public PanelHost? Panels { get; set; }
 
@@ -437,40 +440,50 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact, peek or Panels, and so does one on the
-    /// strip's Ask pill; with no provider set up the palette says the AI layer is off. A press anywhere else on Compact
-    /// opens Panels.
+    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact or peek; in Panels the strip's tomte
+    /// and Ask pill do (<see cref="AskClicked"/>). A press anywhere else on Compact opens Panels.
     /// </summary>
     private void OnPressed(System.Numerics.Vector2 at)
     {
-        if ((island.OnMascot(at) || Panels?.OnAsk(at) == true) && OpensPalette())
+        if (island.OnMascot(at) && OpensPalette())
         {
-            island.Queue.TryEnqueue(() =>
-            {
-                if (OpensPalette())
-                {
-                    // The island is up and was clicked: the pause and the suppression had their say when it showed.
-                    Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
-                    PaletteOpened?.Invoke();
-                }
-            });
+            AskClicked();
             return;
         }
 
         OpenPanelsNextTurn();
     }
 
+    /// <summary>A click that asks the AI: the palette on the next turn, as the palette hotkey opens it; with no provider set up it says the AI layer is off.</summary>
+    internal void AskClicked()
+    {
+        if (!OpensPalette())
+        {
+            return;
+        }
+
+        island.Queue.TryEnqueue(() =>
+        {
+            if (OpensPalette())
+            {
+                // The island is up and was clicked: the pause and the suppression had their say when it showed.
+                Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+                PaletteOpened?.Invoke();
+            }
+        });
+    }
+
     private bool OpensPalette() => machine.State is IslandState.Compact or IslandState.Panels && !activity.HasFlag(IslandActivity.Rambling);
 
     /// <summary>
     /// The pill's own surface, which a drag moves along the top edge: all of Compact, the tab strip's row outside its
-    /// labels, and the tomte wherever it sits. Labels, panel bodies and the palette's controls keep their presses, and
-    /// shelf and result tiles their drag out.
+    /// targets (the tabs, the tomte and the Ask pill take their presses first), and the tomte over the palette. Panel
+    /// bodies and the palette's controls keep their presses, and shelf and result tiles their drag out.
     /// </summary>
     private bool Grabs(System.Numerics.Vector2 at) => machine.State switch
     {
         IslandState.Compact => true,
-        IslandState.Panels => at.Y < PanelSpace.TabStripHeight && Panels?.OnLabel(at) != true,
+        IslandState.Panels => at.Y < PanelSpace.TabStripHeight,
         IslandState.Palette => island.OnMascot(at),
         _ => false,
     };
@@ -523,8 +536,22 @@ internal sealed unsafe partial class TriggerController : IDisposable
         PInvoke.KillTimer(island.Hwnd, id);
         switch (id)
         {
-            case RetractTimer when !pointerInside && RetractionRules.ShouldRetract(machine.State, activity):
-                Hide();
+            case RetractTimer when !pointerInside:
+                if (RetractionRules.Released(activity, InteractionHost.PrimaryDown()) != activity)
+                {
+                    island.Interaction.DropPress();
+                }
+                else if (activity.HasFlag(IslandActivity.Pressing))
+                {
+                    // Still held outside: the release may never reach this window, so look again after the delay.
+                    PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
+                }
+
+                if (RetractionRules.ShouldRetract(machine.State, activity))
+                {
+                    Hide();
+                }
+
                 break;
             case HoverTimer when pointerOn && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
@@ -715,7 +742,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 Hide();
                 break;
             case HotkeyAction.Summon:
-                Reveal(RevealTrigger.Hotkey, IslandState.Panels);
+                if (Reveal(RevealTrigger.Hotkey, IslandState.Panels))
+                {
+                    SummonOpened?.Invoke();
+                }
+
                 break;
             case HotkeyAction.Scratchpad:
                 // Panels opens on the Scratchpad tab; while Panels is open, the same press is a tab switch to it.
@@ -1059,9 +1090,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
-    internal void Typing(bool on)
+    internal void Typing(bool on) => Hold(IslandActivity.Typing, on);
+
+    /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: the island does not retract under it.</summary>
+    internal void Pressing(bool on) => Hold(IslandActivity.Pressing, on);
+
+    private void Hold(IslandActivity what, bool on)
     {
-        activity = on ? activity | IslandActivity.Typing : activity & ~IslandActivity.Typing;
+        activity = on ? activity | what : activity & ~what;
         if (!on && armed && !pointerInside && machine.State != IslandState.Hidden)
         {
             PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);

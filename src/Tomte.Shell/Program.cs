@@ -305,8 +305,10 @@ internal static partial class Program
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var text = new TextRenderer(island, log);
+        island.Interaction.Text = text;
+        island.Interaction.Pressing = triggers.Pressing;
         var typing = StartTyping(island, triggers, store, text, log);
-        var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels };
+        var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels, Ask = triggers.AskClicked };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, text, log));
@@ -315,6 +317,15 @@ internal static partial class Program
         var scratchpad = new ScratchpadPanel(island, Scratchpad, text, typing, log);
         panels.Register(scratchpad);
         triggers.ScratchpadOpened = scratchpad.TakeKeys;
+        // Panels opened on the Scratchpad tab gives the note the keys, as its own hotkey does; any other tab, its targets.
+        triggers.SummonOpened = () =>
+        {
+            scratchpad.TakeKeys();
+            if (typing.Focused is null)
+            {
+                typing.TakeKeys();
+            }
+        };
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
         panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), text, log));
         triggers.Panels = panels;

@@ -243,6 +243,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         Apply(IslandGeometry.Hidden);
 
         new Thread(CompositorClockLoop) { IsBackground = true, Name = "tomte-compositor-clock" }.Start();
+        Interaction = new InteractionHost(this);
     }
 
     public HWND Hwnd { get; }
@@ -274,6 +275,9 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     /// <summary>A morph to a visible shape came to rest: work held back while <see cref="Moving"/> can run now.</summary>
     public event Action? Settled;
+
+    /// <summary>A morph or a retarget starts, before the springs move: what is placed from the shape as it is now should go.</summary>
+    public event Action? Morphing;
 
     /// <summary>
     /// A left button press on the island, in island space. One that <see cref="Grabs"/> holds arrives when the button
@@ -379,7 +383,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     internal Func<uint, nuint, nint, LRESULT?>? Typing { get; set; }
 
     /// <summary>Hover, press, the cursor, tooltips and keyboard focus for the views registered with it.</summary>
-    internal InteractionHost Interaction { get; } = new();
+    internal InteractionHost Interaction { get; }
 
     /// <summary>Where a failure inside the window procedure is written; an exception there would otherwise kill the process.</summary>
     public Action<string>? Log { get; set; }
@@ -398,6 +402,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public Task MorphTo(IslandGeometry to, SpringPreset preset)
     {
+        Morphing?.Invoke();
         Rescale(MonitorScale());
         if (attached)
         {
@@ -1247,8 +1252,8 @@ internal sealed unsafe class IslandWindow : IDisposable
                 return Guarded(i => i.Grab(message));
             case PInvoke.WM_MOUSELEAVE:
                 return Interact(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
-            case PInvoke.WM_KEYDOWN or PInvoke.WM_SETCURSOR:
-                // A text box first, for its keys and its I-beam; then the registered targets.
+            case PInvoke.WM_SETCURSOR:
+                // A text box's I-beam first, then the hand over a registered target, else the class arrow.
                 return Typed(message, wParam, lParam) ?? Interact(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP or PInvoke.WM_CAPTURECHANGED:
                 // The registered targets first, then a text box being drag-selected.
@@ -1258,7 +1263,8 @@ internal sealed unsafe class IslandWindow : IDisposable
             case PInvoke.WM_DISPLAYCHANGE:
                 // A scaling change reaches a resting window here before its own WM_DPICHANGED does.
                 return GuardedRescale(instance?.MonitorScale());
-            case PInvoke.WM_KEYUP or PInvoke.WM_CHAR or PInvoke.WM_SYSKEYDOWN or PInvoke.WM_SYSKEYUP or PInvoke.WM_SYSCHAR:
+            // Who has the keys decides: a text box, or with none the registered targets, which TypingFocus hands them to.
+            case PInvoke.WM_KEYDOWN or PInvoke.WM_KEYUP or PInvoke.WM_CHAR or PInvoke.WM_SYSKEYDOWN or PInvoke.WM_SYSKEYUP or PInvoke.WM_SYSCHAR:
             case >= PInvoke.WM_IME_STARTCOMPOSITION and <= PInvoke.WM_IME_COMPOSITION:
             case >= PInvoke.WM_IME_SETCONTEXT and <= PInvoke.WM_IME_KEYUP:
             case PInvoke.WM_ACTIVATE or PInvoke.WM_SETFOCUS or PInvoke.WM_KILLFOCUS:
@@ -1295,17 +1301,19 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
-    // The registered targets' answer, or null for the old handlers.
+    // The registered targets' answer, or null for the old handlers. One that failed is used up: a press must not reach
+    // the old handlers as well.
     private static LRESULT? Interact(uint message, WPARAM wParam, LPARAM lParam)
     {
         try
         {
-            return instance?.Interaction.OnMessage(message, wParam.Value, lParam.Value);
+            // Null while the window is being made, before the host is.
+            return instance?.Interaction is { } host ? host.OnMessage(message, wParam.Value, lParam.Value) : null;
         }
         catch (Exception e)
         {
             instance?.Log?.Invoke($"interaction message 0x{message:X} failed: {e}");
-            return null;
+            return new LRESULT(0);
         }
     }
 

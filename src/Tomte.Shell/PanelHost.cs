@@ -1,5 +1,7 @@
+using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.System;
 using Windows.UI.Composition;
@@ -78,10 +80,14 @@ internal sealed class PanelHost
         island.ContentReady += OnContentReady;
         island.Pressed += OnPressed;
         island.Wheel += OnWheel;
+        island.Interaction.SwitchTab = Step;
     }
 
     /// <summary>Called when the current panel changes while Panels is open: the triggers re-enter Panels and morph the shape.</summary>
     public Action? Resize { get; set; }
+
+    /// <summary>A click on the tomte in the strip or on the Ask pill: the triggers open the palette.</summary>
+    public Action? Ask { get; set; }
 
     /// <summary>The current panel's size in DIPs, before the monitor cap (<see cref="PanelSize.Fit"/>).</summary>
     public (double W, double H) Size => PanelSize.Of(tabs.Current ?? PanelId.Shelf);
@@ -164,7 +170,8 @@ internal sealed class PanelHost
         {
             if (strip is not null)
             {
-                // The labels fade and go with the body.
+                // The labels fade and go with the body; nothing on them can be clicked meanwhile.
+                island.Interaction.Unregister(strip);
                 (leavingStrip, strip) = (strip, null);
                 leavingStrip.Visual.StartAnimation("Opacity", fadeOut);
             }
@@ -175,9 +182,11 @@ internal sealed class PanelHost
         var (width, height) = PanelSize.Fit(Size, island.MonitorSize);
         if (strip is null)
         {
-            strip = new Strip(island, text);
+            strip = new Strip(island, text, Select, () => Ask?.Invoke());
             strip.Visual.Opacity = 0;
             stripFadePending = true;
+            // From the shape's live body edge, as the strip is drawn, so a press mid-morph finds what is under it.
+            island.Interaction.Register(strip, p => new Vector2(PanelSpace.ToStrip(p, island.Current), p.Y), p => new Vector2(p.X - ((float)island.Current.Width / 2), p.Y));
         }
 
         // On a tab switch the strip stays and the highlight moves; the labels are set for the new width.
@@ -249,25 +258,13 @@ internal sealed class PanelHost
     }
 
     /// <summary>
-    /// A press on a tab label switches to that tab. One on the body is the panel's once the body shows, so a quick
-    /// click after opening or switching cannot hit a button that is not drawn yet.
+    /// A press on the body that no registered target took is the panel's once the body shows, so a quick click after
+    /// opening or switching cannot hit a button that is not drawn yet. The strip's tabs, tomte and Ask pill are targets.
     /// </summary>
     private void OnPressed(Vector2 point)
     {
-        if (shown is null)
+        if (shown is null || point.Y < PanelSpace.TabStripHeight)
         {
-            return;
-        }
-
-        if (point.Y < PanelSpace.TabStripHeight)
-        {
-            // The Ask pill opens the palette through the triggers. While the shape grows to a wider panel a label
-            // laid out for the new width can sit under it, and the press must not switch tabs as well.
-            if (!AskAt(point) && LabelAt(point) is { } id)
-            {
-                Select(id);
-            }
-
             return;
         }
 
@@ -303,19 +300,6 @@ internal sealed class PanelHost
         }
     }
 
-    /// <summary>Whether an island point is on a tab label or the Ask pill, which a press picks rather than holding it to move the island.</summary>
-    public bool OnLabel(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && (LabelAt(point) is not null || AskAt(point));
-
-    /// <summary>Whether an island point is on the Ask pill, a press on which opens the palette as one on the tomte does.</summary>
-    public bool OnAsk(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && AskAt(point);
-
-    // Both from the shape's live body, as the strip is drawn, so a press mid-morph still finds what is under it: the
-    // labels from its left edge, the Ask pill from its right one.
-    private PanelId? LabelAt(Vector2 point) =>
-        TabStrip.At(PanelSpace.ToStrip(point, island.Current), tabs.Order, tabs.Current, bodySize.X, island.Mascot.Enabled);
-
-    private bool AskAt(Vector2 point) => TabStrip.OnAsk(PanelSpace.ToStrip(point, island.Current), (float)island.Current.Width);
-
     private bool InBody(Vector2 island, out Vector2 at)
     {
         at = PanelSpace.ToBody(island, bodySize.X);
@@ -326,11 +310,16 @@ internal sealed class PanelHost
     /// The tab labels in the strip row, with a card behind the current one, and the Ask pill at its right end. The
     /// container sits on the shape's live body left edge in every frame of a morph (island space's origin less its own
     /// offset, plus the ramp an attached shape flares into the top edge with, whole pixels), so the labels move with the
-    /// edge they are laid out from; the Ask pill rides the live right edge the same way. Drawing only: presses and the
-    /// wheel are the host's as before.
+    /// edge they are laid out from; the Ask pill rides the live right edge the same way. Its targets are the tomte and the
+    /// Ask pill, which open the palette, and the tab labels, one group the arrow keys switch along. The wheel is the
+    /// host's.
     /// </summary>
-    private sealed class Strip : IDisposable
+    private sealed class Strip : IDisposable, IInteractive
     {
+        private const string Tomte = "tomte", AskId = "ask";
+        private readonly IslandWindow island;
+        private readonly Action<PanelId> select;
+        private readonly Action openAsk;
         private readonly TextRenderer text;
         private readonly CompositionRoundedRectangleGeometry pill, askCard;
         private readonly CompositionContainerShape sparkle;
@@ -338,10 +327,15 @@ internal sealed class PanelHost
         private readonly ExpressionAnimation askEdge;
         private readonly TextVisual ask;
         private readonly List<TextVisual> labels = [];
+        private Target[] targets = [];
+        private float askWidth, askFor;
 
-        public Strip(IslandWindow island, TextRenderer text)
+        public Strip(IslandWindow island, TextRenderer text, Action<PanelId> select, Action onAsk)
         {
+            this.island = island;
             this.text = text;
+            this.select = select;
+            openAsk = onAsk;
             var compositor = island.Compositor;
             Visual = compositor.CreateShapeVisual();
             var edge = compositor.CreateExpressionAnimation("Vector3((Floor(live.RampW * dips.Scale.X + 0.5) - dips.Offset.X) / dips.Scale.X, 0, 0)");
@@ -381,11 +375,56 @@ internal sealed class PanelHost
             island.Dips.Children.InsertAtTop(Visual);
         }
 
+        public event Action? TargetsChanged;
+
         public ShapeVisual Visual { get; }
+
+        /// <summary>The tomte, the tab labels and the Ask pill, which rides the live right edge as it is drawn.</summary>
+        public IReadOnlyList<Target> Targets
+        {
+            get
+            {
+                float width = (float)island.Current.Width;
+                if (targets.Length > 0 && width != askFor)
+                {
+                    askFor = width;
+                    targets[^1] = targets[^1] with { Bounds = AskCard(width) };
+                }
+
+                return targets;
+            }
+        }
+
+        private RectangleF AskCard(float width) =>
+            new(width - TabStrip.RightPad - askWidth, (PanelSpace.TabStripHeight - TabStrip.Height) / 2, askWidth, TabStrip.Height);
+
+        public void Activate(string id)
+        {
+            if (id is Tomte or AskId)
+            {
+                openAsk();
+            }
+            else if (Enum.TryParse<PanelId>(id, out var tab))
+            {
+                select(tab);
+            }
+        }
 
         public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot)
         {
             var lines = TabStrip.Labels(tabs, current, width, mascot);
+            var list = new List<Target>();
+            if (mascot)
+            {
+                var box = MascotArt.Box(IslandGeometry.Panel(width, PanelSpace.TabStripHeight));
+                list.Add(new(Tomte, box with { X = box.X + (width / 2) }, box.Width / 2, TargetKind.Button, Tip: "Ask Tomte"));
+            }
+
+            foreach (var (id, line) in tabs.Zip(lines))
+            {
+                list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: id == current));
+            }
+
             Visual.Size = new Vector2(width, PanelSpace.TabStripHeight);
             while (labels.Count < lines.Count)
             {
@@ -407,6 +446,10 @@ internal sealed class PanelHost
 
             // Laid out from the card's left edge, which the expression keeps on the live right end.
             var (card, glyph, word) = TabStrip.AskPill(width);
+            askWidth = card.Width;
+            askFor = (float)island.Current.Width;
+            list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything"));
+            targets = [.. list];
             askVisual.Size = new Vector2(card.Width, PanelSpace.TabStripHeight);
             askEdge.SetScalarParameter("right", width - card.X);
             askVisual.StartAnimation("Offset", askEdge);
@@ -415,6 +458,7 @@ internal sealed class PanelHost
             sparkle.Offset = new Vector2(glyph.X - card.X, glyph.Y);
             sparkle.Scale = new Vector2(glyph.Height / TabStrip.SparkleBox.Y);
             ask.Show(word.Text, word.Style, new System.Drawing.RectangleF(word.Slot.X - card.X, word.Slot.Y, word.Slot.Width, word.Slot.Height));
+            TargetsChanged?.Invoke();
         }
 
         public void Dispose()
