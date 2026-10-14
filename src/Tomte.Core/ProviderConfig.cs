@@ -14,3 +14,6 @@ public sealed record ProviderConfig(
     string? DefaultModel = null,
     string? FastModel = null,
     decimal? DailyCapUsd = 2m);
+
+/// <summary>Price per million tokens in US dollars, as the built-in table and the settings file's overrides store it.</summary>
+public sealed record ModelPrice(decimal InputPerMillion, decimal OutputPerMillion);

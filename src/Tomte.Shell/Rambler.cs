@@ -25,6 +25,7 @@ internal sealed class Rambler(
     Func<Task<PaletteSession>>? voice,
     ScratchpadNote scratchpad,
     SendLog sendLog,
+    PaletteOptions prices,
     Action<string> log)
 {
     // The design's rambler pill is wider than the 220 Compact so the bars fit beside the mascot.
@@ -211,9 +212,12 @@ internal sealed class Rambler(
         }
     }
 
-    /// <summary>One send-log line per request that left the PC. There is no price table here yet, so the cost is 0.</summary>
+    /// <summary>
+    /// One send-log line per request that left the PC, priced as the palette prices its sends. A transcription reports
+    /// no token counts, so it counts as 0 until a per-minute price exists.
+    /// </summary>
     private void LogSend(ProviderSend send, int inputTokens, int outputTokens, string attached) =>
-        sendLog.Append(new SendLogEntry(DateTimeOffset.Now, send.Provider, send.Model, inputTokens, outputTokens, 0m, [attached], null));
+        sendLog.Append(new SendLogEntry(DateTimeOffset.Now, send.Provider, send.Model, inputTokens, outputTokens, SendLog.Estimate(prices, send.Model, inputTokens, outputTokens), [attached], null));
 
     private void Level(float rms)
     {

@@ -94,7 +94,7 @@ public sealed class JobTests : IDisposable
     private JobRunner Runner(string name, int turns, out RecordedHandler handler, PaletteOptions? options = null, bool resident = true, DateTimeOffset? now = null)
     {
         var recorded = handler = Handler(name, turns);
-        return new JobRunner(_store, _tasks, _ => new OpenAICompatibleProvider(new HttpClient(recorded), Ollama.BaseUrl!, null), Tools(), new SendLog(LogPath), options ?? new PaletteOptions())
+        return new JobRunner(_store, _tasks, _ => new OpenAICompatibleProvider(new HttpClient(recorded), Ollama.BaseUrl!, null), Tools(), new SendLog(LogPath), _ => options ?? new PaletteOptions())
         {
             Now = () => now ?? Monday0900.AddSeconds(30),
             Zone = () => India,
@@ -631,6 +631,33 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task AJobRunsUnderTheCapSettingsHoldAtItsRun()
+    {
+        // Made under the default $2 cap; settings have since lowered its provider's cap to $0.02 and priced the model at
+        // $100 a million, so this run stops where AJobStopsHardAtTheCapBetweenTurns does. Another provider keeps its own.
+        var settings = new TomteSettings
+        {
+            Provider = Ollama with { DailyCapUsd = 0.02m },
+            ModelPrices = new Dictionary<string, ModelPrice> { [OllamaFactAttribute.Model] = new(100m, 0m) },
+        };
+        AddJob("Read the shelf item notes.txt and summarise it in one sentence.", "read_shelf_item");
+        var handler = Handler("runshelf", 2);
+        var runner = new JobRunner(_store, _tasks, _ => new OpenAICompatibleProvider(new HttpClient(handler), Ollama.BaseUrl!, null), Tools(), new SendLog(LogPath),
+            config => ProviderSetup.OptionsFor(settings, config))
+        {
+            Now = () => Monday0900.AddSeconds(30),
+            Zone = () => India,
+            Log = _logged.Add,
+        };
+
+        await runner.RunDueAsync();
+
+        Assert.Single(handler.Bodies);
+        Assert.Equal("Daily cap of $0.02 reached for ollama, so the job stopped.", Assert.Single(_store.Results()).Text);
+        Assert.Equal(2m, ProviderSetup.OptionsFor(settings, Ollama with { Id = "another" }).DailyCapUsd);
+    }
+
+    [Fact]
     public async Task AJobThatIsNotDueDoesNotRun()
     {
         _store.Add(new JobDraft("Later", "p", WeekdaysAtNine, []), Ollama, Monday0900.AddHours(1), India);
@@ -647,7 +674,7 @@ public sealed class JobTests : IDisposable
         // Each look comes seven hours late, so the run is skipped and only its next one is worked out: nothing is sent.
         var now = Monday0900.AddHours(7);
         var zone = India;
-        var runner = new JobRunner(_store, _tasks, _ => throw new InvalidOperationException("nothing runs"), Tools(), new SendLog(LogPath), new PaletteOptions())
+        var runner = new JobRunner(_store, _tasks, _ => throw new InvalidOperationException("nothing runs"), Tools(), new SendLog(LogPath), _ => new PaletteOptions())
         {
             Now = () => now,
             Zone = () => zone,

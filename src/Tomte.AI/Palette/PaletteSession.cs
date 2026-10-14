@@ -40,13 +40,16 @@ public sealed class ToolStepSegment(string tool, string summary, string result, 
 /// <summary>A device action that ran: the one line the island shows in Compact for 4 s, and its undo where the action offers one.</summary>
 public sealed record DeviceEvent(string Line, Func<ActionResult>? Undo);
 
-/// <summary>The palette's knobs. Lives here until the settings store merges; then Settings owns these values.</summary>
+/// <summary>The palette's knobs. The cap and the prices come from settings through ProviderSetup.OptionsFor.</summary>
 public sealed record PaletteOptions
 {
     /// <summary>Null means no cap.</summary>
     public decimal? DailyCapUsd { get; init; } = 2m;
 
     public IReadOnlyDictionary<string, ModelPrice> Prices { get; init; } = new Dictionary<string, ModelPrice>();
+
+    /// <summary>What a model with no entry in <see cref="Prices"/> costs. Null counts it free: a server on this PC.</summary>
+    public ModelPrice? UnknownPrice { get; init; }
 
     /// <summary>Off by default: the send log then records only names, times and token counts.</summary>
     public bool LogContent { get; init; }
@@ -56,6 +59,9 @@ public sealed record PaletteOptions
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(120);
 
     public int MaxTokens { get; init; } = 4096;
+
+    /// <summary>The model's price from <see cref="Prices"/> (see <see cref="PriceTable.Find"/>), else <see cref="UnknownPrice"/>.</summary>
+    public ModelPrice? PriceFor(string model) => PriceTable.Find(Prices, model) ?? UnknownPrice;
 }
 
 /// <summary>What the renderer binds. Every change raises <see cref="Changed"/> on the sending thread's context.</summary>
@@ -138,7 +144,7 @@ public sealed partial class PaletteSession : IPaletteSession
     private readonly SortedSet<string> _mcpContacted = new(StringComparer.Ordinal);
     private readonly List<string> _skillFiles = [];
     private HashSet<string> _offered = [];
-    private readonly string _model;
+    private readonly string _defaultModel;
     private CancellationTokenSource? _userCancel;
     private string _indicator = "Nothing sent";
 
@@ -151,9 +157,18 @@ public sealed partial class PaletteSession : IPaletteSession
         _tools = tools;
         _grants = grants;
         Chips = chips;
-        _model = config.DefaultModel ?? throw new ArgumentException("The provider has no default model.", nameof(config));
+        _defaultModel = config.DefaultModel ?? throw new ArgumentException("The provider has no default model.", nameof(config));
         SpentTodayUsd = log.SpentToday(config.Id, Now());
     }
+
+    /// <summary>
+    /// The model this session calls: the fast one, when settings name one, for the two small calls (routing a voice
+    /// command and reading a schedule into a job); the default model for everything else.
+    /// </summary>
+    public string ModelId => (Voice || Scheduling is not null) && _config.FastModel is { Length: > 0 } fast ? fast : _defaultModel;
+
+    // What the user reads: "Anthropic" rather than the host its key goes to.
+    private string ProviderName => ProviderSetup.NameOf(_config.Id);
 
     /// <summary>
     /// Asked before an external-effect or destructive tool runs. The renderer shows the prompt; the
@@ -238,7 +253,7 @@ public sealed partial class PaletteSession : IPaletteSession
         Error = null;
         if (_options.DailyCapUsd is { } cap && SpentTodayUsd >= cap)
         {
-            Finish(PaletteStatus.Failed, $"Daily cap of ${cap:0.00} reached for {_config.Id}. Raise it in settings or wait until tomorrow.");
+            Finish(PaletteStatus.Failed, $"Daily cap of ${cap:0.00} reached for {ProviderName}. Raise it in settings or wait until tomorrow.");
             return;
         }
 
@@ -294,9 +309,9 @@ public sealed partial class PaletteSession : IPaletteSession
             while (true)
             {
                 // A job stops hard at the cap: before every turn, not only before the first.
-                if (Job is not null && _options.DailyCapUsd is { } jobCap && SpentTodayUsd + SendLog.Estimate(_options.Prices, _model, inputTokens, outputTokens) >= jobCap)
-                    throw new InvalidOperationException($"Daily cap of ${jobCap:0.00} reached for {_config.Id}, so the job stopped.");
-                _indicator = $"Sending to {_config.Id} · {_model}";
+                if (Job is not null && _options.DailyCapUsd is { } jobCap && SpentTodayUsd + SendLog.Estimate(_options, ModelId, inputTokens, outputTokens) >= jobCap)
+                    throw new InvalidOperationException($"Daily cap of ${jobCap:0.00} reached for {ProviderName}, so the job stopped.");
+                _indicator = $"Sending to {ProviderName} · {ModelId}";
                 sent = true;
                 Changed?.Invoke();
                 var (assistant, calls, usage) = await StreamTurnAsync(messages, tools, ct);
@@ -349,8 +364,8 @@ public sealed partial class PaletteSession : IPaletteSession
             _userCancel = null;
             if (sent)
             {
-                var cost = SendLog.Estimate(_options.Prices, _model, inputTokens, outputTokens);
-                _log.Append(new SendLogEntry(Now(), _config.Id, _model, inputTokens, outputTokens, cost, [.. attached, .. _skillFiles, .. _fileReads],
+                var cost = SendLog.Estimate(_options, ModelId, inputTokens, outputTokens);
+                _log.Append(new SendLogEntry(Now(), _config.Id, ModelId, inputTokens, outputTokens, cost, [.. attached, .. _skillFiles, .. _fileReads],
                     _options.LogContent ? $"{Prompt}\n---\n{AnswerText}" : null, Job?.Name));
                 SpentTodayUsd += cost;
             }
@@ -359,7 +374,7 @@ public sealed partial class PaletteSession : IPaletteSession
             string mcp = _mcpContacted.Count == 0 ? "" : $"MCP: {string.Join(", ", _mcpContacted)}";
             if (sent || mcp.Length > 0)
             {
-                _indicator = "Sent to " + (sent ? $"{_config.Id} · {_model}{(mcp.Length == 0 ? "" : " and ")}" : "") + mcp;
+                _indicator = "Sent to " + (sent ? $"{ProviderName} · {ModelId}{(mcp.Length == 0 ? "" : " and ")}" : "") + mcp;
                 Changed?.Invoke();
             }
         }
@@ -370,7 +385,7 @@ public sealed partial class PaletteSession : IPaletteSession
     private async Task<(List<ContentPart> Assistant, List<ToolCallPart> Calls, TurnDone Usage)> StreamTurnAsync(List<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken ct)
     {
         // A copy: the list keeps growing, and a request must not change after it was sent.
-        var request = new ChatRequest(_model, [.. messages], SystemText, tools,
+        var request = new ChatRequest(ModelId, [.. messages], SystemText, tools,
             Voice ? Math.Min(_options.MaxTokens, VoiceMaxTokens) : _options.MaxTokens);
         var assistant = new List<ContentPart>();
         var calls = new List<ToolCallPart>();

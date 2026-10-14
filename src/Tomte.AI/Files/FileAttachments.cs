@@ -266,7 +266,9 @@ internal sealed class SendPlan
         _cuttable = [.. _files.Where(f => !string.IsNullOrEmpty(f.Text))];
         _fixedWithoutText = _fixed + _files.Where(f => !_cuttable.Contains(f)).Sum(f => f.Tokens);
         _contextBudget = facts.InputBudget(options.MaxTokens);
-        _pricePerToken = options.Prices.TryGetValue(facts.Model, out var price) ? price.InputPerMillion / 1_000_000m : 0m;
+        // An unknown cloud model counts at the highest known price, as in the send log.
+        var price = options.PriceFor(facts.Model);
+        _pricePerToken = price is null ? 0m : price.InputPerMillion / 1_000_000m;
         // The whole reply cap at the output price: what one more request can cost past its input, at most.
         _outputCostPerRequest = price is null ? 0m : options.MaxTokens * price.OutputPerMillion / 1_000_000m;
         _left = options.DailyCapUsd is { } cap && _pricePerToken > 0 ? Math.Max(0, cap - spentToday) : null;

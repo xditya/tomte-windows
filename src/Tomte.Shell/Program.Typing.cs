@@ -44,31 +44,13 @@ internal static partial class Program
     private static PaletteSession DebugSession(TriggerController triggers, SettingsStore store)
     {
         var config = new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", "llama3.2:3b");
-        return Session(triggers, store, ProviderSetup.Create(config, paletteHttp ??= new HttpClient(), null), config, new PaletteOptions(), dry: true);
+        return Session(triggers, store, ProviderSetup.Create(config, paletteHttp ??= ProviderSetup.NewHttp(), null), config, new PaletteOptions(), dry: true);
     }
 
-    /// <summary>The provider set up in settings, with its key from Credential Manager and its daily cap; null when none is.</summary>
+    /// <summary>A session against the provider set up in settings; null when none is.</summary>
     private static PaletteSession? ConfiguredSession(TriggerController triggers, SettingsStore store, Action<string>? log)
     {
-        // With no provider there is no HTTP client either.
-        if (store.Current.Provider is null)
-        {
-            return null;
-        }
-
-        (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options)? palette;
-        try
-        {
-            palette = ProviderSetup.ForPalette(store.Current, paletteHttp ??= new HttpClient(), CredentialStore.Read);
-        }
-        catch (Exception e) when (e is InvalidOperationException or ArgumentException)
-        {
-            // Credential Manager would not read the key, or a hand-edited settings file has no address for the server.
-            log?.Invoke($"palette: the provider in settings cannot be used: {e.Message}");
-            return null;
-        }
-
-        if (palette is not { } configured)
+        if (Configured(store, log) is not { } configured)
         {
             return null;
         }
@@ -76,6 +58,30 @@ internal static partial class Program
         var session = Session(triggers, store, configured.Provider, configured.Config, configured.Options, dry: false);
         _ = DescribeAsync(session, configured.Provider, configured.Config);
         return session;
+    }
+
+    /// <summary>
+    /// The provider set up in settings, with its key from Credential Manager, its cap and its prices, for the palette,
+    /// --rambler and new jobs. Null when there is none, or, with the reason logged, when it cannot be used.
+    /// </summary>
+    internal static (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options)? Configured(SettingsStore store, Action<string>? log)
+    {
+        // With no provider there is no HTTP client either.
+        if (store.Current.Provider is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return ProviderSetup.ForPalette(store.Current, paletteHttp ??= ProviderSetup.NewHttp(), CredentialStore.Read, log);
+        }
+        catch (Exception e) when (e is InvalidOperationException or ArgumentException)
+        {
+            // Credential Manager would not read the key, or a hand-edited settings file has no address for the server.
+            log?.Invoke($"palette: the provider in settings cannot be used: {e.Message}");
+            return null;
+        }
     }
 
     // What a local Ollama says the model reads and takes, set when it answers. The palette does not wait for it: Windows

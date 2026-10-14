@@ -37,7 +37,7 @@ public sealed partial class PaletteSession
 
     public TokenEstimate? Estimate { get; private set; }
 
-    internal ModelFacts Facts => ModelFacts.For(_config, _provider.Capabilities, Model);
+    internal ModelFacts Facts => ModelFacts.For(_config with { DefaultModel = ModelId }, _provider.Capabilities, Model);
 
     // Making a job has its own prompt. A job run has the unattended rule instead of skills and automation, and gets the
     // file paragraph, like any session, once a file is in the send: for a job only through read_shelf_item, which it is
@@ -65,7 +65,7 @@ public sealed partial class PaletteSession
         var facts = Facts;
         if (!facts.Vision && parts.OfType<ImagePart>().Any())
         {
-            Finish(PaletteStatus.Failed, $"{_model} does not take images, so nothing was sent. Turn the screenshot off, or pick a model that reads images.");
+            Finish(PaletteStatus.Failed, $"{ModelId} does not take images, so nothing was sent. Turn the screenshot off, or pick a model that reads images.");
             return null;
         }
 

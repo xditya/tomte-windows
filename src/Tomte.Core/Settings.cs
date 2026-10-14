@@ -62,6 +62,12 @@ public sealed record TomteSettings
 
     /// <summary>The AI provider the palette uses. Null keeps the AI layer off. Its key is in Credential Manager, never here.</summary>
     public ProviderConfig? Provider { get; init; }
+
+    /// <summary>
+    /// Prices by model id that replace or add to the built-in table, for a model the table lacks or a price that changed.
+    /// Read from the file only; the settings window does not show them.
+    /// </summary>
+    public IReadOnlyDictionary<string, ModelPrice> ModelPrices { get; init; } = new Dictionary<string, ModelPrice>();
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>
