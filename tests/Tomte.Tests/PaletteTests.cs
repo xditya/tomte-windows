@@ -261,7 +261,8 @@ public class PaletteTests : IDisposable
     {
         var log = new SendLog(_logPath);
         var now = DateTimeOffset.Now;
-        log.Append(new SendLogEntry(now.AddHours(-1), "p", "m", 1, 1, 0.75m, [], null));
+        // Today's earlier send is logged at the same instant: an hour back is yesterday between midnight and 01:00.
+        log.Append(new SendLogEntry(now, "p", "m", 1, 1, 0.75m, [], null));
         log.Append(new SendLogEntry(now.AddDays(-1), "p", "m", 1, 1, 5m, [], null));
         log.Append(new SendLogEntry(now, "other", "m", 1, 1, 5m, [], null));
         _provider.Turns.Add(ScriptedProvider.Text(10, 5, "x"));
