@@ -1,6 +1,9 @@
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Windows.UI.Composition;
 using Windows.Win32;
 
@@ -9,12 +12,13 @@ namespace Tomte.Shell;
 /// <summary>
 /// A drop zone's panel in the Palette state, laid out by <see cref="DropResultLayout"/>: the zone and the file, where
 /// the request went, a line of progress or trouble, the answer as it streams, the size question's choices and the
-/// result files, which a press and drag takes out of the island through the shelf's own drag. Text is the text
-/// renderer's; only a run that changed is drawn again. It fades in with the shape and goes when the island leaves
-/// the Palette state, which also ends the request and answers an open size question with cancel. The answer scrolls
-/// with the wheel when it is longer than its band.
+/// result files, which a press and drag takes out of the island through the shelf's own drag and a double click or
+/// Enter opens. The choices and the tiles are the interaction host's targets. Text is the text renderer's; only a run
+/// that changed is drawn again. It fades in with the shape and goes when the island leaves the Palette state, which
+/// also ends the request and answers an open size question with cancel. The answer scrolls with the wheel when it is
+/// longer than its band.
 /// </summary>
-internal sealed class DropResultView
+internal sealed class DropResultView : IInteractive
 {
     private readonly IslandWindow island;
     private readonly TriggerController triggers;
@@ -30,6 +34,7 @@ internal sealed class DropResultView
     private string shapesKey = "";
     private DropResultLayout? layout;
     private IReadOnlyList<ShelfItem> files = [];
+    private IReadOnlyList<Target> targets = [];
     private bool fadeInPending = true;
 
     public DropResultView(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log)
@@ -53,16 +58,21 @@ internal sealed class DropResultView
         root.Children.InsertAtTop(band);
         island.Dips.Children.InsertAtTop(root);
         island.ContentReady += FadeIn;
-        island.Pressed += OnPressed;
         island.Wheel += OnWheel;
         triggers.Machine.Changed += OnState;
+        // In the panel's own DIPs: x from its left edge.
+        island.Interaction.Register(this, p => p + new Vector2(width / 2, 0), p => p - new Vector2(width / 2, 0));
     }
 
     /// <summary>The island left the Palette state; the view is gone.</summary>
     public event Action? Closed;
 
-    /// <summary>A choice of the size question was pressed, by its index.</summary>
+    /// <summary>A choice of the size question was clicked, by its index.</summary>
     public event Action<int>? Chose;
+
+    public event Action? TargetsChanged;
+
+    public IReadOnlyList<Target> Targets => targets;
 
     public bool Open { get; private set; } = true;
 
@@ -118,6 +128,12 @@ internal sealed class DropResultView
         }
 
         Shapes(next, result);
+        var now = next.Targets(files.Count);
+        if (!now.SequenceEqual(targets))
+        {
+            targets = now;
+            TargetsChanged?.Invoke();
+        }
     }
 
     /// <summary>
@@ -142,7 +158,7 @@ internal sealed class DropResultView
         for (int i = 0; i < next.Choices.Count; i++)
         {
             bool cancel = i == next.Choices.Count - 1;
-            p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Info : ShelfColors.Card), cancel ? null : p.Brush(ShelfColors.Line), 1);
+            p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Rgb(StateLook.Accent & 0xFFFFFF) : ShelfColors.Card), cancel ? null : p.Brush(ShelfColors.Line), 1);
         }
 
         for (int i = 0; i < next.Tiles.Count; i++)
@@ -152,28 +168,54 @@ internal sealed class DropResultView
         }
     }
 
-    private void OnPressed(Vector2 point)
+    public void Activate(string id) => Activate(id, ActivateBy.Click);
+
+    /// <summary>A choice answers on a click or a key; a tile opens its file on a double click or Enter, as on the shelf.</summary>
+    public void Activate(string id, ActivateBy by)
     {
-        if (!Open || layout is null || triggers.Machine.State != IslandState.Palette)
+        if (!Live)
         {
             return;
         }
 
-        var (tile, choice) = layout.At(point + new Vector2(width / 2, 0));
+        var (tile, choice) = DropResultLayout.Of(id);
         if (choice >= 0)
         {
             Chose?.Invoke(choice);
         }
-        else if (tile >= 0 && tile < files.Count)
+        else if (tile >= 0 && tile < files.Count && by != ActivateBy.Click && ShelfStore.Allows(ShelfAction.Open, files[tile]))
         {
-            // Win32 runs the press, move and release loop with the system's drag threshold: true is a drag.
-            PInvoke.GetCursorPos(out var at);
-            if (PInvoke.DragDetect(island.Hwnd, at))
+            try
             {
-                ShelfDrag.Run(island, triggers, shelf, [files[tile]], log);
+                Process.Start(new ProcessStartInfo(files[tile].Path) { UseShellExecute = true })?.Dispose();
+            }
+            catch (Exception e) when (e is Win32Exception or InvalidOperationException)
+            {
+                log?.Invoke($"zone result: open failed: {e.Message}");
             }
         }
     }
+
+    /// <summary>A press on a tile: Win32 runs the press, move and release loop with the system's drag threshold, and past it the shelf's own drag takes the file out.</summary>
+    public bool TryDrag(string id, Vector2 at)
+    {
+        var (tile, _) = DropResultLayout.Of(id);
+        if (!Live || tile < 0 || tile >= files.Count)
+        {
+            return false;
+        }
+
+        PInvoke.GetCursorPos(out var cursor);
+        if (!PInvoke.DragDetect(island.Hwnd, cursor))
+        {
+            return false;
+        }
+
+        ShelfDrag.Run(island, triggers, shelf, [files[tile]], log);
+        return true;
+    }
+
+    private bool Live => Open && layout is not null && triggers.Machine.State == IslandState.Palette;
 
     // The wheel over the answer scrolls it, three lines a notch.
     private void OnWheel(Vector2 point, int delta)
@@ -216,7 +258,7 @@ internal sealed class DropResultView
         Open = false;
         triggers.Machine.Changed -= OnState;
         island.ContentReady -= FadeIn;
-        island.Pressed -= OnPressed;
+        island.Interaction.Unregister(this);
         island.Wheel -= OnWheel;
         // Out with the shape: the content fades over 0.1 s, then goes; a timer, because a sleeping display finishes no animation.
         root.StartAnimation("Opacity", PanelHost.Fade(island.Compositor, 0, PanelHost.FadeOutMs));

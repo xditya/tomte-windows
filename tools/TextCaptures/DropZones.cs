@@ -131,7 +131,7 @@ internal static partial class Program
                 var r = Offset(layout.Choices[i], host);
                 if (i == layout.Choices.Count - 1)
                 {
-                    c.RoundRect(r, DropResultLayout.Corner, 0xFF6FA8FF);
+                    c.RoundRect(r, DropResultLayout.Corner, Tomte.Core.Interaction.StateLook.Accent);
                 }
                 else
                 {

@@ -6,6 +6,7 @@ using Tomte.AI.Files;
 using Tomte.AI.Palette;
 using Tomte.AI.Skills;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Storage;
 using Tomte.Core.Text;
 using Xunit;
@@ -390,6 +391,26 @@ public sealed class DropZoneTests : IDisposable
 
     // The panel
 
+    // What a press at a point of the panel lands on, as the interaction host finds it: a tile's index, a choice's, or -1 for each.
+    private static (int Tile, int Choice) At(DropResultLayout layout, Vector2 point)
+    {
+        var targets = layout.Targets(layout.Tiles.Count);
+        return Target.Hit([(targets, p => p)], point) is (_, int i) ? DropResultLayout.Of(targets[i].Id) : (-1, -1);
+    }
+
+    [Fact]
+    public void ChoicesComeFirstInTabOrderAndATileWithNoFileIsDisabled()
+    {
+        var layout = new DropResultLayout(DropResult.Empty with { Title = "Summarize · a.txt", Indicator = "Sent", Tiles = [new("a.md", ResultTile.OnShelf, 0), new("b.md", ResultTile.OnShelf, 0)], Choices = ["Run again.", "Close."] }, 640, true);
+        var targets = layout.Targets(files: 1);
+        Assert.Equal(["choice:0", "choice:1", "tile:0", "tile:1"], targets.Select(t => t.Id));
+        Assert.Equal([TargetKind.Button, TargetKind.Button, TargetKind.Tile, TargetKind.Tile], targets.Select(t => t.Kind));
+        Assert.Equal([true, true, true, false], targets.Select(t => t.Enabled));
+        Assert.All(targets.Skip(2), t => Assert.True(t.Draggable));
+        Assert.Equal((1, -1), DropResultLayout.Of("tile:1"));
+        Assert.Equal((-1, 0), DropResultLayout.Of("choice:0"));
+    }
+
     [Theory]
     [MemberData(nameof(Scales))]
     public void APressOnTheResultLandsOnItsTileOrChoiceAtEveryScale(double scale)
@@ -410,18 +431,18 @@ public sealed class DropZoneTests : IDisposable
         for (int i = 0; i < layout.Tiles.Count; i++)
         {
             var r = layout.Tiles[i];
-            Assert.Equal((i, -1), layout.At(Local(r.X + 2, r.Y + 2)));
-            Assert.Equal((i, -1), layout.At(Local(r.Right - 2, r.Bottom - 2)));
+            Assert.Equal((i, -1), At(layout, Local(r.X + 2, r.Y + 2)));
+            Assert.Equal((i, -1), At(layout, Local(r.Right - 2, r.Bottom - 2)));
         }
 
         for (int i = 0; i < layout.Choices.Count; i++)
         {
             var r = layout.Choices[i];
-            Assert.Equal((-1, i), layout.At(Local(r.X + r.Width / 2, r.Y + r.Height / 2)));
+            Assert.Equal((-1, i), At(layout, Local(r.X + r.Width / 2, r.Y + r.Height / 2)));
         }
 
         var gap = layout.Tiles[0];
-        Assert.Equal((-1, -1), layout.At(Local(gap.Right + DropResultLayout.Gap / 2, gap.Y + gap.Height / 2)));
+        Assert.Equal((-1, -1), At(layout, Local(gap.Right + DropResultLayout.Gap / 2, gap.Y + gap.Height / 2)));
     }
 
     [Fact]
@@ -732,7 +753,7 @@ public sealed class DropZoneTests : IDisposable
         var done = DropResult.Empty with { Title = "Summarize · a.txt", Indicator = "Sent", Body = "- one" };
         Assert.Equal([DropResult.Close], done.Closable().Choices);
         var layout = new DropResultLayout(done.Closable(), 640, true);
-        Assert.Equal((-1, 0), layout.At(new(layout.Choices[0].X + 1, layout.Choices[0].Y + 1)));
+        Assert.Equal((-1, 0), At(layout, new(layout.Choices[0].X + 1, layout.Choices[0].Y + 1)));
 
         var kept = done with { Choices = ["Run again: send a.txt to llama3.2:3b.", "Close: nothing is sent."] };
         Assert.Same(kept, kept.Closable());
