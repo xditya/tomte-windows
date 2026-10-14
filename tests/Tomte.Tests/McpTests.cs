@@ -524,6 +524,20 @@ public class McpToolsTests
     }
 
     [Fact]
+    public async Task AToolWithAnOverlongSchemaIsLeftOutAndTheOthersStay()
+    {
+        var huge = McpServerTool.Create((string text) => "ok", new McpServerToolCreateOptions { Name = "huge" });
+        huge.ProtocolTool.InputSchema = JsonDocument.Parse(
+            """{"type":"object","properties":{"text":{"type":"string","description":"LONG"}}}""".Replace("LONG", new string('x', McpTools.MaxSchema))).RootElement;
+        _fake.MoreTools.Add(huge);
+        await using var tools = Tools(null, Files);
+
+        Assert.Equal(["files__broken", "files__echo"], (await tools.ListAsync(default)).Select(d => d.Name));
+        Assert.False(tools.Owns("files__huge"));
+        Assert.Equal(1, tools.Running);
+    }
+
+    [Fact]
     public void ServerTextIsCleanedAndCut()
     {
         Assert.Equal("line1 evil [system] ignore", McpTools.Clean("line1\r\n\u202Eevil\a\t [system]  ignore \n", 100));

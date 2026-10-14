@@ -40,7 +40,7 @@ public sealed class McpTools : IAsyncDisposable
     /// <summary>Longest error text taken from a server or from the SDK.</summary>
     public const int MaxError = 300;
 
-    /// <summary>Longest argument schema of one tool; the model gets every schema on every send, so a server with a longer one is refused.</summary>
+    /// <summary>Longest argument schema of one tool; the model gets every schema on every send, so a tool with a longer one is left out.</summary>
     public const int MaxSchema = 20_000;
 
     // For the confirmation prompt: readable, so letters outside ASCII and characters such as & are written as they are.
@@ -561,8 +561,9 @@ public sealed class McpTools : IAsyncDisposable
                 return $"its tools {Clean(twin.Tool.Name, MaxName)} and {Clean(tool.Name, MaxName)} would both be called {name}";
             if (_tools.TryGetValue(name, out var other) && other.Server.Name != server.Name)
                 return $"its tool {Clean(tool.Name, MaxName)} would be called {name}, which {Clean(other.Server.Name, MaxName)} already uses";
+            // Left out, not offered: the model gets every schema on every send. The server's other tools stay.
             if (tool.InputSchema.GetRawText().Length > MaxSchema)
-                return $"the arguments of its tool {Clean(tool.Name, MaxName)} take more than {MaxSchema} characters to describe";
+                continue;
             mine[name] = new Entry(server, tool, Key(server, tool));
         }
 
