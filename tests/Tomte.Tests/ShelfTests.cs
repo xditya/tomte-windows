@@ -298,6 +298,25 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    public async Task ARemovedItemWhoseFolderIsInUseIsSweptByALaterProcess()
+    {
+        var shelf = Store();
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, "open.txt", Content: "open"u8.ToArray())]);
+        var item = shelf.Items.Single();
+        await shelf.Remove([item]);
+
+        using (File.OpenRead(item.Path))
+        {
+            await Store().Load();
+            Assert.True(File.Exists(item.Path));
+        }
+
+        // The row was kept, so the process after that one deletes the folder.
+        await Store().Load();
+        Assert.False(Directory.Exists(Path.GetDirectoryName(item.Path)));
+    }
+
+    [Fact]
     public void TheSweepTakesOnlyTheShelfsOwnFolders()
     {
         string folder = Path.Combine(dir, "Shelf");
