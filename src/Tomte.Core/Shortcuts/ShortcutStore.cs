@@ -65,10 +65,11 @@ public sealed class ShortcutStore(TomteDb db, Func<bool> scriptsOn, Func<Shortcu
     }
 
     /// <summary>
-    /// Adds a tile at the end. Null when it was added; otherwise why not, in words for the user. A script can be
-    /// added; it stays off until the switch is on and the user confirms it.
+    /// Adds a tile at the end, named <paramref name="name"/> or after its target. Null when it was added; otherwise
+    /// why not, in words for the user. A script can be added; it stays off until the switch is on and the user
+    /// confirms it.
     /// </summary>
-    public string? Add(string target)
+    public string? Add(string target, string? name = null)
     {
         target = target.Trim();
         var read = ShortcutTarget.Read(target);
@@ -85,7 +86,7 @@ public sealed class ShortcutStore(TomteDb db, Func<bool> scriptsOn, Func<Shortcu
         // Stored as it opens: a web address normalised, a path as Windows reads it (no trailing dots or spaces).
         string stored = ShortcutTarget.Normalize(target);
         using var connection = db.Open(Feature, Schema);
-        using var command = Command(connection, "INSERT INTO shortcuts_tiles(name, target) VALUES ($name, $target)", ("$name", ShortcutTarget.NameFor(stored)), ("$target", stored));
+        using var command = Command(connection, "INSERT INTO shortcuts_tiles(name, target) VALUES ($name, $target)", ("$name", name?.Trim() is { Length: > 0 } given ? given : ShortcutTarget.NameFor(stored)), ("$target", stored));
         command.ExecuteNonQuery();
         return null;
     }

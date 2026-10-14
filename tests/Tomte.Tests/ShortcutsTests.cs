@@ -152,6 +152,9 @@ public sealed class ShortcutsTests : IDisposable
     [InlineData(@"C:\notes.txt:hidden")]
     [InlineData("C:\\a\"b")]
     [InlineData("")]
+    [InlineData(@"shell:AppsFolder\")]
+    [InlineData(@"shell:AppsFolder\..\Startup")]
+    [InlineData(@"shell:AppsFolderX\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")]
     public void TargetsThatAreNotAFullLocalPathOrAWebAddressAreRefused(string target)
     {
         Assert.NotNull(ShortcutTarget.Refuse(target));
@@ -162,6 +165,8 @@ public sealed class ShortcutsTests : IDisposable
     [InlineData("https://example.com")]
     [InlineData("http://localhost:8080/app")]
     [InlineData(@"C:\Tools\app.exe")]
+    [InlineData(@"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App")]
+    [InlineData(@"shell:appsfolder\{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\charmap.exe")]
     public void FullPathsAndWebAddressesPass(string target) => Assert.Null(ShortcutTarget.Refuse(target));
 
     [Fact]
@@ -608,6 +613,92 @@ public sealed class ShortcutsTests : IDisposable
             Assert.Equal(Math.Round(icon.X * scale), icon.X * scale, 3);
             Assert.Equal(Math.Round((top + icon.Y) * scale), (top + icon.Y) * scale, 3);
         }
+    }
+
+    [Fact]
+    public void AStartAppReadsAsWhatItsEntryStarts()
+    {
+        const string app = @"shell:AppsFolder\Vendor.App_0000000000000!App";
+        // A packaged app, or a shell object such as File Explorer: no file behind it, so the shell opens it by its ID.
+        Assert.Equal(new ShortcutTarget(ShortcutKind.App, app, Icon: app), ShortcutTarget.ReadApp(app, ("", "")));
+        Assert.Equal(new ShortcutTarget(ShortcutKind.App, app, Icon: app), ShortcutTarget.ReadApp(app, ("::{52205FD8-5DFB-447D-801A-D0B52F2E83E1}", "")));
+
+        // A desktop app is its target, read now: open or focus the exe, as an .exe tile does.
+        string exe = Touch("tool.exe");
+        Assert.Equal(new ShortcutTarget(ShortcutKind.App, exe, Icon: exe), ShortcutTarget.ReadApp(app, (exe, "")));
+        Assert.Equal(ShortcutKind.Url, ShortcutTarget.ReadApp(app, ("https://example.com/", "")).Kind);
+
+        // Arguments make the entry a command line: a script, gated like a link that passes them.
+        var script = ShortcutTarget.ReadApp(app, (exe, "--profile 2"));
+        Assert.Equal(ShortcutKind.Script, script.Kind);
+        Assert.Equal((exe, "--profile 2", dir), (script.Script!.Exe, script.Script.Arguments, script.Script.Folder));
+        Assert.Equal(app, script.Icon);
+        Assert.Equal(ShortcutOutcome.ScriptsOff, ShortcutStore.Gate(new Shortcut(1, "tool", app, null), script, scriptsOn: false));
+        string bat = Touch("build.bat");
+        Assert.Equal($"/d /s /c \"\"{bat}\" release\"", ShortcutTarget.ReadApp(app, (bat, "release")).Script!.Arguments);
+
+        // What a link may not point at, an entry may not either; an app that is gone is missing, never thrown.
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, ("steam://rungameid/431960", "")).Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (@"\\server\share\app.exe", "")).Kind);
+        Assert.True(ShortcutTarget.ReadApp(app, (Path.Combine(dir, "gone.exe"), "")).Missing);
+        Assert.Equal(new ShortcutTarget(ShortcutKind.App, app, Missing: true), ShortcutTarget.ReadApp(app, null));
+        Assert.Equal(new ShortcutTarget(ShortcutKind.App, app, Missing: true), ShortcutTarget.Read(app));
+        // The shell resolves only the folder's own entries: This PC or a path behind the prefix is no app.
+        Assert.True(ShortcutTarget.Read(@"shell:AppsFolder\::{20D04FE0-3AEA-1069-A2D8-08002B30309D}").Missing);
+        Assert.True(ShortcutTarget.Read(@"shell:AppsFolder\shell:Downloads").Missing);
+    }
+
+    [Fact]
+    public void AStartAppIsStoredByItsIdAndStartedByTheLauncher()
+    {
+        var store = Store();
+        Assert.Equal("There is nothing at shell:AppsFolder\\Vendor.Gone_0000000000000!App.", store.Add(@"shell:AppsFolder\Vendor.Gone_0000000000000!App", "Gone"));
+
+        // Read from the shell, not launched: the recorder takes the start. A Start list with no app has nothing to add.
+        var app = AppList.Load().FirstOrDefault(a => ShortcutTarget.Read(a.Target) is { Kind: ShortcutKind.App, Missing: false });
+        if (app is null)
+        {
+            return;
+        }
+
+        Assert.Null(store.Add(app.Target, app.Name));
+        var tile = Assert.Single(store.Load());
+        Assert.Equal((app.Name, app.Target), (tile.Name, tile.Target));
+
+        Assert.Equal(ShortcutOutcome.Opened, store.Launch(tile.Id).Outcome);
+        Assert.Equal(ShortcutTarget.Read(app.Target), Assert.Single(started));
+        Assert.True(store.LaunchByName(app.Name.ToUpperInvariant()));
+        Assert.True(Apps.OpenApp(app.Target, dryRun: true).Ok);
+    }
+
+    [Fact]
+    public void TheAppListIsStartsAppsSortedByName()
+    {
+        var apps = AppList.Load();
+        Assert.NotEmpty(apps);
+        Assert.All(apps, a => Assert.Null(ShortcutTarget.Refuse(a.Target)));
+        Assert.All(apps.Zip(apps.Skip(1)), pair => Assert.True(StringComparer.CurrentCultureIgnoreCase.Compare(pair.First.Name, pair.Second.Name) <= 0));
+    }
+
+    [Fact]
+    public void ShellItemsBecomeAppsWithANameAndAnId()
+    {
+        var apps = AppList.Sorted([(" Zed ", "Zed.App"), ("beta", "B!App"), ("", "Nameless!App"), ("Quoted", "Bad\"Id"), ("Alpha", "B!App"), ("alpha", "A!App")]);
+
+        Assert.Equal(["alpha", "Alpha", "beta", "Zed"], apps.Select(a => a.Name));
+        Assert.Equal(["A!App", "B!App", "B!App", "Zed.App"], apps.Select(a => a.Id));
+        Assert.Equal(@"shell:AppsFolder\A!App", apps[0].Target);
+    }
+
+    [Fact]
+    public void TheSearchBoxKeepsAppsWhoseNameHoldsTheText()
+    {
+        var apps = AppList.Sorted([("Calculator", "C!App"), ("Visual Studio Code", "Code"), ("Code Composer", "CCS"), ("Clock", "K!App")]);
+
+        Assert.Equal(["Code Composer", "Visual Studio Code"], AppList.Filter(apps, "code").Select(a => a.Name));
+        Assert.Equal(["Calculator"], AppList.Filter(apps, "  CALC ").Select(a => a.Name));
+        Assert.Equal(4, AppList.Filter(apps, " ").Count());
+        Assert.Empty(AppList.Filter(apps, "xyz"));
     }
 
     private ShortcutStore Store() => new(new TomteDb(DbPath), () => scriptsOn, Record);

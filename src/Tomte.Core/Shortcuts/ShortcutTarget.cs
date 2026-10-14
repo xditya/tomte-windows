@@ -34,9 +34,9 @@ public sealed record ScriptCommand(string Exe, string Arguments, string Folder, 
 /// <summary>
 /// What a tile's target is right now, read from the disk at the moment of asking: a link that was retargeted
 /// reads as what it points at today. <see cref="Open"/> is what gets started (the path, the link itself, or the
-/// web address); <see cref="Script"/> is set for scripts only. <see cref="Icon"/> is the local path the shell may
-/// read the tile's icon from, or null for none (a web page takes the browser's icon). Reading touches the disk and
-/// the shell, so it runs on a worker thread.
+/// web address); <see cref="Script"/> is set for scripts only. <see cref="Icon"/> is the local path or the Start
+/// app the shell may read the tile's icon from, or null for none (a web page takes the browser's icon). Reading
+/// touches the disk and the shell, so it runs on a worker thread.
 /// </summary>
 public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing = false, ScriptCommand? Script = null, string? Problem = null, string? Icon = null)
 {
@@ -66,10 +66,14 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
         ".msi", ".msp", ".reg", ".hta", ".scr", ".com", ".pif", ".cpl", ".msc", ".inf", ".chm",
     };
 
+    /// <summary>The start of an app picked from Start's list: what follows is the app's AppUserModelID.</summary>
+    public const string AppsFolder = @"shell:AppsFolder\";
+
     /// <summary>
     /// Null when the text can be a tile's target; otherwise why not, in words for the user. Only http and https
-    /// web addresses and full local paths qualify. Any other link (mailto:, ms-settings:, file:, a custom
-    /// scheme) hands its text to whatever program claimed the scheme, which is a command line by another name.
+    /// web addresses, full local paths and apps from Start's list (<see cref="AppsFolder"/>) qualify. Any other link
+    /// (mailto:, ms-settings:, file:, a custom scheme) hands its text to whatever program claimed the scheme, which is
+    /// a command line by another name.
     /// A network path or a mapped network drive makes Windows connect to that server, offering the user's
     /// sign-in, each time the panel reads the tile's icon, and a share that is offline stalls for many seconds.
     /// </summary>
@@ -93,7 +97,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
         int colon = target.IndexOf(':');
         if (colon >= 0 && colon != 1)
         {
-            return WebAddress(target) is null ? "Only http and https web addresses open from a tile." : null;
+            return WebAddress(target) is null && !IsApp(target) ? "Only http and https web addresses open from a tile." : null;
         }
 
         // A second colon names a hidden stream inside a file, not a file.
@@ -127,6 +131,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
     public static string Normalize(string target) =>
         Refuse(target) is not null ? target
         : WebAddress(target) is { } uri ? uri.AbsoluteUri
+        : IsApp(target) ? AppsFolder + target[AppsFolder.Length..]
         : Path.GetFullPath(target);
 
     /// <summary>What the target is now. Never throws: a target that cannot be read is Missing or Blocked.</summary>
@@ -142,9 +147,14 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
             return new(ShortcutKind.Url, uri.AbsoluteUri);
         }
 
-        string path = LongName(Path.GetFullPath(target));
+        string path = IsApp(target) ? target : LongName(Path.GetFullPath(target));
         try
         {
+            if (IsApp(target))
+            {
+                return ReadApp(target, AppEntry(target));
+            }
+
             if (Directory.Exists(path))
             {
                 return new(ShortcutKind.Folder, path, Icon: path);
@@ -183,6 +193,10 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
         // A drive root has no name of its own.
         return name.Length > 0 ? name : trimmed;
     }
+
+    // ".." would step out of the Applications folder into the rest of the shell's namespace.
+    private static bool IsApp(string target) =>
+        target.StartsWith(AppsFolder, StringComparison.OrdinalIgnoreCase) && target.Length > AppsFolder.Length && !target.Contains("..", StringComparison.Ordinal);
 
     private static Func<string, string, (string, string)> WindowsScriptHost => (script, tail) => (InSystem32("wscript.exe"), $"\"{script}\"{tail}");
 
@@ -244,10 +258,38 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
         return new(ShortcutKind.File, open, Icon: icon);
     }
 
+    /// <summary>
+    /// An app from Start's list is what its entry starts today, read from the shell. A packaged app or a shell
+    /// object (File Explorer, Control Panel) has no file behind it and opens through the shell by its ID. An entry
+    /// that names a plain path reads as that path, so an app that moved on an update is followed. An entry that
+    /// passes arguments is a command line, so it reads as a link that passes them: a script.
+    /// <paramref name="entry"/> is the entry's target and arguments as the shell reports them, null for no such app.
+    /// </summary>
+    internal static ShortcutTarget ReadApp(string target, (string Target, string Arguments)? entry)
+    {
+        if (entry is null)
+        {
+            return new(ShortcutKind.App, target, Missing: true);
+        }
+
+        var (raw, arguments) = entry.Value;
+        if (raw.Length == 0 || raw.StartsWith("::", StringComparison.Ordinal))
+        {
+            return new(ShortcutKind.App, target, Icon: target);
+        }
+
+        return arguments.Length == 0 && Refuse(raw) is null && !IsApp(raw) ? Read(raw) : Linked(target, raw, arguments, "", "");
+    }
+
     /// <summary>A .lnk is what it points at. The link itself is what starts, unless it is a script, which runs as the command shown.</summary>
     private static ShortcutTarget ReadLink(string link)
     {
         var (raw, arguments, folder, iconFile) = Link(link);
+        return Linked(link, raw, arguments, folder, iconFile);
+    }
+
+    private static ShortcutTarget Linked(string link, string raw, string arguments, string folder, string iconFile)
+    {
         // The shell starts the target in the link's working folder, which connects to the server when that is remote.
         if (folder.Length > 0 && OnNetwork(Environment.ExpandEnvironmentVariables(folder)))
         {
@@ -297,6 +339,53 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
         string content = script is null ? "" : Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(script)));
         string fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{exe}\n{arguments}\n{folder}\n{content}")));
         return new(exe, arguments, folder, fingerprint, script);
+    }
+
+    /// <summary>
+    /// The target and arguments of an app's entry in the Applications folder, empty for an app with no file behind
+    /// it; null when no installed app has that ID.
+    /// </summary>
+    private static (string Target, string Arguments)? AppEntry(string target)
+    {
+        IShellItem2? item = null;
+        try
+        {
+            return PInvoke.SHCreateItemFromParsingName(target, null, out item).Succeeded
+                ? (Property(item!, PInvoke.PKEY_Link_TargetParsingPath), Property(item!, PInvoke.PKEY_Link_Arguments).Trim())
+                : null;
+        }
+        catch (COMException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (item is not null)
+            {
+                Marshal.FinalReleaseComObject(item);
+            }
+        }
+    }
+
+    // A property the entry does not have reads as empty.
+    private static unsafe string Property(IShellItem2 item, in PROPERTYKEY key)
+    {
+        try
+        {
+            item.GetString(key, out PWSTR value);
+            try
+            {
+                return value.ToString();
+            }
+            finally
+            {
+                PInvoke.CoTaskMemFree(value);
+            }
+        }
+        catch (Exception e) when (e is COMException or ArgumentException)
+        {
+            return "";
+        }
     }
 
     /// <summary>Target path, arguments, working folder and icon file of a .lnk, read without resolving (no search, no network, no UI).</summary>
