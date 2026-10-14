@@ -123,6 +123,9 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
     /// <summary>A notification handler threw; the services must never see the exception.</summary>
     public event Action<Exception>? Failed;
 
+    /// <summary>Something for the log that is not a failure of ours.</summary>
+    public event Action<string>? Log;
+
     /// <summary>The caret's rectangle in client pixels, as the services reported it, and whether they show it.</summary>
     public (int X, int Y, int Height, bool Shown) Caret { get; private set; }
 
@@ -305,14 +308,24 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
             // Deactivate and release, not ShutdownTextServices: with this host the release after a shutdown faults
             // inside msftedit, while the release alone frees the services and the host and lets the module go.
 
-            services->Release();
+            uint left = services->Release();
             services = null;
+            if (acquired)
+            {
+                acquired = false;
+                // Something still holds the services (TSF, or work msftedit deferred): it would call into the module
+                // after it was freed, so the module stays for the rest of the process.
+                if (!Msftedit.Release(left))
+                {
+                    Log?.Invoke($"msftedit.dll kept loaded: {left} references to a text box's services remain after its release");
+                }
+            }
         }
 
         if (acquired)
         {
             acquired = false;
-            Msftedit.Release();
+            Msftedit.Release(0);
         }
 
         if (hostUnknown != 0)
@@ -749,16 +762,26 @@ internal static unsafe class Msftedit
 
     public static HRESULT Create(void* outer, void* host, void** unknown) => create(outer, host, unknown);
 
-    public static void Release()
+    /// <summary>
+    /// One editor is gone. <paramref name="servicesLeft"/> is the count its services' last Release returned: above 0,
+    /// something still holds them and will call into the module, so the module is never freed (false then).
+    /// </summary>
+    public static bool Release(uint servicesLeft)
     {
+        if (servicesLeft > 0)
+        {
+            return false;
+        }
+
         if (users == 0 || --users > 0)
         {
-            return;
+            return true;
         }
 
         PInvoke.FreeLibrary(module);
         module = default;
         create = null;
+        return true;
     }
 
     private static void* Proc(string name)

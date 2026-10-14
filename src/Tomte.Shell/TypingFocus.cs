@@ -80,6 +80,7 @@ internal sealed class TypingFocus
         editor.Use(text.Device?.Graphics);
         editor.Failed += e => log?.Invoke($"typing: a box was not drawn: {e.Message}");
         editor.Services.Failed += e => log?.Invoke($"typing: a change was not taken: {e}");
+        editor.Services.Log += line => log?.Invoke("typing: " + line);
         editor.Disposing += () =>
         {
             text.DeviceReady -= Ready;
