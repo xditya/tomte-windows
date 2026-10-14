@@ -16,6 +16,12 @@ public enum IslandActivity
 
     /// <summary>A drop zone's finished result: it was paid for, so it stays until the user dismisses it.</summary>
     Result = 64,
+
+    /// <summary>
+    /// A press on one of the island's targets holds the mouse, or a view's drag from it runs. Unlike a drag coming in, it
+    /// does not keep the island over a fullscreen app or the lock screen.
+    /// </summary>
+    Pressing = 128,
 }
 
 /// <summary>What a pointer report does to the hover dwell: nothing, start it, or cancel it.</summary>
@@ -35,9 +41,17 @@ public static class RetractionRules
     public static bool ShouldRetract(IslandState state, IslandActivity activity) =>
         state is not (IslandState.Hidden or IslandState.Capture) && activity == IslandActivity.None;
 
-    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler holds the pill or a drag is moving it.</summary>
+    /// <summary>
+    /// What still holds the island when the retract delay is up: a press on one of its targets whose button is up was let
+    /// go outside the island, where the island, not being the foreground window, does not hear the release, so it holds
+    /// nothing any more.
+    /// </summary>
+    public static IslandActivity Released(IslandActivity activity, bool buttonDown) =>
+        buttonDown ? activity : activity & ~IslandActivity.Pressing;
+
+    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler holds the pill, a drag is moving it or a press holds the mouse.</summary>
     public static bool OpensPanels(IslandState state, IslandActivity activity) =>
-        state == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling) && !activity.HasFlag(IslandActivity.DragInProgress);
+        state == IslandState.Compact && (activity & (IslandActivity.Rambling | IslandActivity.DragInProgress | IslandActivity.Pressing)) == 0;
 
     /// <summary>
     /// What one pointer report does to the hover dwell that opens Panels from Compact: coming onto the pill starts it,

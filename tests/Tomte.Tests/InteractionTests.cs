@@ -210,10 +210,10 @@ public class InteractionTests
             [At("add", 0, 50), At("t1", 30, 50, group: 1), At("t2", 60, 50, group: 1), At("t3", 90, 50, group: 1)],
         ];
         string? last = null;
-        (int, int)? Tab((int, int)? from, int direction = 1) => Target.Stop(views, from, direction, (v, g) => v == 1 && g == 1 ? last : null);
+        (int, int)? Tab((int, int)? from, int direction = 1) => Target.Stop(views, from, direction, (v, g) => v == 1 && g == 1 ? last : v == 0 ? "Clipboard" : null);
 
         Assert.Equal((0, 0), Tab(null));
-        // The tab group is entered at the current tab, not its first one.
+        // The tab group is entered at the current tab: not its first one, nor the one focused there last.
         Assert.Equal((0, 2), Tab((0, 0)));
         Assert.Equal((0, 4), Tab((0, 2)));
         Assert.Equal((1, 0), Tab((0, 4)));

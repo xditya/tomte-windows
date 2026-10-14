@@ -134,8 +134,8 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
 
     /// <summary>
     /// Tab (+1) or Shift+Tab (-1) across several views' lists in the order they registered: <see cref="Next"/> over them
-    /// as one list, each view's groups its own. A group is entered at the member <paramref name="lastIn"/> names for it
-    /// (the one last focused there), else at a checked one (the current tab), else at its first enabled member. Null when
+    /// as one list, each view's groups its own. A group is entered at a checked member (the current tab), else at the one
+    /// <paramref name="lastIn"/> names for it (the one last focused there), else at its first enabled member. Null when
     /// nothing is enabled.
     /// </summary>
     public static (int View, int Index)? Stop(IReadOnlyList<IReadOnlyList<Target>> views, (int View, int Index)? from, int direction, Func<int, int, string?> lastIn)
@@ -175,8 +175,8 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
         }
 
         string? last = lastIn(view, group);
-        int pick = Index(list, m => m.Group == group && m.Enabled && m.Id == last);
-        pick = pick >= 0 ? pick : Index(list, m => m.Group == group && m.Enabled && m.Checked);
+        int pick = Index(list, m => m.Group == group && m.Enabled && m.Checked);
+        pick = pick >= 0 ? pick : Index(list, m => m.Group == group && m.Enabled && m.Id == last);
         return (view, pick >= 0 ? pick : index);
     }
 
@@ -376,7 +376,7 @@ public static class StateLook
     /// The tooltip's card: this tall, this much room either side of its line, this far off the target and the island's
     /// edges, with these corners; a grey a step above the island's black, with a faint hairline.
     /// </summary>
-    public const float TipHeight = 24, TipPadX = 8, TipGap = 4, TipCorner = 6;
+    public const float TipHeight = 24, TipPadX = 8, TipGap = 5, TipCorner = 6;
 
     public const uint TipFill = 0xFF2C2C30, TipLine = 0x1AFFFFFF;
 
