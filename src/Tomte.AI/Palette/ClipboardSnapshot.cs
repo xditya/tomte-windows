@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Tomte.Core.Clipboard;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
@@ -70,6 +71,20 @@ internal static unsafe class ClipboardSnapshot
     /// would land there instead).
     /// </summary>
     public static (string? Text, string? ChromiumMime)? CopySelection(nint expectedForeground, int timeoutMs = 250)
+    {
+        // The copy and the put-back are Tomte's, not the user's: clipboard history keeps neither.
+        OwnClipboardUse.Begin();
+        try
+        {
+            return CopySelectionOnce(expectedForeground, timeoutMs);
+        }
+        finally
+        {
+            OwnClipboardUse.End();
+        }
+    }
+
+    private static (string? Text, string? ChromiumMime)? CopySelectionOnce(nint expectedForeground, int timeoutMs)
     {
         // A held Win or Alt from the hotkey would turn Ctrl+C into another chord.
         var wait = Stopwatch.StartNew();

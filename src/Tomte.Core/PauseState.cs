@@ -1,34 +1,52 @@
 namespace Tomte.Core;
 
 /// <summary>
-/// The tray's pause. While paused no trigger reveals the island; "Open island" from the tray still
-/// does. Kept in memory only, so "until restart" ends with the process. Callers pass the time in,
-/// so nothing here runs on a timer: a trigger asks <see cref="IsPaused"/> when it fires.
+/// The tray's pause. While paused no trigger reveals the island and clipboard history keeps nothing;
+/// "Open island" from the tray still works. Kept in memory only, so "until restart" ends with the
+/// process. Callers pass the time in, so nothing here runs on a timer: a trigger asks
+/// <see cref="IsPaused"/> when it fires. The clipboard listener asks from its own thread.
 /// </summary>
 public sealed class PauseState
 {
+    private readonly Lock gate = new();
+
     public DateTimeOffset? Until { get; private set; }
 
     public bool UntilRestart { get; private set; }
 
-    public bool IsPaused(DateTimeOffset now) => UntilRestart || now < Until;
+    public bool IsPaused(DateTimeOffset now)
+    {
+        lock (gate)
+        {
+            return UntilRestart || now < Until;
+        }
+    }
 
     public void PauseFor(TimeSpan duration, DateTimeOffset now)
     {
-        UntilRestart = false;
-        Until = now + duration;
+        lock (gate)
+        {
+            UntilRestart = false;
+            Until = now + duration;
+        }
     }
 
     public void PauseUntilRestart()
     {
-        UntilRestart = true;
-        Until = null;
+        lock (gate)
+        {
+            UntilRestart = true;
+            Until = null;
+        }
     }
 
     public void Resume()
     {
-        UntilRestart = false;
-        Until = null;
+        lock (gate)
+        {
+            UntilRestart = false;
+            Until = null;
+        }
     }
 
     /// <summary>For the tray tooltip: "Tomte", "Tomte, paused until 14:32" or "Tomte, paused until restart".</summary>
