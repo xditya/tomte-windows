@@ -26,7 +26,7 @@ internal static partial class Program
         var made = new KeptResult(DropZone.Summarize, null, "Q3-report.pdf", @"C:\Users\a\Q3-report.pdf", "api.anthropic.com", "claude-haiku-4-5", 0.0031m,
             new DateTimeOffset(2026, 10, 14, 9, 42, 0, TimeSpan.Zero), summary.Body, []);
         var kept = new DropResult("Summarize · Q3-report.pdf", "Nothing sent", made.Line(System.Globalization.CultureInfo.InvariantCulture), false, made.Answer,
-            summary.Tiles, ["Run again: send Q3-report.pdf to claude-haiku-4-5 again.", "Close: nothing is sent."]);
+            summary.Tiles, ["Run again: send Q3-report.pdf to claude-haiku-4-5.", "Close: nothing is sent."]);
         var ask = new DropResult("Ask about it · Q3-report.pdf", "Nothing sent", "File · Q3-report.pdf is attached. Nothing is sent until you ask.", false, "Ask about Q3-report.pdf", [], []);
         return
         [

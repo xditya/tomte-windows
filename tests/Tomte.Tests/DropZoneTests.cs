@@ -632,8 +632,9 @@ public sealed class DropZoneTests : IDisposable
         var item = await Dropped(path);
         Assert.Null(await new KeptResults(db).Last(DropZone.Summarize, null, item.Path));
 
-        await new KeptResults(db).Keep(new KeptResult(DropZone.Summarize, null, item.Name, item.Path, "ollama", "llama3.2:3b", 0.0031m, Morning, "first", []));
-        await new KeptResults(db).Keep(new KeptResult(DropZone.Summarize, null, item.Name, item.Path, "ollama", "llama3.2:3b", 0.0042m, Morning.AddHours(1), "# Q3\n- up", [@"C:\Shelf\a\report summary.md"]));
+        string? stamp = KeptResults.Stamp(item.Path);
+        await new KeptResults(db).Keep(new KeptResult(DropZone.Summarize, null, item.Name, item.Path, "ollama", "llama3.2:3b", 0.0031m, Morning, "first", []), stamp);
+        await new KeptResults(db).Keep(new KeptResult(DropZone.Summarize, null, item.Name, item.Path, "ollama", "llama3.2:3b", 0.0042m, Morning.AddHours(1), "# Q3\n- up", [@"C:\Shelf\a\report summary.md"]), stamp);
 
         // After a restart, by the same path in other letters: the newest, whole.
         var results = new KeptResults(db);
@@ -650,11 +651,26 @@ public sealed class DropZoneTests : IDisposable
     }
 
     [Fact]
+    public async Task AFileEditedWhileItWasSentIsNotOfferedTheAnswer()
+    {
+        var results = new KeptResults(new TomteDb(Path.Combine(_dir, "tomte.db")));
+        string path = UserFile("report.txt", Report);
+        var item = await Dropped(path);
+
+        // The stamp is taken before the send; the user saves the file while the answer streams in.
+        string? before = KeptResults.Stamp(item.Path);
+        File.AppendAllText(path, "Hiring paused.\n");
+        await results.Keep(new KeptResult(DropZone.Summarize, null, item.Name, item.Path, "ollama", "llama3.2:3b", 0, Morning, "about the old text", []), before);
+
+        Assert.Null(await results.Last(DropZone.Summarize, null, item.Path));
+    }
+
+    [Fact]
     public async Task TheSameTextDroppedAgainFindsTheResultKeptForIt()
     {
         var results = new KeptResults(new TomteDb(Path.Combine(_dir, "tomte.db")));
         var first = Assert.Single(await Shelf.Accept(new DroppedItems([], [], Report, KeepCopy: false)));
-        await results.Keep(new KeptResult(DropZone.Summarize, null, first.Name, first.Path, "ollama", "llama3.2:3b", 0, Morning, "summary", []));
+        await results.Keep(new KeptResult(DropZone.Summarize, null, first.Name, first.Path, "ollama", "llama3.2:3b", 0, Morning, "summary", []), KeptResults.Stamp(first.Path));
 
         var again = Assert.Single(await Shelf.Accept(new DroppedItems([], [], Report, KeepCopy: false)));
         Assert.Equal(first.Path, again.Path);
@@ -665,9 +681,12 @@ public sealed class DropZoneTests : IDisposable
     public void AKeptResultShowsWithoutSendingWithCloseAsTheDefault()
     {
         var kept = new KeptResult(DropZone.Summarize, null, "Q3-report.pdf", @"C:\a\Q3-report.pdf", "ollama", "llama3.2:3b", 0.0031m, Morning, "# Q3\n- up", []);
-        var panel = DropZoneRequest.Kept("Summarize", kept, [new("Q3-report summary.md", ResultTile.OnShelf, 0x5D6D7E)]);
+        // Settings have moved on to another model since: running again sends there, and the choice says so.
+        var panel = DropZoneRequest.Kept("Summarize", kept, [new("Q3-report summary.md", ResultTile.OnShelf, 0x5D6D7E)], "qwen2.5:7b");
         Assert.Equal(("Summarize · Q3-report.pdf", "Nothing sent", "# Q3\n- up", false), (panel.Title, panel.Indicator, panel.Body, panel.Problem));
-        Assert.Equal(["Run again: send Q3-report.pdf to llama3.2:3b again.", "Close: nothing is sent."], panel.Choices);
+        Assert.Equal(["Run again: send Q3-report.pdf to qwen2.5:7b.", "Close: nothing is sent."], panel.Choices);
+        Assert.EndsWith(" · llama3.2:3b · $0.0031", panel.Line);
+        Assert.Equal("Run again: send Q3-report.pdf to the provider in settings.", DropZoneRequest.Kept("Summarize", kept, [], null).Choices[0]);
         Assert.Equal("Q3-report summary.md", Assert.Single(panel.Tiles).Name);
         Assert.StartsWith("Kept from ", panel.Line);
         Assert.EndsWith(" · llama3.2:3b · $0.0031", kept.Line(System.Globalization.CultureInfo.InvariantCulture));
@@ -675,7 +694,7 @@ public sealed class DropZoneTests : IDisposable
 
         // Rename shows the name it suggested, as it did when it was new.
         var rename = kept with { Zone = DropZone.Rename, Answer = "\"Invoice October 2026\"\n" };
-        Assert.Equal("Suggested name: Invoice October 2026.pdf", DropZoneRequest.Kept("Rename by content", rename, []).Body);
+        Assert.Equal("Suggested name: Invoice October 2026.pdf", DropZoneRequest.Kept("Rename by content", rename, [], "llama3.2:3b").Body);
     }
 
     [Fact]

@@ -129,13 +129,15 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             var item = items[0];
             skillName = zone == DropZone.Skill ? store.Current.DropZoneSkill : null;
             // Paid for once: what this file already has from this zone shows first, and nothing is sent unless asked.
+            // Running it again goes to the provider in settings now, which the choice names.
+            var ready = Program.Configured(store, log);
             var kept = await results.Last(zone, skillName, item.Path);
-            if (!view.Open || (kept is not null && !await Offer(title, kept)))
+            if (!view.Open || (kept is not null && !await Offer(title, kept, ready?.Config.DefaultModel)))
             {
                 return;
             }
 
-            if (Program.Configured(store, log) is not { } configured)
+            if (ready is not { } configured)
             {
                 Finish(new DropResult($"{title} · {item.Name}", "Nothing sent", NoProvider, true, "", [], []), ok: false);
                 return;
@@ -191,6 +193,8 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
                 return asking.Task;
             };
             running.Changed += () => Update(running, item.Name, title);
+            // Before the file is read: an edit during the send makes it a new file, not one this answer is about.
+            string? stamp = await Task.Run(() => KeptResults.Stamp(item.Path));
             island.Mascot.Set(MascotState.Thinking);
             decimal before = running.SpentTodayUsd;
             await running.SendAsync();
@@ -199,7 +203,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
                 return;
             }
 
-            await Done(zone, running, item, title, config.Id, running.SpentTodayUsd - before);
+            await Done(zone, running, item, title, config.Id, running.SpentTodayUsd - before, stamp);
         }
         catch (Exception e)
         {
@@ -238,12 +242,12 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
     /// shelf. True when the user chose to run it again; false when they closed it, which takes the island down, or
     /// dismissed it some other way.
     /// </summary>
-    private async Task<bool> Offer(string title, KeptResult kept)
+    private async Task<bool> Offer(string title, KeptResult kept, string? model)
     {
         log?.Invoke($"drop zone: {kept.Zone} result kept from {kept.At:O}, shown");
         var files = shelf.Items.Where(i => kept.Files.Contains(i.Path, StringComparer.OrdinalIgnoreCase)).ToList();
         offering = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Finish(DropZoneRequest.Kept(title, kept, [.. files.Select(ResultTile.Of)]), files, ok: true);
+        Finish(DropZoneRequest.Kept(title, kept, [.. files.Select(ResultTile.Of)], model), files, ok: true);
         bool again = await offering.Task;
         offering = null;
         if (!view.Open)
@@ -264,7 +268,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
     private SendLog NewSendLog() => new(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(store.FilePath))!, "send-log.jsonl"));
 
     /// <summary>The result: its files on the shelf, or the renamed copy, and the panel shows them; then it is kept.</summary>
-    private async Task Done(DropZone zone, PaletteSession session, ShelfItem item, string title, string provider, decimal cost)
+    private async Task Done(DropZone zone, PaletteSession session, ShelfItem item, string title, string provider, decimal cost, string? stamp)
     {
         if (session.Status != PaletteStatus.Done)
         {
@@ -301,7 +305,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
 
         // Every finished answer was paid for, files or not; the next drop of this file on this zone shows it first.
         void Keep(IReadOnlyList<ShelfItem> files) => _ = results.Keep(new KeptResult(zone, skillName, item.Name, item.Path, provider, session.ModelId, cost,
-            DateTimeOffset.Now, session.AnswerText, [.. files.Select(f => f.Path)]));
+            DateTimeOffset.Now, session.AnswerText, [.. files.Select(f => f.Path)]), stamp);
     }
 
     /// <summary>Session changes come in bursts while the answer streams; the panel follows once per turn of the dispatcher.</summary>

@@ -20,7 +20,7 @@ public sealed record KeptResult(DropZone Zone, string? Skill, string SourceName,
 /// <summary>
 /// Every finished drop zone result, in tomte.db (feature "results"), so a result is paid for once: a later drop of the
 /// same file on the same zone shows the kept one first. The same file is the same path, ignoring case, with the size
-/// and the last write time it had when the result was kept; a file changed since is a new file. Work runs on the pool,
+/// and the last write time it had just before it was sent; a file changed since is a new file. Work runs on the pool,
 /// never on the island's thread; trouble with the disk or the database is logged and loses only that one result.
 /// </summary>
 public sealed class KeptResults(TomteDb db, Action<string>? log = null)
@@ -34,7 +34,8 @@ public sealed class KeptResults(TomteDb db, Action<string>? log = null)
         "source_stamp TEXT, provider TEXT NOT NULL, model TEXT NOT NULL, cost_usd TEXT NOT NULL, at INTEGER NOT NULL, answer TEXT NOT NULL, files TEXT NOT NULL)",
     ];
 
-    public Task Keep(KeptResult result) => Task.Run(() =>
+    /// <param name="stamp">The file's <see cref="Stamp"/> from just before the send, so an edit during the send makes it a new file.</param>
+    public Task Keep(KeptResult result, string? stamp) => Task.Run(() =>
     {
         try
         {
@@ -48,7 +49,7 @@ public sealed class KeptResults(TomteDb db, Action<string>? log = null)
             insert.Parameters.AddWithValue("$skill", (object?)result.Skill ?? DBNull.Value);
             insert.Parameters.AddWithValue("$name", result.SourceName);
             insert.Parameters.AddWithValue("$path", result.SourcePath);
-            insert.Parameters.AddWithValue("$stamp", (object?)Stamp(result.SourcePath) ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$stamp", (object?)stamp ?? DBNull.Value);
             insert.Parameters.AddWithValue("$provider", result.Provider);
             insert.Parameters.AddWithValue("$model", result.Model);
             insert.Parameters.AddWithValue("$cost", result.CostUsd.ToString(CultureInfo.InvariantCulture));
@@ -94,8 +95,11 @@ public sealed class KeptResults(TomteDb db, Action<string>? log = null)
         }
     });
 
-    /// <summary>What says a file is still the one a result was made from: its size and last write time; null when it is gone.</summary>
-    internal static string? Stamp(string path)
+    /// <summary>
+    /// What says a file is still the one a result was made from: its size and last write time; null when it is gone.
+    /// It reads the disk, which can be a network share: call it off the island's thread.
+    /// </summary>
+    public static string? Stamp(string path)
     {
         try
         {
