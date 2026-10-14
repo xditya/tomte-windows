@@ -65,8 +65,7 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
 
     public static readonly IReadOnlyList<ToolDefinition> Definitions = [.. Table.Select(t => new ToolDefinition(t.Name, t.Description, Schema(t.Params)))];
 
-    /// <summary>Tool name to the device action it runs, for the device tools only.</summary>
-    public static readonly IReadOnlyDictionary<string, string> DeviceActions = Table.Where(t => t.Action is not null).ToDictionary(t => t.Name, t => t.Action!);
+    private static readonly HashSet<string> DeviceTools = [.. Table.Where(t => t.Action is not null).Select(t => t.Name)];
 
     // The clipboard belongs to the user, not the app: replacing it is an external effect.
     private static readonly Dictionary<string, ActionTier> BuiltInTiers = new()
@@ -81,8 +80,9 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
     public static readonly IReadOnlyDictionary<string, ActionTier> Tiers =
         Table.ToDictionary(t => t.Name, t => t.Action is null ? BuiltInTiers[t.Name] : DeviceActionTiers.All[t.Action]);
 
-    public static bool IsDeviceTool(string name) => DeviceActions.ContainsKey(name);
+    public static bool IsDeviceTool(string name) => DeviceTools.Contains(name);
 
+    // Kept with no caller yet: the scheduled-job runner will filter a job's tool list with it.
     /// <summary>A scheduled job may only carry tools that never need a prompt while unattended; destructive ones never run there.</summary>
     public static bool AllowedInScheduledJobs(string name) => Tiers.TryGetValue(name, out var tier) && tier != ActionTier.Destructive;
 

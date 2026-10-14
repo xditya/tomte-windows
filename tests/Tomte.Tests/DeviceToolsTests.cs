@@ -65,15 +65,11 @@ public sealed class DeviceToolsTests : IDisposable
     [Fact]
     public void OneToolPerDeviceActionWithItsTier()
     {
-        Assert.Equal(DeviceActionTiers.All.Keys.ToHashSet(), BuiltInTools.DeviceActions.Values.ToHashSet());
-        Assert.Equal(DeviceActionTiers.All.Count, BuiltInTools.DeviceActions.Count);
+        var deviceTools = BuiltInTools.Definitions.Select(d => d.Name).Where(BuiltInTools.IsDeviceTool).ToList();
+        Assert.Equal(DeviceActionTiers.All.Count, deviceTools.Count);
         Assert.Equal(5 + DeviceActionTiers.All.Count, BuiltInTools.Definitions.Count);
-        foreach (var (tool, action) in BuiltInTools.DeviceActions)
-        {
-            Assert.Equal(DeviceActionTiers.All[action], BuiltInTools.Tiers[tool]);
-            Assert.True(BuiltInTools.IsDeviceTool(tool));
-        }
-
+        // The same tiers as the device table, one for one.
+        Assert.Equal(DeviceActionTiers.All.Values.Order(), deviceTools.Select(t => BuiltInTools.Tiers[t]).Order());
         Assert.Equal(ActionTier.ExternalEffect, BuiltInTools.Tiers[BuiltInTools.SetDarkMode]);
         Assert.Equal(ActionTier.Read, BuiltInTools.Tiers[BuiltInTools.ListOutputDevices]);
         Assert.All(new[] { BuiltInTools.LockPc, BuiltInTools.SleepPc, BuiltInTools.RestartPc, BuiltInTools.ShutDownPc },

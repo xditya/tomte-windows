@@ -71,10 +71,10 @@ public static class Apps
         && uri.Length > "ms-settings:".Length
         && uri["ms-settings:".Length..].All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.');
 
-    // Launch only: an app that is already running is not looked up and focused (see the decision
-    // record for D1). AllowSetForegroundWindow only works while this process may set the
-    // foreground, which the never-activated island usually may not, so the result says when the
-    // app is likely to open behind the current window.
+    // Starts the target through the shell; OpenApp has already looked for a running window to
+    // focus. AllowSetForegroundWindow only works while this process may set the foreground, which
+    // the never-activated island usually may not, so the result says when the app is likely to
+    // open behind the current window.
     private static ActionResult Launch(string target)
     {
         try
