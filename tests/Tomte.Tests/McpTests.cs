@@ -459,6 +459,8 @@ public class McpToolsTests
         Assert.Equal(2, tools.Running);
     }
 
+    // The one MCP test that uses the real Credential Manager: it checks that the default reader is the
+    // vault entry under "mcp/<name>" and that the value arrives in the request. The others pass a reader.
     [Fact]
     public async Task HttpServersGetTheHeaderFromCredentialManager()
     {
@@ -492,22 +494,14 @@ public class McpToolsTests
     public async Task TheHeaderValueNeverReachesAnErrorMessage()
     {
         // What the SDK throws for a header it cannot add; the value is the user's secret.
-        var server = new McpServerSettings { Name = $"test-{Guid.NewGuid():N}", Transport = McpTransport.Http, Url = "https://example.com/mcp", HeaderName = "X-Api-Key" };
-        CredentialStore.Save(server.CredentialId, "Bearer s3cr3t-value-123");
-        try
-        {
-            _fake.Failing.Add(server.Name);
-            _fake.FailingMessage = "Failed to add header 'X-Api-Key' with value 'Bearer s3cr3t-value-123'; token s3cr3t-value-123 refused";
-            await using var tools = Tools(null, server);
-            var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(default));
-            Assert.Contains("with value '[hidden]'; token [hidden] refused", e.Message);
-            // The debug log writes the whole exception, inner errors included.
-            Assert.DoesNotContain("s3cr3t", e.ToString());
-        }
-        finally
-        {
-            CredentialStore.Delete(server.CredentialId);
-        }
+        var server = new McpServerSettings { Name = "Web", Transport = McpTransport.Http, Url = "https://example.com/mcp", HeaderName = "X-Api-Key" };
+        _fake.Failing.Add(server.Name);
+        _fake.FailingMessage = "Failed to add header 'X-Api-Key' with value 'Bearer s3cr3t-value-123'; token s3cr3t-value-123 refused";
+        await using var tools = new McpTools([server], null, _fake.ConnectAsync, id => id == server.CredentialId ? "Bearer s3cr3t-value-123" : null);
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(default));
+        Assert.Contains("with value '[hidden]'; token [hidden] refused", e.Message);
+        // The debug log writes the whole exception, inner errors included.
+        Assert.DoesNotContain("s3cr3t", e.ToString());
     }
 
     [Fact]
@@ -516,26 +510,19 @@ public class McpToolsTests
         // A server that quotes the token it was given: in a result, and in an error.
         _fake.MoreTools.Add(McpServerTool.Create(() => "token 'Bearer s3cr3t-value-123' is invalid", new McpServerToolCreateOptions { Name = "whoami" }));
         _fake.MoreTools.Add(McpServerTool.Create(string () => throw new McpException("refused: s3cr3t-value-123"), new McpServerToolCreateOptions { Name = "denied" }));
-        var server = new McpServerSettings { Name = $"test-{Guid.NewGuid():N}", Transport = McpTransport.Http, Url = "https://example.com/mcp", HeaderName = "Authorization" };
-        CredentialStore.Save(server.CredentialId, "Bearer s3cr3t-value-123");
-        try
-        {
-            await using var tools = Tools(null, server);
-            await tools.ListAsync(default);
-            // Deleted in Settings while the server runs: what was sent is still what gets hidden.
-            CredentialStore.Delete(server.CredentialId);
+        var server = new McpServerSettings { Name = "Web", Transport = McpTransport.Http, Url = "https://example.com/mcp", HeaderName = "Authorization" };
+        string? saved = "Bearer s3cr3t-value-123";
+        await using var tools = new McpTools([server], null, _fake.ConnectAsync, id => id == server.CredentialId ? saved : null);
+        await tools.ListAsync(default);
+        // Deleted in Settings while the server runs: what was sent is still what gets hidden.
+        saved = null;
 
-            var result = (await tools.CallAsync(Call(McpTools.ModelName(server, "whoami"), "{}"), default)).Result;
-            Assert.Equal("token '[hidden]' is invalid", result.Content);
-            var error = (await tools.CallAsync(Call(McpTools.ModelName(server, "denied"), "{}"), default)).Result;
-            Assert.True(error.IsError);
-            Assert.Contains("refused: [hidden]", error.Content);
-            Assert.DoesNotContain("s3cr3t", error.Content);
-        }
-        finally
-        {
-            CredentialStore.Delete(server.CredentialId);
-        }
+        var result = (await tools.CallAsync(Call("web__whoami", "{}"), default)).Result;
+        Assert.Equal("token '[hidden]' is invalid", result.Content);
+        var error = (await tools.CallAsync(Call("web__denied", "{}"), default)).Result;
+        Assert.True(error.IsError);
+        Assert.Contains("refused: [hidden]", error.Content);
+        Assert.DoesNotContain("s3cr3t", error.Content);
     }
 
     [Fact]

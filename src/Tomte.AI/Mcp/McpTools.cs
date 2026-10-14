@@ -49,6 +49,7 @@ public sealed class McpTools : IAsyncDisposable
     private readonly McpServerSettings[] _servers;
     private readonly string? _invalid;
     private readonly Func<McpServerSettings, string?, CancellationToken, Task<Connection>> _connect;
+    private readonly Func<string, string?> _readSecret;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // Written under the gate; the idle timer's thread and Running read it without.
@@ -61,7 +62,8 @@ public sealed class McpTools : IAsyncDisposable
     private bool _disposed;
 
     /// <param name="connect">Starts or connects one server; tests pass an in-process one.</param>
-    public McpTools(IEnumerable<McpServerSettings> servers, TimeSpan? idleTimeout = null, Func<McpServerSettings, CancellationToken, Task<McpClient>>? connect = null)
+    /// <param name="readSecret">Reads a header value by credential id; Credential Manager unless a test passes its own.</param>
+    public McpTools(IEnumerable<McpServerSettings> servers, TimeSpan? idleTimeout = null, Func<McpServerSettings, CancellationToken, Task<McpClient>>? connect = null, Func<string, string?>? readSecret = null)
     {
         // Settings checks a server when it is saved; a hand-edited file skips that, and two servers with
         // one name would share a slot here, so the second would never be stopped.
@@ -76,6 +78,7 @@ public sealed class McpTools : IAsyncDisposable
 
         _servers = [.. usable];
         _connect = connect is null ? ConnectAsync : async (server, secret, ct) => new Connection(await connect(server, ct), null, secret);
+        _readSecret = readSecret ?? CredentialStore.Read;
         IdleTimeout = idleTimeout ?? TimeSpan.FromMinutes(5);
         _idle = new Timer(_ => _ = StopIfIdleAsync());
     }
@@ -583,7 +586,7 @@ public sealed class McpTools : IAsyncDisposable
         {
             // Read once and kept with the connection: what gets hidden later is the value that was sent,
             // also when Settings has changed or deleted it since.
-            secret = server.HeaderName.Length > 0 ? CredentialStore.Read(server.CredentialId) : null;
+            secret = server.HeaderName.Length > 0 ? _readSecret(server.CredentialId) : null;
             connection = await _connect(server, secret, ct);
             var client = connection.Client;
             var tools = await UnlessGoneAsync(c => client.ListToolsAsync(cancellationToken: c).AsTask(), client.Completion, ct);
