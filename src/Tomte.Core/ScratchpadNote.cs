@@ -276,11 +276,12 @@ public sealed class ScratchpadNote : IScratchpad
         {
             try
             {
-                File.Move(carryOver!, carryOver + ".imported", overwrite: true);
+                // Never over an earlier .imported: that one is the only copy of what an earlier import took.
+                File.Move(carryOver!, carryOver + ".imported", overwrite: false);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                // The note is in the database now and is never imported twice; the old file just stays where it was.
+                // The note is in the database now and is not imported again from here; the old file stays where it was.
             }
         }
 

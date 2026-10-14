@@ -52,6 +52,25 @@ public sealed class ScratchpadTests : IDisposable
     }
 
     [Fact]
+    public async Task ASecondImportLeavesTheFirstBackupAlone()
+    {
+        // A database set aside as damaged has no note, so the old file is imported again; the backup from the first
+        // import must survive that.
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(OldFile + ".imported", "the first import's copy");
+        File.WriteAllText(OldFile, "found again later");
+
+        var note = await Loaded();
+
+        Assert.Equal("found again later", note.Text);
+        Assert.Equal("the first import's copy", File.ReadAllText(OldFile + ".imported"));
+        Assert.Equal("found again later", File.ReadAllText(OldFile));
+        // And it is not imported a third time from the file that stayed.
+        File.WriteAllText(OldFile, "changed by hand");
+        Assert.Equal("found again later", (await Loaded()).Text);
+    }
+
+    [Fact]
     public void NothingReadsOrWritesBeforeTheFirstLoad()
     {
         var note = new ScratchpadNote(Db, OldFile);
