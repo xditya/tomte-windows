@@ -189,6 +189,21 @@ public class McpSecretsTests
     }
 
     [Fact]
+    public async Task NothingStartsOnceTheStartIsCancelled()
+    {
+        // Cancelled while the values are read, as when the palette closes: the server must not be started.
+        var fake = new FakeMcpServers();
+        using var cancel = new CancellationTokenSource();
+        await using var tools = new McpTools([Files], null, fake.ConnectAsync, _ =>
+        {
+            cancel.Cancel();
+            return "tomte-secret-value-99";
+        });
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => tools.ListAsync(cancel.Token));
+        Assert.Equal(0, fake.Starts);
+    }
+
+    [Fact]
     public async Task AVariableValueNeverReachesAnErrorMessage()
     {
         var fake = new FakeMcpServers { FailingMessage = "login failed for token tomte-secret-value-99" };

@@ -622,6 +622,8 @@ public sealed class McpTools : IAsyncDisposable
                     ?? throw new InvalidOperationException($"The value of {variable} is not in Windows Credential Manager. Enter it again in Settings.");
             }
 
+            // A process started now would only be killed again.
+            ct.ThrowIfCancellationRequested();
             connection = await _connect(server, header, environment, ct);
             var client = connection.Client;
             var tools = await UnlessGoneAsync(c => client.ListToolsAsync(cancellationToken: c).AsTask(), client.Completion, ct);
