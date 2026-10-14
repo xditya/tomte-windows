@@ -541,6 +541,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     island.Interaction.DropPress();
                 }
+                else if (activity.HasFlag(IslandActivity.Pressing))
+                {
+                    // Still held outside: the release may never reach this window, so look again after the delay.
+                    PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
+                }
 
                 if (RetractionRules.ShouldRetract(machine.State, activity))
                 {
