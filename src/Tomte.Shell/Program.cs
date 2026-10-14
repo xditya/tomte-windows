@@ -100,7 +100,8 @@ internal static class Program
         // --debug-settings <path>: a settings file of this run's own, so a test never edits the user's.
         using var store = new SettingsStore(Arg(args, "--debug-settings"));
         var pause = new PauseState();
-        var timer = new IslandTimer(IslandTimer.DefaultPath);
+        // Beside the settings file, so a run with its own settings keeps its timer to itself too.
+        var timer = new IslandTimer(Path.Combine(Path.GetDirectoryName(store.FilePath)!, Path.GetFileName(IslandTimer.DefaultPath)));
         Action<string>? logLine = log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}");
         var triggers = new TriggerController(island, store, pause, timer, logLine);
         if (debugTimer is TimeSpan length)
