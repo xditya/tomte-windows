@@ -290,16 +290,17 @@ internal sealed class PanelHost
     }
 
     /// <summary>Whether an island point is on a tab label or the Ask pill, which a press picks rather than holding it to move the island.</summary>
-    public bool OnLabel(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && (LabelAt(point) is not null || TabStrip.OnAsk(StripX(point), bodySize.X));
+    public bool OnLabel(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && (LabelAt(point) is not null || AskAt(point));
 
     /// <summary>Whether an island point is on the Ask pill, a press on which opens the palette as one on the tomte does.</summary>
-    public bool OnAsk(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && TabStrip.OnAsk(StripX(point), bodySize.X);
+    public bool OnAsk(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && AskAt(point);
 
-    private PanelId? LabelAt(Vector2 point) => TabStrip.At(StripX(point), tabs.Order, tabs.Current, bodySize.X, island.Mascot.Enabled);
+    // Both from the shape's live body, as the strip is drawn, so a press mid-morph still finds what is under it: the
+    // labels from its left edge, the Ask pill from its right one.
+    private PanelId? LabelAt(Vector2 point) =>
+        TabStrip.At(PanelSpace.ToStrip(point, island.Current), tabs.Order, tabs.Current, bodySize.X, island.Mascot.Enabled);
 
-    // The strip is laid out from the outline's live outer left edge (ramps included when attached to the top), so a
-    // press mid-morph still finds its label.
-    private float StripX(Vector2 point) => point.X + (float)island.Current.OuterWidth / 2;
+    private bool AskAt(Vector2 point) => TabStrip.OnAsk(PanelSpace.ToStrip(point, island.Current), (float)island.Current.Width);
 
     private bool InBody(Vector2 island, out Vector2 at)
     {
@@ -309,15 +310,18 @@ internal sealed class PanelHost
 
     /// <summary>
     /// The tab labels in the strip row, with a card behind the current one, and the Ask pill at its right end. The
-    /// container sits on the pill's live left edge in every frame of a morph (island space's origin less its own offset,
-    /// a whole pixel), so the labels move with the edge they are laid out from. Drawing only: presses and the wheel are
-    /// the host's as before.
+    /// container sits on the shape's live body left edge in every frame of a morph (island space's origin less its own
+    /// offset, plus the ramp an attached shape flares into the top edge with, whole pixels), so the labels move with the
+    /// edge they are laid out from; the Ask pill rides the live right edge the same way. Drawing only: presses and the
+    /// wheel are the host's as before.
     /// </summary>
     private sealed class Strip : IDisposable
     {
         private readonly TextRenderer text;
         private readonly CompositionRoundedRectangleGeometry pill, askCard;
         private readonly CompositionContainerShape sparkle;
+        private readonly ShapeVisual askVisual;
+        private readonly ExpressionAnimation askEdge;
         private readonly TextVisual ask;
         private readonly List<TextVisual> labels = [];
 
@@ -326,19 +330,28 @@ internal sealed class PanelHost
             this.text = text;
             var compositor = island.Compositor;
             Visual = compositor.CreateShapeVisual();
-            var edge = compositor.CreateExpressionAnimation("Vector3(-dips.Offset.X / dips.Scale.X, 0, 0)");
+            var edge = compositor.CreateExpressionAnimation("Vector3((Floor(live.RampW * dips.Scale.X + 0.5) - dips.Offset.X) / dips.Scale.X, 0, 0)");
             edge.SetReferenceParameter("dips", island.Dips);
+            edge.SetReferenceParameter("live", island.Live);
             Visual.StartAnimation("Offset", edge);
             pill = compositor.CreateRoundedRectangleGeometry();
             pill.CornerRadius = new Vector2(TabStrip.Corner);
             var shape = compositor.CreateSpriteShape(pill);
             shape.FillBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(28, 255, 255, 255));
             Visual.Shapes.Add(shape);
+
+            // The Ask pill in a visual of its own, "right" DIPs (its width and the right padding) short of the body's
+            // live right edge, which is as far from island space's origin as the left one.
+            askVisual = compositor.CreateShapeVisual();
+            askEdge = compositor.CreateExpressionAnimation(
+                "Vector3((dips.Offset.X * 2 - Floor(live.RampW * dips.Scale.X + 0.5) * 2 - Floor(right * dips.Scale.X + 0.5)) / dips.Scale.X, 0, 0)");
+            askEdge.SetReferenceParameter("dips", island.Dips);
+            askEdge.SetReferenceParameter("live", island.Live);
             askCard = compositor.CreateRoundedRectangleGeometry();
             askCard.CornerRadius = new Vector2(TabStrip.Corner);
             var card = compositor.CreateSpriteShape(askCard);
             card.FillBrush = compositor.CreateColorBrush(Argb(TabStrip.AskCard));
-            Visual.Shapes.Add(card);
+            askVisual.Shapes.Add(card);
             sparkle = compositor.CreateContainerShape();
             var ink = compositor.CreateColorBrush(Argb(TabStrip.AskColor));
             foreach (var star in TabStrip.Sparkle)
@@ -348,8 +361,9 @@ internal sealed class PanelHost
                 sparkle.Shapes.Add(figure);
             }
 
-            Visual.Shapes.Add(sparkle);
-            ask = text.Create(Visual);
+            askVisual.Shapes.Add(sparkle);
+            Visual.Children.InsertAtTop(askVisual);
+            ask = text.Create(askVisual);
             island.Dips.Children.InsertAtTop(Visual);
         }
 
@@ -373,12 +387,16 @@ internal sealed class PanelHost
             pill.Offset = new Vector2(on.X, on.Y);
             pill.Size = new Vector2(on.Width, on.Height);
 
+            // Laid out from the card's left edge, which the expression keeps on the live right end.
             var (card, glyph, word) = TabStrip.AskPill(width);
-            askCard.Offset = new Vector2(card.X, card.Y);
+            askVisual.Size = new Vector2(card.Width, PanelSpace.TabStripHeight);
+            askEdge.SetScalarParameter("right", width - card.X);
+            askVisual.StartAnimation("Offset", askEdge);
+            askCard.Offset = new Vector2(0, card.Y);
             askCard.Size = new Vector2(card.Width, card.Height);
-            sparkle.Offset = new Vector2(glyph.X, glyph.Y);
+            sparkle.Offset = new Vector2(glyph.X - card.X, glyph.Y);
             sparkle.Scale = new Vector2(glyph.Height / TabStrip.SparkleBox.Y);
-            ask.Show(word);
+            ask.Show(word.Text, word.Style, new System.Drawing.RectangleF(word.Slot.X - card.X, word.Slot.Y, word.Slot.Width, word.Slot.Height));
         }
 
         public void Dispose()
@@ -389,6 +407,7 @@ internal sealed class PanelHost
             }
 
             ask.Dispose();
+            askVisual.Dispose();
             Visual.Parent?.Children.Remove(Visual);
             Visual.Dispose();
         }

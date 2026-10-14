@@ -276,6 +276,39 @@ public class PanelTests
     }
 
     [Fact]
+    public void AnAttachedStripStartsAtTheBodyNotAtTheRamps()
+    {
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        var shape = IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H).Attached();
+        Assert.True(shape.RampW > 0);
+        float width = (float)shape.Width;
+
+        // The tomte sits at the body's left edge, so the first label, laid out from there too, starts after it.
+        var box = MascotArt.Box(shape);
+        var first = TabStrip.Labels(all, PanelId.Shelf, width, mascot: true)[0];
+        Assert.True(PanelSpace.ToStrip(new(box.Right, PanelSpace.TabStripHeight / 2), shape) <= first.Slot.X);
+        Assert.Null(TabStrip.At(PanelSpace.ToStrip(new(box.X + box.Width / 2, PanelSpace.TabStripHeight / 2), shape), all, PanelId.Shelf, width, mascot: true));
+
+        // The Ask pill ends at the body's right padding, not short of it by the ramps.
+        float right = width / 2 - TabStrip.RightPad;
+        Assert.True(TabStrip.OnAsk(PanelSpace.ToStrip(new(right - 1, PanelSpace.TabStripHeight / 2), shape), width));
+        Assert.False(TabStrip.OnAsk(PanelSpace.ToStrip(new(right + 1, PanelSpace.TabStripHeight / 2), shape), width));
+    }
+
+    [Fact]
+    public void TheAskPillFollowsTheLiveRightEdgeThroughAMorph()
+    {
+        // From the Media panel to the Shelf one and back, a press just inside the live shape's right padding is on Ask.
+        foreach (double live in new[] { PanelSize.Media.W, 430, 470, 510, PanelSize.Shelf.W })
+        {
+            var shape = IslandGeometry.Panel(live, 200);
+            float right = (float)live / 2 - TabStrip.RightPad;
+            Assert.True(TabStrip.OnAsk(PanelSpace.ToStrip(new(right - 1, 20), shape), (float)shape.Width), $"at {live}");
+            Assert.False(TabStrip.OnAsk(PanelSpace.ToStrip(new(right + 1, 20), shape), (float)shape.Width), $"at {live}");
+        }
+    }
+
+    [Fact]
     public void APressOnTheAskPillIsAskAndNoTab()
     {
         PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];

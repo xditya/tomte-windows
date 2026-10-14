@@ -188,6 +188,12 @@ public static class PanelSpace
         new(island.X + (float)panelWidth / 2, island.Y - TabStripHeight);
 
     /// <summary>
+    /// An island point's x from the tab strip's left edge, which is the shape's body edge, as <see cref="TabStrip"/>
+    /// lays it out: the ramps an attached shape flares into the top edge with lie outside it, and the tomte sits inside.
+    /// </summary>
+    public static float ToStrip(Vector2 island, in IslandGeometry shape) => island.X + (float)shape.Width / 2;
+
+    /// <summary>
     /// Whether an island point is on the shape itself: no further than half its width from the centre line,
     /// and between its top and bottom edges. The window also covers the shadow beside and below the pill and
     /// a row above it, and a press or a wheel there is nobody's.

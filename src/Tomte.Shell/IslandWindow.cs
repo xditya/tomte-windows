@@ -191,6 +191,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         centre.SetReferenceParameter("content", Content);
         Dips.StartAnimation("Offset", centre);
         Content.Children.InsertAtBottom(Dips);
+        Live = compositor.CreatePropertySet();
+        Live.InsertScalar("RampW", 0);
 
         live = compositor.CreateContainerVisual();
         live.Children.InsertAtBottom(pill.Visual);
@@ -253,6 +255,13 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// follows a DPI change by itself. Panels and Compact content attach here.
     /// </summary>
     public ContainerVisual Dips { get; }
+
+    /// <summary>
+    /// The live shape for expressions, set in every frame of a morph: "RampW" is how far in DIPs each fillet of an
+    /// attached shape flares out past the body at the top edge, 0 for the floating pill. Content laid out from the
+    /// body's edges, as the tab strip is, takes it off <see cref="Dips"/>' offset.
+    /// </summary>
+    public CompositionPropertySet Live { get; }
 
     /// <summary>
     /// Raised once per morph to a visible shape when it has come 60% of the way, which is when new content
@@ -799,6 +808,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     {
         IslandOutline.Build(g, attached, segments);
         pill.Geometry.Path = BuildPath(CollectionsMarshal.AsSpan(segments), (float)scale);
+        Live.InsertScalar("RampW", (float)g.RampW);
 
         // The pill's hairline thins out with its last pixel of depth and goes where the outline has no area left,
         // so a reveal does not start as a line under the gap.
