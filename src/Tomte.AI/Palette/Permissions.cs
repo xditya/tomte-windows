@@ -23,6 +23,10 @@ public sealed class PermissionGrants
     {
     }
 
+    /// <summary>
+    /// One per store, kept for as long as the store: it listens to the store's Changed and never lets go.
+    /// The shell makes it once and hands it to every palette session; a new one per session would pile up handlers.
+    /// </summary>
     public PermissionGrants(SettingsStore store)
     {
         _store = store;

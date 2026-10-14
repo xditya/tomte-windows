@@ -90,12 +90,12 @@ internal static class Program
 
         if (palettePrompt is not null)
         {
-            _ = PaletteRun(island, triggers, log!, palettePrompt);
+            _ = PaletteRun(island, triggers, store, log!, palettePrompt);
         }
 
         if (captureQuestion is not null)
         {
-            triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, log!, captureQuestion, overlay, crop, foreground);
+            triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
         }
 
         using var tray = new TrayIcon(pause);
@@ -203,7 +203,7 @@ internal static class Program
     /// Tomte.AI loads only on the first capture.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task AskAboutCapture(IslandWindow island, TriggerController triggers, TextWriter log, string question, CaptureOverlay overlay, PixelRect crop, nint foreground)
+    private static async Task AskAboutCapture(IslandWindow island, TriggerController triggers, SettingsStore store, TextWriter log, string question, CaptureOverlay overlay, PixelRect crop, nint foreground)
     {
         long released = Stopwatch.GetTimestamp();
         var png = await WindowCapture.CaptureMonitorRegionPngAsync(overlay.Monitor, crop, CancellationToken.None);
@@ -211,7 +211,7 @@ internal static class Program
         var chip = ContextChips.Lasso(png, w, h);
         File.WriteAllBytes(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "capture-last.png"), png);
         log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} capture chip \"{chip.Label}\" px={crop} points={overlay.Lasso.Points.Count} png={png.Length}B in {Stopwatch.GetElapsedTime(released).TotalMilliseconds:F1}ms");
-        await PaletteRun(island, triggers, log, question, chip, foreground);
+        await PaletteRun(island, triggers, store, log, question, chip, foreground);
     }
 
     /// <summary>
@@ -221,7 +221,7 @@ internal static class Program
     /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
     /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
-    private static async Task PaletteRun(IslandWindow island, TriggerController triggers, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
+    private static async Task PaletteRun(IslandWindow island, TriggerController triggers, SettingsStore store, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
     {
         try
         {
@@ -259,8 +259,7 @@ internal static class Program
             // --dry keeps device tools from changing anything; the grants come from settings.json as they will for the real palette.
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
             var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
-            using var settings = new SettingsStore();
-            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(settings), chips)
+            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
             {
                 Prompt = prompt,
                 ConfirmTool = (request, _) =>
