@@ -16,7 +16,8 @@ namespace Tomte.AI.Mcp;
 /// .bat (npx is one) can only run through cmd.exe, so those go through it with the arguments quoted
 /// to arrive unchanged. A batch file that hands its arguments on with CALL makes cmd read them a
 /// second time, which the quoting does not cover; npx.cmd does not. The child gets Tomte's whole
-/// environment and runs in the user's profile folder.
+/// environment plus the server's own variables, which only its environment block holds, and runs in
+/// the user's profile folder.
 /// </summary>
 internal sealed class McpProcess : IAsyncDisposable
 {
@@ -30,6 +31,7 @@ internal sealed class McpProcess : IAsyncDisposable
     private readonly SafeHandle _job;
     private readonly StringBuilder _stderr = new();
     private readonly Task _errors;
+    private bool _stderrCut;
 
     private McpProcess(Process process, SafeHandle job)
     {
@@ -44,7 +46,8 @@ internal sealed class McpProcess : IAsyncDisposable
     /// <summary>The server's stdout.</summary>
     public Stream Output => _process.StandardOutput.BaseStream;
 
-    public static McpProcess Start(McpServerSettings server)
+    /// <param name="environment">The server's variables with their values; set in the child's environment block only.</param>
+    public static McpProcess Start(McpServerSettings server, IReadOnlyDictionary<string, string> environment)
     {
         string path = Find(server.Command)
             ?? throw new FileNotFoundException($"The command \"{server.Command}\" was not found. Give its full path, or check that its folder is on PATH.");
@@ -58,6 +61,14 @@ internal sealed class McpProcess : IAsyncDisposable
             StandardErrorEncoding = Encoding.UTF8,
             WorkingDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         };
+        foreach (var (name, value) in environment)
+        {
+            // The block separates variables with a NUL, so one inside a value would start another variable.
+            if (value.Contains('\0'))
+                throw new ArgumentException($"The value of {name} holds a character that cannot be passed to a program.");
+            info.Environment[name] = value;
+        }
+
         if (Path.GetExtension(path).ToLowerInvariant() is ".cmd" or ".bat")
         {
             info.FileName = Path.Combine(Environment.SystemDirectory, "cmd.exe");
@@ -102,12 +113,25 @@ internal sealed class McpProcess : IAsyncDisposable
         return owned;
     }
 
-    /// <summary>The end of what the server wrote to stderr, which is usually why it did not start. Waits a moment for the last of it.</summary>
+    /// <summary>
+    /// The end of what the server wrote to stderr, which is usually why it did not start. Waits a moment
+    /// for the last of it. When the front was cut off, the text starts after the first whitespace: the cut
+    /// can fall inside a token the server printed ("bad token ghp_..."), and a piece of a value is not
+    /// hidden later, only the whole value or its whole words.
+    /// </summary>
     public async Task<string> ErrorTailAsync()
     {
         await Task.WhenAny(_errors, Task.Delay(200));
         lock (_stderr)
-            return _stderr.Length > ErrorTail ? _stderr.ToString(_stderr.Length - ErrorTail, ErrorTail) : _stderr.ToString();
+        {
+            if (_stderr.Length <= ErrorTail && !_stderrCut)
+                return _stderr.ToString();
+            string tail = _stderr.ToString(Math.Max(0, _stderr.Length - ErrorTail), Math.Min(ErrorTail, _stderr.Length));
+            int start = 0;
+            while (start < tail.Length && !char.IsWhiteSpace(tail[start]))
+                start++;
+            return tail[Math.Min(start + 1, tail.Length)..];
+        }
     }
 
     /// <summary>Ends the server and everything it started, now.</summary>
@@ -255,7 +279,10 @@ internal sealed class McpProcess : IAsyncDisposable
                     // Only the end is kept: a server can write without limit, and nobody reads the rest.
                     _stderr.Append(buffer, 0, read);
                     if (_stderr.Length > 4 * ErrorTail)
+                    {
                         _stderr.Remove(0, _stderr.Length - ErrorTail);
+                        _stderrCut = true;
+                    }
                 }
             }
         }

@@ -8,8 +8,9 @@ public enum McpTransport { Stdio, Http }
 
 /// <summary>
 /// One MCP server the user added. A stdio server is a command Tomte starts as a child process; an
-/// HTTP server is a Streamable HTTP endpoint. The optional header's value is a secret and lives in
-/// Credential Manager under <see cref="CredentialId"/>, never here.
+/// HTTP server is a Streamable HTTP endpoint. The optional header's value and the values of a stdio
+/// server's environment variables are secrets and live in Credential Manager under
+/// <see cref="CredentialId"/> and <see cref="EnvCredentialId"/>, never here.
 /// </summary>
 public sealed record McpServerSettings
 {
@@ -26,6 +27,9 @@ public sealed record McpServerSettings
     /// <summary>Sent on every request when not empty, for example "Authorization".</summary>
     public string HeaderName { get; init; } = "";
 
+    /// <summary>Names of the variables a stdio server gets in its environment, for example GITHUB_TOKEN.</summary>
+    public IReadOnlyList<string> Environment { get; init; } = [];
+
     public bool Enabled { get; init; } = true;
 
     /// <summary>
@@ -39,6 +43,12 @@ public sealed record McpServerSettings
 
     [JsonIgnore]
     public string CredentialId => "mcp/" + Name;
+
+    /// <summary>
+    /// Where one variable's value is kept. It has its own prefix, so no server name can make it collide
+    /// with a header's id, and the variable is the last part, since a variable name holds no slash.
+    /// </summary>
+    public string EnvCredentialId(string variable) => $"mcp-env/{Name}/{variable}";
 
     /// <summary>What the model sees in front of each of this server's tool names.</summary>
     [JsonIgnore]
@@ -127,7 +137,12 @@ public sealed record McpServerSettings
         if (others.Any(o => o.Prefix == server.Prefix))
             return $"A server named like \"{server.Name}\" is already added.";
         if (server.Transport == McpTransport.Stdio)
-            return server.Command.Trim().Length == 0 ? "Enter the command that starts the server, for example npx." : null;
+        {
+            return server.Command.Trim().Length == 0
+                ? "Enter the command that starts the server, for example npx."
+                : server.Environment.Select((v, i) => CheckVariable(server.Environment.Take(i), v)).FirstOrDefault(p => p is not null);
+        }
+
         if (!Uri.TryCreate(server.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
             return "Enter the server's http or https URL.";
         if (server.HeaderName.Length == 0)
@@ -140,6 +155,18 @@ public sealed record McpServerSettings
         if (uri.Scheme == "http" && !uri.IsLoopback)
             return "A header is only sent over https. Use an https URL or remove the header.";
         return null;
+    }
+
+    /// <summary>
+    /// Null when <paramref name="variable"/> can be added after <paramref name="others"/>. Letters, digits
+    /// and underscores only, so a name never holds the = or the slash that would break the environment
+    /// block or the credential id. Windows reads variable names without regard to case.
+    /// </summary>
+    public static string? CheckVariable(IEnumerable<string> others, string variable)
+    {
+        if (variable.Length == 0 || char.IsAsciiDigit(variable[0]) || !variable.All(c => char.IsAsciiLetterOrDigit(c) || c == '_'))
+            return "A variable name has only letters, digits and underscores, and does not start with a digit.";
+        return others.Contains(variable, StringComparer.OrdinalIgnoreCase) ? $"{variable} is already in the list." : null;
     }
 
     /// <summary>Splits an arguments line at spaces; double quotes keep spaces inside one argument.</summary>

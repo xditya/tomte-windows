@@ -1,10 +1,12 @@
 // A small MCP server over stdio, for the tests that need a real child process.
 //
-//   McpEchoServer serve <infoFile> [--linger] [--child <infoFile>] [anything else]
-//       Writes its process id, working folder and arguments to infoFile, then serves one tool,
+//   McpEchoServer serve <infoFile> [--linger] [--child <infoFile>] [--huge] [anything else]
+//       Writes its process id, working folder, arguments and the environment variables whose names
+//       start with TOMTE_ECHO_ to infoFile, then serves one tool,
 //       echo(text). echo("exit") ends the process without an answer, like a crash. --linger keeps the
 //       process running after its input closes, like a server that ignores the request to stop.
 //       --child starts a second process first (sleep mode), like a server that starts helpers.
+//       --huge adds a tool whose argument schema is too long for Tomte to offer, to see in Settings.
 //   McpEchoServer sleep <infoFile>
 //       Writes its process id and sleeps for a minute.
 //   McpEchoServer own <infoFile>
@@ -36,7 +38,10 @@ if (args[0] == "own")
 }
 
 // Written under another name first, so a reader never sees half a file.
-File.WriteAllText(infoFile + ".tmp", JsonSerializer.Serialize(new { pid = Environment.ProcessId, cwd = Environment.CurrentDirectory, args = args[2..] }));
+var env = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
+    .Where(e => ((string)e.Key).StartsWith("TOMTE_ECHO_", StringComparison.OrdinalIgnoreCase))
+    .ToDictionary(e => (string)e.Key, e => (string?)e.Value);
+File.WriteAllText(infoFile + ".tmp", JsonSerializer.Serialize(new { pid = Environment.ProcessId, cwd = Environment.CurrentDirectory, args = args[2..], env }));
 File.Move(infoFile + ".tmp", infoFile, overwrite: true);
 
 if (args[0] == "sleep")
@@ -62,6 +67,13 @@ var options = new McpServerOptions
         }, new McpServerToolCreateOptions { Name = "echo", Description = "Repeat the text." }),
     ],
 };
+if (args.Contains("--huge"))
+{
+    var huge = McpServerTool.Create((string text) => text, new McpServerToolCreateOptions { Name = "huge", Description = "A tool with a very long schema." });
+    huge.ProtocolTool.InputSchema = JsonDocument.Parse(
+        """{"type":"object","properties":{"text":{"type":"string","description":"LONG"}}}""".Replace("LONG", new string('x', McpTools.MaxSchema))).RootElement;
+    options.ToolCollection.Add(huge);
+}
 await using (var server = McpServer.Create(new StdioServerTransport("echo"), options))
     await server.RunAsync();
 

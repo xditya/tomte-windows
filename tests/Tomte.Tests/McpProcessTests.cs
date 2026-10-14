@@ -203,6 +203,82 @@ public sealed class McpProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task VariablesReachOnlyTheServersEnvironmentAndAreHidden()
+    {
+        const string token = "tomte-test-token-1234567890";
+        var server = Echo(InFolder("info.json")) with { Environment = ["TOMTE_ECHO_TOKEN"] };
+        // A reader in place of Credential Manager: the test writes nothing to the real vault.
+        await using var tools = new McpTools([server], readSecret: id => id == server.EnvCredentialId("TOMTE_ECHO_TOKEN") ? token : null);
+        await tools.ListAsync(_limit.Token);
+
+        var info = await InfoAsync("info.json");
+        Assert.Equal(token, info.GetProperty("env").GetProperty("TOMTE_ECHO_TOKEN").GetString());
+        Assert.DoesNotContain(token, info.GetProperty("args").GetRawText());
+        Assert.Null(Environment.GetEnvironmentVariable("TOMTE_ECHO_TOKEN"));
+
+        // A server that quotes the value back: the model and the user see it hidden.
+        var echoed = (await tools.CallAsync(McpToolsTests.Call("echo__echo", $$"""{"text":"{{token}}"}"""), _limit.Token)).Result;
+        Assert.Equal("echo: [hidden]", echoed.Content);
+    }
+
+    [Fact]
+    public async Task APieceOfAValueCutFromTheEndOfStderrIsNotShown()
+    {
+        // A server that prints the token it was given and exits. Only the last 200 characters of stderr
+        // are kept, and this cut falls 12 characters before the end of the value.
+        const string token = "tomte-straddle-0123456789abcdef";
+        string rest = (" refused" + string.Concat(Enumerable.Repeat(" word", 40)))[..186];
+        string script = InFolder("bad.cmd");
+        File.WriteAllText(script, $"@>&2 echo bad token %TOMTE_ECHO_X%{rest}\r\n@exit /b 1\r\n");
+        await using var tools = new McpTools([new McpServerSettings { Name = "Echo", Command = script, Environment = ["TOMTE_ECHO_X"] }], readSecret: _ => token);
+
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(_limit.Token));
+        Assert.DoesNotContain(token[^12..], e.ToString());
+        Assert.Contains("It wrote: refused word", e.Message);
+    }
+
+    [Fact]
+    public async Task AValueWithANulIsRefusedBeforeTheServerStarts()
+    {
+        // The environment block ends each variable with a NUL, so this value would start another variable.
+        var server = Echo(InFolder("info.json")) with { Environment = ["TOMTE_ECHO_X"] };
+        await using var tools = new McpTools([server], readSecret: _ => "abcd\0efgh1234");
+
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(_limit.Token));
+        Assert.Contains("The value of TOMTE_ECHO_X holds a character that cannot be passed to a program.", e.Message);
+        Assert.DoesNotContain("abcd\0efgh1234", e.ToString());
+        Assert.DoesNotContain("efgh1234", e.ToString());
+        Assert.False(File.Exists(InFolder("info.json")));
+    }
+
+    [Fact]
+    public async Task SettingsListsAToolLeftOutForItsSchema()
+    {
+        // The path the settings window takes: start the server, list, stop.
+        var tools = await McpTools.ProbeAsync(Echo(InFolder("info.json"), "--huge"), _limit.Token);
+        Assert.Equal(["echo", "huge"], tools.Select(t => t.Name));
+        Assert.Null(tools[0].LeftOut);
+        Assert.StartsWith("The AI is not offered this tool", tools[1].LeftOut);
+    }
+
+    [Fact]
+    public async Task DisposeCancelsAStartThatNeverAnswers()
+    {
+        // "sleep" never answers the first request. With nothing to cancel the start, the SDK waits 60 s
+        // for it, and dispose used to wait with it.
+        var tools = new McpTools([new McpServerSettings { Name = "Echo", Command = Exe, Arguments = ["sleep", InFolder("sleeper.json")] }]);
+        var listing = tools.ListAsync(CancellationToken.None);
+        int sleeper = await PidAsync("sleeper.json");
+
+        var watch = Stopwatch.StartNew();
+        await tools.DisposeAsync();
+        Assert.InRange(watch.ElapsedMilliseconds, 0, 5000);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing);
+        Assert.True(await GoneAsync(sleeper));
+        Assert.Equal(0, tools.Running);
+    }
+
+    [Fact]
     public async Task ACancelledStartEndsTheProcess()
     {
         // "sleep" never answers the first request, like a command that is not an MCP server but keeps running.

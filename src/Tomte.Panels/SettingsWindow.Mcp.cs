@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Tomte.AI;
 using Tomte.AI.Mcp;
 using Tomte.Core;
@@ -25,14 +27,32 @@ public sealed partial class SettingsWindow
     private readonly Button mcpSave = new() { Content = "Add server" };
     private readonly Button mcpCancel = new() { Content = "Cancel", Visibility = Visibility.Collapsed };
     private readonly TextBlock mcpNote = Note();
+    private readonly TextBlock mcpArgumentsWarning = Note("These arguments look like they hold a token or key. Arguments are plain text in the settings file, and other programs can read them while the server runs. If the server reads the token from an environment variable, add it under Environment variable below instead.");
+    private readonly StackPanel mcpEnvList = new() { Spacing = 12 };
+    private readonly TextBox mcpEnvName = new() { PlaceholderText = "GITHUB_TOKEN", Width = 212 };
+    private readonly Button mcpEnvAdd = new() { Content = "Add" };
+    private readonly List<(string Name, PasswordBox Value)> mcpEnv = [];
     private Grid? mcpArgumentsRow, mcpHeaderNameRow, mcpHeaderValueRow;
+    private StackPanel? mcpEnvSection;
     private string? mcpEditing;
 
     private Border McpSection()
     {
-        mcpArgumentsRow = Row("Arguments", Note("Separated by spaces. Put an argument with spaces in double quotes. Arguments are stored as plain text in the settings file and shown in this window."), mcpArguments);
+        mcpArgumentsRow = Row("Arguments", Note("Separated by spaces. Put an argument with spaces in double quotes. Arguments are stored as plain text in the settings file and shown in this window. Put a token under Environment variable instead."), mcpArguments);
         mcpHeaderNameRow = Row("Header name", Note("Optional. Sent with every request, for example Authorization. Needs an https URL."), mcpHeaderName);
-        mcpHeaderValueRow = Row("Header value", Note("Kept in Windows Credential Manager, not in the settings file. Leave empty to keep the saved value. Enter it again after changing the URL."), mcpHeaderValue);
+        mcpHeaderValueRow = Row("Header value", Note("Kept in Windows Credential Manager, not in the settings file. At least 8 characters. Leave empty to keep the saved value. Enter it again after changing the URL."), mcpHeaderValue);
+        mcpArgumentsWarning.Foreground = (Brush)Application.Current.Resources["SystemFillColorCautionBrush"];
+        mcpEnvSection = new StackPanel
+        {
+            Spacing = 12,
+            Children =
+            {
+                mcpEnvList,
+                Row("Environment variable", Note("Optional. Set only in this server's process, for a token the server reads from its environment. The value needs at least 8 characters and is kept in Windows Credential Manager, not in the settings file."), new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { mcpEnvName, mcpEnvAdd } }),
+            },
+        };
+        mcpArguments.TextChanged += (_, _) => ShowArgumentsWarning();
+        mcpEnvAdd.Click += (_, _) => AddTypedMcpVariable();
         mcpKind.SelectionChanged += (_, _) => ShowMcpKind();
         mcpSave.Click += (_, _) => SaveMcpServer();
         mcpCancel.Click += (_, _) => ResetMcpForm();
@@ -45,6 +65,8 @@ public sealed partial class SettingsWindow
             Row("Kind", null, mcpKind),
             Row("Command or URL", Note("For a command, the program to run, for example npx or uvx."), mcpTarget),
             mcpArgumentsRow,
+            mcpArgumentsWarning,
+            mcpEnvSection,
             mcpHeaderNameRow,
             mcpHeaderValueRow,
             buttons,
@@ -56,8 +78,50 @@ public sealed partial class SettingsWindow
     private void ShowMcpKind()
     {
         mcpTarget.PlaceholderText = McpStdio ? "npx" : "https://example.com/mcp";
-        mcpArgumentsRow!.Visibility = McpStdio ? Visibility.Visible : Visibility.Collapsed;
+        mcpArgumentsRow!.Visibility = mcpEnvSection!.Visibility = McpStdio ? Visibility.Visible : Visibility.Collapsed;
         mcpHeaderNameRow!.Visibility = mcpHeaderValueRow!.Visibility = McpStdio ? Visibility.Collapsed : Visibility.Visible;
+        ShowArgumentsWarning();
+    }
+
+    // A warning only: the arguments are saved as typed.
+    private void ShowArgumentsWarning() =>
+        mcpArgumentsWarning.Visibility = McpStdio && McpSecrets.LooksLikeToken(mcpArguments.Text) ? Visibility.Visible : Visibility.Collapsed;
+
+    private void AddTypedMcpVariable()
+    {
+        string name = mcpEnvName.Text.Trim();
+        string? error = McpServerSettings.CheckVariable(mcpEnv.Select(v => v.Name), name);
+        Show(mcpNote, error);
+        if (error is null)
+        {
+            AddMcpVariable(name, saved: false);
+            mcpEnvName.Text = "";
+        }
+    }
+
+    // One row per variable, like the header value: the value box is empty, and stays empty to keep a saved value.
+    private void AddMcpVariable(string name, bool saved)
+    {
+        var box = new PasswordBox { Width = 200, PlaceholderText = saved ? "Saved" : "Value" };
+        AutomationProperties.SetName(box, $"Value of {name}");
+        var remove = new Button { Content = "Remove" };
+        var row = Row(name, Note(saved ? "Leave empty to keep the saved value. Enter it again after changing the command or its arguments." : null), new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { box, remove } });
+        var entry = (name, box);
+        remove.Click += (_, _) =>
+        {
+            // Its saved value is deleted when the server is saved.
+            mcpEnv.Remove(entry);
+            mcpEnvList.Children.Remove(row);
+        };
+        mcpEnv.Add(entry);
+        mcpEnvList.Children.Add(row);
+    }
+
+    private void ClearMcpVariables()
+    {
+        mcpEnv.Clear();
+        mcpEnvList.Children.Clear();
+        mcpEnvName.Text = "";
     }
 
     private void RenderMcpServers()
@@ -80,11 +144,13 @@ public sealed partial class SettingsWindow
             var remove = new Button { Content = "Remove" };
             remove.Click += (_, _) =>
             {
-                TryCredential(() => CredentialStore.Delete(server.CredentialId));
+                var left = McpSecrets.Forget(server, CredentialStore.Delete);
                 // The server's always-allow grants go with it, so adding a server of the same name later starts from asking.
                 Save(s => McpTools.WithServer(s, server, null));
                 RenderMcpServers();
                 RenderGrants();
+                // The server is gone either way; what Windows would not delete, the user can delete by hand.
+                Show(mcpNote, left.Count == 0 ? null : $"{server.Name} is removed, but Windows Credential Manager could not delete {string.Join(", ", left.Select(id => CredentialStore.Prefix + id))}. Delete them there, under Windows Credentials.");
             };
             var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { enabled, list, edit, remove } };
             mcpList.Children.Add(new StackPanel { Spacing = 8, Children = { Row(server.Name, Note(server.Summary), controls), tools } });
@@ -114,6 +180,12 @@ public sealed partial class SettingsWindow
 
             foreach (var tool in tools)
             {
+                if (tool.LeftOut is not null)
+                {
+                    panel.Children.Add(Row(tool.Name, Note(tool.LeftOut), Note("Not offered")));
+                    continue;
+                }
+
                 var tiers = server.AllowedTiers;
                 var box = new ComboBox { ItemsSource = tiers.Select(TierName).ToArray(), SelectedIndex = IndexOf(tiers, server.TierFor(tool.Key)), MinWidth = 200 };
                 box.SelectionChanged += (_, _) => SaveMcp(s => s.Name == name ? s.WithTier(tool.Key, tiers[box.SelectedIndex]) : s);
@@ -176,6 +248,12 @@ public sealed partial class SettingsWindow
         mcpArguments.Text = McpServerSettings.JoinArguments(server.Arguments);
         mcpHeaderName.Text = server.HeaderName;
         mcpHeaderValue.Password = "";
+        ClearMcpVariables();
+        foreach (string variable in server.Environment)
+        {
+            AddMcpVariable(variable, saved: true);
+        }
+
         mcpSave.Content = "Save changes";
         mcpCancel.Visibility = Visibility.Visible;
         Show(mcpNote, null);
@@ -186,6 +264,7 @@ public sealed partial class SettingsWindow
         mcpEditing = null;
         mcpName.Text = mcpTarget.Text = mcpArguments.Text = mcpHeaderName.Text = "";
         mcpHeaderValue.Password = "";
+        ClearMcpVariables();
         mcpSave.Content = "Add server";
         mcpCancel.Visibility = Visibility.Collapsed;
         Show(mcpNote, null);
@@ -200,34 +279,33 @@ public sealed partial class SettingsWindow
             Transport = McpStdio ? McpTransport.Stdio : McpTransport.Http,
             Command = McpStdio ? mcpTarget.Text.Trim() : "",
             Arguments = McpStdio ? McpServerSettings.SplitArguments(mcpArguments.Text) : [],
+            Environment = McpStdio ? [.. mcpEnv.Select(v => v.Name)] : [],
             Url = McpStdio ? "" : mcpTarget.Text.Trim(),
             HeaderName = McpStdio ? "" : mcpHeaderName.Text.Trim(),
         }.After(existing);
         string? error = McpServerSettings.Validate(store.Current.McpServers.Where(s => s.Name != mcpEditing), server);
-        // An empty box keeps the saved value, and a rename moves it to the new name. A changed URL does
-        // not keep it: the value was entered for the old address.
-        string? secret = mcpHeaderValue.Password.Length > 0 ? mcpHeaderValue.Password : null;
-        if (error is null && secret is null && existing is not null && existing.Target == server.Target
-            && !TryCredential(() => secret = CredentialStore.Read(existing.CredentialId)))
+        var typed = new Dictionary<string, string>();
+        if (mcpHeaderValue.Password.Length > 0)
+        {
+            typed[server.CredentialId] = mcpHeaderValue.Password;
+        }
+
+        foreach (var (name, box) in mcpEnv.Where(v => v.Value.Password.Length > 0))
+        {
+            typed[server.EnvCredentialId(name)] = box.Password;
+        }
+
+        // An empty box keeps the saved value, and a rename moves it to the new name. A changed command,
+        // arguments or URL does not keep it: the value was entered for what ran before.
+        Dictionary<string, string> values = [];
+        if (error is null && !TryCredential(() => error = McpSecrets.Collect(existing, server, typed, CredentialStore.Read, out values)))
         {
             return;
         }
 
-        if (error is null && server.HeaderName.Length > 0 && secret is null)
-        {
-            error = "Enter the header value.";
-        }
-
+        // A removed variable or header, and every value under the old name after a rename, is deleted.
         Show(mcpNote, error);
-        if (error is not null || !TryCredential(() =>
-            {
-                if (existing is not null && existing.CredentialId != server.CredentialId)
-                    CredentialStore.Delete(existing.CredentialId);
-                if (server.HeaderName.Length > 0)
-                    CredentialStore.Save(server.CredentialId, secret!);
-                else
-                    CredentialStore.Delete(server.CredentialId);
-            }))
+        if (error is not null || !TryCredential(() => McpSecrets.Write(existing, server, values, CredentialStore.Save, CredentialStore.Delete)))
         {
             return;
         }
