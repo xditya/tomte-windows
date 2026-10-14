@@ -214,9 +214,10 @@ internal static class Program
     }
 
     /// <summary>
-    /// --palette "prompt": the debug driver. Opens the palette on the island, runs the prompt against local
-    /// Ollama with the window chip on and an in-memory shelf and scratchpad, logs the stream and the tool
-    /// steps, then retracts and quits. External-effect tools are allowed once each, as a user would.
+    /// --palette "prompt" [--screenshot] [--dry]: the debug driver. Opens the palette on the island, runs the
+    /// prompt against local Ollama with the window chip on and an in-memory shelf and scratchpad, logs the
+    /// stream and the tool steps, retracts, shows each device action as a Compact event and undoes it, then
+    /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
     /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
     private static async Task PaletteRun(IslandWindow island, TriggerController triggers, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
@@ -254,8 +255,11 @@ internal static class Program
 
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory before: {Memory()}");
             var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
-            var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);
-            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(), chips)
+            // --dry keeps device tools from changing anything; the grants come from settings.json as they will for the real palette.
+            bool dry = Environment.GetCommandLineArgs().Contains("--dry");
+            var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
+            using var settings = new SettingsStore();
+            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(settings), chips)
             {
                 Prompt = prompt,
                 ConfirmTool = (request, _) =>
@@ -273,11 +277,21 @@ internal static class Program
                     log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette tool {step.Tool}: {step.Summary} -> {(step.IsError ? "error: " : "")}{step.Result.ReplaceLineEndings(" | ")}");
                 }
             };
-            await new PaletteHost(island, triggers.Machine, log.WriteLine).RunAsync(session);
+            var host = new PaletteHost(island, triggers.Machine, log.WriteLine);
+            await host.RunAsync(session);
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette answer: {session.AnswerText.ReplaceLineEndings(" | ")}");
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory after answer: {Memory()}");
             await Task.Delay(2000);
             triggers.Hide();
+            // Each device action shows as a Compact event once the palette is gone, then its undo runs so a debug run leaves the PC as it was.
+            foreach (var e in host.Events)
+            {
+                await host.ShowEventAsync(e);
+                if (e.Undo is { } undo)
+                {
+                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette undo: {undo().Message}");
+                }
+            }
             GC.Collect();
             GC.WaitForPendingFinalizers();
             await Task.Delay(1000);

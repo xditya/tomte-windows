@@ -18,6 +18,9 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
 {
     private double _targetHeight;
 
+    /// <summary>Device actions the session ran, in order. Each shows as a Compact event once the palette has retracted.</summary>
+    public List<DeviceEvent> Events { get; } = [];
+
     public async Task RunAsync(PaletteSession session)
     {
         var from = machine.State;
@@ -25,12 +28,7 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
         island.Mascot.Follow(from, IslandState.Palette);
         island.Mascot.Set(MascotState.Thinking);
         island.PanelLook = true;
-        var placeholder = island.Compositor.CreateSpriteVisual();
-        placeholder.Brush = island.Compositor.CreateColorBrush(Color.FromArgb(28, 255, 255, 255));
-        float s = (float)island.Scale;
-        placeholder.Offset = new Vector3((24 + 14) * s, 12 * s, 0);
-        placeholder.Size = new Vector2((float)(PanelSize.PaletteWidth - 28) * s, 36 * s);
-        island.Content.Children.InsertAtTop(placeholder);
+        var placeholder = Placeholder(24 + 14, 12, PanelSize.PaletteWidth - 28, 36);
         try
         {
             _targetHeight = PanelSize.PaletteMinHeight;
@@ -47,6 +45,11 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
                 log($"{DateTime.Now:HH:mm:ss.fff} palette grow -> {height} ({session.AnswerText.Length} chars, {session.ToolSteps} steps)");
                 growth = island.MorphTo(Geometry(height), SpringPreset.Gentle);
             };
+            session.DeviceActionExecuted += e =>
+            {
+                Events.Add(e);
+                log($"{DateTime.Now:HH:mm:ss.fff} palette device event: {e.Line}{(e.Undo is null ? "" : " (undo available)")}");
+            };
             await session.SendAsync();
             island.Mascot.Set(session.Status == PaletteStatus.Done ? MascotState.Result : MascotState.Error);
             await growth;
@@ -56,6 +59,46 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
         {
             island.Content.Children.Remove(placeholder);
         }
+    }
+
+    /// <summary>
+    /// The one-line Compact event for a device action: Compact for 4 s, then Hidden. The state table
+    /// enters Compact from Hidden only, so the caller retracts the palette first. The text renderer
+    /// will draw the line and an undo affordance where the placeholder bar sits.
+    /// </summary>
+    public async Task ShowEventAsync(DeviceEvent e)
+    {
+        machine.TransitionTo(IslandState.Compact);
+        island.Mascot.Follow(IslandState.Hidden, IslandState.Compact);
+        island.PanelLook = false;
+        var compact = IslandGeometry.For(IslandState.Compact, 0, 0);
+        var placeholder = Placeholder(44, 11, compact.Width - 44 - 16, 16);
+        try
+        {
+            await island.MorphTo(compact, Spring.PresetFor(IslandState.Hidden, IslandState.Compact));
+            log($"{DateTime.Now:HH:mm:ss.fff} compact event shown: {e.Line}{(e.Undo is null ? "" : " [undo]")}");
+            await Task.Delay(4000);
+            machine.TransitionTo(IslandState.Hidden);
+            island.Mascot.Follow(IslandState.Compact, IslandState.Hidden);
+            await island.MorphTo(IslandGeometry.For(IslandState.Hidden, 0, 0), Spring.PresetFor(IslandState.Compact, IslandState.Hidden));
+            log($"{DateTime.Now:HH:mm:ss.fff} compact event timed out");
+        }
+        finally
+        {
+            island.Content.Children.Remove(placeholder);
+        }
+    }
+
+    /// <summary>A faint bar on the Content seam, in DIPs, standing in for text until the renderer lands.</summary>
+    private SpriteVisual Placeholder(double x, double y, double width, double height)
+    {
+        var visual = island.Compositor.CreateSpriteVisual();
+        visual.Brush = island.Compositor.CreateColorBrush(Color.FromArgb(28, 255, 255, 255));
+        float s = (float)island.Scale;
+        visual.Offset = new Vector3((float)x * s, (float)y * s, 0);
+        visual.Size = new Vector2((float)width * s, (float)height * s);
+        island.Content.Children.InsertAtTop(visual);
+        return visual;
     }
 
     /// <summary>Text segments as their lines, a tool step as one line; the estimate itself lives in Tomte.Core.</summary>
