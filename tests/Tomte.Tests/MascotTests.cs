@@ -116,6 +116,31 @@ public class MascotTests
         Assert.InRange(m.RootY, -1, 1); // gentle would still be about 5 units up
     }
 
+    // Under the pointer the tomte lifts 1.5 DIP on the snappy spring, turns back from mid-flight when the pointer
+    // leaves, and settles where it was; hiding drops the lift.
+    [Fact]
+    public void HoverLiftsTheTomteOnASpringAndLeavingSettlesItBack()
+    {
+        var m = NewMascot();
+        m.Follow(IslandState.Hidden, IslandState.Compact);
+        Run(m, 1, x => 0);
+        double up = -MascotStates.HoverLiftDips * MascotArt.ViewBox / MascotArt.SizeDips;
+        m.Hover(true);
+        Run(m, 0.02, x => 0);
+        double partWay = m.RootY;
+        Assert.InRange(partWay, up + 0.1, -0.01);
+        m.Hover(false);
+        Run(m, 0.01, x => 0);
+        Assert.True(m.RootY < 0, "a retarget keeps its velocity, so it does not jump back");
+        Run(m, 0.5, x => 0);
+        Assert.InRange(m.RootY, -0.25, 0.25);
+        m.Hover(true);
+        Run(m, 0.5, x => 0);
+        Assert.InRange(m.RootY, up - 0.25, up + 0.25);
+        m.Park();
+        Assert.Equal(MascotStates.PeekFromY, m.RootY);
+    }
+
     [Fact]
     public void RestingSchedulesASwayFourToSevenSecondsOut()
     {
