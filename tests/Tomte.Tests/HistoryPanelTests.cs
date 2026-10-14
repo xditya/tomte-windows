@@ -47,7 +47,7 @@ public class HistoryPanelTests
         Assert.Equal(layout.MaxScroll, layout.Reveal(0, layout.Place("row:k19")), 0.01);
         Assert.Equal(layout.MaxScroll, layout.Scrolled(layout.MaxScroll, -120 * 50));
         Assert.Equal(0, layout.Scrolled(0, 120));
-        Assert.Equal("row:k1", layout.At(new Vector2(layout.List.X + 50, layout.List.Y + layout.Rows[1].Y + 10), 0)?.Id);
+        Assert.Equal("row:k1", Assert.Single(layout.Targets(0), t => t.Bounds.Contains(layout.List.X + 50, layout.List.Y + layout.Rows[1].Y + 10)).Id);
     }
 
     [Fact]

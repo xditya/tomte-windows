@@ -4,13 +4,14 @@ using Tomte.Core;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
+using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
 
 /// <summary>
 /// The History tab: the AI conversations and drop zone results kept on this PC, newest first, or the off or empty state.
-/// A click on a row (or Enter on it) opens its conversation under it, read as Markdown, with Continue, which opens the
+/// A click on a row (or Enter or Right on it) opens its conversation under it, read as Markdown, with Continue, which opens the
 /// AI box with the conversation loaded and nothing sent, and Copy answer, which puts the last answer on the clipboard.
 /// The wheel scrolls the list. Rows come from the history's worker, so <see cref="Shown"/> returns at once and the rows
 /// are drawn when they land; only the rows in and near the list's view have visuals. Composition visuals in DIPs laid
@@ -21,13 +22,14 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
     private View? view;
     private HistoryPanelLayout? layout;
     private IReadOnlyList<AiExchange> rows = [];
+    private IReadOnlyList<Target> targets = [];
     private string? opened;
     private float scroll;
     private int generation;
 
     public PanelId Id => PanelId.History;
 
-    public IReadOnlyList<Target> Targets => layout?.Targets(scroll) ?? [];
+    public IReadOnlyList<Target> Targets => targets;
 
     public event Action? TargetsChanged;
 
@@ -41,16 +43,12 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
     {
         generation++;
         view?.Dispose();
-        (view, layout, rows, opened, scroll) = (null, null, [], null, 0);
+        (view, layout, rows, targets, opened, scroll) = (null, null, [], [], null, 0);
     }
 
-    // Until the island's interaction host runs the targets, a press is hit-tested against the same list.
+    // The rows and buttons are the interaction host's.
     public void Press(Vector2 point)
     {
-        if (layout?.At(point, scroll) is { Enabled: true } target)
-        {
-            Activate(target.Id);
-        }
     }
 
     public void Wheel(Vector2 point, int delta)
@@ -59,21 +57,47 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
         {
             scroll = layout.Scrolled(scroll, delta);
             view.Scroll(layout, scroll);
-            TargetsChanged?.Invoke();
+            Retarget();
         }
     }
 
     /// <summary>Focus that reaches a row or button out of view (only the arrow keys and Tab can) scrolls the list to show it.</summary>
     public void Hovered(string? id)
     {
-        if (view is null || layout is null || id is null || Targets.FirstOrDefault(t => t.Id == id).Bounds.Height > 0 || layout.Place(id) is not { IsEmpty: false } place)
+        if (view is null || layout is null || id is null || targets.FirstOrDefault(t => t.Id == id).Bounds.Height > 0 || layout.Place(id) is not { IsEmpty: false } place)
         {
             return;
         }
 
         scroll = layout.Reveal(scroll, place);
         view.Scroll(layout, scroll);
-        TargetsChanged?.Invoke();
+        Retarget();
+    }
+
+    /// <summary>On a row, Right opens it and Left closes it; held keys do it once.</summary>
+    public bool KeyDown(string id, int virtualKey, bool repeat)
+    {
+        bool right = virtualKey == (int)VIRTUAL_KEY.VK_RIGHT;
+        if ((!right && virtualKey != (int)VIRTUAL_KEY.VK_LEFT) || rows.FirstOrDefault(row => HistoryPanelLayout.RowId(row) == id) is not { } row)
+        {
+            return false;
+        }
+
+        if (!repeat && right != (row.Key == opened))
+        {
+            Activate(id);
+        }
+
+        return true;
+    }
+
+    /// <summary>A double click's second click would close the row the first opened: only the first counts.</summary>
+    public void Activate(string id, ActivateBy by)
+    {
+        if (by != ActivateBy.DoubleClick)
+        {
+            Activate(id);
+        }
     }
 
     public void Activate(string id)
@@ -144,6 +168,13 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
     {
         scroll = Math.Min(scroll, layout!.MaxScroll);
         view!.Show(layout, history.On, scroll);
+        Retarget();
+    }
+
+    // The host reads the targets on every pointer move, so they are built once per layout or scroll.
+    private void Retarget()
+    {
+        targets = layout?.Targets(scroll) ?? [];
         TargetsChanged?.Invoke();
     }
 

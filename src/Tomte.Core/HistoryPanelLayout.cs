@@ -209,10 +209,6 @@ public sealed class HistoryPanelLayout
         return shown.IsEmpty ? r with { Height = 0 } : shown;
     }
 
-    /// <summary>The target under a point of the body, or null.</summary>
-    public Target? At(Vector2 point, float scroll) =>
-        Targets(scroll).LastOrDefault(t => t.Bounds.Contains(point.X, point.Y)) is { Id: not null } hit ? hit : null;
-
     /// <summary>
     /// The conversation from the card's top-left corner, under the row's own line: for each turn the question, the names
     /// of the chips that were on, a line per tool call, the answer as Markdown and what went wrong, at most
