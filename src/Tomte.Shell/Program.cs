@@ -5,6 +5,7 @@ using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
+using Tomte.Core.Media;
 using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
@@ -107,7 +108,7 @@ internal static class Program
             timer.Run = TimerRun.Starting(DateTimeOffset.Now, length);
         }
 
-        StartPanels(island, triggers, logLine, args.Contains("--debug-tabs"));
+        StartPanels(island, triggers, store, logLine, args.Contains("--debug-tabs"));
         if (rambler)
         {
             triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
@@ -181,17 +182,57 @@ internal static class Program
         settingsProcess = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
     }
 
-    /// <summary>The panel host. Each panel registers here once.</summary>
-    private static void StartPanels(IslandWindow island, TriggerController triggers, Action<string>? log, bool debugTabs)
+    /// <summary>
+    /// The panel host with the Media panel, the Compact now-playing row and the track-change event. The
+    /// event is the one thing that listens to media while the island is hidden, and only when the user
+    /// turned it on in settings.
+    /// </summary>
+    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, bool debugTabs)
     {
+        var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
+        panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
         if (debugTabs)
         {
             // --debug-tabs: an empty Shelf-sized tab to switch to, until a second panel exists.
             panels.Register(new BlankPanel());
+            panels.Select(PanelId.Media);
         }
 
         triggers.Panels = panels;
+        var row = new NowPlayingRow(island, triggers, media, log);
+
+        bool announcing = false;
+        media.TrackChanged += playing =>
+        {
+            if (announcing)
+            {
+                log?.Invoke($"media: track changed, raising the event ({playing.App})");
+                triggers.Raise(row.Announced = new IslandEvent(playing.Title, DateTimeOffset.Now));
+            }
+        };
+        Apply(store.Current);
+        // Changed arrives on a pool thread.
+        store.Changed += settings => island.Queue.TryEnqueue(() => Apply(settings));
+
+        void Apply(TomteSettings settings)
+        {
+            if (settings.MediaTrackChangeEvent == announcing)
+            {
+                return;
+            }
+
+            announcing = settings.MediaTrackChangeEvent;
+            // Without the timeline: a source that reports its position every second must not wake a hidden island.
+            if (announcing)
+            {
+                media.Watch(timeline: false);
+            }
+            else
+            {
+                media.Unwatch(timeline: false);
+            }
+        }
     }
 
     /// <summary>Debug stand-ins for the drag and the microphone: lean toward the cursor, and a synthetic level at 20 Hz.</summary>
