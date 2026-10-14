@@ -4,8 +4,8 @@ using System.Drawing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Tomte.Core;
+using Tomte.Core.Triggers;
 using Windows.ApplicationModel.DataTransfer;
-using Windows.Foundation;
 using Windows.Storage;
 using Windows.UI.Composition;
 using Windows.Win32;
@@ -23,6 +23,10 @@ namespace Tomte.Shell;
 internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log) : IPanel
 {
     private readonly HashSet<long> selected = [];
+    private DataTransferManager? shareManager;
+    private Windows.System.DispatcherQueueTimer? shareWait;
+    private List<ShelfItem> sharing = [];
+    private int shareAsked;
     private ContainerVisual? body;
     private Vector2 size;
     private Parts? parts;
@@ -171,40 +175,70 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
     }
 
-    /// <summary>The Windows share sheet for the items, anchored to the island. It takes focus, which the user asked for.</summary>
+    /// <summary>
+    /// The Windows share sheet for the items, anchored to the island. It takes focus, which the user asked for. The
+    /// handler goes on once and stays: Windows may ask for the data from inside ShowShareUIForWindow, and a handler
+    /// that takes itself off in that call leaves the share with no data and no sheet. Should Windows not ask within
+    /// a few seconds, the island says so once it hides, so a share that never shows is not silent.
+    /// </summary>
     private void Share(List<ShelfItem> items)
     {
         nint hwnd = Handle(island.Hwnd);
-        var manager = DataTransferManagerInterop.GetForWindow(hwnd);
-        TypedEventHandler<DataTransferManager, DataRequestedEventArgs>? handler = null;
-        handler = async (sender, e) =>
+        if (shareManager is null)
         {
-            sender.DataRequested -= handler;
-            var deferral = e.Request.GetDeferral();
-            try
-            {
-                var storage = new List<IStorageItem>();
-                foreach (var item in items)
-                {
-                    storage.Add(item.IsFolder ? await StorageFolder.GetFolderFromPathAsync(item.Path) : await StorageFile.GetFileFromPathAsync(item.Path));
-                }
+            shareManager = DataTransferManagerInterop.GetForWindow(hwnd);
+            shareManager.DataRequested += OnShareRequested;
+        }
 
-                e.Request.Data.Properties.Title = items.Count == 1 ? items[0].Name : $"{items.Count} items";
-                e.Request.Data.SetStorageItems(storage);
-            }
-            catch (Exception ex)
-            {
-                // An async event handler: nothing may escape it.
-                log?.Invoke($"shelf: share failed: {ex.Message}");
-                e.Request.FailWithDisplayText("Tomte could not share this item.");
-            }
-            finally
-            {
-                deferral.Complete();
-            }
-        };
-        manager.DataRequested += handler;
+        sharing = items;
+        Volatile.Write(ref shareAsked, 0);
         DataTransferManagerInterop.ShowShareUIForWindow(hwnd);
+        if (shareWait is null)
+        {
+            shareWait = island.Queue.CreateTimer();
+            shareWait.Interval = TimeSpan.FromSeconds(4);
+            shareWait.IsRepeating = false;
+            shareWait.Tick += (_, _) =>
+            {
+                if (Volatile.Read(ref shareAsked) == 0)
+                {
+                    log?.Invoke("shelf: Windows did not ask for the shared items");
+                    triggers.Raise(new IslandEvent("Windows did not open Share. Reveal the file and share it from File Explorer.", DateTimeOffset.Now));
+                }
+            };
+        }
+
+        shareWait.Start();
+    }
+
+    // Possibly on another thread than the island's; it reads only the list Share set and writes only the log.
+    private async void OnShareRequested(DataTransferManager sender, DataRequestedEventArgs e)
+    {
+        Volatile.Write(ref shareAsked, 1);
+        var items = sharing;
+        log?.Invoke($"shelf: the share sheet asked for {items.Count} items");
+        var deferral = e.Request.GetDeferral();
+        try
+        {
+            var storage = new List<IStorageItem>();
+            foreach (var item in items)
+            {
+                storage.Add(item.IsFolder ? await StorageFolder.GetFolderFromPathAsync(item.Path) : await StorageFile.GetFileFromPathAsync(item.Path));
+            }
+
+            e.Request.Data.Properties.Title = items.Count == 1 ? items[0].Name : $"{items.Count} items";
+            e.Request.Data.SetStorageItems(storage);
+        }
+        catch (Exception ex)
+        {
+            // An async event handler: nothing may escape it.
+            log?.Invoke($"shelf: share failed: {ex.Message}");
+            e.Request.FailWithDisplayText("Tomte could not share this item.");
+        }
+        finally
+        {
+            deferral.Complete();
+        }
     }
 
     private void Rebuild()
