@@ -41,7 +41,7 @@ public sealed partial class SettingsWindow
             Row("Add a folder", null, folder),
             Row("Add a web address", null, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { webAddress, web } }),
             shortcutsNote,
-            Row("Script shortcuts", Note("Off: script tiles do nothing. On: each script asks once before it runs, showing its full command, and asks again when it changes. Batch, PowerShell and Windows Script Host files."), scripts));
+            Row("Script shortcuts", Note("Off: script tiles do nothing. On: each script asks once before it runs, showing its full command, and asks again when it changes. Scripts are batch, PowerShell and Windows Script Host files, and every shortcut (.lnk) that passes arguments to a program, browser web apps and profiles included."), scripts));
     }
 
     private async Task PickAsync(bool folder)
@@ -164,7 +164,9 @@ public sealed partial class SettingsWindow
                     new TextBlock { Text = "When you click the tile, Tomte runs this command:", TextWrapping = TextWrapping.Wrap },
                     new TextBox { Text = command.Text, IsReadOnly = true, TextWrapping = TextWrapping.Wrap, FontFamily = new FontFamily("Cascadia Mono, Consolas") },
                     new TextBlock { Text = $"Working folder: {command.Folder}", TextWrapping = TextWrapping.Wrap },
-                    Note("It runs with your permissions and can change anything you can. If the script or this command changes, the tile asks again."),
+                    Note(command.HashedFile is null
+                        ? "It runs with your permissions and can change anything you can. Only this command is checked for changes, not any file it names: if such a file changes, the tile does not ask again."
+                        : "It runs with your permissions and can change anything you can. If the script or this command changes, the tile asks again."),
                 },
             },
         };
