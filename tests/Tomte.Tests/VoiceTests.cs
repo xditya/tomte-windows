@@ -289,6 +289,34 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
+    public async Task VoiceRefusesTheClipboardAndFreeScratchpadWritesAndChatRefusesTheNote()
+    {
+        var spoken = new ScriptedProvider();
+        spoken.Turns.Add([
+            .. ScriptedProvider.Call(BuiltInTools.CopyToClipboard, """{"text":"secret"}""", "c1")[..^1],
+            .. ScriptedProvider.Call(BuiltInTools.WriteScratchpad, """{"text":"overwrite","mode":"replace"}""", "c2")]);
+        spoken.Turns.Add(ScriptedProvider.Text(1, 1, "ok"));
+        var voice = Session(spoken);
+        await voice.SendAsync();
+
+        Assert.Empty(_asked);
+        Assert.DoesNotContain("clipboard", _ran);
+        Assert.Equal("", _pad.Text);
+        Assert.Equal(["There is no tool named copy_to_clipboard.", "There is no tool named write_scratchpad."],
+            voice.Answer.OfType<ToolStepSegment>().Select(s => s.Result));
+
+        var typed = new ScriptedProvider();
+        typed.Turns.Add(ScriptedProvider.Call(BuiltInTools.SaveNote, """{"note":"buy milk"}"""));
+        typed.Turns.Add(ScriptedProvider.Text(1, 1, "ok"));
+        var chat = Session(typed, voice: false);
+        await chat.SendAsync();
+
+        Assert.Empty(_asked);
+        Assert.Equal("", _pad.Text);
+        Assert.Equal("There is no tool named save_note.", Assert.Single(chat.Answer.OfType<ToolStepSegment>()).Result);
+    }
+
+    [Fact]
     public async Task AVoiceTurnIsCappedAt1024Tokens()
     {
         var provider = new ScriptedProvider();
