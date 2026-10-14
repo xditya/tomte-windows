@@ -272,6 +272,26 @@ public sealed class DropZoneTests : IDisposable
         Assert.Contains(Shelf.Items, i => i.Path == original && i.Name == "scan0042.txt");
     }
 
+    [Fact]
+    public async Task RenameByContentCopiesAFileTheShelfKeepsItself()
+    {
+        // Dropped from a browser or a mail: the item is content in the shelf's own folder, not a reference.
+        var item = Assert.Single(await Shelf.Add([new ShelfEntry(ShelfKind.Content, "scan0042.txt", Content: Encoding.UTF8.GetBytes(Report))]));
+        var session = Zone(DropZone.Rename, item, Recorded("openai-ollama-zone-rename.sse", out _));
+
+        await session.SendAsync();
+        var copy = await Shelf.AddCopy(item.Path, DropZoneRequest.SuggestedName(session.AnswerText, item.Name)!);
+
+        Assert.NotEqual(item.Id, copy!.Id);
+        Assert.Equal(("Q3 revenue report.txt", ShelfKind.Copy), (copy.Name, copy.Kind));
+        Assert.NotEqual(Path.GetDirectoryName(item.Path), Path.GetDirectoryName(copy.Path));
+        Assert.Equal(Report, File.ReadAllText(copy.Path));
+        Assert.Equal(["Q3 revenue report.txt", "scan0042.txt"], Shelf.ItemNames);
+        // Renamed again to the same name: that copy, not a third. Renamed to its own name: a copy of its own.
+        Assert.Equal(copy.Id, (await Shelf.AddCopy(item.Path, "Q3 revenue report.txt"))!.Id);
+        Assert.Equal("scan0042 (2).txt", (await Shelf.AddCopy(item.Path, "scan0042.txt"))!.Name);
+    }
+
     [Theory]
     [InlineData("\"Q3 revenue report\"", "scan.pdf", "Q3 revenue report.pdf")]
     [InlineData("Name: invoice October.pdf\nBecause it is an invoice.", "scan.pdf", "invoice October.pdf")]
@@ -413,15 +433,89 @@ public sealed class DropZoneTests : IDisposable
         var layout = new DropResultLayout(result, 640, true);
         Assert.InRange(layout.Height, PanelSize.PaletteMaxHeight - DropResultLayout.BodyStyle.LineHeight, PanelSize.PaletteMaxHeight);
         Assert.True(layout.Tiles[0].Bottom <= PanelSize.PaletteMaxHeight - DropResultLayout.Pad + 0.5f);
-        using var body = TextLayout.Of(layout.Body!.Value.Run);
-        Assert.True(body.Trimmed);
-        Assert.True(layout.Body!.Value.At.Y + body.Height <= layout.Tiles[0].Y);
+        // All of it is laid out, nothing cut; the band ends above the tile and the rest scrolls.
+        using var body = TextLayout.Of(Assert.Single(layout.Body).Run);
+        Assert.False(body.Trimmed);
+        Assert.Equal(200, body.LineCount);
+        Assert.True(layout.Band.Bottom <= layout.Tiles[0].Y);
+        Assert.Equal(layout.BodyHeight - layout.Band.Height, layout.MaxScroll, 0.01f);
+        Assert.Equal(DropResultLayout.WheelStep, layout.Scrolled(0, -120));
+        Assert.Equal(layout.MaxScroll, layout.Scrolled(0, -120 * 1000));
+        Assert.Equal(0, layout.Scrolled(layout.MaxScroll, 120 * 1000));
 
         // A short screen caps the shape at half its height (1080 pixels at 150% is 360 DIP): the tile still fits.
         var capped = new DropResultLayout(result with { Choices = ["Truncate: send the start.", "Cancel: send nothing."] }, 640, true, maxHeight: 360);
         Assert.InRange(capped.Height, 360 - DropResultLayout.BodyStyle.LineHeight, 360);
         Assert.True(capped.Tiles[0].Bottom <= 360 - DropResultLayout.Pad + 0.5f);
         Assert.True(capped.Choices[^1].Bottom < capped.Tiles[0].Y);
+        Assert.True(capped.Band.Bottom <= capped.Choices[0].Y);
+    }
+
+    [Fact]
+    public void AVeryLongAnswerIsCutWhereEverySurfaceStillDraws()
+    {
+        // A table of a thousand rows in one code block, a hundred thousand characters with no break, and many paragraphs.
+        string csv = "```csv\n" + string.Join("\n", Enumerable.Range(0, 1000).Select(i => $"row {i},{i * 3},north")) + "\n```";
+        string[] answers = [csv, new string('x', 100_000), string.Join("\n\n", Enumerable.Range(0, 400).Select(i => $"Paragraph {i}."))];
+        foreach (string answer in answers)
+        {
+            var layout = new DropResultLayout(DropResult.Empty with { Title = "Tables to CSV · big.xlsx", Indicator = "Sent", Body = answer }, 640, true);
+            Assert.Equal(DropResultLayout.Rest, layout.Body[^1].Run.Text);
+            int lines = 0;
+            foreach (var (run, at) in layout.Body.SkipLast(1))
+            {
+                using var laid = TextLayout.Of(run);
+                lines += laid.LineCount;
+                // Each run is one surface: at 300% it stays inside Direct3D's 16384 pixel texture. A word with no break
+                // in it breaks inside the panel's padding.
+                Assert.True(laid.Height * 3 < 16384, $"{laid.Height} DIP");
+                Assert.True(at.X + laid.Width <= 640 - DropResultLayout.Pad + 0.5f);
+            }
+
+            Assert.InRange(lines, DropResultLayout.MaxLines - 2, DropResultLayout.MaxLines);
+        }
+
+        // An answer under the cap has no such line.
+        var whole = new DropResultLayout(DropResult.Empty with { Title = "Summarize · a.txt", Indicator = "Sent", Body = string.Join("\n", Enumerable.Range(0, 200).Select(i => $"Line {i}.")) }, 640, true);
+        Assert.DoesNotContain(whole.Body, r => r.Run.Text == DropResultLayout.Rest);
+    }
+
+    [Fact]
+    public void TheAnswerIsReadAsMarkdownAndWrapsInsideThePanel()
+    {
+        const float width = 640;
+        const string reason = "Costs held flat, and the long reason for that goes on and on, well past the end of one line of the panel, before it stops.";
+        string answer = $"# Q3 report\n\nRevenue went **up 12%** on the quarter.\n\n- **Costs**{reason[5..]}\n  - Hiring paused.\n"
+            + "9. nine\n10. ten\n\nhttps://intranet.example.com/a-very-long-address-without-a-single-space-in-it-that-is-wider-than-the-whole-panel-is";
+        var layout = new DropResultLayout(DropResult.Empty with { Title = "Summarize · a.pdf", Indicator = "Sent", Body = answer }, width, true);
+        var runs = layout.Body;
+        Assert.Equal(["Q3 report", "Revenue went up 12% on the quarter.", "•", reason, "•", "Hiring paused.", "9.", "nine", "10.", "ten"],
+            runs.Take(10).Select(r => r.Run.Text));
+        Assert.Equal(600, runs[0].Run.Style.Weight);
+        Assert.Equal([(13, 6)], runs[1].Run.Bold);
+
+        // A marker hangs left of its text, a level deeper sits one indent in, and a list's numbers share one column.
+        var (bullet, costs, inner, hiring) = (runs[2], runs[3], runs[4], runs[5]);
+        Assert.Equal(bullet.At.X + DropResultLayout.Indent, costs.At.X);
+        Assert.Equal(bullet.At.X + DropResultLayout.Indent, inner.At.X);
+        Assert.Equal(costs.At.X + DropResultLayout.Indent, hiring.At.X);
+        Assert.Equal(runs[7].At.X, runs[9].At.X);
+        Assert.Equal(bullet.At.Y, costs.At.Y);
+        using (var wrapped = TextLayout.Of(costs.Run))
+        {
+            Assert.Equal(2, wrapped.LineCount);
+            Assert.True(inner.At.Y >= costs.At.Y + wrapped.Height);
+        }
+
+        // Nothing runs past the panel's padding, the address without a space included.
+        foreach (var (run, at) in runs)
+        {
+            using var laid = TextLayout.Of(run);
+            Assert.False(laid.Trimmed);
+            Assert.True(at.X >= DropResultLayout.Pad && at.X + laid.Width <= width - DropResultLayout.Pad + 0.5f, $"{run.Text} runs to {at.X + laid.Width}");
+        }
+
+        Assert.True(layout.Band.Width == width && layout.Band.Height > 0);
     }
 
     // The custom slot
@@ -553,6 +647,83 @@ public sealed class DropZoneTests : IDisposable
         var panel = DropZoneRequest.Panel("Summarize", item.Name, session, null);
         Assert.True(panel.Problem);
         Assert.Equal(session.Error, panel.Line);
+    }
+
+    // Kept results
+
+    private static readonly DateTimeOffset Morning = new(2026, 10, 14, 9, 30, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task AFinishedResultIsKeptForThatFileAndZoneUntilTheFileChanges()
+    {
+        var db = new TomteDb(Path.Combine(_dir, "tomte.db"));
+        string path = UserFile("report.txt", Report);
+        var item = await Dropped(path);
+        Assert.Null(await new KeptResults(db).Last(DropZone.Summarize, null, item.Path));
+
+        string? stamp = KeptResults.Stamp(item.Path);
+        await new KeptResults(db).Keep(new KeptResult(DropZone.Summarize, null, item.Name, item.Path, "ollama", "llama3.2:3b", 0.0031m, Morning, "first", []), stamp);
+        await new KeptResults(db).Keep(new KeptResult(DropZone.Summarize, null, item.Name, item.Path, "ollama", "llama3.2:3b", 0.0042m, Morning.AddHours(1), "# Q3\n- up", [@"C:\Shelf\a\report summary.md"]), stamp);
+
+        // After a restart, by the same path in other letters: the newest, whole.
+        var results = new KeptResults(db);
+        var kept = await results.Last(DropZone.Summarize, null, path.ToUpperInvariant());
+        Assert.Equal(new KeptResult(DropZone.Summarize, null, "report.txt", item.Path, "ollama", "llama3.2:3b", 0.0042m, Morning.AddHours(1), "# Q3\n- up", []) with { Files = kept!.Files }, kept);
+        Assert.Equal([@"C:\Shelf\a\report summary.md"], kept.Files);
+        // Another zone, or the skill slot, has none of its own yet.
+        Assert.Null(await results.Last(DropZone.Tables, null, item.Path));
+        Assert.Null(await results.Last(DropZone.Skill, "invoice-parser", item.Path));
+
+        // A file changed since is a new file: nothing is offered for it.
+        File.AppendAllText(path, "Hiring paused.\n");
+        Assert.Null(await results.Last(DropZone.Summarize, null, item.Path));
+    }
+
+    [Fact]
+    public async Task AFileEditedWhileItWasSentIsNotOfferedTheAnswer()
+    {
+        var results = new KeptResults(new TomteDb(Path.Combine(_dir, "tomte.db")));
+        string path = UserFile("report.txt", Report);
+        var item = await Dropped(path);
+
+        // The stamp is taken before the send; the user saves the file while the answer streams in.
+        string? before = KeptResults.Stamp(item.Path);
+        File.AppendAllText(path, "Hiring paused.\n");
+        await results.Keep(new KeptResult(DropZone.Summarize, null, item.Name, item.Path, "ollama", "llama3.2:3b", 0, Morning, "about the old text", []), before);
+
+        Assert.Null(await results.Last(DropZone.Summarize, null, item.Path));
+    }
+
+    [Fact]
+    public async Task TheSameTextDroppedAgainFindsTheResultKeptForIt()
+    {
+        var results = new KeptResults(new TomteDb(Path.Combine(_dir, "tomte.db")));
+        var first = Assert.Single(await Shelf.Accept(new DroppedItems([], [], Report, KeepCopy: false)));
+        await results.Keep(new KeptResult(DropZone.Summarize, null, first.Name, first.Path, "ollama", "llama3.2:3b", 0, Morning, "summary", []), KeptResults.Stamp(first.Path));
+
+        var again = Assert.Single(await Shelf.Accept(new DroppedItems([], [], Report, KeepCopy: false)));
+        Assert.Equal(first.Path, again.Path);
+        Assert.Equal("summary", (await results.Last(DropZone.Summarize, null, again.Path))?.Answer);
+    }
+
+    [Fact]
+    public void AKeptResultShowsWithoutSendingWithCloseAsTheDefault()
+    {
+        var kept = new KeptResult(DropZone.Summarize, null, "Q3-report.pdf", @"C:\a\Q3-report.pdf", "ollama", "llama3.2:3b", 0.0031m, Morning, "# Q3\n- up", []);
+        // Settings have moved on to another model since: running again sends there, and the choice says so.
+        var panel = DropZoneRequest.Kept("Summarize", kept, [new("Q3-report summary.md", ResultTile.OnShelf, 0x5D6D7E)], "qwen2.5:7b");
+        Assert.Equal(("Summarize · Q3-report.pdf", "Nothing sent", "# Q3\n- up", false), (panel.Title, panel.Indicator, panel.Body, panel.Problem));
+        Assert.Equal(["Run again: send Q3-report.pdf to qwen2.5:7b.", "Close: nothing is sent."], panel.Choices);
+        Assert.EndsWith(" · llama3.2:3b · $0.0031", panel.Line);
+        Assert.Equal("Run again: send Q3-report.pdf to the provider in settings.", DropZoneRequest.Kept("Summarize", kept, [], null).Choices[0]);
+        Assert.Equal("Q3-report summary.md", Assert.Single(panel.Tiles).Name);
+        Assert.StartsWith("Kept from ", panel.Line);
+        Assert.EndsWith(" · llama3.2:3b · $0.0031", kept.Line(System.Globalization.CultureInfo.InvariantCulture));
+        Assert.EndsWith(" · no cost", (kept with { CostUsd = 0 }).Line());
+
+        // Rename shows the name it suggested, as it did when it was new.
+        var rename = kept with { Zone = DropZone.Rename, Answer = "\"Invoice October 2026\"\n" };
+        Assert.Equal("Suggested name: Invoice October 2026.pdf", DropZoneRequest.Kept("Rename by content", rename, [], "llama3.2:3b").Body);
     }
 
     [Fact]

@@ -13,6 +13,9 @@ public enum IslandActivity
     /// <summary>Desktop peek retracts when a window enters the zone, not when the pointer leaves.</summary>
     Peek = 16,
     Rambling = 32,
+
+    /// <summary>A drop zone's finished result: it was paid for, so it stays until the user dismisses it.</summary>
+    Result = 64,
 }
 
 public static class RetractionRules
@@ -30,9 +33,22 @@ public static class RetractionRules
 
     /// <summary>
     /// What is left when a state the user asked for takes the island over: the peek pill's "retract when a window
-    /// comes under" rule and the rambler's hold on the pill end, so a hold that ends later cannot retract it.
+    /// comes under" rule and the rambler's hold on the pill end, so a hold that ends later cannot retract it, and a
+    /// drop zone's result, which the new state replaces, no longer holds the island.
     /// </summary>
-    public static IslandActivity TakenOver(IslandActivity activity) => activity & ~(IslandActivity.Peek | IslandActivity.Rambling);
+    public static IslandActivity TakenOver(IslandActivity activity) => activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result);
+
+    /// <summary>
+    /// Whether Esc is taken as a global hotkey: in the states the user opened on purpose, except that a drop zone's
+    /// result, which can stay up a long time, takes it only while the pointer is on the island, so Esc in the user's
+    /// own app after Alt+Tab stays theirs.
+    /// </summary>
+    public static bool TakesEscape(IslandState state, IslandActivity activity, bool pointerInside) =>
+        state is IslandState.Panels or IslandState.Palette && (!activity.HasFlag(IslandActivity.Result) || pointerInside);
+
+    /// <summary>A press outside the island dismisses a drop zone's result; anywhere else it is the user's own click.</summary>
+    public static bool DismissedByClickOutside(IslandState state, IslandActivity activity) =>
+        state == IslandState.Palette && activity.HasFlag(IslandActivity.Result);
 
     /// <summary>Pointer inside a window rectangle grown by the margin on every side, in physical pixels.</summary>
     public static bool Inside(int x, int y, int left, int top, int right, int bottom, int margin) =>

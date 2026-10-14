@@ -16,7 +16,8 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// The dedicated input thread: a message-only window that receives raw mouse input (edge push, pointer
-/// tracking for retraction), the WH_MOUSE_LL hook (drag candidates), the registered hotkeys and the raw
+/// tracking for retraction), the WH_MOUSE_LL hook (drag candidates, and presses outside the island while it is
+/// tracked; the hook is there whenever the drag trigger is on, the only way to the drop zones), the registered hotkeys and the raw
 /// keyboard input armed while the Rambler chord is held. Everything here is a few field reads and a
 /// PostMessage to the island window; nothing logs or allocates. Settings are read on this thread only:
 /// the UI thread posts <see cref="ApplySettings"/> and the thread re-reads the store itself.
@@ -33,6 +34,7 @@ internal static unsafe class InputThread
     public const uint MsgHotkeyReleased = PInvoke.WM_APP + 7;   // the Rambler chord came up; wParam 1 = held long enough to keep
     public const uint MsgHotkeysRegistered = PInvoke.WM_APP + 8; // Registrations holds a new snapshot
     public const uint MsgConfirmUnavailable = PInvoke.WM_APP + 9; // Win+Alt+Enter could not be registered; wParam = the error
+    public const uint MsgPressOutside = PInvoke.WM_APP + 14;    // a mouse button went down outside the tracked island bounds
 
     public const int EscapeHotkeyId = 100;
 
@@ -448,6 +450,12 @@ internal static unsafe class InputThread
             {
                 var info = (MSLLHOOKSTRUCT*)lParam.Value;
                 int x = info->pt.X, y = info->pt.Y;
+                if ((uint)wParam.Value is PInvoke.WM_LBUTTONDOWN or PInvoke.WM_RBUTTONDOWN && Volatile.Read(ref trackPointer) == 1
+                    && !RetractionRules.Inside(x, y, boundsLeft, boundsTop, boundsRight, boundsBottom, 0))
+                {
+                    PInvoke.PostMessage(island, MsgPressOutside, 0, 0);
+                }
+
                 switch ((uint)wParam.Value)
                 {
                     case PInvoke.WM_LBUTTONDOWN:

@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Tomte.Core.Storage;
 using Windows.Win32;
@@ -113,6 +114,10 @@ public sealed class ShelfStore : IShelf
     private readonly Action<string>? log;
     private readonly Lock gate = new();
     private Task chain = Task.CompletedTask;
+
+    // Folders Slot made in this process that no item has taken yet, the only ones a duplicate's may be deleted from.
+    // Made inside a drop on the island's thread and on the worker, so under its own lock.
+    private readonly HashSet<string> unclaimed = new(StringComparer.OrdinalIgnoreCase);
 
     // Worker only.
     private List<ShelfItem> rows = [];
@@ -256,7 +261,10 @@ public sealed class ShelfStore : IShelf
         static async Task<IReadOnlyList<ShelfItem>> All(List<Task<IReadOnlyList<ShelfItem>>> tasks) => [.. (await Task.WhenAll(tasks)).SelectMany(added => added)];
     }
 
-    /// <summary>Queued; the task gives the items as they were added, none when the disk or the database refused them.</summary>
+    /// <summary>
+    /// Queued; the task gives the items as they were added, none when the disk or the database refused them. An entry
+    /// that is an item already (see <see cref="Already"/>) gives that item, brought to the front, and adds none.
+    /// </summary>
     public async Task<IReadOnlyList<ShelfItem>> Add(IReadOnlyList<ShelfEntry> entries)
     {
         IReadOnlyList<ShelfItem> added = [];
@@ -266,21 +274,30 @@ public sealed class ShelfStore : IShelf
 
     /// <summary>
     /// A copy of a file as a new item called <paramref name="name"/> (made unique), in a folder of the shelf's own. The
-    /// file it came from is only read: a copy, never a link, so changing one never changes the other. Null when the
-    /// copy failed; nothing is left behind then.
+    /// file it came from is only read: a copy, never a link, so changing one never changes the other. Another copy of the
+    /// same bytes under that name already on the shelf comes to the front instead; the item the copy is made from never
+    /// counts, even when it is a file of the shelf's own. Null when the copy failed; nothing is left behind then.
     /// </summary>
     public async Task<ShelfItem?> AddCopy(string source, string name)
     {
         IReadOnlyList<ShelfItem> added = [];
         await Run(() =>
         {
+            string from = Normal(source);
+            if (Already(new ShelfEntry(ShelfKind.Copy, name, source), [.. rows.Where(r => !Same(Normal(r.Path), from))], byPath: false) is { } same)
+            {
+                // That copy is on the shelf already; its path is that item, so this brings it to the front.
+                added = AddAll([new ShelfEntry(ShelfKind.Copy, same.Name, same.Path)]);
+                return;
+            }
+
             string unique = Unique(SafeName(name), rows.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase));
             string copy = IntoSlot(unique, target =>
             {
                 File.Copy(source, target);
                 return true;
             })!;
-            added = AddAll([new ShelfEntry(ShelfKind.Copy, unique, copy)]);
+            added = AddAll([new ShelfEntry(ShelfKind.Copy, unique, copy)], refuseDuplicates: false);
         });
         return added.Count > 0 ? added[0] : null;
     }
@@ -308,14 +325,17 @@ public sealed class ShelfStore : IShelf
 
     public string? PathOf(string name) => Items.FirstOrDefault(i => Same(i.Name, name))?.Path;
 
-    /// <summary>A text file on the shelf as content. Replaces an item of the same name. Queued; returns at once.</summary>
+    /// <summary>
+    /// A text file on the shelf as content. Replaces an item of the same name, and is an item of that name even when
+    /// another item holds the same bytes, so the tool's undo removes what it made. Queued; returns at once.
+    /// </summary>
     public void CreateFile(string name, string content)
     {
         var bytes = System.Text.Encoding.UTF8.GetBytes(content);
         Run(() =>
         {
             RemoveAll(rows.Where(r => Same(r.Name, name)).Select(r => r.Id).ToHashSet());
-            AddAll([new ShelfEntry(ShelfKind.Content, name, Content: bytes)]);
+            AddAll([new ShelfEntry(ShelfKind.Content, name, Content: bytes)], refuseDuplicates: false);
         });
     }
 
@@ -668,16 +688,35 @@ public sealed class ShelfStore : IShelf
         transaction.Commit();
     }
 
-    private List<ShelfItem> AddAll(IReadOnlyList<ShelfEntry> entries)
+    private List<ShelfItem> AddAll(IReadOnlyList<ShelfEntry> entries, bool refuseDuplicates = true)
     {
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
-        var now = DateTimeOffset.UtcNow;
+        // The shelf is ordered by this time, so a tile brought to the front must not share a millisecond with the one before.
+        var now = DateTimeOffset.FromUnixTimeMilliseconds(Math.Max(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), rows.Count == 0 ? 0 : rows.Max(r => r.Added.ToUnixTimeMilliseconds()) + 1));
         var taken = rows.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var added = new List<ShelfItem>();
         using var connection = db.Open(Feature, Schema);
         using var transaction = connection.BeginTransaction();
         foreach (var entry in entries)
         {
+            if (refuseDuplicates && Already(entry, [.. added, .. rows]) is { } same)
+            {
+                // The same file again: its tile comes to the front instead of a second one.
+                Forget(entry);
+                if (!added.Contains(same))
+                {
+                    using var bump = connection.CreateCommand();
+                    bump.CommandText = "UPDATE shelf_items SET added = $added WHERE id = $id";
+                    bump.Parameters.AddWithValue("$added", now.ToUnixTimeMilliseconds());
+                    bump.Parameters.AddWithValue("$id", same.Id);
+                    bump.ExecuteNonQuery();
+                    added.Add(Probe(same with { Added = now }));
+                }
+
+                log?.Invoke($"shelf: {same.Name} is on the shelf already, brought to the front");
+                continue;
+            }
+
             string name = Unique(entry.Kind == ShelfKind.Reference ? entry.Name : SafeName(entry.Name), taken);
             string path;
             try
@@ -697,6 +736,7 @@ public sealed class ShelfStore : IShelf
             }
 
             taken.Add(name);
+            Claim(Path.GetDirectoryName(path));
             using var insert = connection.CreateCommand();
             insert.CommandText = "INSERT INTO shelf_items(name, path, kind, added) VALUES ($name, $path, $kind, $added) RETURNING id";
             insert.Parameters.AddWithValue("$name", name);
@@ -708,9 +748,108 @@ public sealed class ShelfStore : IShelf
 
         transaction.Commit();
         added.Reverse();
+        rows.RemoveAll(r => added.Any(a => a.Id == r.Id));
         rows.InsertRange(0, added);
         log?.Invoke($"shelf: added {string.Join(", ", added.Select(i => $"{i.Name} ({i.Kind})"))} in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
         return added;
+    }
+
+    /// <summary>
+    /// The item that already holds what <paramref name="entry"/> brings, or null. A path is one file: an entry that
+    /// would sit at an item's path (a reference, or a shelf file dropped back) is that item, ignoring case. A file the
+    /// shelf keeps itself (a copy or content) is also the same as one of the shelf's own files with its name, or that
+    /// name made unique, and its size and bytes; <paramref name="byPath"/> false asks that alone. Folders the shelf
+    /// keeps are compared by path only.
+    /// </summary>
+    private ShelfItem? Already(ShelfEntry entry, IReadOnlyList<ShelfItem> items, bool byPath = true)
+    {
+        if (byPath && entry.Path is { } at && (entry.Kind != ShelfKind.Copy || IsUnder(at, Folder)))
+        {
+            string path = Normal(at);
+            if (items.FirstOrDefault(i => Same(Normal(i.Path), path)) is { } here)
+            {
+                return here;
+            }
+        }
+
+        if (entry.Kind == ShelfKind.Reference)
+        {
+            return null;
+        }
+
+        try
+        {
+            long size = entry.Content?.Length ?? (File.Exists(entry.Path) ? new FileInfo(entry.Path!).Length : -1);
+            string name = SafeName(entry.Name);
+            byte[]? hash = null;
+            foreach (var item in items.Where(i => i.Kind != ShelfKind.Reference && SameName(i.Name, name) && File.Exists(i.Path)))
+            {
+                if (new FileInfo(item.Path).Length != size)
+                {
+                    continue;
+                }
+
+                hash ??= entry.Content is { } bytes ? SHA256.HashData(bytes) : HashOf(entry.Path!);
+                if (hash.AsSpan().SequenceEqual(HashOf(item.Path)))
+                {
+                    return item;
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // A file that cannot be read is taken as new.
+        }
+
+        return null;
+
+        static byte[] HashOf(string path)
+        {
+            using var file = File.OpenRead(path);
+            return SHA256.HashData(file);
+        }
+    }
+
+    /// <summary>
+    /// A duplicate's own folder goes again, and only when <see cref="Slot"/> made it in this process and no item has
+    /// taken it: a removed item's folder stays until the next process, as every removed item's does.
+    /// </summary>
+    private void Forget(ShelfEntry entry)
+    {
+        if (entry.Path is { } path && OwnSlot(Folder, path) is { } slot && Claim(slot))
+        {
+            TryDelete(slot);
+        }
+    }
+
+    /// <summary>The folder is an item's, or gone, from now on; true when it was one <see cref="Slot"/> made that nothing had taken.</summary>
+    private bool Claim(string? slot)
+    {
+        lock (unclaimed)
+        {
+            return slot is not null && unclaimed.Remove(slot);
+        }
+    }
+
+    /// <summary>The item's name is <paramref name="name"/>, or the "name (2).ext" form <see cref="Unique"/> makes of it.</summary>
+    private static bool SameName(string item, string name)
+    {
+        string stem = Path.GetFileNameWithoutExtension(name), ext = Path.GetExtension(name);
+        return Same(item, name) || (item.Length > stem.Length + ext.Length + 3
+            && item.StartsWith(stem + " (", StringComparison.OrdinalIgnoreCase) && item.EndsWith(")" + ext, StringComparison.OrdinalIgnoreCase)
+            && int.TryParse(item[(stem.Length + 2)..^(ext.Length + 1)], out _));
+    }
+
+    private static string Normal(string path)
+    {
+        try
+        {
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return path;
+        }
     }
 
     /// <summary>Marks the rows removed. Their files stay until the next process sweeps them.</summary>
@@ -742,6 +881,11 @@ public sealed class ShelfStore : IShelf
     {
         string slot = Path.Combine(Folder, Guid.NewGuid().ToString("N")[..12]);
         Directory.CreateDirectory(slot);
+        lock (unclaimed)
+        {
+            unclaimed.Add(slot);
+        }
+
         return slot;
     }
 

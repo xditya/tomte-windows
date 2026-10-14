@@ -11,8 +11,8 @@ namespace Tomte.Shell;
 /// the request went, a line of progress or trouble, the answer as it streams, the size question's choices and the
 /// result files, which a press and drag takes out of the island through the shelf's own drag. Text is the text
 /// renderer's; only a run that changed is drawn again. It fades in with the shape and goes when the island leaves
-/// the Palette state (Esc, or the island retracting once nothing is in progress), which also ends the request and
-/// answers an open size question with cancel. While the question is open the island stays out until it is answered.
+/// the Palette state, which also ends the request and answers an open size question with cancel. The answer scrolls
+/// with the wheel when it is longer than its band.
 /// </summary>
 internal sealed class DropResultView
 {
@@ -22,9 +22,10 @@ internal sealed class DropResultView
     private readonly TextRenderer text;
     private readonly Action<string>? log;
     private readonly ContainerVisual root;
-    private readonly List<TextVisual> slots = [];
-    private readonly TextVisual body;
+    private readonly List<TextVisual> slots = [], runs = [];
+    private readonly ContainerVisual band, scrolled;
     private readonly float width, maxHeight;
+    private float scroll;
     private Parts? shapes;
     private string shapesKey = "";
     private DropResultLayout? layout;
@@ -44,10 +45,16 @@ internal sealed class DropResultView
         root = island.Compositor.CreateContainerVisual();
         root.Offset = new Vector3(-width / 2, 0, 0);
         root.Opacity = 0;
-        body = text.Create(root);
+        // The answer's runs sit in one container clipped to the answer's band and moved by the scroll.
+        band = island.Compositor.CreateContainerVisual();
+        band.Clip = island.Compositor.CreateInsetClip();
+        scrolled = island.Compositor.CreateContainerVisual();
+        band.Children.InsertAtTop(scrolled);
+        root.Children.InsertAtTop(band);
         island.Dips.Children.InsertAtTop(root);
         island.ContentReady += FadeIn;
         island.Pressed += OnPressed;
+        island.Wheel += OnWheel;
         triggers.Machine.Changed += OnState;
     }
 
@@ -89,13 +96,25 @@ internal sealed class DropResultView
             slots[i].Show(next.Slots[i]);
         }
 
-        if (next.Body is { } at)
+        while (runs.Count < next.Body.Count)
         {
-            body.Show(at.Run, at.At);
+            runs.Add(text.Create(scrolled));
         }
-        else
+
+        while (runs.Count > next.Body.Count)
         {
-            body.Show(new Tomte.Core.Text.TextRun("", DropResultLayout.BodyStyle, 0), Vector2.Zero);
+            runs[^1].Dispose();
+            runs.RemoveAt(runs.Count - 1);
+        }
+
+        band.Offset = new Vector3(next.Band.X, next.Band.Y, 0);
+        band.Size = new Vector2(next.Band.Width, next.Band.Height);
+        // Where the user left it, as far as the answer now allows; a new answer starts at its top.
+        scroll = Math.Min(scroll, next.MaxScroll);
+        scrolled.Offset = new Vector3(0, -scroll, 0);
+        for (int i = 0; i < next.Body.Count; i++)
+        {
+            runs[i].Show(next.Body[i].Run, next.Body[i].At);
         }
 
         Shapes(next, result);
@@ -153,6 +172,28 @@ internal sealed class DropResultView
         }
     }
 
+    // The wheel over the answer scrolls it, three lines a notch.
+    private void OnWheel(Vector2 point, int delta)
+    {
+        if (!Open || layout is null || triggers.Machine.State != IslandState.Palette)
+        {
+            return;
+        }
+
+        var local = point + new Vector2(width / 2, 0);
+        if (!layout.Band.Contains(local.X, local.Y))
+        {
+            return;
+        }
+
+        scroll = layout.Scrolled(scroll, delta);
+        scrolled.Offset = new Vector3(0, -scroll, 0);
+        foreach (var run in runs)
+        {
+            run.Refresh();
+        }
+    }
+
     private void FadeIn()
     {
         if (fadeInPending && Open)
@@ -173,6 +214,7 @@ internal sealed class DropResultView
         triggers.Machine.Changed -= OnState;
         island.ContentReady -= FadeIn;
         island.Pressed -= OnPressed;
+        island.Wheel -= OnWheel;
         // Out with the shape: the content fades over 0.1 s, then goes; a timer, because a sleeping display finishes no animation.
         root.StartAnimation("Opacity", PanelHost.Fade(island.Compositor, 0, PanelHost.FadeOutMs));
         PanelHost.AfterFadeOut(island, Dispose).Start();
@@ -182,12 +224,13 @@ internal sealed class DropResultView
     private void Dispose()
     {
         shapes?.Dispose();
-        foreach (var slot in slots)
+        foreach (var visual in slots.Concat(runs))
         {
-            slot.Dispose();
+            visual.Dispose();
         }
 
-        body.Dispose();
+        scrolled.Dispose();
+        band.Dispose();
         island.Dips.Children.Remove(root);
         root.Dispose();
     }

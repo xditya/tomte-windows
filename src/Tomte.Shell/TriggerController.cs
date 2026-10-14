@@ -333,6 +333,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case InputThread.MsgDragEnd:
                 EndDrag();
                 return true;
+            case InputThread.MsgPressOutside:
+                if (RetractionRules.DismissedByClickOutside(machine.State, activity))
+                {
+                    log?.Invoke("zone result: pressed outside, dismissed");
+                    Hide();
+                }
+
+                return true;
             case InputThread.MsgHotkey:
                 OnHotkey((int)wParam);
                 return true;
@@ -462,6 +470,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
             {
                 PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
             }
+        }
+
+        if (activity.HasFlag(IslandActivity.Result))
+        {
+            InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
         }
     }
 
@@ -908,7 +921,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         // Esc as a global hotkey only for the states the user opened on purpose. Compact comes from a push, an event,
         // peek or the first-run hint, where swallowing the user's Esc in their own app would be a surprise. Once the
         // palette and the scratchpad activate the window they receive WM_KEYDOWN and this hotkey goes.
-        InputThread.SetEscape(state is IslandState.Panels or IslandState.Palette);
+        InputThread.SetEscape(RetractionRules.TakesEscape(state, activity, pointerInside));
     }
 
     /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
@@ -922,28 +935,27 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// A drop zone's panel: the Palette state at this height, held open while its request runs. Once it is done the
-    /// island retracts as usual; when the pointer is away by then, <paramref name="done"/> is raised as an event, which
-    /// shows once the island has retracted.
+    /// A drop zone's panel: the Palette state at this height, held open while its request runs, and once it is done
+    /// held by its result, which was paid for, until the user dismisses it: Esc while the pointer is on the island, the
+    /// palette hotkey, a press outside the island or another state. The pointer being away never retracts it. <paramref name="hold"/> false leaves a panel
+    /// that holds nothing of its own (Ask about it, which hands over to the typing palette) to the usual rules.
     /// </summary>
-    internal void ZonePalette(double height, bool busy, string? done = null)
+    internal void ZonePalette(double height, bool busy, bool hold = true)
     {
-        bool away = !pointerInside;
-        activity = busy ? activity | IslandActivity.AiTask : activity & ~IslandActivity.AiTask;
         if (machine.State == IslandState.ShelfDrop || (machine.State == IslandState.Palette && height != zoneHeight))
         {
             zoneHeight = height;
             Go(IslandState.Palette, (PanelSize.PaletteWidth, height));
         }
 
-        if (!busy && away && machine.State == IslandState.Palette)
+        if (machine.State == IslandState.Palette)
         {
-            if (done is not null)
+            var was = activity;
+            activity = (activity & ~(IslandActivity.AiTask | IslandActivity.Result)) | (busy ? IslandActivity.AiTask : hold ? IslandActivity.Result : IslandActivity.None);
+            if ((was ^ activity).HasFlag(IslandActivity.Result))
             {
-                Raise(new IslandEvent(done, DateTimeOffset.Now));
+                InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, pointerInside));
             }
-
-            PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
         }
     }
 
