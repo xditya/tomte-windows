@@ -30,6 +30,8 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
     private View? view;
     private int showing;
     private bool drooped;
+    private int lastCell = -1;
+    private long lastPressMs;
 
     /// <summary>The current showing's load: tiles, then icons. The debug driver waits on it to measure.</summary>
     public Task Ready { get; private set; } = Task.CompletedTask;
@@ -49,6 +51,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         view?.Dispose();
         view = null;
         drooped = false;
+        lastCell = -1;
     }
 
     public void Press(Vector2 point)
@@ -57,6 +60,15 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         {
             return;
         }
+
+        // A double-click starts a tile once: the second press of it within the double-click time is ignored.
+        long now = Environment.TickCount64;
+        if (cell == lastCell && now - lastPressMs < Windows.Win32.PInvoke.GetDoubleClickTime())
+        {
+            return;
+        }
+
+        (lastCell, lastPressMs) = (cell, now);
 
         if (cell == view.Shown)
         {
@@ -74,7 +86,9 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
     {
     }
 
-    private static string Source(Tile tile) => ShortcutTarget.WebAddress(tile.Row.Target) is null ? tile.Row.Target : Web;
+    // A web page always shows the browser's icon (a .url file's own icon file could be on a server); blocked and
+    // missing tiles show none; anything else shows the icon of the local path the target names.
+    private static string? Source(Tile tile) => tile.Target.Kind == ShortcutKind.Url ? Web : tile.Target.Icon;
 
     private static ShellImage? Extract(string source, int pixels) => source == Web ? ShellIcon.ForWeb(pixels) : ShellIcon.For(source, pixels);
 
@@ -97,7 +111,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
 
             int pixels = ShortcutGrid.IconPixels(scale);
             var shown = view!.Tiles;
-            var wanted = shown.Where(t => !t.Target.Missing).Select(t => (Source: Source(t), Pixels: pixels)).Distinct().Where(k => !icons.ContainsKey(k)).ToList();
+            var wanted = shown.Select(Source).OfType<string>().Select(source => (Source: source, Pixels: pixels)).Distinct().Where(k => !icons.ContainsKey(k)).ToList();
             var extracted = await Task.Run(() => wanted.Select(k => (Key: k, Image: Extract(k.Source, k.Pixels))).ToList());
             foreach (var (key, image) in extracted)
             {
@@ -109,7 +123,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
                 return;
             }
 
-            var images = shown.Select(t => t.Target.Missing ? null : icons.GetValueOrDefault((Source(t), pixels))).ToList();
+            var images = shown.Select(t => Source(t) is { } source ? icons.GetValueOrDefault((source, pixels)) : null).ToList();
             if (images.All(image => image is null))
             {
                 // No icon to show: no device either.

@@ -28,6 +28,7 @@ ICompositorInterop
 ICompositionDrawingSurfaceInterop
 IDXGISurface
 ID3D11Resource
+GetDoubleClickTime
 WM_CLOSE
 WM_DESTROY
 WM_DPICHANGED
