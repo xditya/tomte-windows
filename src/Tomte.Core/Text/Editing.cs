@@ -99,6 +99,37 @@ public sealed class PaintGate
     }
 }
 
+/// <summary>Text as the island's text boxes hold it.</summary>
+public static class EditorText
+{
+    /// <summary>Every line break as one '\n': CR LF, a lone CR and RichEdit's soft break (VT) alike.</summary>
+    public static string Lines(string text) =>
+        text.IndexOf('\r') < 0 && text.IndexOf('\v') < 0 ? text : text.Replace("\r\n", "\n").Replace('\r', '\n').Replace('\v', '\n');
+
+    /// <summary>
+    /// A character typed before the note could be read, kept to go in once it can: Backspace takes the last one back,
+    /// Enter is a new line, other control characters (Ctrl shortcuts) are not text and are left out.
+    /// </summary>
+    public static void Keep(System.Text.StringBuilder kept, char typed)
+    {
+        if (typed == '\b')
+        {
+            if (kept.Length > 0)
+            {
+                kept.Length--;
+            }
+        }
+        else if (typed is '\r' or '\n')
+        {
+            kept.Append('\n');
+        }
+        else if (typed == '\t' || !char.IsControl(typed))
+        {
+            kept.Append(typed);
+        }
+    }
+}
+
 /// <summary>
 /// Keys the island takes for itself. Alt+F4 always hides it, whatever has the keys: the island's window would close
 /// and Tomte with it. Esc hides it only while a text box has the keys; otherwise it is a hotkey, or not the island's.
@@ -202,30 +233,34 @@ public readonly record struct Splice(int Start, int Length, string Text)
 /// </summary>
 public sealed class NoteBinding(ScratchpadNote note)
 {
-    private string shown = "";
+    // The note's text as last seen, and the same with every line break one '\n', as the editor holds it.
+    private string basis = "", shown = "";
 
-    /// <summary>The note as the editor last showed it.</summary>
+    /// <summary>The note as the editor last showed it, every line break one '\n'.</summary>
     public string Shown => shown;
 
-    /// <summary>The note's text and caret for an editor that is about to show it.</summary>
+    /// <summary>The note's text and caret for an editor that is about to show it, every line break one '\n'.</summary>
     public (string Text, int Caret) Open()
     {
-        shown = note.Text;
-        return (shown, note.Caret);
+        basis = note.Text;
+        shown = EditorText.Lines(basis);
+        int caret = Math.Min(note.Caret, basis.Length);
+        return (shown, EditorText.Lines(basis[..caret]).Length);
     }
 
     /// <summary>What the editor must replace to show the note as it is now; null when it already does.</summary>
     public Splice? Pull()
     {
         string now = note.Text;
-        if (ReferenceEquals(now, shown) || now == shown)
+        if (ReferenceEquals(now, basis) || now == basis)
         {
             return null;
         }
 
-        var change = Splice.Between(shown, now);
-        shown = now;
-        return change;
+        string lines = EditorText.Lines(now);
+        var change = Splice.Between(shown, lines);
+        (basis, shown) = (now, lines);
+        return change.IsEmpty ? null : change;
     }
 
     /// <summary>
@@ -235,15 +270,16 @@ public sealed class NoteBinding(ScratchpadNote note)
     public string? Typed(string text, int caret)
     {
         string? fixedText = null;
-        while (!note.TryEdit(shown, text, caret))
+        while (!note.TryEdit(basis, text, caret))
         {
-            string theirs = note.Text;
+            string now = note.Text;
+            string theirs = EditorText.Lines(now);
             string merged = Merge(shown, text, theirs);
             caret = Splice.Between(text, merged).Map(caret);
-            (shown, text, fixedText) = (theirs, merged, merged);
+            (basis, shown, text, fixedText) = (now, theirs, merged, merged);
         }
 
-        shown = text;
+        (basis, shown) = (text, text);
         return fixedText;
     }
 

@@ -1,5 +1,7 @@
 using System.Numerics;
+using System.Text;
 using Tomte.Core;
+using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
 
@@ -9,14 +11,20 @@ namespace Tomte.Shell;
 /// The Scratchpad tab: a heading, the card the note is typed into and a footer, as composition visuals in DIPs laid
 /// out by <see cref="ScratchpadPanelLayout"/>. The card holds a text box bound to the note (<see cref="NoteEditor"/>);
 /// a click into it, or the scratchpad hotkey, gives it the keys. The note loads on a worker, so <see cref="Shown"/>
-/// returns at once and keys typed before the first load go in once it lands. Leaving the tab saves what is unsaved
-/// and releases the text box.
+/// returns at once and what is typed before the first load goes in once it lands. A load that fails says so in the
+/// card and keeps what was typed for the next show that can read the note. Leaving the tab saves what is unsaved and
+/// releases the text box.
 /// </summary>
 internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, TextRenderer text, TypingFocus focus, Action<string>? log) : IPanel
 {
     private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
 
     private readonly List<TextVisual> texts = [];
+
+    // Typed while the note could not be read yet; kept across shows until it can be.
+    private readonly StringBuilder kept = new();
+    private ScratchpadPanelLayout? layout;
+    private ContainerVisual? host;
     private ShapeVisual? frame;
     private EditorView? editor;
     private NoteEditor? bound;
@@ -26,14 +34,15 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
-        var layout = new ScratchpadPanelLayout(size);
+        layout = new ScratchpadPanelLayout(size);
+        host = body;
         frame = island.Compositor.CreateShapeVisual();
         frame.Size = size;
         body.Children.InsertAtTop(frame);
         DrawFrame(body, layout);
         editor = focus.Create(body, multiline: true, ScratchpadPanelLayout.NoteSize);
         editor.Place(layout.Editor, island.Scale);
-        bound = new NoteEditor(editor, note, island.Queue);
+        bound = new NoteEditor(editor, note, island.Queue, kept);
         Load();
     }
 
@@ -49,7 +58,7 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
 
         texts.Clear();
         frame?.Dispose();
-        (frame, editor, bound) = (null, null, null);
+        (frame, editor, bound, layout, host) = (null, null, null, null, null);
         Observe(note.FlushAsync(), "save the note");
     }
 
@@ -85,7 +94,15 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
         }
         catch (Exception e)
         {
-            log?.Invoke($"scratchpad panel: the note could not be loaded ({e.GetType().Name})");
+            log?.Invoke($"scratchpad panel: the note could not be loaded ({e.GetType().Name}); {kept.Length} typed characters kept");
+            if (shownAs == generation && host is not null && layout is not null)
+            {
+                var notice = text.Create(host);
+                texts.Add(notice);
+                var box = layout.Editor;
+                notice.Show(ScratchpadPanelLayout.Unreadable, TextStyle.Secondary with { Color = TextStyle.WarnColor }, new System.Drawing.RectangleF(box.X, box.Y, box.Width, 18));
+            }
+
             return;
         }
 

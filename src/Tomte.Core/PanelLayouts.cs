@@ -151,6 +151,9 @@ public sealed class ScratchpadPanelLayout(Vector2 body)
     /// <summary>The note's text size in DIPs.</summary>
     public const float NoteSize = 13;
 
+    /// <summary>Said in the card when the note cannot be read; what is typed then waits for it.</summary>
+    public const string Unreadable = "The note could not be opened. What you type is kept and goes in once it opens.";
+
     /// <summary>The text box the note is typed in: the card less its insets. Its text scrolls inside it.</summary>
     public RectangleF Editor => RectangleF.FromLTRB(Note.X + TextInset, Note.Y + 10, Note.Right - TextInset, Note.Bottom - 10);
 

@@ -178,7 +178,7 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
             services->TxGetText(&text);
             try
             {
-                return (text.ToString() ?? "").Replace('\r', '\n').Replace('\v', '\n');
+                return EditorText.Lines(text.ToString() ?? "");
             }
             finally
             {
@@ -347,7 +347,8 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
     /// <summary>Timers the services asked for and not yet killed; none while the editor is blurred or gone.</summary>
     public int Timers => timers.Count;
 
-    private static string ToServices(string text) => text.Replace("\r\n", "\n").Replace('\n', '\r');
+    // One line break, one character, as the note binding counts them; RichEdit's own break is CR.
+    private static string ToServices(string text) => EditorText.Lines(text).Replace('\n', '\r');
 
     private void StopTimers()
     {

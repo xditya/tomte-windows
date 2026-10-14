@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Text;
 using Tomte.Core;
 using Tomte.Core.Storage;
 using Tomte.Core.Text;
@@ -106,7 +107,13 @@ internal static unsafe class Typing
         Paints(queue, graphics);
         Undo(queue, graphics);
         Pump();
+        Kept(queue, graphics, dir);
+        Pump();
         Check("msftedit.dll freed after the boxes are disposed", !Msftedit.Loaded);
+
+        // Last, because it keeps the module for the rest of the process by design.
+        Msftedit.Acquire();
+        Check("a box whose services are still held keeps msftedit.dll loaded", !Msftedit.Release(servicesLeft: 1) && Msftedit.Loaded);
 
         graphics.Dispose();
         d2d->Release();
@@ -163,16 +170,19 @@ internal static unsafe class Typing
         note.LoadAsync().GetAwaiter().GetResult();
         note.Text = "Milk";
         using var box = Box(queue, graphics, new RectangleF(0, 0, 468, 220), 1.25);
-        using var binding = new NoteEditor(box, note, queue);
+        using var binding = new NoteEditor(box, note, queue, new StringBuilder());
         box.Focus();
         box.Services.Selection = (4, 4);
         var keys = new Keys(box);
         keys.Type(", eggs");
-        Check("typing goes to the note", note.Text == "Milk, eggs", Esc(note.Text));
+        // The box's change reaches the note on the next turn, never inside the services' own notification.
+        Pump();
+        Check("typing goes to the note on the next turn", note.Text == "Milk, eggs", Esc(note.Text));
 
         // The rambler appends on a worker; its Changed is queued to this thread, and the next key comes before that runs.
         note.AppendAsync("Call the dentist", new DateTime(2026, 10, 14, 9, 30, 0)).GetAwaiter().GetResult();
         keys.Type("!");
+        Pump();
         Check("a rambler note that landed before the key is kept, the key goes where the caret was",
             note.Text.StartsWith("Milk, eggs!", StringComparison.Ordinal) && note.Text.Contains("Call the dentist") && box.Services.Text == note.Text, Esc(note.Text));
 
@@ -200,8 +210,38 @@ internal static unsafe class Typing
         note.Text = "Rewritten by the tool";
         Pump();
         Check("a whole-text write reaches the box", box.Services.Text == "Rewritten by the tool", Esc(box.Services.Text));
+        // A note with Windows line breaks: the box and the binding count each break as one character.
+        note.Text = "one\r\ntwo";
+        Pump();
+        note.Text = "one\r\ntwo\r\nthree";
+        Pump();
+        Check("CR LF in the note: the box shows one break per line and follows a change to it", box.Services.Text == "one\ntwo\nthree", Esc(box.Services.Text));
+        box.Services.Selection = (3, 3);
+        keys.Type("!");
+        Pump();
+        Check("a key after it lands where the caret is", note.Text == "one!\ntwo\nthree", Esc(note.Text));
         note.FlushAsync().GetAwaiter().GetResult();
         Log($"note in the store: \"{Esc(note.Text)}\"");
+    }
+
+    // Typed before the note could be read: kept, and in once it opens, Backspace included.
+    private static void Kept(Windows.System.DispatcherQueue queue, CompositionGraphicsDevice graphics, string dir)
+    {
+        var note = new ScratchpadNote(new TomteDb(Path.Combine(dir, "note-db", "kept.db")));
+        var kept = new StringBuilder();
+        using var box = Box(queue, graphics, new RectangleF(0, 0, 468, 220), 1.5);
+        using (var early = new NoteEditor(box, note, queue, kept))
+        {
+            box.Focus();
+            new Keys(box).Type("buy milkk\b");
+            Check("before the note is read nothing reaches the box, the keys are kept", box.Services.Text == "" && kept.ToString() == "buy milk", $"box \"{Esc(box.Services.Text)}\", kept \"{kept}\"");
+        }
+
+        // The panel shows again later and the note can be read now.
+        note.LoadAsync().GetAwaiter().GetResult();
+        using var later = new NoteEditor(box, note, queue, kept);
+        Pump();
+        Check("what was kept goes in once the note opens", note.Text == "buy milk" && kept.Length == 0, Esc(note.Text));
     }
 
     // Many changes in one turn paint once, in the next turn.
