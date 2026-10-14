@@ -77,4 +77,12 @@ public static class PanelSpace
 
     public static Vector2 ToBody(Vector2 island, double panelWidth) =>
         new(island.X + (float)panelWidth / 2, island.Y - TabStripHeight);
+
+    /// <summary>
+    /// Whether an island point is on the shape itself: no further than half its width from the centre line,
+    /// and between its top and bottom edges. The window also covers the shadow beside and below the pill and
+    /// a row above it, and a press or a wheel there is nobody's.
+    /// </summary>
+    public static bool OnShape(Vector2 island, in IslandGeometry shape) =>
+        Math.Abs(island.X) <= shape.Width / 2 && island.Y >= 0 && island.Y <= shape.Depth;
 }

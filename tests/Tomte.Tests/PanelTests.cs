@@ -156,4 +156,20 @@ public class PanelTests
         Assert.Equal(new Vector2(0, 0), PanelSpace.ToBody(new Vector2(-190, 42), 380));
         Assert.Equal(new Vector2(380, 98), PanelSpace.ToBody(new Vector2(190, 140), 380));
     }
+
+    [Theory]
+    // The Media panel, 380 x 140: its middle, its edges and its corners are on it.
+    [InlineData(0, 70, true)]
+    [InlineData(-190, 0, true)]
+    [InlineData(190, 140, true)]
+    // The shadow band beside the panel, and the band below it.
+    [InlineData(200, 70, false)]
+    [InlineData(-196, 120, false)]
+    [InlineData(0, 150, false)]
+    // The row above the pill, over the gap to the screen edge.
+    [InlineData(0, -1, false)]
+    public void OnlyThePillItselfTakesPressesAndTheWheel(float x, float y, bool expected)
+    {
+        Assert.Equal(expected, PanelSpace.OnShape(new Vector2(x, y), IslandGeometry.Panel(380, 140)));
+    }
 }

@@ -809,6 +809,31 @@ internal sealed unsafe class IslandWindow : IDisposable
         return ToIsland(point.X, point.Y);
     }
 
+    /// <summary>
+    /// A press or a wheel, handed on only when it lands on the shape as drawn now. The window also covers the
+    /// pill's shadow and a row above it, so nothing that listens ever sees a point there.
+    /// </summary>
+    private void Pointer(uint message, nuint wParam, nint lParam)
+    {
+        int x = (short)(lParam & 0xFFFF), y = (short)((lParam >> 16) & 0xFFFF);
+        bool wheel = message == PInvoke.WM_MOUSEWHEEL;
+        // Unlike the button messages, the wheel's point is in screen pixels.
+        var at = wheel ? ScreenToIsland(x, y) : ToIsland(x, y);
+        if (!PanelSpace.OnShape(at, Current))
+        {
+            return;
+        }
+
+        if (wheel)
+        {
+            Wheel?.Invoke(at, (short)((wParam >> 16) & 0xFFFF));
+        }
+        else
+        {
+            Pressed?.Invoke(at);
+        }
+    }
+
     /// <summary>Pointer input for whoever listens; like every handler here, it must not throw into the caller.</summary>
     private static LRESULT Guarded(Action<IslandWindow> action)
     {
@@ -853,12 +878,9 @@ internal sealed unsafe class IslandWindow : IDisposable
             case PInvoke.WM_MOUSEACTIVATE:
                 return new LRESULT((nint)PInvoke.MA_NOACTIVATE);
             case PInvoke.WM_LBUTTONDOWN:
-                // The window never activates, but the mouse still reaches it.
-                return Guarded(i => i.Pressed?.Invoke(i.ToIsland((short)(lParam.Value & 0xFFFF), (short)((lParam.Value >> 16) & 0xFFFF))));
             case PInvoke.WM_MOUSEWHEEL:
-                // Unlike the button messages, the wheel's point is in screen pixels.
-                return Guarded(i => i.Wheel?.Invoke(
-                    i.ScreenToIsland((short)(lParam.Value & 0xFFFF), (short)((lParam.Value >> 16) & 0xFFFF)), (short)((wParam.Value >> 16) & 0xFFFF)));
+                // The window never activates, but the mouse still reaches it.
+                return Guarded(i => i.Pointer(message, wParam.Value, lParam.Value));
             case PInvoke.WM_DPICHANGED:
                 return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
             case PInvoke.WM_DISPLAYCHANGE:
