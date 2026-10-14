@@ -3,6 +3,7 @@ using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Xunit;
 
@@ -216,13 +217,26 @@ public sealed class PaletteQuestionTests : IDisposable
     }
 
     [Fact]
+    public void AButtonsIdNamesItsQuestionSoAPressHeldIntoTheNextOneAnswersNothing()
+    {
+        string run = PaletteLayout.ButtonId(ConfirmButton.Run, 1);
+        Assert.Equal(ConfirmButton.Run, PaletteLayout.ButtonFor(run, 1));
+        // The next question opened while Run was held down: its Run has another id, and the old one answers nothing.
+        Assert.NotEqual(run, PaletteLayout.ButtonId(ConfirmButton.Run, 2));
+        Assert.Null(PaletteLayout.ButtonFor(run, 2));
+        Assert.Equal(ConfirmButton.Cancel, PaletteLayout.ButtonFor(PaletteLayout.ButtonId(ConfirmButton.Cancel, 2), 2));
+        // Another target's id is no button at all.
+        Assert.Null(PaletteLayout.ButtonFor("send", 1));
+        Assert.Null(PaletteLayout.ButtonFor("history", 1));
+    }
+
+    [Fact]
     public void TheQuestionSitsAboveTheFooterWithRunLastAndAlwaysAllowOnlyWhereOffered()
     {
         var plain = new PaletteLayout(640, mascot: true);
         var confirm = new Confirmation("Turn dark mode on", Confirmation.LineFor(ActionTier.ExternalEffect, ConfirmKeys.Prompt), AlwaysAllow: true, Destructive: false);
         var layout = new PaletteLayout(640, mascot: true, confirm: confirm);
         Assert.Null(plain.Ask(150));
-        Assert.Null(plain.ButtonAt(new Vector2(600, 120), 150));
 
         // The card takes its own room: the palette grows by it, it starts under the chips while there is no answer,
         // and an answer's band ends a gap above it.
@@ -244,11 +258,9 @@ public sealed class PaletteQuestionTests : IDisposable
         Assert.Equal("Turn dark mode on", ask.Summary.Text);
         Assert.Equal("Reaches outside Tomte · Enter runs it, Esc cancels", ask.Line.Text);
 
-        var run = ask.Buttons[^1].Box;
-        Assert.Equal(ConfirmButton.Run, layout.ButtonAt(new Vector2(run.X + run.Width / 2, run.Y + run.Height / 2), height));
-        var cancel = ask.Buttons[1].Box;
-        Assert.Equal(ConfirmButton.Cancel, layout.ButtonAt(new Vector2(cancel.X + 1, cancel.Y + 1), height));
-        Assert.Null(layout.ButtonAt(new Vector2(ask.Card.X + 4, ask.Card.Y + 4), height));
+        // The buttons are the host's targets: big enough, inside the card, and none over another.
+        Assert.All(ask.Buttons, b => Assert.True(b.Box.Height >= StateLook.MinTarget && ask.Card.Contains(b.Box)));
+        Assert.True(ask.Buttons[0].Box.Right < ask.Buttons[1].Box.X && ask.Buttons[1].Box.Right < ask.Buttons[2].Box.X);
 
         // A tier that never offers it shows Cancel and Run only; by voice the keys are the chord.
         var power = new PaletteLayout(640, mascot: true, confirm: confirm with { AlwaysAllow = false, Line = Confirmation.LineFor(ActionTier.Destructive, ConfirmKeys.Voice) });

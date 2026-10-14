@@ -269,12 +269,19 @@ internal static unsafe partial class Program
             new("shortcuts", Panel(PanelSize.Shortcuts), c => Shortcuts(c)),
             new("scratchpad", Panel(PanelSize.Scratchpad), c => Scratchpad(c, "Call Mom\nSubscribe to the newsletter about small tools, the one with the long name that wraps over two lines\nGym 6:00 PM")),
             new("scratchpad-markdown", Panel(PanelSize.Scratchpad), c => Scratchpad(c, MarkdownNote)),
-            new("palette-prompt", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, "What does this error mean?", Chips(false), "Nothing sent", [], 0, 0.03m)),
-            new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, StreamingHeight()), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m)),
+            // Nothing selected, so no Selection chip; the rest off. Send is on for the typed question.
+            new("palette-prompt", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("What does this error mean?", Chips(false), [])), c => Palette(c, "What does this error mean?", Chips(false), "Nothing sent", [], 0, 0.03m)),
+            new("palette-empty", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("", Chips(false), [])), c => Palette(c, "", Chips(false), "Nothing sent", [], 0, 0.03m)),
+            new("palette-chips-some-on", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text", Chips(true, ChipIcon.Selection, ChipIcon.Screenshot), [], sends: SomeOn)), c => Palette(c, "Summarize the selected text", Chips(true, ChipIcon.Selection, ChipIcon.Screenshot), "Nothing sent", [], 0, 0.03m, sends: SomeOn)),
+            new("palette-region", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Which game is this?", RegionChips(), [], sends: RegionOn)), c => Palette(c, "Which game is this?", RegionChips(), "Nothing sent", [], 0, 0.03m, sends: RegionOn)),
+            // Sending: the chips and Send dim.
+            new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), Streaming, sends: SelectionOn)), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m, sending: true, sends: SelectionOn)),
             new("palette-ai-off", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0)),
             new("palette-long-answer-scrolled", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight), c => Palette(c, "How do I fix a stuck Windows update?", Chips(false), "Sent to ollama · llama3.2:3b", Long, 2, 0.04m, scrolled: 0.5f)),
-            new("palette-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, AskHeight(Asking, voice: false)), c => Palette(c, "Open the Tomte repository", Chips(false), "Sending to ollama · llama3.2:3b", Asked, 0, 0.03m, confirm: Asking)),
-            new("palette-voice-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, AskHeight(PowerAsking, voice: true)), c => Palette(c, "Turn the computer off", [], "Sending to ollama · llama3.2:3b", [], 0, 0.01m, confirm: PowerAsking, voice: true)),
+            // A question opens during a send: Run dim while its read guard runs, then ready.
+            new("palette-confirm-waiting", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Open the Tomte repository", Chips(false), Asked, Asking)), c => Palette(c, "Open the Tomte repository", Chips(false), "Sending to ollama · llama3.2:3b", Asked, 0, 0.03m, confirm: Asking, sending: true, run: StateLook.DisabledOpacity)),
+            new("palette-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Open the Tomte repository", Chips(false), Asked, Asking)), c => Palette(c, "Open the Tomte repository", Chips(false), "Sending to ollama · llama3.2:3b", Asked, 0, 0.03m, confirm: Asking, sending: true)),
+            new("palette-voice-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Turn the computer off", [], [], PowerAsking, voice: true)), c => Palette(c, "Turn the computer off", [], "Sending to ollama · llama3.2:3b", [], 0, 0.01m, confirm: PowerAsking, voice: true, sending: true)),
             new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
             new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
             new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
@@ -668,14 +675,21 @@ internal static unsafe partial class Program
     private const string MarkdownNote = "# Saturday\n- [x] Milk and **eggs**\n- [ ] Bread, ~~rye~~ the *sourdough* one from the bakery on the corner, before it sells out at ten\n"
         + "\t- if it is gone, the rye\n## Calls\n1. Dentist `555 0100`, see [the clinic](https://example.com/clinic)\n```\ngit pull --rebase\n```";
 
-    private static (string, bool)[] Chips(bool selection) =>
-    [
-        (selection ? "Selection · \"Tomte is a Windows 11 utility...\"" : "Selection · none", selection),
-        ("Window · notepad · tomte-notes.txt - Notepad", false),
-        ("Screenshot of window", false),
-        ("Shelf · Q3-report.pdf", false),
-        ("Scratchpad", false),
-    ];
+    private static readonly (string Name, ChipIcon Icon)[] ChipNames =
+        [("Selection", ChipIcon.Selection), ("Window", ChipIcon.Window), ("Screenshot", ChipIcon.Screenshot), ("Shelf", ChipIcon.Shelf), ("Note", ChipIcon.Note)];
+
+    // The hotkey palette's chips with the ones in <paramref name="on"/> turned on; with nothing selected the Selection
+    // chip is not shown.
+    private static ChipSpec[] Chips(bool selection, params ChipIcon[] on) =>
+        [.. ChipNames.Skip(selection ? 0 : 1).Select(chip => new ChipSpec(chip.Name, chip.Icon, on.Contains(chip.Icon)))];
+
+    // Circle-to-ask's: the region first and on, then the others.
+    private static ChipSpec[] RegionChips() => [new("Region", ChipIcon.Region, true), .. Chips(true)];
+
+    // The line under the chips for those scenes, as the chips word it.
+    private const string SomeOn = "Sends your question, the text selected in Notepad and a screenshot of Notepad";
+    private const string RegionOn = "Sends your question and the region you circled";
+    private const string SelectionOn = "Sends your question and the text selected in Notepad";
 
     private static readonly (string, TextStyle)[] Streaming =
     [
@@ -703,47 +717,41 @@ internal static unsafe partial class Program
 
     private static readonly Confirmation PowerAsking = new("Shut down the PC", Confirmation.LineFor(Tomte.Core.Device.ActionTier.Destructive, ConfirmKeys.Voice), AlwaysAllow: false, Destructive: true);
 
-    // The palette's height with a question open, from the prompt's own height (the text box's at 150%, or what was
-    // said by voice) and the answer, as the view lays it out.
-    private static double AskHeight(Confirmation confirm, bool voice)
+    // The palette's height for a scene, from the prompt's own height (the text box's at 150%, or what was said by voice),
+    // the chips, the question and the answer, as the view lays it out.
+    private static double PaletteHeight(string prompt, ChipSpec[] chips, (string Text, TextStyle Style)[] answer, Confirmation? confirm = null, bool voice = false, string sends = "")
     {
-        var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true);
+        var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, send: !voice);
         float text;
         if (voice)
         {
-            using var said = TextLayout.Of(new TextRun("Turn the computer off", PaletteLayout.PromptText, first.Editor.Width, PaletteLayout.PromptLines));
+            using var said = TextLayout.Of(new TextRun(prompt, PaletteLayout.PromptText, first.Editor.Width, PaletteLayout.PromptLines));
             text = said.Height;
         }
         else
         {
-            using var probe = Typing.Captured("Open the Tomte repository", PaletteLayout.PromptSize, first.Editor, 1.5, null);
+            using var probe = Typing.Captured(prompt, PaletteLayout.PromptSize, first.Editor, 1.5, null);
             text = (float)(probe.ContentHeight / 1.5);
         }
 
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, voice ? [] : Chips(false), confirm);
-        return layout.Height(voice ? 0 : layout.Answer(Asked).Height);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: !voice, sends);
+        return layout.Height(layout.Answer(answer).Height);
     }
 
-    // The palette's height for the streaming scene, from the prompt's own height at 150% and the answer.
-    private static double StreamingHeight()
-    {
-        var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true);
-        using var probe = Typing.Captured("Summarize the selected text\nin two lines", PaletteLayout.PromptSize, first.Editor, 1.5, null);
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, probe.ContentHeight / 1.5f, Chips(true));
-        return layout.Height(layout.Answer(Streaming).Height);
-    }
-
-    // The palette: the prompt's card with its text box (or the AI-off line), the chips, the answer and the footer, as
-    // the palette view lays them out. A null prompt is a palette with no provider. The answer shows in its band, clipped
-    // there and scrolled to <paramref name="scrolled"/> of its range (1 is the end, where a streaming answer stays).
-    private static void Palette(Canvas c, string? prompt, (string Label, bool On)[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false)
+    // The palette: the prompt's card with its text box and Send (or the AI-off line), "Include" and the chips, the
+    // answer and the footer, as the palette view lays them out. A null prompt is a palette with no provider. The answer
+    // shows in its band, clipped there and scrolled to <paramref name="scrolled"/> of its range (1 is the end, where a
+    // streaming answer stays). In a typed palette the box has the keys. While <paramref name="sending"/> the chips and
+    // Send are dimmed; <paramref name="run"/> is Run's opacity, dim while its read guard runs.
+    private static void Palette(Canvas c, string? prompt, ChipSpec[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false, bool sending = false, float run = 1, string sends = "")
     {
         var origin = new Vector2((float)(-PanelSize.PaletteWidth / 2), 0);
         c.Pill();
         c.Mascot();
         float text = 0;
         TextServices? editor = null;
-        var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true);
+        bool typed = prompt is not null && !voice;
+        var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, send: typed);
         if (prompt is not null && voice)
         {
             // By voice there is no text box: what was said shows in its place.
@@ -757,10 +765,10 @@ internal static unsafe partial class Program
         }
 
         // As the view does it: the prompt's height first, then the box grows to it and the rest follows.
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: typed, sends);
         var card = layout.Prompt;
         c.RoundRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
-        c.StrokeRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x1AFFFFFF);
+        c.Stroke(Offset(card, origin), PaletteLayout.PromptCorner, typed ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine, 1);
         var box = layout.Editor;
         if (prompt is null)
         {
@@ -778,11 +786,42 @@ internal static unsafe partial class Program
             editor.Resize(PixelGrid.Cover(box.Width, c.Scale), PixelGrid.Cover(box.Height, c.Scale), EditorScale.Zoom(c.Scale, TextServices.SystemDpi));
             c.Editor(editor, box, origin);
             editor.Dispose();
+            if (prompt.Length == 0)
+            {
+                c.Text(PaletteLayout.Hint, PaletteLayout.Placeholder, new RectangleF(box.X, card.Y, box.Width, card.Height), origin);
+            }
+
+            // Send, in a visual of its own that dims as one.
+            var send = Offset(layout.Send, origin);
+            c.Layer(PaletteLayout.CanSend(prompt, sending) ? 1 : StateLook.DisabledOpacity);
+            c.RoundRect(send, PaletteLayout.SendCorner, PaletteLayout.SendFill);
+            c.Figures(PaletteGlyphs.Send, new Vector2(send.X + (send.Width - PaletteGlyphs.SendSize) / 2, send.Y + (send.Height - PaletteGlyphs.SendSize) / 2), PaletteLayout.SendInk);
+            c.EndLayer();
         }
-        foreach (var (pill, label) in layout.Chips)
+
+        // The chips' shapes in one layer and their names on top, all dimmed while sending, as the view's chip layer is.
+        float dim = sending ? StateLook.DisabledOpacity : 1;
+        c.Text(layout.IncludeLabel, origin, dim);
+        c.Text(layout.SendsLine, origin, dim);
+        c.Layer(dim);
+        for (int i = 0; i < layout.Chips.Count; i++)
         {
-            c.RoundRect(Offset(pill, origin), PaletteLayout.ChipCorner, label.Style == PaletteLayout.ChipOn ? 0x336FA8FFu : 0x0FFFFFFFu);
-            c.Text(label, origin);
+            var chip = layout.Chips[i];
+            // The view fills and strokes one path, a pixel-wide stroke inside the pill's edges on whole pixels.
+            var (path, corner, stroke) = PaletteLayout.ChipStroke(chip.Box, origin, c.Scale);
+            c.RoundRect(Offset(path, origin), corner, chip.On ? StateLook.CheckedFill : PaletteLayout.ChipFill);
+            c.Stroke(Offset(path, origin), corner, chip.On ? StateLook.CheckedFill : PaletteLayout.ChipOutline, stroke);
+            uint ink = chip.On ? StateLook.CheckedText : PaletteLayout.ChipInk;
+            var icon = Offset(chip.Icon, origin);
+            var mark = Offset(chip.Mark, origin);
+            c.Figures(PaletteGlyphs.Icon(chips[i].Icon), new Vector2(icon.X, icon.Y), ink);
+            c.Figures(chip.On ? PaletteGlyphs.Tick : PaletteGlyphs.Plus, new Vector2(mark.X, mark.Y), ink);
+        }
+
+        c.EndLayer();
+        foreach (var chip in layout.Chips)
+        {
+            c.Text(chip.Label, origin, dim);
         }
 
         var (runs, measured) = layout.Answer(answer);
@@ -790,24 +829,38 @@ internal static unsafe partial class Program
         var band = layout.AnswerBand(height);
         float scroll = layout.MaxScroll(measured, height) * scrolled;
         c.Clip = Offset(band, origin);
-        foreach (var (run, at) in runs)
+        foreach (var (line, at) in runs)
         {
-            c.Text(run, new Vector2(at.X, band.Y + at.Y - scroll), origin);
+            c.Text(line, new Vector2(at.X, band.Y + at.Y - scroll), origin);
         }
 
         c.Clip = null;
 
-        // The question, with the view's colours: the chip blue round the card, Run filled white, or amber for what asks every time.
+        // The question, with the view's colours: the accent round the card, Run white or amber for what asks every time,
+        // the others filled and outlined; each button in a layer of its own, the yes buttons at their read guard's opacity.
         if (layout.Ask(height) is { } ask)
         {
             c.RoundRect(Offset(ask.Card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
-            c.StrokeRect(Offset(ask.Card, origin), PaletteLayout.PromptCorner, 0x666FA8FF);
+            c.Stroke(Offset(ask.Card, origin), PaletteLayout.PromptCorner, PaletteLayout.AskOutline, 1);
             c.Text(ask.Summary, ask.SummaryAt, origin);
             c.Text(ask.Line, origin);
-            foreach (var (button, rect, label) in ask.Buttons)
+            foreach (var (button, at, label) in ask.Buttons)
             {
-                c.RoundRect(Offset(rect, origin), PaletteLayout.ButtonCorner, button != ConfirmButton.Run ? 0x1AFFFFFFu : confirm!.Destructive ? 0xFFF0B35Au : 0xFFFFFFFFu);
-                c.Text(label, origin);
+                var rect = Offset(at, origin);
+                float opacity = button == ConfirmButton.Cancel ? 1 : run;
+                c.Layer(opacity);
+                if (button == ConfirmButton.Run)
+                {
+                    c.RoundRect(rect, PaletteLayout.ButtonCorner, confirm!.Destructive ? PaletteLayout.RunWarn : PaletteLayout.RunFill);
+                }
+                else
+                {
+                    c.RoundRect(rect, PaletteLayout.ButtonCorner, PaletteLayout.ButtonFill);
+                    c.Stroke(rect, PaletteLayout.ButtonCorner, PaletteLayout.ButtonOutline, 1);
+                }
+
+                c.EndLayer();
+                c.Text(label, origin, opacity);
             }
         }
 
@@ -1141,6 +1194,40 @@ internal static unsafe partial class Program
             dc->DrawLine(new D2D_POINT_2F { x = centre.X - half, y = centre.Y + half }, new D2D_POINT_2F { x = centre.X + half, y = centre.Y - half }, (ID2D1Brush*)brush, width, null);
             brush->Release();
         }
+
+        /// <summary>A palette glyph's figures from their box's top-left corner: filled, or stroked along their outlines.</summary>
+        public void Figures(GlyphFigure[] figures, Vector2 at, uint argb)
+        {
+            foreach (var figure in figures)
+            {
+                if (!figure.Stroked)
+                {
+                    Fill(figure.Path, at, 1, argb);
+                    continue;
+                }
+
+                var path = Path(figure.Path, at, 1);
+                var brush = Brush(argb);
+                dc->DrawGeometry((ID2D1Geometry*)path, (ID2D1Brush*)brush, PaletteGlyphs.Stroke, null);
+                brush->Release();
+                path->Release();
+            }
+        }
+
+        /// <summary>What is drawn from here to <see cref="EndLayer"/> fades as one, as the shapes of one shape visual do.</summary>
+        public void Layer(float opacity)
+        {
+            var parameters = new D2D1_LAYER_PARAMETERS1
+            {
+                contentBounds = new D2D_RECT_F { left = float.MinValue, top = float.MinValue, right = float.MaxValue, bottom = float.MaxValue },
+                maskAntialiasMode = D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                maskTransform = new D2D_MATRIX_3X2_F { m11 = 1, m22 = 1 },
+                opacity = opacity,
+            };
+            dc->PushLayer(&parameters, null);
+        }
+
+        public void EndLayer() => dc->PopLayer();
 
         /// <summary>A rounded outline one pixel wide, inside the rectangle.</summary>
         public void StrokeRect(RectangleF r, float radius, uint argb)

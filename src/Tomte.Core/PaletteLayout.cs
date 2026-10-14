@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Globalization;
 using System.Numerics;
 using Tomte.Core.Device;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 
 namespace Tomte.Core;
@@ -37,13 +38,27 @@ public sealed record Confirmation(string Summary, string Line, bool AlwaysAllow,
         };
 }
 
+/// <summary>The picture before a chip's name.</summary>
+public enum ChipIcon { Selection, Window, Screenshot, Shelf, Note, Region }
+
+/// <summary>A chip to draw: its short name, its picture and whether it is on.</summary>
+public readonly record struct ChipSpec(string Name, ChipIcon Icon, bool On);
+
+/// <summary>
+/// A chip laid out: its pill, which is also where it takes clicks, the picture at its left, its name, and the mark at its
+/// right, a "+" while off and a tick while on.
+/// </summary>
+public readonly record struct LaidChip(RectangleF Box, RectangleF Icon, TextSlot Label, RectangleF Mark, bool On);
+
 /// <summary>
 /// The palette's content in DIPs from its top-left corner: the prompt box after the tomte, the chips under it in as
 /// many rows as they need, the answer, a tool's question while one is open, and the footer along the bottom. The
 /// palette is as tall as that needs, from 150 to 480 DIPs; an answer longer than the room left scrolls in its band.
 /// <paramref name="text"/> is the prompt's own height (the text box's content height), which the box grows with.
+/// <paramref name="send"/> puts a Send button at the box's right end, for a palette with a text box. <paramref name="sends"/>
+/// is the line under the chips saying what the next send carries; empty for none.
 /// </summary>
-public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<(string Label, bool On)>? chips = null, Confirmation? confirm = null)
+public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false, string sends = "")
 {
     public const float Pad = 14, Top = 12, Bottom = 10, Gap = 10, BlockGap = 6;
     public const float PromptHeight = 36, PromptInsetX = 12, PromptInsetY = 9, PromptCorner = 8;
@@ -51,7 +66,16 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>The prompt box grows with its text up to this, then its text scrolls: about four lines.</summary>
     public const float PromptMaxText = 72;
 
-    public const float ChipHeight = 24, ChipPadX = 9, ChipGap = 6, ChipCorner = 12, ChipMaxText = 200;
+    /// <summary>
+    /// A chip is as tall as its click area, so all of it is drawn: the picture, a gap, the name, a gap and the mark
+    /// between the side paddings. "Include" stands before the first row, and the rows after it start under the first chip.
+    /// </summary>
+    public const float ChipHeight = StateLook.ChipHeight, ChipPadX = 10, ChipGap = 6, ChipCorner = ChipHeight / 2, ChipMaxText = 160;
+    public const float IconSize = 16, IconGap = 6, MarkSize = 10, MarkGap = 6, IncludeGap = 8, SendsHeight = 16;
+
+    /// <summary>Send sits inside the prompt's card at its right end, level with the last line, its corner inset with the card's.</summary>
+    public const float SendSize = 28, SendInset = 4, SendGap = 6, SendCorner = PromptCorner - SendInset;
+
     public const float FootHeight = 14;
 
     /// <summary>A tool's question: a card above the footer, its summary on up to three lines, then why it asks and the buttons.</summary>
@@ -70,7 +94,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public static readonly TextStyle StepText = new(12, Color: TextStyle.SecondaryColor, LineHeight: 18);
     public static readonly TextStyle ErrorText = AnswerText with { Color = TextStyle.WarnColor };
     public static readonly TextStyle Chip = new(12, Color: TextStyle.SecondaryColor);
-    public static readonly TextStyle ChipOn = Chip with { Color = TextStyle.WhiteColor };
+    public static readonly TextStyle ChipOn = Chip with { Color = StateLook.CheckedText };
     public static readonly TextStyle Provider = TextStyle.Small with { Color = 0xFFBCD3FF };
     public static readonly TextStyle Spend = TextStyle.Small with { Align = TextAlign.Trailing };
 
@@ -86,9 +110,41 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const string Off = "The AI layer is off";
     public const string Setup = "Add a provider key to use the palette.";
     public const string Run = "Run", Cancel = "Cancel", AlwaysAllow = "Always allow";
+    public const string Include = "Include", SendTip = "Send (Enter)";
 
-    private IReadOnlyList<(RectangleF Box, TextSlot Label)>? row;
-    private float? askHeight;
+    /// <summary>
+    /// An off chip: a faint fill, an outline at about 4.5:1 against the palette, and grey ink for its picture and "+".
+    /// An on chip takes the accent fill with black ink. Glyph ink is opaque, so a glyph fades as one.
+    /// </summary>
+    public const uint ChipFill = 0x0FFFFFFF, ChipOutline = 0x73FFFFFF, ChipInk = 0xFFA3A3A5;
+
+    /// <summary>
+    /// The path a chip's outline follows and the stroke's width in DIPs: one pixel wide, half a pixel inside the pill's
+    /// edges put on whole pixels, so it lights whole pixels at any scale; two half-lit ones would fall under 3:1.
+    /// <paramref name="parent"/> is where the pill's space starts, in DIPs from a whole pixel.
+    /// </summary>
+    public static (RectangleF Path, float Corner, float Stroke) ChipStroke(RectangleF pill, Vector2 parent, double scale)
+    {
+        float half = (float)(0.5 / scale);
+        float left = PixelGrid.Snap(parent.X, pill.Left, scale), top = PixelGrid.Snap(parent.Y, pill.Top, scale);
+        float right = PixelGrid.Snap(parent.X, pill.Right, scale), bottom = PixelGrid.Snap(parent.Y, pill.Bottom, scale);
+        return (RectangleF.FromLTRB(left + half, top + half, right - half, bottom - half), ChipCorner - half, 2 * half);
+    }
+
+    /// <summary>The prompt card's outline, which takes the accent while the box has the keys.</summary>
+    public const uint PromptLine = 0x1AFFFFFF, PromptFocusLine = 0x996FA8FF;
+
+    /// <summary>Send: a white button with a black arrow.</summary>
+    public const uint SendFill = 0xFFFFFFFF, SendInk = 0xFF000000;
+
+    /// <summary>
+    /// The question's card carries the accent in its outline so it reads as waiting for the user. Its buttons are filled
+    /// and outlined as the chips are; Run is white, or the warning colour for what is asked every time.
+    /// </summary>
+    public const uint AskOutline = 0x666FA8FF, ButtonFill = 0x1AFFFFFF, ButtonOutline = ChipOutline, RunFill = 0xFFFFFFFF, RunWarn = 0xFFF0B35A;
+
+    private IReadOnlyList<LaidChip>? row;
+    private float? askHeight, includeWidth;
 
     public float Width => width;
 
@@ -97,39 +153,54 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>The prompt's card: one line tall at least, growing with its text up to about four lines.</summary>
     public RectangleF Prompt => new(Left, Top, width - Pad - Left, Math.Clamp(text + 2 * PromptInsetY, PromptHeight, PromptMaxText + 2 * PromptInsetY));
 
-    /// <summary>Where the prompt's text box sits inside the card.</summary>
+    /// <summary>Where the prompt's text box sits inside the card, short of Send when there is one.</summary>
     public RectangleF Editor
     {
         get
         {
             var card = Prompt;
-            return new(card.X + PromptInsetX, card.Y + PromptInsetY, card.Width - 2 * PromptInsetX, card.Height - 2 * PromptInsetY);
+            float right = send ? SendInset + SendSize + SendGap : PromptInsetX;
+            return new(card.X + PromptInsetX, card.Y + PromptInsetY, card.Width - PromptInsetX - right, card.Height - 2 * PromptInsetY);
         }
     }
+
+    /// <summary>The Send button at the card's right end, level with its last line; empty without one.</summary>
+    public RectangleF Send
+    {
+        get
+        {
+            var card = Prompt;
+            return send ? new(card.Right - SendInset - SendSize, card.Bottom - SendInset - SendSize, SendSize, SendSize) : RectangleF.Empty;
+        }
+    }
+
+    /// <summary>Send works while the prompt has more than white space and nothing is being sent.</summary>
+    public static bool CanSend(string prompt, bool sending) => !sending && !string.IsNullOrWhiteSpace(prompt);
 
     public float ChipsTop => Top + Prompt.Height + Gap;
 
     /// <summary>
-    /// One pill per chip, each 9 DIP wider than its label on both sides and 6 apart, in rows: a chip that does not fit
-    /// beside the one before starts the next row. A label is cut with an ellipsis at 200 DIP, or at the row's width.
+    /// One pill per chip, 6 apart, in rows after "Include": a chip that does not fit beside the one before starts the
+    /// next row, under the first chip. A name is cut with an ellipsis at 160 DIP, or at the row's width.
     /// </summary>
-    public IReadOnlyList<(RectangleF Box, TextSlot Label)> Chips => row ??= LayChips();
+    public IReadOnlyList<LaidChip> Chips => row ??= LayChips();
 
-    /// <summary>The chip under a point, or -1.</summary>
-    public int ChipAt(Vector2 point)
+    /// <summary>"Include" before the first row, as tall as a chip; empty with no chips.</summary>
+    public TextSlot IncludeLabel => new(chips is { Count: > 0 } ? Include : "", Chip, new RectangleF(Pad, ChipsTop, IncludeWidth, ChipHeight));
+
+    /// <summary>What the next send carries, on one line under the chips from where they start; empty while no chip is on.</summary>
+    public TextSlot SendsLine
     {
-        for (int i = 0; i < Chips.Count; i++)
+        get
         {
-            if (Chips[i].Box.Contains(point.X, point.Y))
-            {
-                return i;
-            }
+            float x = Pad + IncludeWidth + IncludeGap;
+            return new(sends, Chip, new RectangleF(x, ChipsBottom + ChipGap, width - Pad - x, sends.Length > 0 ? SendsHeight : 0));
         }
-
-        return -1;
     }
 
-    public float AnswerTop => (Chips.Count > 0 ? Chips[^1].Box.Bottom : ChipsTop - Gap) + Gap;
+    public float AnswerTop => (sends.Length > 0 ? SendsLine.Slot.Bottom : ChipsBottom) + Gap;
+
+    private float ChipsBottom => Chips.Count > 0 ? Chips[^1].Box.Bottom : ChipsTop - Gap;
 
     public float AnswerWidth => width - 2 * Pad;
 
@@ -173,19 +244,15 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
             new TextSlot(confirm.Line, AskLine, new RectangleF(left, rowY, Math.Max(0, right - left), ButtonHeight)), buttons);
     }
 
-    /// <summary>The question's button under a point, or null.</summary>
-    public ConfirmButton? ButtonAt(Vector2 point, float height)
-    {
-        foreach (var (button, box, _) in Ask(height)?.Buttons ?? [])
-        {
-            if (box.Contains(point.X, point.Y))
-            {
-                return button;
-            }
-        }
+    /// <summary>
+    /// A question's button as a target: its kind and the number of the question it is for, so a press that began on
+    /// one question's button answers nothing once the next question has opened.
+    /// </summary>
+    public static string ButtonId(ConfirmButton button, int question) => string.Create(CultureInfo.InvariantCulture, $"{button}:{question}");
 
-        return null;
-    }
+    /// <summary>The button an id names on question <paramref name="question"/>; null for another question's, or another target.</summary>
+    public static ConfirmButton? ButtonFor(string id, int question) =>
+        Enum.GetValues<ConfirmButton>().Cast<ConfirmButton?>().FirstOrDefault(b => ButtonId(b!.Value, question) == id);
 
     // The question's card: padding, the summary's lines, the gap and the row of buttons; 0 with none.
     private float AskHeight => askHeight ??= confirm is null ? 0 : AskPad + SummaryHeight(confirm.Summary) + AskGap + ButtonHeight + AskPad;
@@ -254,23 +321,95 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>Pinned to the end: scrolled to the end, or to where the end shows anyway.</summary>
     public bool AtEnd(float scroll, float answer, float height) => scroll >= MaxScroll(answer, height) - 0.5f;
 
-    private List<(RectangleF, TextSlot)> LayChips()
+    private float IncludeWidth => includeWidth ??= TextSlot.Measure(Include, Chip, ChipMaxText);
+
+    private List<LaidChip> LayChips()
     {
-        float x = Pad, y = ChipsTop, right = width - Pad;
-        var laid = new List<(RectangleF, TextSlot)>();
-        foreach (var (label, on) in chips ?? [])
+        const float Fixed = 2 * ChipPadX + IconSize + IconGap + MarkGap + MarkSize;
+        float start = Pad + IncludeWidth + IncludeGap, x = start, y = ChipsTop, right = width - Pad;
+        var laid = new List<LaidChip>();
+        foreach (var (name, icon, on) in chips ?? [])
         {
             var style = on ? ChipOn : Chip;
-            float w = Math.Min(TextSlot.Measure(label, style, ChipMaxText) + 2 * ChipPadX, right - Pad);
-            if (x > Pad && x + w > right)
+            float w = Fixed + TextSlot.Measure(name, style, Math.Min(ChipMaxText, right - start - Fixed));
+            if (x > start && x + w > right)
             {
-                (x, y) = (Pad, y + ChipHeight + ChipGap);
+                (x, y) = (start, y + ChipHeight + ChipGap);
             }
 
-            laid.Add((new RectangleF(x, y, w, ChipHeight), new TextSlot(label, style, new RectangleF(x + ChipPadX, y, w - 2 * ChipPadX, ChipHeight))));
+            float middle = y + ChipHeight / 2, labelX = x + ChipPadX + IconSize + IconGap;
+            var mark = new RectangleF(x + w - ChipPadX - MarkSize, middle - MarkSize / 2, MarkSize, MarkSize);
+            laid.Add(new(new RectangleF(x, y, w, ChipHeight), new RectangleF(x + ChipPadX, middle - IconSize / 2, IconSize, IconSize),
+                new TextSlot(name, style, new RectangleF(labelX, y, mark.X - MarkGap - labelX, ChipHeight)), mark, on));
             x += w + ChipGap;
         }
 
         return laid;
     }
+}
+
+/// <summary>One closed figure of a glyph: filled, or stroked <see cref="PaletteGlyphs.Stroke"/> wide along its outline.</summary>
+public readonly record struct GlyphFigure(OutlineSegment[] Path, bool Stroked = false);
+
+/// <summary>
+/// The palette's glyphs in DIPs from their box's top-left corner: a chip's picture in a 16 box, its "+" and tick in a
+/// 10 box, and Send's arrow in a 16 box. No figure overlaps another, so a glyph fades evenly.
+/// </summary>
+public static class PaletteGlyphs
+{
+    public const float Stroke = 1.5f, SendSize = 16;
+
+    // A frame stroked along these edges: its inside runs from 2.5 to 13.5 across and from 3.5 to 12.5 down.
+    private static readonly GlyphFigure Frame = new(Rect(1.75f, 2.75f, 12.5f, 10.5f), Stroked: true);
+
+    /// <summary>Selected text: a highlighted run with the text cursor after it.</summary>
+    public static readonly GlyphFigure[] Selection =
+    [
+        new(Rect(1, 5, 8.5f, 6)),
+        new(TabStrip.Polygon(10.5f, 2, 14.5f, 2, 14.5f, 3.5f, 13.25f, 3.5f, 13.25f, 12.5f, 14.5f, 12.5f, 14.5f, 14, 10.5f, 14, 10.5f, 12.5f, 11.75f, 12.5f, 11.75f, 3.5f, 10.5f, 3.5f)),
+    ];
+
+    /// <summary>A window: a frame with a title bar.</summary>
+    public static readonly GlyphFigure[] Window = [Frame, new(Rect(2.5f, 3.5f, 11, 2.5f))];
+
+    /// <summary>A picture: a frame with a hill and the sun.</summary>
+    public static readonly GlyphFigure[] Screenshot = [Frame, new(TabStrip.Polygon(4, 11.5f, 7.5f, 7, 11, 11.5f)), new(Rect(10.25f, 4.75f, 2, 2))];
+
+    /// <summary>A file: a page with its corner folded in.</summary>
+    public static readonly GlyphFigure[] Shelf = [new(TabStrip.Polygon(3.25f, 1.75f, 9.25f, 1.75f, 9.25f, 5.25f, 12.75f, 5.25f, 12.75f, 14.25f, 3.25f, 14.25f), Stroked: true)];
+
+    /// <summary>A note: a page with three lines.</summary>
+    public static readonly GlyphFigure[] Note =
+        [new(Rect(2.25f, 2.25f, 11.5f, 11.5f), Stroked: true), new(Rect(4.5f, 5, 7, 1.5f)), new(Rect(4.5f, 7.75f, 7, 1.5f)), new(Rect(4.5f, 10.5f, 4.5f, 1.5f))];
+
+    /// <summary>A region: the four corners of a box drawn round something.</summary>
+    public static readonly GlyphFigure[] Region =
+    [
+        new(TabStrip.Polygon(1.5f, 1.5f, 6, 1.5f, 6, 3, 3, 3, 3, 6, 1.5f, 6)),
+        new(TabStrip.Polygon(14.5f, 1.5f, 14.5f, 6, 13, 6, 13, 3, 10, 3, 10, 1.5f)),
+        new(TabStrip.Polygon(14.5f, 14.5f, 10, 14.5f, 10, 13, 13, 13, 13, 10, 14.5f, 10)),
+        new(TabStrip.Polygon(1.5f, 14.5f, 1.5f, 10, 3, 10, 3, 13, 6, 13, 6, 14.5f)),
+    ];
+
+    /// <summary>An off chip's mark: add it.</summary>
+    public static readonly GlyphFigure[] Plus =
+        [new(TabStrip.Polygon(4.25f, 0.5f, 5.75f, 0.5f, 5.75f, 4.25f, 9.5f, 4.25f, 9.5f, 5.75f, 5.75f, 5.75f, 5.75f, 9.5f, 4.25f, 9.5f, 4.25f, 5.75f, 0.5f, 5.75f, 0.5f, 4.25f, 4.25f, 4.25f))];
+
+    /// <summary>An on chip's mark: it goes with the question.</summary>
+    public static readonly GlyphFigure[] Tick = [new(TabStrip.Polygon(0.6f, 5.3f, 1.7f, 4.2f, 3.9f, 6.4f, 8.3f, 2, 9.4f, 3.1f, 3.9f, 8.6f))];
+
+    /// <summary>Send: an arrow pointing up and away.</summary>
+    public static readonly GlyphFigure[] Send = [new(TabStrip.Polygon(2, 7.33f, 14, 2, 8.67f, 14, 7.33f, 8.67f))];
+
+    public static GlyphFigure[] Icon(ChipIcon icon) => icon switch
+    {
+        ChipIcon.Selection => Selection,
+        ChipIcon.Window => Window,
+        ChipIcon.Screenshot => Screenshot,
+        ChipIcon.Shelf => Shelf,
+        ChipIcon.Note => Note,
+        _ => Region,
+    };
+
+    private static OutlineSegment[] Rect(float x, float y, float w, float h) => TabStrip.Polygon(x, y, x + w, y, x + w, y + h, x, y + h);
 }

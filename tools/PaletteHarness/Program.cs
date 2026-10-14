@@ -105,7 +105,7 @@ foreach (var chip in chips)
 {
     chip.On = chipsWanted.Contains(chip.Kind.ToString()) || (chip.Kind == ContextKind.Selection && chip.On)
         || (chip.Kind == ContextKind.ShelfItem && (chipsWanted.Contains("shelf") || files.Count > 0));
-    Console.WriteLine($"chip  {(chip.On ? "[x]" : "[ ]")} {chip.Label}{(chip.Available ? "" : " (unavailable)")}");
+    Console.WriteLine($"chip  {(chip.On ? "[x]" : "[ ]")} {chip.Label}: {chip.Tip}{(chip.Available ? "" : " (unavailable)")}");
 }
 
 // Grants stay in memory here: the harness must not write the user's settings.json.

@@ -167,7 +167,7 @@ public static class TabStrip
         return x >= card.Left && x < card.Right;
     }
 
-    private static OutlineSegment[] Polygon(params float[] xy) =>
+    internal static OutlineSegment[] Polygon(params float[] xy) =>
         [OutlineSegment.Move(new(xy[0], xy[1])), .. Enumerable.Range(1, (xy.Length / 2) - 1).Select(i => OutlineSegment.Line(new(xy[2 * i], xy[(2 * i) + 1])))];
 }
 

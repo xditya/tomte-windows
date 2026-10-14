@@ -3,12 +3,12 @@ using Tomte.Core;
 
 namespace Tomte.AI.Palette;
 
-public enum ContextKind { Selection, Window, Screenshot, ShelfItem, Scratchpad }
+public enum ContextKind { Selection, Window, Screenshot, ShelfItem, Scratchpad, Region }
 
 /// <summary>
 /// One opt-in context attachment. Nothing is read until the chip is on and the user sends; an
 /// off chip never runs its reader. <see cref="Available"/> is false when there is nothing to
-/// attach (no selection, empty shelf) so the renderer can grey the chip out. A chip with an
+/// attach (no selection, empty shelf), and the palette does not show the chip then. A chip with an
 /// <c>arm</c> step runs it the first time the user turns it on (the Ctrl+C selection fallback),
 /// so no input is injected and no clipboard replaced until the user has acted.
 /// </summary>
@@ -19,14 +19,23 @@ public sealed class ContextChip(
     Func<CancellationToken, Task<IReadOnlyList<ContentPart>>> read,
     bool available = true,
     bool on = false,
-    Func<(string Label, bool Available)>? arm = null)
+    Func<bool>? arm = null,
+    Func<string>? tip = null,
+    Func<string>? sends = null)
 {
-    private Func<(string Label, bool Available)>? _arm = arm;
+    private Func<bool>? _arm = arm;
     private bool _on = on && available;
 
     public ContextKind Kind { get; } = kind;
 
-    public string Label { get; private set; } = label;
+    /// <summary>The chip's short name, as it shows.</summary>
+    public string Label { get; } = label;
+
+    /// <summary>What turning the chip on sends, in plain words from the chip's own data, for its tooltip.</summary>
+    public string Tip => tip?.Invoke() ?? Label;
+
+    /// <summary>What the chip adds to a send, as a phrase for the line under the chips ("the Scratchpad note").</summary>
+    public string Sends => sends?.Invoke() ?? Label;
 
     /// <summary>What the send log records for this chip, for example a file name.</summary>
     public string AttachedName { get; } = attachedName;
@@ -40,13 +49,24 @@ public sealed class ContextChip(
         {
             if (value && _arm is { } arm)
             {
-                (Label, Available) = arm();
+                Available = arm();
                 _arm = null;
             }
 
             _on = value && Available;
         }
     }
+
+    /// <summary>The chip as the palette draws it.</summary>
+    public ChipSpec Spec => new(Label, Kind switch
+    {
+        ContextKind.Selection => ChipIcon.Selection,
+        ContextKind.Window => ChipIcon.Window,
+        ContextKind.Screenshot => ChipIcon.Screenshot,
+        ContextKind.ShelfItem => ChipIcon.Shelf,
+        ContextKind.Scratchpad => ChipIcon.Note,
+        _ => ChipIcon.Region,
+    }, On && Available);
 
     internal Task<IReadOnlyList<ContentPart>> ReadAsync(CancellationToken ct) => read(ct);
 }
@@ -78,63 +98,91 @@ public static class ContextAssembly
     }
 }
 
-/// <summary>The chips the palette offers, built from what is in front of the user when it opens.</summary>
+/// <summary>
+/// The chips the palette offers, built from what is in front of the user when it opens. Each has a short name and a
+/// tooltip that says what it would send.
+/// </summary>
 public static class ContextChips
 {
     /// <summary>
     /// The hotkey palette's chips: the circled region first and on when circle-to-ask opened it, then the selection,
     /// the window, its screenshot, the shelf and the scratchpad, each off until the user turns it on.
+    /// <paramref name="product"/> is the app's name as people know it, for what the chips say; the process name without one.
     /// </summary>
-    public static List<ContextChip> For(ContextChip? lasso, string? selection, string app, string title, Func<CancellationToken, Task<byte[]>> screenshot, IShelf shelf, IScratchpad scratchpad) =>
-        [.. lasso is null ? [] : new[] { lasso }, Selection(selection), Window(app, title), Screenshot(app, screenshot), Shelf(shelf), Scratchpad(scratchpad)];
+    public static List<ContextChip> For(ContextChip? lasso, string? selection, string app, string title, Func<CancellationToken, Task<byte[]>> screenshot, IShelf shelf, IScratchpad scratchpad, string? product = null) =>
+        [.. lasso is null ? [] : new[] { lasso }, Selection(selection, app: product ?? app), Window(app, title, product), Screenshot(app, screenshot, product), Shelf(shelf), Scratchpad(scratchpad)];
+
+    /// <summary>
+    /// The line under the chips: what the next send carries besides the question, in chip order ("Sends your question,
+    /// a screenshot of Notepad and the Scratchpad note"); empty while no chip is on.
+    /// </summary>
+    public static string Summary(IEnumerable<ContextChip> chips)
+    {
+        List<string> parts = ["your question", .. chips.Where(c => c.On && c.Available).Select(c => c.Sends)];
+        return parts.Count == 1 ? "" : $"Sends {string.Join(", ", parts[..^1])} and {parts[^1]}";
+    }
 
     /// <summary>
     /// The UIA selection is read when the palette opens (focus moves once the user clicks in), so
     /// <paramref name="text"/> is already here. When UIA could not tell (<paramref name="fallback"/>
     /// given), the chip offers itself and runs the Ctrl+C fallback only when the user turns it on.
     /// Every chip starts off, this one included.
-    ///
+    /// <paramref name="app"/> is the app the text is in.
     /// </summary>
-    public static ContextChip Selection(string? text, Func<string?>? fallback = null)
+    public static ContextChip Selection(string? text, Func<string?>? fallback = null, string app = "")
     {
-        bool has = !string.IsNullOrWhiteSpace(text);
-        string LabelFor() => has ? $"Selection · \"{ContextAssembly.Trim(text!)}\"" : "Selection · none";
+        bool has = !string.IsNullOrWhiteSpace(text), armed = !has && fallback is not null;
         return new(ContextKind.Selection,
-            !has && fallback is not null ? "Selection · read on use" : LabelFor(),
+            "Selection",
             "selection",
             _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("selection", text ?? "")]),
-            available: has || fallback is not null,
+            available: has || armed,
             on: false,
-            arm: has || fallback is null ? null : () =>
+            arm: !armed ? null : () =>
             {
-                text = fallback();
-                has = !string.IsNullOrWhiteSpace(text);
-                return (LabelFor(), has);
-            });
+                text = fallback!();
+                (has, armed) = (!string.IsNullOrWhiteSpace(text), false);
+                return has;
+            },
+            tip: () => has ? $"Selected text{From(app)}, {Count(text!.Length, "character")}"
+                : armed ? $"Copies the selected text{From(app)} when you turn this on, then puts the clipboard back"
+                : "No text is selected",
+            sends: () => app.Length > 0 ? $"the text selected in {app}" : "the selected text");
     }
 
-    public static ContextChip Window(string app, string title) => new(ContextKind.Window,
-        $"Window · {app} · {ContextAssembly.Trim(title, 40)}",
-        $"window:{app}",
-        _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("active_window", title, $"app=\"{app}\"")]),
-        available: title.Length > 0 || app.Length > 0);
+    /// <summary><paramref name="product"/> names the app in what the chip says; the process name <paramref name="app"/> goes to the model.</summary>
+    public static ContextChip Window(string app, string title, string? product = null)
+    {
+        string name = product ?? app;
+        return new(ContextKind.Window,
+            "Window",
+            $"window:{app}",
+            _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("active_window", title, $"app=\"{app}\"")]),
+            available: title.Length > 0 || app.Length > 0,
+            tip: () => title.Length > 0 ? $"Window title{From(name)}: {ContextAssembly.Trim(title, 80)}" : $"The name of the app in front: {name}",
+            sends: () => $"the title of the {name} window");
+    }
 
     /// <summary>The screenshot is taken at send time; <paramref name="capture"/> returns PNG bytes. With no app there is no window to take.</summary>
-    public static ContextChip Screenshot(string app, Func<CancellationToken, Task<byte[]>> capture) => new(ContextKind.Screenshot,
-        "Screenshot of window",
+    public static ContextChip Screenshot(string app, Func<CancellationToken, Task<byte[]>> capture, string? product = null) => new(ContextKind.Screenshot,
+        "Screenshot",
         $"screenshot:{app}",
         async ct => [new ImagePart("image/png", await capture(ct))],
-        available: app.Length > 0);
+        available: app.Length > 0,
+        tip: () => $"Screenshot of {product ?? app}, sent as an image",
+        sends: () => $"a screenshot of {product ?? app}");
 
     /// <summary>
     /// The circled region from circle-to-ask, captured when the lasso was released. Drawing the lasso is the
-    /// user's opt-in for this request, so the chip starts on; the size in the label is in DIPs.
+    /// user's opt-in for this request, so the chip starts on; the size in the tooltip is in DIPs.
     /// </summary>
-    public static ContextChip Lasso(byte[] png, double widthDips, double heightDips) => new(ContextKind.Screenshot,
-        $"Lasso · {widthDips:F0} × {heightDips:F0}",
+    public static ContextChip Lasso(byte[] png, double widthDips, double heightDips) => new(ContextKind.Region,
+        "Region",
         "lasso",
         _ => Task.FromResult<IReadOnlyList<ContentPart>>([new ImagePart("image/png", png)]),
-        on: true);
+        on: true,
+        tip: () => $"The region you circled, {widthDips:F0} × {heightDips:F0}, sent as an image",
+        sends: () => "the region you circled");
 
     /// <summary>
     /// The newest shelf item, and the shelf: with this chip on, the model may read the other items with read_shelf_item,
@@ -143,20 +191,32 @@ public static class ContextChips
     public static ContextChip Shelf(IShelf shelf)
     {
         var name = shelf.ItemNames.Count > 0 ? shelf.ItemNames[0] : null;
+        int count = shelf.ItemNames.Count;
         return new(ContextKind.ShelfItem,
-            // The label says that the other items' names go along too.
-            name is null ? "Shelf · empty"
-                : shelf.ItemNames.Count switch { 1 => $"Shelf · {name}", 2 => $"Shelf · {name} and the name of 1 other", var n => $"Shelf · {name} and the names of {n - 1} others" },
+            "Shelf",
             // The other items' names go to the provider too, so the send log names them.
-            name is null ? "shelf" : $"shelf:{name}" + (shelf.ItemNames.Count > 1 ? $", names: {string.Join(", ", shelf.ItemNames.Skip(1).Select(PreparedFile.Clean))}" : ""),
-            _ => Task.FromResult<IReadOnlyList<ContentPart>>(shelf.ItemNames.Count > 1
+            name is null ? "shelf" : $"shelf:{name}" + (count > 1 ? $", names: {string.Join(", ", shelf.ItemNames.Skip(1).Select(PreparedFile.Clean))}" : ""),
+            _ => Task.FromResult<IReadOnlyList<ContentPart>>(count > 1
                 ? [new ShelfFilePart(name!), ContextAssembly.Block("shelf_items", string.Join('\n', shelf.ItemNames.Skip(1).Select(PreparedFile.Clean)))]
                 : [new ShelfFilePart(name!)]),
-            available: name is not null);
+            available: name is not null,
+            // The tooltip and the line say that the other items' names go along too.
+            tip: () => name is null ? "The shelf is empty" : $"Shelf: {name}" + Others(count, " and"),
+            sends: () => $"{name} from the shelf" + Others(count, " with"));
+
+        static string Others(int count, string joint) => count switch { <= 1 => "", 2 => $"{joint} the name of 1 other", var n => $"{joint} the names of {n - 1} others" };
     }
 
     public static ContextChip Scratchpad(IScratchpad scratchpad) => new(ContextKind.Scratchpad,
-        "Scratchpad",
+        "Note",
         "scratchpad",
-        _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("scratchpad", scratchpad.Text)]));
+        _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("scratchpad", scratchpad.Text)]),
+        // Counted when the tooltip shows: the note may still be loading when the palette opens.
+        tip: () => string.IsNullOrWhiteSpace(scratchpad.Text) ? "The Scratchpad note, which is empty"
+            : $"The Scratchpad note, {Count(scratchpad.Text.AsSpan().TrimEnd("\r\n").Count('\n') + 1, "line")}",
+        sends: () => "the Scratchpad note");
+
+    private static string From(string app) => app.Length > 0 ? $" from {app}" : "";
+
+    private static string Count(int n, string what) => $"{n} {what}{(n == 1 ? "" : "s")}";
 }

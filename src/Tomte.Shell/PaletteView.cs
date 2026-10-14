@@ -3,7 +3,9 @@ using System.Numerics;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
+using Windows.System;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
 
@@ -11,24 +13,21 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// The palette's content on the island, laid out by <see cref="PaletteLayout"/> in a container in island space: the
-/// prompt box, a text box when a session can send, what was said when the palette has no box (voice), and the "AI
-/// layer is off" line when nothing can send; the chips, which a click turns on and off; the answer as it streams,
-/// drawn by the text renderer in a band that scrolls with the wheel and follows the newest line until the user
-/// scrolls up; a tool's question with Run, Cancel and, where the tier allows it, Always allow; and the footer with
-/// where the request goes and what today cost. It fades in with the shape and goes when the island leaves the
-/// Palette state.
+/// prompt box, a text box with Send at its right end when a session can send, what was said when the palette has no
+/// box (voice), and the "AI layer is off" line when nothing can send; "Include" and the chips that have something to
+/// add, each a toggle; the answer as it streams, drawn by the text renderer in a band that scrolls with the wheel and
+/// follows the newest line until the user scrolls up; a tool's question with Run, Cancel and, where the tier allows
+/// it, Always allow; and the footer with where the request goes and what today cost. It fades in with the shape and
+/// goes when the island leaves the Palette state. The island's interaction host runs its chips and buttons: hover,
+/// press, the cursor, tooltips and the keys. While a request is sending the chips and Send are disabled; Run is
+/// disabled, and drawn dim, until a yes would count.
 /// The answer is plain text runs, not a read-only text box: nothing asks for selecting or copying it, and a third
 /// set of text services would cost a module instance, input routing and a surface for that alone.
 /// </summary>
-internal sealed class PaletteView : IDisposable
+internal sealed class PaletteView : IDisposable, IInteractive
 {
-    private static readonly Color Card = Color.FromArgb(15, 255, 255, 255), Line = Color.FromArgb(26, 255, 255, 255);
-    private static readonly Color ChipOff = Color.FromArgb(15, 255, 255, 255), ChipOn = Color.FromArgb(51, 111, 168, 255);
-
-    // The question's card carries the chip's blue in its outline so it reads as waiting for the user; Run is the
-    // filled button, in the warning colour for what is asked every time.
-    private static readonly Color AskOutline = Color.FromArgb(102, 111, 168, 255), ButtonOff = Color.FromArgb(26, 255, 255, 255);
-    private static readonly Color RunFill = Color.FromArgb(255, 255, 255, 255), RunWarn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
+    private const string ChipId = "chip:", SendId = "send";
+    private static readonly Color Card = Color.FromArgb(15, 255, 255, 255), Clear = default;
 
     private readonly IslandWindow island;
     private readonly IslandStateMachine machine;
@@ -36,16 +35,23 @@ internal sealed class PaletteView : IDisposable
     private readonly TypingFocus? focus;
     private readonly IPaletteSession? session;
     private readonly float width;
+    private readonly Action<string>? send;
     private PaletteLayout layout;
     private float laidText = -1;
-    private List<(string, bool)> laidChips = [];
-    private readonly ContainerVisual root;
-    private readonly ShapeVisual shapes;
+    private List<ChipSpec> laidChips = [];
+    private string laidSends = "";
+    private List<ContextChip> shownChips = [];
+    private IReadOnlyList<Target> targets = [];
+    private readonly ContainerVisual root, chipLayer;
+    private readonly ShapeVisual shapes, chipShapes;
     private readonly CompositionRoundedRectangleGeometry card;
-    private readonly CompositionSpriteShape cardShape;
-    private readonly List<(CompositionRoundedRectangleGeometry Geometry, CompositionColorBrush Brush)> pills = [];
-    private readonly List<TextVisual> labels = [], runs = [];
-    private readonly TextVisual placeholder, provider, spend;
+    private readonly CompositionColorBrush cardLine;
+    private readonly List<ChipSlot> slots = [];
+    private readonly List<TextVisual> runs = [];
+    private readonly TextVisual placeholder, provider, spend, include, sendsLine;
+    private readonly ShapeVisual? sendVisual;
+    private readonly CompositionRoundedRectangleGeometry? sendButton;
+    private readonly CompositionContainerShape? sendArrow;
     private readonly ContainerVisual band, scrolled;
     private readonly EditorView? prompt;
     private readonly ToolQuestion? question;
@@ -62,7 +68,16 @@ internal sealed class PaletteView : IDisposable
     private (string Text, float Height) said = ("", 0);
     private CompositionRoundedRectangleGeometry? askCard;
     private TextVisual? askSummary, askLine;
-    private readonly List<(CompositionRoundedRectangleGeometry Geometry, CompositionColorBrush Brush, TextVisual Label)> buttons = [];
+    private readonly Dictionary<ConfirmButton, AskButton> buttons = [];
+
+    // The question whose read guard the yes buttons show, and the one a yes counts for once it has run out.
+    // The questions opened so far, which numbers the buttons' ids.
+    private ToolRequest? guarded, readable;
+    private int questions;
+    private DispatcherQueueTimer? readTimer;
+
+    // What the targets were last built from: rebuilt only when one of these changes, not for every streamed word.
+    private (PaletteLayout? Layout, float Height, bool Sending, bool Readable, bool CanSend) targeted;
 
     /// <param name="send">What Enter does with the prompt's text; null for a palette that only shows (voice, a driven run).</param>
     /// <param name="question">The session's open question, drawn with its buttons; null where nobody can answer (a driven run).</param>
@@ -75,6 +90,7 @@ internal sealed class PaletteView : IDisposable
         this.session = session;
         this.width = width;
         this.question = question;
+        this.send = send;
         typed = send is not null;
         hint = PaletteLayout.HintFor(session?.Commands.Select(c => c.Skill) ?? []);
         layout = new PaletteLayout(width, island.Mascot.Enabled);
@@ -82,16 +98,20 @@ internal sealed class PaletteView : IDisposable
         root = c.CreateContainerVisual();
         root.Offset = new Vector3(-width / 2, 0, 0);
         root.Opacity = 0;
-        shapes = c.CreateShapeVisual();
-        shapes.Size = new Vector2(width, (float)PanelSize.PaletteMaxHeight);
-        root.Children.InsertAtTop(shapes);
+        shapes = Shapes(root);
         card = c.CreateRoundedRectangleGeometry();
         card.CornerRadius = new Vector2(PaletteLayout.PromptCorner);
-        cardShape = c.CreateSpriteShape(card);
+        var cardShape = c.CreateSpriteShape(card);
         cardShape.FillBrush = c.CreateColorBrush(Card);
-        cardShape.StrokeBrush = c.CreateColorBrush(Line);
+        cardShape.StrokeBrush = cardLine = c.CreateColorBrush(Argb(PaletteLayout.PromptLine));
         cardShape.StrokeThickness = 1;
         shapes.Shapes.Add(cardShape);
+        // The chips and "Include" in one layer, which dims as one while a request is sending.
+        chipLayer = c.CreateContainerVisual();
+        root.Children.InsertAtTop(chipLayer);
+        chipShapes = Shapes(chipLayer);
+        include = text.Create(chipLayer);
+        sendsLine = text.Create(chipLayer);
         // The answer's runs sit in one container clipped to the answer's band and moved by the scroll.
         band = c.CreateContainerVisual();
         band.Clip = c.CreateInsetClip();
@@ -103,7 +123,8 @@ internal sealed class PaletteView : IDisposable
         spend = text.Create(root);
         if (session is not null && focus is not null)
         {
-            prompt = focus.Create(root, multiline: true, PaletteLayout.PromptSize);
+            // The prompt hands Tab and Shift+Tab to the palette's chips, Send and buttons, and takes the keys back after them.
+            prompt = focus.Create(root, multiline: true, PaletteLayout.PromptSize, owner: this);
             prompt.Services.Text = session.Prompt;
             if (send is not null)
             {
@@ -120,9 +141,23 @@ internal sealed class PaletteView : IDisposable
             // Esc cancels an open question and leaves the palette up; with none it hides the island as before.
             prompt.Escape = () => Answer(ConfirmButton.Cancel);
 
-            // Inside the services' own notifications nothing may call back into them: the hint only, and a relayout later.
-            prompt.Services.Changed += Hint;
+            // Inside the services' own notifications nothing may call back into them: the hint and Send's state only,
+            // and a relayout later.
+            prompt.Services.Changed += Typed;
             prompt.Services.Resized += Resize;
+            if (typed)
+            {
+                // Send: a white button in a visual of its own, which dims as one while there is nothing to send.
+                sendVisual = Shapes(root);
+                sendButton = c.CreateRoundedRectangleGeometry();
+                sendButton.CornerRadius = new Vector2(PaletteLayout.SendCorner);
+                var button = c.CreateSpriteShape(sendButton);
+                button.FillBrush = c.CreateColorBrush(Argb(PaletteLayout.SendFill));
+                sendVisual.Shapes.Add(button);
+                sendArrow = c.CreateContainerShape();
+                Draw(sendArrow, PaletteGlyphs.Send, c.CreateColorBrush(Argb(PaletteLayout.SendInk)));
+                sendVisual.Shapes.Add(sendArrow);
+            }
         }
 
         island.Dips.Children.InsertAtTop(root);
@@ -167,7 +202,41 @@ internal sealed class PaletteView : IDisposable
     public event Action? HeightChanged;
 
     /// <summary>The prompt takes the keys, after the palette hotkey or a click on the tomte. False when there is no prompt or Windows refused.</summary>
-    public bool TakeKeys() => !disposed && prompt is not null && focus!.Take(prompt);
+    public bool TakeKeys()
+    {
+        bool took = !disposed && prompt is not null && focus!.Take(prompt);
+        // The card's outline shows that the box has the keys.
+        Update();
+        return took;
+    }
+
+    public IReadOnlyList<Target> Targets => targets;
+
+    public event Action? TargetsChanged;
+
+    /// <summary>A chip turns on or off, Send sends, or a question's button answers it; nothing while that target is disabled.</summary>
+    public void Activate(string id)
+    {
+        if (disposed || session is null || machine.State != IslandState.Palette || targets.FirstOrDefault(t => t.Id == id) is not { Enabled: true })
+        {
+            return;
+        }
+
+        if (id == SendId)
+        {
+            send!(prompt!.Services.Text);
+        }
+        else if (shownChips.FirstOrDefault(chip => ChipId + chip.Label == id) is { } chip)
+        {
+            chip.On = !chip.On;
+        }
+        else if (PaletteLayout.ButtonFor(id, questions) is { } button)
+        {
+            Answer(button);
+        }
+
+        Update();
+    }
 
     /// <summary>The question the card shows now, which a yes from the chord may answer; null with none.</summary>
     public ToolRequest? Shown => laidAsk;
@@ -199,20 +268,25 @@ internal sealed class PaletteView : IDisposable
 
         // The chips are measured again only when the prompt's height, a chip or the question changed, not for every streamed word.
         float promptText = prompt?.ContentHeight ?? Said();
-        List<(string, bool)> chips = session is null ? [] : [.. session.Chips.Select(chip => (chip.Label, chip.On && chip.Available))];
+        // A chip with nothing to add (no selection, an empty shelf, a window that could not be read) is not shown.
+        shownChips = session is null ? [] : [.. session.Chips.Where(chip => chip.Available)];
+        List<ChipSpec> chips = [.. shownChips.Select(chip => chip.Spec)];
+        string sends = ContextChips.Summary(shownChips);
         var asked = question?.Asked;
-        // Enter answers only while the prompt box has the keys; the line says so.
-        var keys = !typed ? ConfirmKeys.Voice : prompt is not null && focus?.Focused == prompt ? ConfirmKeys.Prompt : ConfirmKeys.Pointer;
-        if (promptText != laidText || !chips.SequenceEqual(laidChips) || !ReferenceEquals(asked, laidAsk) || keys != laidKeys)
+        // Enter answers only while the prompt box has the keys; the line says so, and the card's outline shows it.
+        bool focused = prompt is not null && focus?.Focused == prompt;
+        var keys = !typed ? ConfirmKeys.Voice : focused ? ConfirmKeys.Prompt : ConfirmKeys.Pointer;
+        if (promptText != laidText || !chips.SequenceEqual(laidChips) || sends != laidSends || !ReferenceEquals(asked, laidAsk) || keys != laidKeys)
         {
-            (laidText, laidChips, laidAsk, laidKeys) = (promptText, chips, asked, keys);
+            (laidText, laidChips, laidSends, laidAsk, laidKeys) = (promptText, chips, sends, asked, keys);
             confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, keys), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive);
-            layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm);
+            layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm, send: sendVisual is not null, sends);
         }
 
         var box = layout.Prompt;
         card.Offset = new Vector2(box.X, box.Y);
         card.Size = new Vector2(box.Width, box.Height);
+        cardLine.Color = Argb(focused ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine);
         prompt?.Place(layout.Editor, island.Scale);
         Hint();
 
@@ -225,28 +299,7 @@ internal sealed class PaletteView : IDisposable
             return;
         }
 
-        var chipRow = layout.Chips;
-        while (pills.Count < chipRow.Count)
-        {
-            var geometry = island.Compositor.CreateRoundedRectangleGeometry();
-            geometry.CornerRadius = new Vector2(PaletteLayout.ChipCorner);
-            var brush = island.Compositor.CreateColorBrush(ChipOff);
-            var shape = island.Compositor.CreateSpriteShape(geometry);
-            shape.FillBrush = brush;
-            shapes.Shapes.Add(shape);
-            pills.Add((geometry, brush));
-            labels.Add(text.Create(root));
-        }
-
-        for (int i = 0; i < pills.Count; i++)
-        {
-            var (geometry, brush) = pills[i];
-            bool shown = i < chipRow.Count;
-            geometry.Offset = shown ? new Vector2(chipRow[i].Box.X, chipRow[i].Box.Y) : default;
-            geometry.Size = shown ? new Vector2(chipRow[i].Box.Width, chipRow[i].Box.Height) : default;
-            brush.Color = shown && chipRow[i].Label.Style == PaletteLayout.ChipOn ? ChipOn : ChipOff;
-            labels[i].Show(shown ? chipRow[i].Label : new TextSlot("", PaletteLayout.Chip, default));
-        }
+        ShowChips();
 
         // every streamed word lays the answer out again (and its run once more to draw it); cache the blocks
         // that did not change if long answers cost frames.
@@ -271,6 +324,7 @@ internal sealed class PaletteView : IDisposable
         spend.Show(foot[1]);
         ShowAsk(height);
         SetHeight(height);
+        Retarget();
     }
 
     public void Dispose()
@@ -281,6 +335,8 @@ internal sealed class PaletteView : IDisposable
         }
 
         disposed = true;
+        island.Interaction.Unregister(this);
+        readTimer?.Stop();
         island.ContentReady -= FadeIn;
         island.Pressed -= OnPressed;
         island.Wheel -= OnWheel;
@@ -306,7 +362,7 @@ internal sealed class PaletteView : IDisposable
         }
 
         prompt?.Dispose();
-        foreach (var visual in labels.Concat(runs).Concat(buttons.Select(b => b.Label)).Append(placeholder).Append(provider).Append(spend))
+        foreach (var visual in slots.Select(s => s.Label).Concat(runs).Concat(buttons.Values.Select(b => b.Label)).Append(placeholder).Append(provider).Append(spend).Append(include).Append(sendsLine))
         {
             visual.Dispose();
         }
@@ -314,14 +370,175 @@ internal sealed class PaletteView : IDisposable
         setup?.Dispose();
         askSummary?.Dispose();
         askLine?.Dispose();
+        foreach (var button in buttons.Values)
+        {
+            button.Layer.Dispose();
+        }
+
         scrolled.Dispose();
         band.Dispose();
         island.Dips.Children.Remove(root);
+        chipShapes.Dispose();
+        chipLayer.Dispose();
+        sendVisual?.Dispose();
         shapes.Dispose();
         root.Dispose();
     }
 
-    // The hint shows while the prompt is empty, as an input's placeholder does.
+    private static Color Argb(uint c) => Color.FromArgb((byte)(c >> 24), (byte)(c >> 16), (byte)(c >> 8), (byte)c);
+
+    // A shape visual as large as the palette can grow, at the top of a container.
+    private ShapeVisual Shapes(ContainerVisual host)
+    {
+        var visual = island.Compositor.CreateShapeVisual();
+        visual.Size = new Vector2(width, (float)PanelSize.PaletteMaxHeight);
+        host.Children.InsertAtTop(visual);
+        return visual;
+    }
+
+    // A glyph's figures in a container shape, all in one ink: filled, or stroked along their outlines.
+    private void Draw(CompositionContainerShape into, GlyphFigure[] figures, CompositionColorBrush ink)
+    {
+        into.Shapes.Clear();
+        foreach (var figure in figures)
+        {
+            var shape = island.Compositor.CreateSpriteShape(island.Compositor.CreatePathGeometry(IslandWindow.BuildPath(figure.Path, 1)));
+            if (figure.Stroked)
+            {
+                shape.StrokeBrush = ink;
+                shape.StrokeThickness = PaletteGlyphs.Stroke;
+            }
+            else
+            {
+                shape.FillBrush = ink;
+            }
+
+            into.Shapes.Add(shape);
+        }
+    }
+
+    // One drawn chip: its pill with a fill and an outline, its picture and mark in one ink, its name, and which picture
+    // and mark are drawn now. A slot past the chips shown is drawn empty.
+    private sealed record ChipSlot(CompositionRoundedRectangleGeometry Pill, CompositionSpriteShape Stroke, CompositionColorBrush Fill, CompositionColorBrush Outline, CompositionColorBrush Ink, CompositionContainerShape Icon, CompositionContainerShape Mark, TextVisual Label)
+    {
+        public (ChipIcon Icon, bool On)? Drawn { get; set; }
+    }
+
+    private ChipSlot Slot()
+    {
+        var c = island.Compositor;
+        var pill = c.CreateRoundedRectangleGeometry();
+        pill.CornerRadius = new Vector2(PaletteLayout.ChipCorner);
+        var shape = c.CreateSpriteShape(pill);
+        var slot = new ChipSlot(pill, shape, c.CreateColorBrush(), c.CreateColorBrush(), c.CreateColorBrush(), c.CreateContainerShape(), c.CreateContainerShape(), text.Create(chipLayer));
+        shape.FillBrush = slot.Fill;
+        shape.StrokeBrush = slot.Outline;
+        chipShapes.Shapes.Add(shape);
+        chipShapes.Shapes.Add(slot.Icon);
+        chipShapes.Shapes.Add(slot.Mark);
+        return slot;
+    }
+
+    // Each chip shown: off, an outline with a "+"; on, the accent with a tick. All of them dim while a request is sending,
+    // when a click on one changes nothing.
+    private void ShowChips()
+    {
+        var row = layout.Chips;
+        include.Show(layout.IncludeLabel);
+        sendsLine.Show(layout.SendsLine);
+        while (slots.Count < row.Count)
+        {
+            slots.Add(Slot());
+        }
+
+        for (int i = 0; i < slots.Count; i++)
+        {
+            var slot = slots[i];
+            if (i >= row.Count)
+            {
+                slot.Pill.Size = default;
+                slot.Outline.Color = Clear;
+                slot.Icon.Shapes.Clear();
+                slot.Mark.Shapes.Clear();
+                slot.Drawn = null;
+                slot.Label.Show(new TextSlot("", PaletteLayout.Chip, default));
+                continue;
+            }
+
+            var chip = row[i];
+            var (path, corner, stroke) = PaletteLayout.ChipStroke(chip.Box, new Vector2(root.Offset.X, root.Offset.Y), island.Scale);
+            slot.Pill.Offset = new Vector2(path.X, path.Y);
+            slot.Pill.Size = new Vector2(path.Width, path.Height);
+            slot.Pill.CornerRadius = new Vector2(corner);
+            slot.Stroke.StrokeThickness = stroke;
+            slot.Fill.Color = Argb(chip.On ? StateLook.CheckedFill : PaletteLayout.ChipFill);
+            slot.Outline.Color = Argb(chip.On ? StateLook.CheckedFill : PaletteLayout.ChipOutline);
+            slot.Ink.Color = Argb(chip.On ? StateLook.CheckedText : PaletteLayout.ChipInk);
+            var drawn = (laidChips[i].Icon, chip.On);
+            if (slot.Drawn != drawn)
+            {
+                slot.Drawn = drawn;
+                Draw(slot.Icon, PaletteGlyphs.Icon(drawn.Icon), slot.Ink);
+                Draw(slot.Mark, chip.On ? PaletteGlyphs.Tick : PaletteGlyphs.Plus, slot.Ink);
+            }
+
+            slot.Icon.Offset = new Vector2(chip.Icon.X, chip.Icon.Y);
+            slot.Mark.Offset = new Vector2(chip.Mark.X, chip.Mark.Y);
+            slot.Label.Show(chip.Label);
+        }
+
+        chipLayer.Opacity = Sending ? StateLook.DisabledOpacity : 1;
+    }
+
+    private bool Sending => session?.Status == PaletteStatus.Sending;
+
+    // The targets the island's interaction host runs, in Tab order: the chips as one stop (the arrows move among them),
+    // Send, then each of the question's buttons as a stop of its own, the yes buttons once a yes would count. Built
+    // again only when the layout, the sending state, the read guard or Send's state changed; raised to the host only
+    // when the list did. A chip's tooltip is read then, so a note that loads later shows in it at the next change.
+    private void Retarget()
+    {
+        bool sending = Sending, ready = ReferenceEquals(readable, laidAsk);
+        bool canSend = sendVisual is not null && PaletteLayout.CanSend(prompt!.Services.Text, sending);
+        var from = (layout, Height, sending, ready, canSend);
+        if (disposed || session is null || from == targeted)
+        {
+            return;
+        }
+
+        targeted = from;
+        var list = new List<Target>();
+        for (int i = 0; i < layout.Chips.Count; i++)
+        {
+            var chip = layout.Chips[i];
+            list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, shownChips[i].Tip, Group: 1, Checked: chip.On));
+        }
+
+        if (sendVisual is not null)
+        {
+            list.Add(new Target(SendId, layout.Send, PaletteLayout.SendCorner, TargetKind.Button, canSend, PaletteLayout.SendTip));
+        }
+
+        foreach (var (button, at, _) in layout.Ask(Height)?.Buttons ?? [])
+        {
+            list.Add(new Target(PaletteLayout.ButtonId(button, questions), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ready));
+        }
+
+        if (!list.SequenceEqual(targets))
+        {
+            targets = list;
+            TargetsChanged?.Invoke();
+        }
+    }
+
+    // A change to the prompt's text: the hint, and whether Send can send it.
+    private void Typed()
+    {
+        Hint();
+        Retarget();
+    }
+
+    // The hint shows while the prompt is empty, as an input's placeholder does; Send dims while there is nothing to send.
     private void Hint()
     {
         if (disposed)
@@ -331,6 +548,15 @@ internal sealed class PaletteView : IDisposable
 
         var box = layout.Prompt;
         var editorBox = layout.Editor;
+        if (sendVisual is not null)
+        {
+            var button = layout.Send;
+            sendButton!.Offset = new Vector2(button.X, button.Y);
+            sendButton.Size = new Vector2(button.Width, button.Height);
+            sendArrow!.Offset = new Vector2(button.X + (button.Width - PaletteGlyphs.SendSize) / 2, button.Y + (button.Height - PaletteGlyphs.SendSize) / 2);
+            sendVisual.Opacity = PaletteLayout.CanSend(prompt!.Services.Text, Sending) ? 1 : StateLook.DisabledOpacity;
+        }
+
         if (prompt is null && session is not null)
         {
             placeholder.Show(new TextRun(session.Prompt, PaletteLayout.PromptText, editorBox.Width, PaletteLayout.PromptLines), new Vector2(editorBox.X, editorBox.Y));
@@ -364,28 +590,47 @@ internal sealed class PaletteView : IDisposable
             return;
         }
 
+        var c = island.Compositor;
         if (askCard is null)
         {
-            var c = island.Compositor;
             askCard = c.CreateRoundedRectangleGeometry();
             askCard.CornerRadius = new Vector2(PaletteLayout.PromptCorner);
             var shape = c.CreateSpriteShape(askCard);
             shape.FillBrush = c.CreateColorBrush(Card);
-            shape.StrokeBrush = c.CreateColorBrush(AskOutline);
+            shape.StrokeBrush = c.CreateColorBrush(Argb(PaletteLayout.AskOutline));
             shape.StrokeThickness = 1;
             shapes.Shapes.Add(shape);
             askSummary = text.Create(root);
             askLine = text.Create(root);
-            for (int i = 0; i < 3; i++)
+            // Each button in a layer of its own, so a yes button can show the read guard as one: Run filled, the others
+            // filled and outlined as an off chip is.
+            foreach (var kind in Enum.GetValues<ConfirmButton>())
             {
+                var layer = c.CreateContainerVisual();
+                root.Children.InsertAtTop(layer);
                 var geometry = c.CreateRoundedRectangleGeometry();
                 geometry.CornerRadius = new Vector2(PaletteLayout.ButtonCorner);
-                var brush = c.CreateColorBrush(ButtonOff);
-                var button = c.CreateSpriteShape(geometry);
-                button.FillBrush = brush;
-                shapes.Shapes.Add(button);
-                buttons.Add((geometry, brush, text.Create(root)));
+                var pill = c.CreateSpriteShape(geometry);
+                var fill = c.CreateColorBrush(Argb(PaletteLayout.ButtonFill));
+                pill.FillBrush = fill;
+                if (kind != ConfirmButton.Run)
+                {
+                    pill.StrokeBrush = c.CreateColorBrush(Argb(PaletteLayout.ButtonOutline));
+                }
+
+                Shapes(layer).Shapes.Add(pill);
+                buttons[kind] = new AskButton(layer, geometry, pill, fill, text.Create(layer));
             }
+
+            readTimer = island.Queue.CreateTimer();
+            readTimer.IsRepeating = false;
+            readTimer.Interval = TimeSpan.FromMilliseconds(ToolQuestion.ReadMs);
+            readTimer.Tick += (_, _) =>
+            {
+                // A yes counts now: Run and Always allow take clicks, Enter and Space.
+                readable = guarded;
+                Retarget();
+            };
         }
 
         askCard.Offset = ask is { } a ? new Vector2(a.Card.X, a.Card.Y) : default;
@@ -393,16 +638,41 @@ internal sealed class PaletteView : IDisposable
         askSummary!.Show(ask?.Summary ?? new TextRun("", PaletteLayout.AskSummary, 1), ask?.SummaryAt ?? default);
         askLine!.Show(ask?.Line ?? new TextSlot("", PaletteLayout.AskLine, default));
         var shown = ask?.Buttons ?? [];
-        for (int i = 0; i < buttons.Count; i++)
+        foreach (var (kind, button) in buttons)
         {
-            var (geometry, brush, label) = buttons[i];
-            bool on = i < shown.Count;
-            geometry.Offset = on ? new Vector2(shown[i].Box.X, shown[i].Box.Y) : default;
-            geometry.Size = on ? new Vector2(shown[i].Box.Width, shown[i].Box.Height) : default;
-            brush.Color = on && shown[i].Button == ConfirmButton.Run ? (confirm!.Destructive ? RunWarn : RunFill) : ButtonOff;
-            label.Show(on ? shown[i].Label : new TextSlot("", PaletteLayout.Button, default));
+            var at = shown.FirstOrDefault(s => s.Button == kind);
+            bool on = at.Label.Text is not null;
+            button.Geometry.Offset = new Vector2(at.Box.X, at.Box.Y);
+            button.Geometry.Size = new Vector2(at.Box.Width, at.Box.Height);
+            button.Shape.StrokeThickness = on && kind != ConfirmButton.Run ? 1 : 0;
+            if (kind == ConfirmButton.Run)
+            {
+                button.Fill.Color = Argb(confirm?.Destructive == true ? PaletteLayout.RunWarn : PaletteLayout.RunFill);
+            }
+
+            button.Label.Show(on ? at.Label : new TextSlot("", PaletteLayout.Button, default));
+        }
+
+        if (laidAsk is { } open && !ReferenceEquals(open, guarded))
+        {
+            // A new question: the yes buttons show the read guard, dim while a yes would not count yet, brightening as
+            // it starts to. Cancel works at once.
+            guarded = open;
+            questions++;
+            var fade = c.CreateScalarKeyFrameAnimation();
+            fade.InsertKeyFrame(0, StateLook.DisabledOpacity);
+            fade.InsertKeyFrame(0.7f, StateLook.DisabledOpacity);
+            fade.InsertKeyFrame(1, 1);
+            fade.Duration = TimeSpan.FromMilliseconds(ToolQuestion.ReadMs);
+            buttons[ConfirmButton.Run].Layer.StartAnimation("Opacity", fade);
+            buttons[ConfirmButton.AlwaysAllow].Layer.StartAnimation("Opacity", fade);
+            readTimer!.Stop();
+            readTimer.Start();
         }
     }
+
+    // One of the question's buttons: its layer, its pill with a fill (and, but for Run, an outline), and its label.
+    private sealed record AskButton(ContainerVisual Layer, CompositionRoundedRectangleGeometry Geometry, CompositionSpriteShape Shape, CompositionColorBrush Fill, TextVisual Label);
 
     // The answer from a button, Enter or Esc, for the question the card shows: never for one that opened after it was
     // drawn. False when none is shown, or when a yes comes before the card has shown for long enough to be read.
@@ -467,6 +737,9 @@ internal sealed class PaletteView : IDisposable
         {
             fadeInPending = false;
             root.StartAnimation("Opacity", PanelHost.Fade(island.Compositor, 1, PanelHost.FadeInMs));
+            // Its targets go live as it starts to show, in the palette's own space from its top-left corner.
+            var corner = new Vector2(root.Offset.X, root.Offset.Y);
+            island.Interaction.Register(this, p => p - corner, p => p + corner);
         }
     }
 
@@ -493,8 +766,8 @@ internal sealed class PaletteView : IDisposable
         }
     }
 
-    // A press on a question's button answers it; a press on a chip turns it on or off; a press on the prompt is the
-    // typing focus's.
+    // The chips and buttons are the interaction host's. A press on the prompt's card is the typing focus's: the box
+    // takes its own presses, and its padding looks like part of it, so a press there gives the box the keys too.
     private void OnPressed(Vector2 at)
     {
         if (disposed || session is null || machine.State != IslandState.Palette)
@@ -503,31 +776,13 @@ internal sealed class PaletteView : IDisposable
         }
 
         var local = at - new Vector2(root.Offset.X, root.Offset.Y);
-        if (layout.ButtonAt(local, Height) is { } button)
+        if (prompt is not null && !Sending && layout.Prompt.Contains(local.X, local.Y) && !layout.Send.Contains(local.X, local.Y) && !prompt.Contains(at))
         {
-            Answer(button);
-            return;
-        }
-
-        if (session.Status == PaletteStatus.Sending)
-        {
-            // The typing focus saw the press first: a click into the box gave it the keys back, and the line says so.
-            Update();
-            return;
-        }
-
-        int i = layout.ChipAt(local);
-        if (i >= 0)
-        {
-            var chip = session.Chips[i];
-            chip.On = !chip.On;
-            Update();
-        }
-        else if (prompt is not null && layout.Prompt.Contains(local.X, local.Y) && !prompt.Contains(at))
-        {
-            // The card's padding around the text box looks like part of it; the box itself takes its own presses.
             focus?.Take(prompt);
         }
+
+        // The typing focus saw the press first: a click into the box gave it the keys, and the outline and the line say so.
+        Update();
     }
 
     private void OnState(IslandState from, IslandState to)
@@ -538,6 +793,8 @@ internal sealed class PaletteView : IDisposable
         }
 
         // Out with the shape: the content fades over 0.1 s, then goes; a timer, because a sleeping display finishes no animation.
+        // Its targets are nobody's from now.
+        island.Interaction.Unregister(this);
         machine.Changed -= OnState;
         root.StartAnimation("Opacity", PanelHost.Fade(island.Compositor, 0, PanelHost.FadeOutMs));
         PanelHost.AfterFadeOut(island, Dispose).Start();

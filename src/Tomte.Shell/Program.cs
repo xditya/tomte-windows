@@ -504,7 +504,7 @@ internal static partial class Program
         var (w, h) = overlay.Lasso.BoxDips;
         var chip = ContextChips.Lasso(png, w, h);
         File.WriteAllBytes(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "capture-last.png"), png);
-        log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} capture chip \"{chip.Label}\" px={crop} points={overlay.Lasso.Points.Count} png={png.Length}B in {Stopwatch.GetElapsedTime(released).TotalMilliseconds:F1}ms");
+        log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} capture chip \"{chip.Tip}\" px={crop} points={overlay.Lasso.Points.Count} png={png.Length}B in {Stopwatch.GetElapsedTime(released).TotalMilliseconds:F1}ms");
         await PaletteRun(island, triggers, store, log, question, chip, foreground);
     }
 
@@ -541,11 +541,12 @@ internal static partial class Program
             var scratchpad = Scratchpad;
             await scratchpad.LoadAsync();
             var (app, title) = WindowContext.Describe(foreground);
+            string product = await Task.Run(() => WindowContext.Product(foreground, app));
             var chips = new List<ContextChip>
             {
                 ContextChips.Selection(null),
-                ContextChips.Window(app, title),
-                ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct)),
+                ContextChips.Window(app, title, product),
+                ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct), product),
                 ContextChips.Shelf(shelf),
                 ContextChips.Scratchpad(scratchpad),
             };
