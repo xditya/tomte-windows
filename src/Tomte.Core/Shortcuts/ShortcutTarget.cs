@@ -59,7 +59,10 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
     // 26200); the second row it does, and is here so the answer does not depend on the PC.
     private static readonly HashSet<string> AlsoBlocked = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".appinstaller", ".appx", ".appxbundle", ".msix", ".msixbundle", ".application", ".jar", ".py", ".pyw", ".sh", ".xll", ".diagcab", ".search-ms", ".searchConnector-ms", ".settingcontent-ms", ".themepack",
+        ".appinstaller", ".appx", ".appxbundle", ".msix", ".msixbundle", ".application", ".jar", ".sh", ".xll", ".diagcab", ".search-ms", ".searchConnector-ms", ".settingcontent-ms", ".themepack",
+        // Everything the Python launcher runs.
+        // a named list; file types that belong to other installed interpreters can still get through as files.
+        ".py", ".pyw", ".pyz", ".pyzw", ".pyc", ".pyo",
         ".msi", ".msp", ".reg", ".hta", ".scr", ".com", ".pif", ".cpl", ".msc", ".inf", ".chm",
     };
 
@@ -99,7 +102,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
             return "A path holds a colon only after the drive letter.";
         }
 
-        if (target.StartsWith(@"\\", StringComparison.Ordinal) || target.StartsWith("//", StringComparison.Ordinal))
+        if (UncLike(target))
         {
             return "Tomte does not open shortcuts on a network path.";
         }
@@ -139,7 +142,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
             return new(ShortcutKind.Url, uri.AbsoluteUri);
         }
 
-        string path = Path.GetFullPath(target);
+        string path = LongName(Path.GetFullPath(target));
         try
         {
             if (Directory.Exists(path))
@@ -197,7 +200,21 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
         }
     }
 
-    private static bool OnNetwork(string path) => path.StartsWith(@"\\", StringComparison.Ordinal) || (Path.IsPathFullyQualified(path) && OnNetworkDrive(path));
+    private static bool OnNetwork(string path) => UncLike(path) || (Path.IsPathFullyQualified(path) && OnNetworkDrive(path));
+
+    // Two leading separators of either kind start a network or device path: Windows reads every mix of them as two backslashes.
+    private static bool UncLike(string path) => path is ['\\' or '/', '\\' or '/', ..];
+
+    /// <summary>
+    /// The path with every short (8.3) name spelled out, so a short name set to look like another type cannot
+    /// hide the file's real extension. A path that does not exist comes back as it was.
+    /// </summary>
+    private static string LongName(string path)
+    {
+        Span<char> buffer = stackalloc char[2048];
+        uint length = PInvoke.GetLongPathName(path, buffer);
+        return length > 0 && length < buffer.Length ? new string(buffer[..(int)length]) : path;
+    }
 
     // For a target that is gone: what it looked like, so the tile keeps its place in the right style.
     private static ShortcutKind Guess(string path) =>
@@ -246,6 +263,12 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
     private static ShortcutTarget ReadLink(string link)
     {
         var (raw, arguments, folder, iconFile) = Link(link);
+        // The shell starts the target in the link's working folder, which connects to the server when that is remote.
+        if (folder.Length > 0 && OnNetwork(Environment.ExpandEnvironmentVariables(folder)))
+        {
+            return new(ShortcutKind.Blocked, link, Problem: $"This shortcut starts in {folder}, a network folder, which Tomte does not open.");
+        }
+
         // A link's own icon is read from wherever it says; one on a network path is not, and the target's is used.
         bool remoteIcon = iconFile.Length > 0 && OnNetwork(Environment.ExpandEnvironmentVariables(iconFile));
         if (raw.Length == 0)
@@ -259,7 +282,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
             return new(ShortcutKind.Blocked, link, Problem: $"This shortcut points at {raw}. {why}");
         }
 
-        string path = Path.GetFullPath(raw);
+        string path = LongName(Path.GetFullPath(raw));
         string icon = remoteIcon ? path : link;
         if (Directory.Exists(path))
         {

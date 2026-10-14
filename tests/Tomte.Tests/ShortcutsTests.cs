@@ -80,6 +80,10 @@ public sealed class ShortcutsTests : IDisposable
     [InlineData("saver.scr")]
     [InlineData("run.py")]
     [InlineData("run.sh")]
+    [InlineData("app.pyz")]
+    [InlineData("app.pyzw")]
+    [InlineData("cached.pyc")]
+    [InlineData("cached.pyo")]
     [InlineData("app.appinstaller")]
     [InlineData("app.msix")]
     [InlineData("old.com")]
@@ -141,6 +145,8 @@ public sealed class ShortcutsTests : IDisposable
     [InlineData(@"\\server\share\notes.txt")]
     [InlineData(@"\\?\C:\Windows\notepad.exe")]
     [InlineData("//server/share")]
+    [InlineData(@"\/server\share\notes.txt")]
+    [InlineData(@"/\server\share\notes.txt")]
     [InlineData("notes.txt")]
     [InlineData(@"C:notes.txt")]
     [InlineData(@"C:\notes.txt:hidden")]
@@ -422,6 +428,37 @@ public sealed class ShortcutsTests : IDisposable
         // A link whose icon lives on a network path shows its target's icon instead.
         string remote = Link("remote-icon.lnk", notes, icon: @"\\server\share\x.ico,0");
         Assert.Equal(notes, ShortcutTarget.Read(remote).Icon);
+        // One backslash and one slash name the same server.
+        string mixed = Link("mixed-icon.lnk", notes, icon: @"\/server\share\x.ico,0");
+        Assert.Equal(notes, ShortcutTarget.Read(mixed).Icon);
+    }
+
+    [Fact]
+    public void ALinkThatStartsInANetworkFolderIsBlocked()
+    {
+        // The shell would start the app with that folder current, which connects to the server.
+        string tool = Touch("tool.exe");
+        foreach (string folder in new[] { @"\\server\share", @"\/server\share" })
+        {
+            var target = ShortcutTarget.Read(Link("remote-folder.lnk", tool, folder: folder));
+            Assert.Equal(ShortcutKind.Blocked, target.Kind);
+            Assert.Null(target.Icon);
+        }
+
+        Assert.Equal(ShortcutKind.App, ShortcutTarget.Read(Link("local-folder.lnk", tool, folder: dir)).Kind);
+    }
+
+    [Fact]
+    public void AShortNameIsReadAsTheLongNameItStandsFor()
+    {
+        // "tool.wsfx" is a plain file; its short name, where the volume makes one, ends in .WSF, a script type. On a
+        // volume with short names turned off the short path is the long one and this only checks the plain read.
+        string file = Touch("tool.wsfx");
+        dynamic fso = Activator.CreateInstance(Type.GetTypeFromProgID("Scripting.FileSystemObject")!)!;
+        string shortPath = fso.GetFile(file).ShortPath;
+        var target = ShortcutTarget.Read(shortPath);
+        Assert.Equal(ShortcutKind.File, target.Kind);
+        Assert.Equal(file, target.Open, ignoreCase: true);
     }
 
     [Fact]
@@ -590,7 +627,7 @@ public sealed class ShortcutsTests : IDisposable
         return path;
     }
 
-    private string Link(string name, string target, string arguments = "", string? icon = null)
+    private string Link(string name, string target, string arguments = "", string? icon = null, string? folder = null)
     {
         string path = Path.Combine(dir, name);
         dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
@@ -600,6 +637,11 @@ public sealed class ShortcutsTests : IDisposable
         if (icon is not null)
         {
             link.IconLocation = icon;
+        }
+
+        if (folder is not null)
+        {
+            link.WorkingDirectory = folder;
         }
 
         link.Save();
