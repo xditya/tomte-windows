@@ -432,8 +432,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     // Begin opens the 262 wide pill and sets the mascot itself.
                     rambler.Begin();
-                    ring.Hide();
                     activity |= IslandActivity.Rambling;
+                    // The rambler's pill has no room for the ring, and it changes state without Go.
+                    UpdateRing();
                     pointerInside = false;
                     InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
                 }
@@ -545,7 +546,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void UpdateRing()
     {
         var run = timer.Run ?? finished;
-        if (machine.State == IslandState.Compact && run is not null)
+        if (machine.State == IslandState.Compact && run is not null && !activity.HasFlag(IslandActivity.Rambling))
         {
             ring.Show(run, DateTimeOffset.Now, island.Scale);
         }
@@ -709,6 +710,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             Go(IslandState.Hidden);
         }
+
+        // The rambler retracts on its own, so Go may not have run: make sure no ring animation outlives the pill.
+        UpdateRing();
 
         // The pill was peeking before something opened on top of it; nothing has moved under it, so it comes back.
         if (peekWanted && !wasPeek)
