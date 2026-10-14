@@ -50,6 +50,12 @@ internal static class Program
             return 0;
         }
 
+        // --run-job from Task Scheduler while Tomte already runs on the same folder: that Tomte runs it.
+        if (Jobs.HandedOff(args))
+        {
+            return 0;
+        }
+
         bool debugMascot = args.Contains("--debug-mascot");
         int paletteArg = Array.IndexOf(args, "--palette");
         string? palettePrompt = paletteArg >= 0 && paletteArg + 1 < args.Length ? args[paletteArg + 1] : null;
@@ -78,7 +84,7 @@ internal static class Program
         }
 
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
-        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null;
+        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null || args.Contains("--debug-job");
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
@@ -147,6 +153,7 @@ internal static class Program
         // One store of tiles for the Shortcuts panel and for voice; nothing opens the database until a tile is wanted.
         var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         StartPanels(island, triggers, store, db, shortcuts, clipboard, logLine);
+        _ = Jobs.StartAsync(new JobContext(island, triggers, store, db, timer, Scratchpad, SendLogPath, log, logLine), args);
 
         if (rambler)
         {
@@ -339,6 +346,7 @@ internal static class Program
     {
         string dir = Path.GetDirectoryName(store.FilePath)!;
         var shelf = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log);
+        Jobs.Shelf = shelf;
         // Virtual files are written into the shelf folder as the drop reads them; the drop then goes to the shelf.
         triggers.Drops.Receive = shelf.Receive;
         triggers.Dropped += drop => shelf.Accept(drop);
