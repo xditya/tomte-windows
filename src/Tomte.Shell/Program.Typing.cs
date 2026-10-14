@@ -23,6 +23,9 @@ internal static partial class Program
     private static HttpClient? paletteHttp;
     private static PermissionGrants? paletteGrants;
 
+    // The conversation the History tab's Continue asked for, taken by the palette that opens next.
+    private static AiExchange? continuing;
+
     /// <summary>The island's text renderer, made with the panels at start.</summary>
     internal static TextRenderer? Text => text;
 
@@ -72,6 +75,17 @@ internal static partial class Program
         {
             NotOpened(triggers, log, e);
         }
+    }
+
+    /// <summary>
+    /// The History tab's Continue: the AI box as the Ask pill opens it, with the conversation loaded and an empty prompt.
+    /// Nothing is sent until Enter, which sends the conversation's text with the new question.
+    /// </summary>
+    private static void ContinueInPalette(TriggerController triggers, AiExchange conversation)
+    {
+        continuing = conversation;
+        triggers.OpenPalette();
+        continuing = null;
     }
 
     // A palette that failed to open would leave the island in the Palette state with nothing in it.
@@ -124,7 +138,9 @@ internal static partial class Program
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, ContextChip? lasso = null, nint? front = null)
     {
-        hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide);
+        // Read before the first wait: Continue sets it only for the open it starts.
+        var earlier = continuing;
+        hotkeyPalette ??= NewPaletteHost(island, triggers, log);
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
         if ((debug ? DebugProvider() : Configured(store, log)) is not { } configured)
         {
@@ -158,7 +174,7 @@ internal static partial class Program
         }
 
         var session = Session(triggers, store, configured, dry: debug, foreground, selection.IsCompletedSuccessfully ? selection.Result : null,
-            skills.IsCompletedSuccessfully ? skills.Result : null, lasso, product.IsCompletedSuccessfully ? product.Result : null);
+            skills.IsCompletedSuccessfully ? skills.Result : null, lasso, product.IsCompletedSuccessfully ? product.Result : null, earlier);
         if (!debug)
         {
             _ = DescribeAsync(session, configured.Provider, configured.Config);
@@ -166,6 +182,13 @@ internal static partial class Program
 
         hotkeyPalette.Type(session);
     }
+
+    /// <summary>The typed palette's host, whose footer button opens the History tab on the next turn, after the click.</summary>
+    private static PaletteHost NewPaletteHost(IslandWindow island, TriggerController triggers, Action<string>? log) =>
+        new(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide)
+        {
+            OpenHistory = () => island.Queue.TryEnqueue(() => triggers.OpenPanel(PanelId.History)),
+        };
 
     private static (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) DebugProvider()
     {
@@ -208,7 +231,7 @@ internal static partial class Program
     /// (started on the first send, stopped when the palette closes) and, when Settings turned it on, UI Automation on the
     /// window that was in front, every list and action of it asked.
     /// </summary>
-    private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection, SkillSet? skills, ContextChip? lasso, string? product)
+    private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection, SkillSet? skills, ContextChip? lasso, string? product, AiExchange? earlier)
     {
         var (app, title) = WindowContext.Describe(foreground);
         // The real shelf, so the Shelf chip offers what is on it and a file the AI makes stays there.
@@ -223,6 +246,8 @@ internal static partial class Program
         var session = new PaletteSession(configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants, chips)
         {
             Skills = skills,
+            History = History,
+            Continuing = earlier,
             Mcp = McpTools.For(settings.McpServers),
             // With no window to point them at (the tray's Ask AI with none remembered) the tools are not offered.
             Automation = AutomationTools.For(settings.UiAutomation.Enabled && foreground != 0, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),

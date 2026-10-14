@@ -24,6 +24,9 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
     /// <summary>The question the running palette's card shows now; null with none.</summary>
     public ToolRequest? Shown => running?.Shown;
 
+    /// <summary>What the footer's AI history button does: Panels on the History tab.</summary>
+    public Action? OpenHistory { get; set; }
+
     /// <param name="question">The question the session asks through, drawn with its buttons; null for a driven run that answers itself.</param>
     public async Task RunAsync(PaletteSession session, ToolQuestion? question = null)
     {
@@ -38,7 +41,7 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
         island.PanelLook = true;
         // Esc closes the palette, as it does every state the user opened on purpose.
         InputThread.SetEscape(true);
-        var view = running = new PaletteView(island, machine, text, focus, session, (float)Width, null, question);
+        var view = running = new PaletteView(island, machine, text, focus, session, (float)Width, null, question) { OpenHistory = OpenHistory };
         void Rest() => RestWhileAsked(question!);
         if (question is not null)
             question.Changed += Rest;

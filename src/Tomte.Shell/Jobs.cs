@@ -264,6 +264,8 @@ internal static class Jobs
         {
             Resident = resident,
             Log = log,
+            // The settings file is read at each keep, so a history turned off since start keeps nothing.
+            History = new AiHistory(db, () => SettingsStore.Load(settings).KeepAiHistory, log),
         };
     }
 

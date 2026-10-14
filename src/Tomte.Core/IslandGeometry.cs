@@ -54,6 +54,7 @@ public static class PanelSize
     public static readonly (double W, double H) Scratchpad = (520, 320);
     public static readonly (double W, double H) Shelf = (560, 260);
     public static readonly (double W, double H) Clipboard = (560, 360);
+    public static readonly (double W, double H) History = (560, 400);
     public const double PaletteWidth = 640;
     public const double PaletteMinHeight = 150;
     public const double PaletteMaxHeight = 480;
@@ -69,6 +70,7 @@ public static class PanelSize
         PanelId.Media => Media,
         PanelId.Scratchpad => Scratchpad,
         PanelId.Clipboard => Clipboard,
+        PanelId.History => History,
         _ => throw new ArgumentOutOfRangeException(nameof(id)),
     };
 

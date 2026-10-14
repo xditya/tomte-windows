@@ -29,7 +29,8 @@ internal sealed class DropZones
     public DropZones(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, TomteDb db, Action<string>? log)
     {
         (this.island, this.triggers, this.shelf, this.text, this.store, this.log) = (island, triggers, shelf, text, store, log);
-        results = new KeptResults(db, log);
+        // Part of the AI history: with it off, a result is neither kept nor shown again.
+        results = new KeptResults(db, log, () => store.Current.KeepAiHistory);
         Surface = new ShelfDropSurface(island, triggers.Machine, triggers.Drops, text, Layout);
         triggers.DropOnZone = Take;
     }

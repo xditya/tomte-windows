@@ -11,6 +11,7 @@ public enum PanelId
     Media,
     Scratchpad,
     Clipboard,
+    History,
 }
 
 /// <summary>
@@ -101,6 +102,7 @@ public static class TabStrip
         PanelId.Shortcuts => "Shortcuts",
         PanelId.Media => "Media",
         PanelId.Scratchpad => "Scratchpad",
+        PanelId.History => "History",
         _ => "Clipboard",
     };
 

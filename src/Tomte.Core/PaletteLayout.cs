@@ -265,14 +265,41 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         return laid.Height;
     }
 
-    /// <summary>The footer: where the request went or is going on the left, the steps and the spend on the right.</summary>
+    /// <summary>The AI history button at the footer's left: a clock, as big as the smallest target, centred on the footer's line.</summary>
+    public RectangleF History(float height) => new(Pad - 5, height - Bottom - (FootHeight / 2) - (StateLook.MinTarget / 2), StateLook.MinTarget, StateLook.MinTarget);
+
+    public Target HistoryTarget(float height) => new(HistoryId, History(height), 6, TargetKind.Button, Tip: HistoryTip);
+
+    public const string HistoryId = "history", HistoryTip = "AI history";
+
+    /// <summary>The clock's ring radius and stroke, and its two hands as bars from the centre, in the button's own DIPs.</summary>
+    public const float ClockRadius = 5.5f, ClockStroke = 1.5f;
+
+    public static readonly RectangleF[] ClockHands = [new(11.25f, 8.5f, 1.5f, 4.25f), new(11.25f, 11.25f, 3.5f, 1.5f)];
+
+    /// <summary>
+    /// The line under the answer while the next question would go with the conversation's text: what that costs and what
+    /// stays out. <paramref name="continuing"/> is the first question of a conversation from the history, before the
+    /// first new answer.
+    /// </summary>
+    public static string ContinueLine(string? continuing) => continuing is null
+        ? "A follow-up goes with this conversation's text, so it costs more. Earlier attachments are not included."
+        : $"Continuing \"{Trim(continuing)}\". Your question goes with its text, so it costs more. Its attachments are not included.";
+
+    private static string Trim(string text)
+    {
+        var line = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return line.Length <= 60 ? line : line[..59].TrimEnd() + "…";
+    }
+
+    /// <summary>The footer: where the request went or is going on the left after the history button, the steps and the spend on the right.</summary>
     public IReadOnlyList<TextSlot> Foot(string provider, int steps, decimal spent, decimal? cap, float height)
     {
         var foot = new RectangleF(Pad, height - Bottom - FootHeight, width - 2 * Pad, FootHeight);
-        float half = foot.Width / 2;
+        float half = foot.Width / 2, after = History(height).Right + 4 - foot.X;
         return
         [
-            new(provider, Provider, new RectangleF(foot.X, foot.Y, half + 40, FootHeight)),
+            new(provider, Provider, new RectangleF(foot.X + after, foot.Y, half + 40 - after, FootHeight)),
             new(SpendLine(steps, spent, cap), Spend, new RectangleF(foot.X + half + 50, foot.Y, half - 50, FootHeight)),
         ];
     }

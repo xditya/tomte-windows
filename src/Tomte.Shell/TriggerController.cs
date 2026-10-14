@@ -281,6 +281,26 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>The window the user last worked in, if it is still up, else 0 (<see cref="DesktopWatch.LastApp"/>).</summary>
     public nint LastApp => watch.LastApp;
 
+    /// <summary>A button on the open island asked for a tab: Panels on it, from the palette or from another tab.</summary>
+    internal void OpenPanel(PanelId id)
+    {
+        if (machine.State is IslandState.Panels or IslandState.Palette)
+        {
+            Panels?.Select(id);
+            Go(IslandState.Panels);
+        }
+    }
+
+    /// <summary>A button on the open Panels asked for the AI box, as the Ask pill does; the shell fills it.</summary>
+    internal void OpenPalette()
+    {
+        if (OpensPalette())
+        {
+            Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+            PaletteOpened?.Invoke();
+        }
+    }
+
     /// <summary>The current panel changed while Panels is open (a tab switch): Panels re-enters itself and the shape morphs to the new size.</summary>
     public void ResizePanels()
     {
