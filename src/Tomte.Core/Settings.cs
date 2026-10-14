@@ -166,7 +166,8 @@ public sealed class SettingsStore : IDisposable
     public void Save(TomteSettings settings)
     {
         string text = Serialize(settings);
-        string temp = FilePath + ".tmp";
+        // One temporary file per process: the shell and the settings window both save.
+        string temp = FilePath + "." + Environment.ProcessId + ".tmp";
         File.WriteAllText(temp, text);
         Retry(() => File.Move(temp, FilePath, overwrite: true));
         Publish(settings, text);
