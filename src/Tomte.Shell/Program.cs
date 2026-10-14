@@ -266,7 +266,8 @@ internal static class Program
                 Prompt = prompt,
                 ConfirmTool = (request, _) =>
                 {
-                    bool deny = request.Tier == ActionTier.Destructive && !dry;
+                    // Nobody is at the keyboard in a driven run: refuse what has no undo and no bound.
+                    bool deny = !dry && (request.Tier == ActionTier.Destructive || request.Tool == BuiltInTools.OpenApp);
                     log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette confirm {request.Tier}: {request.Summary} -> {(deny ? "deny, needs --dry" : "allow once")}");
                     return Task.FromResult(deny ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
                 },
