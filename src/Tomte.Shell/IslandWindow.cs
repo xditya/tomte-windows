@@ -802,9 +802,12 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
-    /// <summary>A point in the window's client pixels to island space, whose origin is the top of Content's centre line.</summary>
+    /// <summary>
+    /// A point in the window's client pixels to island space, whose origin is the top of Content's centre line, rounded
+    /// down to a whole pixel as the Dips container's is, so a press lands where its target is drawn.
+    /// </summary>
     private Vector2 ToIsland(int x, int y) =>
-        PanelSpace.FromPixels(x, y, root.Offset.X + (Content.Size.X - 2 * Margin) / 2, root.Offset.Y, scale);
+        PanelSpace.FromPixels(x, y, root.Offset.X + MathF.Floor((Content.Size.X - 2 * Margin) / 2), root.Offset.Y, scale);
 
     /// <summary>The same from screen pixels, which is where the wheel message puts its point.</summary>
     private Vector2 ScreenToIsland(int x, int y)
