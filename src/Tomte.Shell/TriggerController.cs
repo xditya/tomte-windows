@@ -69,6 +69,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             activity |= IslandActivity.DragInProgress;
             PInvoke.KillTimer(island.Hwnd, HoverTimer);
+            island.Swell(false);
         };
         island.Moved += OnMoved;
         island.LayoutChanged += () =>
@@ -557,7 +558,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// The pointer is inside the island's bounds plus the retract margin, or not, and on the island itself, or not. The
-    /// margin holds the island open; only resting on the pill counts toward the dwell that opens Panels.
+    /// margin holds the island open; only resting on the pill counts toward the dwell that opens Panels, and on the push
+    /// pill it swells a little while that dwell runs.
     /// </summary>
     private void OnPointer(bool inside, bool on)
     {
@@ -577,10 +579,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (hover == HoverStep.Start && RetractionRules.OpensPanels(machine.State, activity))
         {
             PInvoke.SetTimer(island.Hwnd, HoverTimer, (uint)settings.Reveal.ExpandDwellHeldMs, null);
+            island.Swell(Compact == CompactReason.Summary);
         }
         else if (hover == HoverStep.Cancel)
         {
             PInvoke.KillTimer(island.Hwnd, HoverTimer);
+            island.Swell(false);
         }
 
         if (activity.HasFlag(IslandActivity.Result))

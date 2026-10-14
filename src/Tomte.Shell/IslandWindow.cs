@@ -92,6 +92,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     private double fromWidth, fromDepth;
     private bool contentPending;
 
+    // The swell is asked for, and the springs aim at its targets (grown or back) rather than a state's.
+    private bool swell, swellAimed;
+
     // A press on the pill's own surface, held until it is a click or a drag; and the last such click, for a double click,
     // with where it landed while it waits to see whether a second one comes.
     private bool grabbing, grabMoved, grabPill;
@@ -406,6 +409,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         targetGeometry = to;
+        swell = swellAimed = false;
         double lead = Mascot.TakeIslandLead();
         if (to.Depth <= 0.5 && Dips.Children.Count > 0)
         {
@@ -460,6 +464,51 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         return settled.Task;
+    }
+
+    /// <summary>
+    /// The resting shape grows a few DIPs while the pointer rests on it, and springs back: the width, depth and corner
+    /// springs retargeted on the gentle preset with no change of state, so nothing fades in again, a click waiting for
+    /// a second one keeps waiting and the content stays where it is. Asked for during a morph, it starts once the shape
+    /// settles; the next morph ends it. Windows animation effects off, it does not grow.
+    /// </summary>
+    public void Swell(bool on)
+    {
+        if (on == swell || !visible || (on && (ForceReduceMotion || !uiSettings.AnimationsEnabled)))
+        {
+            return;
+        }
+
+        swell = on;
+        if (!islandMoving || swellAimed)
+        {
+            AimSwell();
+        }
+    }
+
+    private void AimSwell()
+    {
+        var rest = targetGeometry;
+        var to = swell ? rest.Swollen() : rest;
+        swellAimed = true;
+        foreach (var spring in springs)
+        {
+            spring.Use(SpringPreset.Gentle);
+        }
+
+        (width.Target, depth.Target, corner.Target) = (to.Width, to.Depth, to.Corner);
+        ClearRegion();
+        SizeWindow(System.Drawing.Rectangle.Union(Bounds(Current), Bounds(to)));
+        Apply(Current);
+        if (!islandMoving)
+        {
+            islandMoving = true;
+            morphStartMs = clock.Elapsed.TotalMilliseconds;
+            LastMorphTicks = 0;
+            leadMs = 0;
+        }
+
+        Wake();
     }
 
     /// <summary>
@@ -707,7 +756,8 @@ internal sealed unsafe class IslandWindow : IDisposable
             LayoutChanged?.Invoke();
         }
 
-        if (settled is not null)
+        // A swell has no task to complete, but its window and region still need the shape it rests on.
+        if (settled is not null || swellAimed)
         {
             Settle();
             RaiseContentReady();
@@ -773,6 +823,11 @@ internal sealed unsafe class IslandWindow : IDisposable
         if (visible)
         {
             Settled?.Invoke();
+            if (swell && !swellAimed)
+            {
+                // The pointer came to rest on the pill while it was still opening.
+                AimSwell();
+            }
         }
     }
 
