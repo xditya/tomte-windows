@@ -198,9 +198,13 @@ internal sealed unsafe class EditorView : IDisposable
         HideCaret();
     }
 
-    /// <summary>Enter hands the text to <paramref name="send"/> and adds nothing; Shift+Enter is a new line. The palette's prompt.</summary>
+    /// <summary>Tab and Shift+Tab leave the box for the island's targets instead of typing a tab: the palette's prompt.</summary>
+    public bool TabLeaves { get; private set; }
+
+    /// <summary>Enter hands the text to <paramref name="send"/> and adds nothing; Shift+Enter is a new line; Tab leaves. The palette's prompt.</summary>
     public void SendOnEnter(Action<string> send)
     {
+        TabLeaves = true;
         var keys = new PromptKeys();
         BeforeKey = (message, wParam, lParam) =>
         {

@@ -169,6 +169,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>After the scratchpad hotkey opened its tab: the note takes the keys.</summary>
     public Action? ScratchpadOpened { get; set; }
 
+    /// <summary>After the summon hotkey opened Panels: the island takes the keys, so Tab and the arrows reach its targets.</summary>
+    public Action? SummonOpened { get; set; }
+
     /// <summary>Which panel the Panels state shows and how large it is. Without one, Panels is an empty Shelf-sized shape.</summary>
     public PanelHost? Panels { get; set; }
 
@@ -437,40 +440,50 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact, peek or Panels, and so does one on the
-    /// strip's Ask pill; with no provider set up the palette says the AI layer is off. A press anywhere else on Compact
-    /// opens Panels.
+    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact or peek; in Panels the strip's tomte
+    /// and Ask pill do (<see cref="AskClicked"/>). A press anywhere else on Compact opens Panels.
     /// </summary>
     private void OnPressed(System.Numerics.Vector2 at)
     {
-        if ((island.OnMascot(at) || Panels?.OnAsk(at) == true) && OpensPalette())
+        if (island.OnMascot(at) && OpensPalette())
         {
-            island.Queue.TryEnqueue(() =>
-            {
-                if (OpensPalette())
-                {
-                    // The island is up and was clicked: the pause and the suppression had their say when it showed.
-                    Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
-                    PaletteOpened?.Invoke();
-                }
-            });
+            AskClicked();
             return;
         }
 
         OpenPanelsNextTurn();
     }
 
+    /// <summary>A click that asks the AI: the palette on the next turn, as the palette hotkey opens it; with no provider set up it says the AI layer is off.</summary>
+    internal void AskClicked()
+    {
+        if (!OpensPalette())
+        {
+            return;
+        }
+
+        island.Queue.TryEnqueue(() =>
+        {
+            if (OpensPalette())
+            {
+                // The island is up and was clicked: the pause and the suppression had their say when it showed.
+                Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+                PaletteOpened?.Invoke();
+            }
+        });
+    }
+
     private bool OpensPalette() => machine.State is IslandState.Compact or IslandState.Panels && !activity.HasFlag(IslandActivity.Rambling);
 
     /// <summary>
     /// The pill's own surface, which a drag moves along the top edge: all of Compact, the tab strip's row outside its
-    /// labels, and the tomte wherever it sits. Labels, panel bodies and the palette's controls keep their presses, and
-    /// shelf and result tiles their drag out.
+    /// targets (the tabs, the tomte and the Ask pill take their presses first), and the tomte over the palette. Panel
+    /// bodies and the palette's controls keep their presses, and shelf and result tiles their drag out.
     /// </summary>
     private bool Grabs(System.Numerics.Vector2 at) => machine.State switch
     {
         IslandState.Compact => true,
-        IslandState.Panels => at.Y < PanelSpace.TabStripHeight && Panels?.OnLabel(at) != true,
+        IslandState.Panels => at.Y < PanelSpace.TabStripHeight,
         IslandState.Palette => island.OnMascot(at),
         _ => false,
     };
@@ -715,7 +728,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 Hide();
                 break;
             case HotkeyAction.Summon:
-                Reveal(RevealTrigger.Hotkey, IslandState.Panels);
+                if (Reveal(RevealTrigger.Hotkey, IslandState.Panels))
+                {
+                    SummonOpened?.Invoke();
+                }
+
                 break;
             case HotkeyAction.Scratchpad:
                 // Panels opens on the Scratchpad tab; while Panels is open, the same press is a tab switch to it.
