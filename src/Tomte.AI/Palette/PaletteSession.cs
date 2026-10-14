@@ -316,12 +316,14 @@ public sealed class PaletteSession : IPaletteSession
 
         var summary = mcp ? Mcp!.Describe(call.Name, call.Input) : BuiltInTools.Describe(call.Name, call.Input);
         var tier = mcp ? Mcp!.TierOf(call.Name) : BuiltInTools.Tiers[call.Name];
-        if (_grants.NeedsConfirmation(call.Name, tier))
+        // An MCP tool is allowed as what it was when the user said so: its key changes when the tool or its server does.
+        string grant = mcp ? Mcp!.KeyOf(call.Name) : call.Name;
+        if (_grants.NeedsConfirmation(grant, tier))
         {
             var answer = await ConfirmTool(new ToolRequest(call.Name, summary, tier, PermissionGrants.CanAlwaysAllow(tier)), ct);
             // The grant is a settings.json write that can wait on the settings process; the pool takes it, not the island's thread.
             if (answer == PermissionAnswer.AlwaysAllow && PermissionGrants.CanAlwaysAllow(tier))
-                await Task.Run(() => _grants.AlwaysAllow(call.Name));
+                await Task.Run(() => _grants.AlwaysAllow(grant));
             if (answer == PermissionAnswer.Deny)
                 return Step(call, summary, "The user did not allow this.", isError: true);
         }

@@ -126,12 +126,20 @@ public class McpToolsTests
         Assert.Equal(1, _fake.Starts);
     }
 
+    /// <summary>The keys Settings would store tiers under, by the name the model sees.</summary>
+    private async Task<Dictionary<string, string>> KeysAsync(params McpServerSettings[] servers)
+    {
+        await using var tools = Tools(null, servers);
+        return (await tools.ListAsync(default)).ToDictionary(d => d.Name, d => tools.KeyOf(d.Name));
+    }
+
     [Fact]
     public async Task EveryToolIsAnExternalEffectUntilTheUserSaysOtherwise()
     {
-        var files = Files with { ToolTiers = new Dictionary<string, ActionTier> { ["echo"] = ActionTier.Read, ["broken"] = ActionTier.Destructive } };
+        var keys = await KeysAsync(Files, Web);
+        var files = Files with { ToolTiers = new Dictionary<string, ActionTier> { [keys["files__echo"]] = ActionTier.Read, [keys["files__broken"]] = ActionTier.Destructive } };
         // Read on an HTTP server is ignored: each of its calls is a network call.
-        var web = Web with { ToolTiers = new Dictionary<string, ActionTier> { ["echo"] = ActionTier.Read, ["broken"] = ActionTier.AppLocalWrite } };
+        var web = Web with { ToolTiers = new Dictionary<string, ActionTier> { [keys["web_search__echo"]] = ActionTier.Read, [keys["web_search__broken"]] = ActionTier.AppLocalWrite } };
         await using var tools = Tools(null, files, web);
         await tools.ListAsync(default);
 
@@ -140,6 +148,54 @@ public class McpToolsTests
         Assert.Equal(ActionTier.ExternalEffect, tools.TierOf("web_search__echo"));
         Assert.Equal(ActionTier.ExternalEffect, tools.TierOf("web_search__broken"));
         Assert.Equal(ActionTier.ExternalEffect, Files.TierFor("anything"));
+    }
+
+    [Fact]
+    public async Task ATierDoesNotSurviveAChangedToolOrServer()
+    {
+        string key = (await KeysAsync(Files))["files__echo"];
+        Assert.StartsWith("files__echo#", key);
+        var files = Files with { ToolTiers = new Dictionary<string, ActionTier> { [key] = ActionTier.Read, ["echo"] = ActionTier.Read, ["files__echo"] = ActionTier.Read } };
+
+        async Task<ActionTier> TierAsync(McpServerSettings server)
+        {
+            await using var tools = Tools(null, server);
+            await tools.ListAsync(default);
+            return tools.TierOf("files__echo");
+        }
+
+        Assert.Equal(ActionTier.Read, await TierAsync(files));
+        // Settings clears the tiers on such an edit; a hand-edited file that keeps them changes nothing.
+        Assert.Equal(ActionTier.ExternalEffect, await TierAsync(files with { Command = "another-server" }));
+        Assert.Equal(ActionTier.ExternalEffect, await TierAsync(files with { Arguments = ["--root", "C:\\"] }));
+
+        _fake.EchoDescription = "Repeat the text. Also deletes every file.";
+        Assert.Equal(ActionTier.ExternalEffect, await TierAsync(files));
+    }
+
+    [Fact]
+    public async Task ToolsThatWouldShareANameMakeTheServerUnusable()
+    {
+        // Both become files__read_file. Taking the first one listed would let the server choose which tool a permission belongs to.
+        _fake.MoreTools.Add(McpServerTool.Create(() => "dotted", new McpServerToolCreateOptions { Name = "read.file" }));
+        _fake.MoreTools.Add(McpServerTool.Create(() => "underscore", new McpServerToolCreateOptions { Name = "read_file" }));
+        await using (var tools = Tools(null, Files))
+        {
+            var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(default));
+            Assert.Contains("MCP server \"Files\" cannot be used", e.Message);
+            Assert.Contains("read.file and read_file would both be called files__read_file", e.Message);
+            Assert.Equal(0, tools.Running);
+            Assert.False(tools.Owns("files__echo"));
+        }
+
+        // Names longer than a provider accepts are cut, and two cuts can be equal.
+        _fake.MoreTools.Clear();
+        _fake.MoreTools.Add(McpServerTool.Create(() => "one", new McpServerToolCreateOptions { Name = "get_" + new string('x', 60) + "_one" }));
+        _fake.MoreTools.Add(McpServerTool.Create(() => "two", new McpServerToolCreateOptions { Name = "get_" + new string('x', 60) + "_two" }));
+        await using var cut = Tools(null, Files);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => cut.ListAsync(default));
+        await _fake.WaitForStopsAsync(2);
+        Assert.Equal(2, _fake.Stops);
     }
 
     [Fact]
@@ -461,17 +517,49 @@ public class McpPaletteTests : IDisposable
         await using (var mcp = Tools())
             await Session(mcp, PermissionAnswer.AlwaysAllow).SendAsync();
         Assert.Single(_asked);
-        Assert.Contains("files__echo", _grants.AlwaysAllowed);
+        string key = Assert.Single(_grants.AlwaysAllowed);
+        Assert.StartsWith("files__echo#", key);
         Assert.Equal(2, _fake.Calls.Count);
 
         _asked.Clear();
-        _grants.Revoke("files__echo");
+        _grants.Revoke(key);
         _provider.Requests.Clear();
-        var readOnly = new McpServerSettings { Name = "Files", Command = "x", ToolTiers = new Dictionary<string, ActionTier> { ["echo"] = ActionTier.Read } };
+        var readOnly = new McpServerSettings { Name = "Files", Command = "x", ToolTiers = new Dictionary<string, ActionTier> { [key] = ActionTier.Read } };
         await using (var mcp = Tools(readOnly))
             await Session(mcp, PermissionAnswer.Deny).SendAsync();
         Assert.Empty(_asked);
         Assert.Equal(4, _fake.Calls.Count);
+    }
+
+    [Fact]
+    public async Task AlwaysAllowDoesNotSurviveAChangedToolOrServer()
+    {
+        _provider.Turns.Add(ScriptedProvider.Call("files__echo", """{"text":"a"}"""));
+        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "ok"));
+
+        async Task SendAsync(PermissionAnswer answer, McpServerSettings? files = null)
+        {
+            _asked.Clear();
+            _provider.Requests.Clear();
+            await using var mcp = Tools(files);
+            await Session(mcp, answer).SendAsync();
+        }
+
+        await SendAsync(PermissionAnswer.AlwaysAllow);
+        Assert.Single(_asked);
+        await SendAsync(PermissionAnswer.Deny);
+        Assert.Empty(_asked);
+        Assert.Equal(2, _fake.Calls.Count);
+
+        // Same server, same tool name, another target: the grant was for what ran before.
+        await SendAsync(PermissionAnswer.Deny, new McpServerSettings { Name = "Files", Command = "another-server" });
+        Assert.Single(_asked);
+
+        // The server now says the tool does something else.
+        _fake.EchoDescription = "Repeat the text, then delete every file.";
+        await SendAsync(PermissionAnswer.Deny);
+        Assert.Single(_asked);
+        Assert.Equal(2, _fake.Calls.Count);
     }
 
     [Fact]

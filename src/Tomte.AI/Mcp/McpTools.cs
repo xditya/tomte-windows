@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ModelContextProtocol;
@@ -37,6 +38,9 @@ public sealed class McpTools : IAsyncDisposable
     /// <summary>Longest error text taken from a server or from the SDK.</summary>
     public const int MaxError = 300;
 
+    /// <summary>Longest argument schema of one tool; the model gets every schema on every send, so a server with a longer one is refused.</summary>
+    public const int MaxSchema = 20_000;
+
     private readonly McpServerSettings[] _servers;
     private readonly string? _invalid;
     private readonly Func<McpServerSettings, CancellationToken, Task<McpClient>> _connect;
@@ -44,8 +48,9 @@ public sealed class McpTools : IAsyncDisposable
 
     // Written under the gate; the idle timer's thread and Running read it without.
     private readonly ConcurrentDictionary<string, McpClient> _clients = new();
-    private readonly Dictionary<string, (McpServerSettings Server, Tool Tool)> _tools = new(StringComparer.Ordinal);
-    private readonly List<ToolDefinition> _definitions = [];
+
+    // By the name the model sees, in a fixed order: the model gets the same tool list on every send.
+    private readonly SortedDictionary<string, Entry> _tools = new(StringComparer.Ordinal);
     private readonly Timer _idle;
     private int _busy;
     private bool _disposed;
@@ -77,16 +82,19 @@ public sealed class McpTools : IAsyncDisposable
 
     /// <summary>Every tool listed so far, for Settings.</summary>
     public IReadOnlyList<McpToolInfo> Tools =>
-        [.. _tools.Values.Select(t => new McpToolInfo(t.Tool.Name, Clean(t.Tool.Name, MaxName), Clean(t.Tool.Description, MaxDescription)))];
+        [.. _tools.Values.Select(t => new McpToolInfo(t.Key, Clean(t.Tool.Name, MaxName), Clean(t.Tool.Description, MaxDescription)))];
 
     public bool Owns(string tool) => _tools.ContainsKey(tool);
 
-    public ActionTier TierOf(string tool) => _tools[tool].Server.TierFor(_tools[tool].Tool.Name);
+    /// <summary>What this tool's tier override and "always allow" are stored under; see <see cref="Key"/>.</summary>
+    public string KeyOf(string tool) => _tools[tool].Key;
+
+    public ActionTier TierOf(string tool) => _tools[tool].Server.TierFor(_tools[tool].Key);
 
     /// <summary>One line for the confirmation prompt: which server, which tool, with what.</summary>
     public string Describe(string tool, JsonElement input)
     {
-        var (server, mcpTool) = _tools[tool];
+        var (server, mcpTool, _) = _tools[tool];
         string args = input.ValueKind == JsonValueKind.Object && input.EnumerateObject().Any() ? " " + Clean(input.GetRawText(), 120) : "";
         return $"{Clean(server.Name, MaxName)}: {Clean(mcpTool.Name, MaxName)}{args}";
     }
@@ -100,7 +108,7 @@ public sealed class McpTools : IAsyncDisposable
         try
         {
             await StartMissingAsync(_servers, ct);
-            return [.. _definitions];
+            return [.. _tools.Select(t => new ToolDefinition(t.Key, Clean($"[{t.Value.Server.Name}] {t.Value.Tool.Description}", MaxDescription), t.Value.Tool.InputSchema))];
         }
         finally
         {
@@ -115,7 +123,7 @@ public sealed class McpTools : IAsyncDisposable
     /// </summary>
     public async Task<ToolResultPart> CallAsync(ToolCallPart call, CancellationToken ct)
     {
-        var (server, tool) = _tools[call.Name];
+        var (server, tool, key) = _tools[call.Name];
         Interlocked.Increment(ref _busy);
         try
         {
@@ -131,6 +139,10 @@ public sealed class McpTools : IAsyncDisposable
             {
                 _gate.Release();
             }
+
+            // A restart lists the tools again. What the user allowed was the tool as it was before.
+            if (!_tools.TryGetValue(call.Name, out var now) || now.Key != key)
+                return new ToolResultPart(call.Id, call.Name, $"{Clean(server.Name, MaxName)} changed this tool when it restarted, so the call was not made. Call it again to use it as it is now.", IsError: true);
 
             // Small models send null for optional arguments they do not use; servers read that as a wrong type.
             var args = call.Input.ValueKind == JsonValueKind.Object
@@ -182,6 +194,20 @@ public sealed class McpTools : IAsyncDisposable
     {
         string name = server.Prefix + Separator + new string([.. tool.Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_')]);
         return name.Length > 64 ? name[..64] : name;
+    }
+
+    /// <summary>
+    /// What a tier override and an "always allow" are stored under: the name the model sees plus a hash
+    /// of what the tool is. A server pointed at another command or URL, or a tool whose name,
+    /// description or arguments changed, gets another key, so it is an External effect again and asks.
+    /// </summary>
+    internal static string Key(McpServerSettings server, Tool tool)
+    {
+        var identity = new StringBuilder();
+        // Each part with its length in front, so no two different sets of parts make the same text.
+        foreach (string part in (string[])[server.Target, tool.Name, tool.Description ?? "", tool.InputSchema.GetRawText()])
+            identity.Append(part.Length).Append(':').Append(part);
+        return ModelName(server, tool.Name) + "#" + Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity.ToString())), 0, 8);
     }
 
     /// <summary>
@@ -338,18 +364,48 @@ public sealed class McpTools : IAsyncDisposable
                 continue;
             }
 
-            _clients[server.Name] = client;
-            foreach (var tool in tools)
+            if (Register(server, tools) is { } problem)
             {
-                string name = ModelName(server, tool.Name);
-                if (_tools.TryAdd(name, (server, tool)))
-                    _definitions.Add(new ToolDefinition(name, Clean($"[{server.Name}] {tool.Description}", MaxDescription), tool.InputSchema));
+                await StopAsync(client);
+                failure ??= new InvalidOperationException($"MCP server \"{Clean(server.Name, MaxName)}\" cannot be used: {problem}. Turn it off in Settings to send without it.");
+                continue;
             }
+
+            _clients[server.Name] = client;
         }
 
         ct.ThrowIfCancellationRequested();
         if (failure is not null)
             throw failure;
+    }
+
+    /// <summary>
+    /// Takes a started server's tools, or says why the server is refused. A restart lists again, and
+    /// what the server says now replaces what it said before.
+    /// </summary>
+    private string? Register(McpServerSettings server, IList<Tool> tools)
+    {
+        var mine = new Dictionary<string, Entry>(StringComparer.Ordinal);
+        foreach (var tool in tools)
+        {
+            // Different names can become one name for the model (read.file and read_file, or two long
+            // names cut at 64). Taking the first would let a server hand one tool's permission to
+            // another by changing the order of its list.
+            string name = ModelName(server, tool.Name);
+            if (mine.TryGetValue(name, out var twin))
+                return $"its tools {Clean(twin.Tool.Name, MaxName)} and {Clean(tool.Name, MaxName)} would both be called {name}";
+            if (_tools.TryGetValue(name, out var other) && other.Server.Name != server.Name)
+                return $"its tool {Clean(tool.Name, MaxName)} would be called {name}, which {Clean(other.Server.Name, MaxName)} already uses";
+            if (tool.InputSchema.GetRawText().Length > MaxSchema)
+                return $"the arguments of its tool {Clean(tool.Name, MaxName)} take more than {MaxSchema} characters to describe";
+            mine[name] = new Entry(server, tool, Key(server, tool));
+        }
+
+        foreach (string stale in _tools.Where(t => t.Value.Server.Name == server.Name).Select(t => t.Key).ToArray())
+            _tools.Remove(stale);
+        foreach (var (name, entry) in mine)
+            _tools[name] = entry;
+        return null;
     }
 
     /// <summary>Never throws: a server that did not start comes back without a client, with the error unless the start was cancelled.</summary>
@@ -445,4 +501,6 @@ public sealed class McpTools : IAsyncDisposable
             // It already exited, or it failed while stopping; either way there is nothing left to do for it.
         }
     }
+
+    private sealed record Entry(McpServerSettings Server, Tool Tool, string Key);
 }

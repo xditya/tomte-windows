@@ -119,6 +119,13 @@ public sealed partial class SettingsWindow
                     : s);
                 panel.Children.Add(Row(tool.Name, tool.Description.Length == 0 ? null : Note(FirstSentence(tool.Description)), box));
             }
+
+            // A tier chosen for a tool the server no longer has, or has since changed, applies to nothing.
+            var keys = tools.Select(t => t.Key).ToHashSet();
+            if (server.ToolTiers.Keys.Any(k => !keys.Contains(k)))
+            {
+                SaveMcp(s => s.Name == name ? s with { ToolTiers = s.ToolTiers.Where(t => keys.Contains(t.Key)).ToDictionary() } : s);
+            }
         }
         catch (Exception e)
         {
@@ -188,13 +195,13 @@ public sealed partial class SettingsWindow
             Arguments = McpStdio ? McpServerSettings.SplitArguments(mcpArguments.Text) : [],
             Url = McpStdio ? "" : mcpTarget.Text.Trim(),
             HeaderName = McpStdio ? "" : mcpHeaderName.Text.Trim(),
-            Enabled = existing?.Enabled ?? true,
-            ToolTiers = existing?.ToolTiers ?? new Dictionary<string, ActionTier>(),
-        };
+        }.After(existing);
         string? error = McpServerSettings.Validate(store.Current.McpServers.Where(s => s.Name != mcpEditing), server);
-        // An empty box keeps the saved value; a rename moves it to the new name.
+        // An empty box keeps the saved value, and a rename moves it to the new name. A changed URL does
+        // not keep it: the value was entered for the old address.
         string? secret = mcpHeaderValue.Password.Length > 0 ? mcpHeaderValue.Password : null;
-        if (error is null && secret is null && existing is not null && !TryCredential(() => secret = CredentialStore.Read(existing.CredentialId)))
+        if (error is null && secret is null && existing is not null && existing.Target == server.Target
+            && !TryCredential(() => secret = CredentialStore.Read(existing.CredentialId)))
         {
             return;
         }
