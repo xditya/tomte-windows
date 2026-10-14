@@ -163,13 +163,15 @@ public sealed partial class OpenAICompatibleProvider(HttpClient http, string bas
         return body;
     }
 
-    // What a local Ollama said about each model, once per process: base URL and model id, then the answer or null.
-    private static readonly ConcurrentDictionary<string, ModelInfo?> Described = new();
+    // What a local Ollama said about each model, kept for the process: base URL and model id, then the answer.
+    private static readonly ConcurrentDictionary<string, ModelInfo> Described = new();
 
     /// <summary>
-    /// What a local Ollama says about a model: vision from its capabilities (Ollama 0.6 and later) and the context from
-    /// its model info, or the num_ctx its Modelfile sets, which is what it runs with. Asked only of a loopback endpoint,
-    /// with a 3 s limit, once per model; null for any other server, an unknown model, or an Ollama that does not answer.
+    /// What a local Ollama says about a model: vision from its capabilities (Ollama 0.6 and later) and the context it
+    /// runs the model with: the num_ctx its Modelfile sets, else its default of 4,096 (or the model's own length when
+    /// that is shorter), since the OpenAI endpoint cannot ask for more. Asked only of a loopback endpoint, with a 3 s
+    /// limit; an answer is kept for the process, a miss is asked again. Null for any other server, an unknown model, or an
+    /// Ollama that does not answer.
     /// </summary>
     public async Task<ModelInfo?> DescribeAsync(string model, CancellationToken ct = default)
     {
@@ -188,29 +190,32 @@ public sealed partial class OpenAICompatibleProvider(HttpClient http, string bas
             var show = doc.RootElement;
             bool? vision = show.TryGetProperty("capabilities", out var caps) && caps.ValueKind == JsonValueKind.Array
                 ? caps.EnumerateArray().Any(c => c.GetString() == "vision") : null;
-            int? context = show.TryGetProperty("model_info", out var info) && info.ValueKind == JsonValueKind.Object
+            int? trained = show.TryGetProperty("model_info", out var info) && info.ValueKind == JsonValueKind.Object
                 ? info.EnumerateObject().Where(p => p.Name.EndsWith(".context_length", StringComparison.Ordinal) && p.Value.ValueKind == JsonValueKind.Number)
                     .Select(p => p.Value.TryGetInt32(out int n) ? n : (int?)null).FirstOrDefault()
                 : null;
-            if (show.TryGetProperty("parameters", out var parameters) && parameters.ValueKind == JsonValueKind.String
-                && NumCtx().Match(parameters.GetString()!) is { Success: true } set)
-                context = int.Parse(set.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-            var described = vision is null && context is null ? null : new ModelInfo(model, context, vision);
+            int context = show.TryGetProperty("parameters", out var parameters) && parameters.ValueKind == JsonValueKind.String
+                && NumCtx().Match(parameters.GetString()!) is { Success: true } set
+                    ? int.Parse(set.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)
+                    : Math.Min(trained ?? OllamaDefaultContext, OllamaDefaultContext);
+            var described = new ModelInfo(model, context, vision);
             Described[cacheKey] = described;
             return described;
         }
-        catch (ProviderException e) when (e.Status is not null)
+        catch (InvalidOperationException)
         {
-            // An answer that is not Ollama's (404 from another server) or no such model: remembered.
-            Described[cacheKey] = null;
-            return null;
+            // An answer in a shape this does not know (a capability that is not a string): the plain answer.
+            return new ModelInfo(model, OllamaDefaultContext, null);
         }
         catch (Exception e) when (e is ProviderException or OperationCanceledException && !ct.IsCancellationRequested)
         {
-            // Not running, or too slow: asked again next time.
+            // Another server's 404, a model not pulled yet, Ollama not running or too slow: asked again next time.
             return null;
         }
     }
+
+    // The context Ollama runs a model with when nothing sets num_ctx.
+    private const int OllamaDefaultContext = 4096;
 
     [System.Text.RegularExpressions.GeneratedRegex(@"^num_ctx\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline)]
     private static partial System.Text.RegularExpressions.Regex NumCtx();

@@ -1074,17 +1074,18 @@ public sealed class FileTests : IDisposable
     public async Task ALocalOllamaSaysWhatTheModelReadsAndTakesOncePerModel()
     {
         // Recorded from Ollama 0.5.7 on this machine (license, Modelfile with its local path, and template taken out). That
-        // version has no capabilities field, so vision stays unknown; the context comes from the model info.
+        // version has no capabilities field, so vision stays unknown. The Modelfile sets no num_ctx, so Ollama runs the
+        // model at its default of 4,096 tokens, not the 131,072 of the model info.
         var recorded = new RecordedHandler("ollama-show-llama3.2.json");
         var ollama = new OpenAICompatibleProvider(new HttpClient(recorded), "http://127.0.0.1:11434/v1", null);
         var info = await ollama.DescribeAsync("llama3.2:3b-file-tests");
-        Assert.Equal(new ModelInfo("llama3.2:3b-file-tests", 131_072, null), info);
+        Assert.Equal(new ModelInfo("llama3.2:3b-file-tests", 4_096, null), info);
         Assert.Equal("http://127.0.0.1:11434/api/show", recorded.Request!.RequestUri!.ToString());
         Assert.Equal("""{"model":"llama3.2:3b-file-tests"}""", recorded.Body);
         Assert.Equal(info, await ollama.DescribeAsync("llama3.2:3b-file-tests"));
         Assert.Single(recorded.Bodies);
         var facts = ModelFacts.For(new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", "llama3.2:3b-file-tests"), ollama.Capabilities, info);
-        Assert.Equal((131_072, false), (facts.ContextTokens, facts.Vision));
+        Assert.Equal((4_096, false), (facts.ContextTokens, facts.Vision));
 
         // Ollama 0.6 and later add "capabilities"; this is the same answer with a vision model's list.
         var vision = new OpenAICompatibleProvider(new HttpClient(new RecordedHandler("ollama-show-vision.json")), "http://localhost:11434/v1", null);
@@ -1094,6 +1095,20 @@ public sealed class FileTests : IDisposable
         var remote = new RecordedHandler("ollama-show-vision.json");
         Assert.Null(await new OpenAICompatibleProvider(new HttpClient(remote), "https://openrouter.ai/api/v1", "k").DescribeAsync("m"));
         Assert.Empty(remote.Bodies);
+    }
+
+    [Fact]
+    public async Task AnOllamaMissIsAskedAgainAndASetNumCtxWins()
+    {
+        // Not JSON (no such model yet, or another server), then an answer in a shape this does not know, then the model
+        // with num_ctx set in its Modelfile.
+        var recorded = new RecordedHandler("openai-ollama-text.sse", then: ["ollama-show-odd.json", "ollama-show-num-ctx.json"]);
+        var ollama = new OpenAICompatibleProvider(new HttpClient(recorded), "http://127.0.0.1:11434/v1", null);
+        Assert.Null(await ollama.DescribeAsync("pulled-later-file-tests"));
+        Assert.Equal(new ModelInfo("pulled-later-file-tests", 4_096, null), await ollama.DescribeAsync("pulled-later-file-tests"));
+        Assert.Equal(new ModelInfo("pulled-later-file-tests", 8_192, null), await ollama.DescribeAsync("pulled-later-file-tests"));
+        Assert.Equal(new ModelInfo("pulled-later-file-tests", 8_192, null), await ollama.DescribeAsync("pulled-later-file-tests"));
+        Assert.Equal(3, recorded.Bodies.Count);
     }
 
     [Fact]

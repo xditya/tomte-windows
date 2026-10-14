@@ -1,0 +1,1 @@
+{"parameters":"num_ctx                        8192\nstop                           \"<|eot_id|>\"","model_info":{"llama.context_length":131072}}
