@@ -6,6 +6,8 @@ using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
 using Tomte.Core.Rambler;
+using Windows.Media.Core;
+using Windows.Media.Playback;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -323,6 +325,26 @@ public sealed class VoiceTests : IDisposable
         Assert.Equal(PaletteStatus.Done, session.Status);
     }
 
+    [MediaFact]
+    public async Task AReplyThatCannotPlayIsReleasedWithItsStream()
+    {
+        var stream = new Disposable();
+        SpokenReply.Play(MediaSource.CreateFromUri(new Uri(Path.Combine(_dir, "missing.wav"))), stream);
+
+        for (int i = 0; i < 100 && SpokenReply.Playing; i++)
+            await Task.Delay(100);
+
+        Assert.False(SpokenReply.Playing);
+        Assert.True(stream.Disposed);
+    }
+
+    private sealed class Disposable : IDisposable
+    {
+        public bool Disposed { get; private set; }
+
+        public void Dispose() => Disposed = true;
+    }
+
     [Fact]
     public void VoiceGetsThePowerToolsTheTimerTheShelfAndTheNoteButNotTheClipboard()
     {
@@ -438,5 +460,21 @@ public sealed class VoiceTests : IDisposable
         await VoiceCommand.RouteAsync("hmm", Keep, session, Run);
         Assert.Null(VoiceCommand.ReplyToSpeak(session, spokenReplies: false));
         Assert.Equal("Since the user didn't give a question, no action can be performed.", VoiceCommand.ReplyToSpeak(session, spokenReplies: true));
+    }
+}
+
+/// <summary>Runs only where Windows can make a media player (no Media Foundation on some server images).</summary>
+public sealed class MediaFactAttribute : FactAttribute
+{
+    public MediaFactAttribute()
+    {
+        try
+        {
+            new MediaPlayer().Dispose();
+        }
+        catch (Exception e)
+        {
+            Skip = $"No media player here: {e.Message}";
+        }
     }
 }
