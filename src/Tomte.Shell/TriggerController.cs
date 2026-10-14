@@ -151,10 +151,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// What a finished lasso does: crop the monitor region, then ask with it in the palette, which takes the state
-    /// from Capture to Palette. Gets the overlay, the box in its monitor's pixels and the foreground window from
-    /// before the overlay took focus. Null until a question can be supplied; then the chord only logs.
+    /// from Capture to Palette (<see cref="PaletteFromCapture"/>). Gets the overlay, the box in its monitor's pixels and
+    /// the foreground window from before the overlay took focus. Null until the shell sets it; then the chord only logs.
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
+
+    /// <summary>The lasso is cropped: the Palette state at its smallest, as the palette hotkey opens it.</summary>
+    internal void PaletteFromCapture() => Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
 
     /// <summary>After the palette hotkey or a click on the tomte opened the Palette state: its content and its prompt box, which takes the keys.</summary>
     public Action? PaletteOpened { get; set; }

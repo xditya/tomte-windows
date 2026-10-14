@@ -33,8 +33,30 @@ internal static partial class Program
     {
         text = renderer;
         focus = new TypingFocus(island, triggers.Machine, renderer, log) { Escape = triggers.Hide, Typing = triggers.Typing };
-        triggers.PaletteOpened = () => OpenPalette(island, triggers, store, log);
+        triggers.PaletteOpened = () => OpenPalette(island, triggers, store, log)
+            .ContinueWith(t => log?.Invoke($"palette: not opened: {t.Exception?.InnerException}"), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         return focus;
+    }
+
+    /// <summary>
+    /// Circle-to-ask after the lasso: the circled region cropped from its monitor, then the palette the hotkey opens,
+    /// with the region as its first chip, on, and the prompt box ready for the question. Kept out of Main so Tomte.AI
+    /// loads only on the first capture.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task CaptureToPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, CaptureOverlay overlay, PixelRect crop, nint foreground)
+    {
+        // Cropped before the palette opens, so the island is never in the picture.
+        var png = await WindowCapture.CaptureMonitorRegionPngAsync(overlay.Monitor, crop, CancellationToken.None);
+        var (w, h) = overlay.Lasso.BoxDips;
+        // Esc, another hotkey or the lock screen ended the capture meanwhile.
+        if (triggers.Machine.State != IslandState.Capture)
+        {
+            return;
+        }
+
+        triggers.PaletteFromCapture();
+        await OpenPalette(island, triggers, store, log, ContextChips.Lasso(png, w, h), foreground);
     }
 
     /// <summary>
@@ -42,10 +64,11 @@ internal static partial class Program
     /// none, the line that says the AI layer is off, which takes no keys. --debug-palette makes each open a session
     /// against local Ollama instead, as the --palette driver uses, whose device tools only pretend. The selection in the
     /// app in front is read through UI Automation, off the island's thread, before the prompt takes the keys; a read
-    /// slower than <see cref="SelectionWait"/> offers no selection.
+    /// slower than <see cref="SelectionWait"/> offers no selection. Circle-to-ask passes its region and the window that
+    /// was in front before its overlay, and no selection is read then.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async void OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log)
+    private static async Task OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, ContextChip? lasso = null, nint foreground = 0)
     {
         hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide);
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
@@ -56,8 +79,12 @@ internal static partial class Program
         }
 
         // Read now, while the island is still not the foreground window.
-        nint foreground = WindowContext.Foreground();
-        var selection = Task.Run(SelectionReader.Read);
+        if (lasso is null)
+        {
+            foreground = WindowContext.Foreground();
+        }
+
+        var selection = lasso is null ? Task.Run(SelectionReader.Read) : Task.FromResult<string?>(null);
         // Skills come from beside the settings file on each open, only those turned on, so one added or turned on since
         // the last open is there; their text goes to the provider only with a send.
         var skills = Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
@@ -76,7 +103,7 @@ internal static partial class Program
         }
 
         var session = Session(triggers, store, configured, dry: debug, foreground, selection.IsCompletedSuccessfully ? selection.Result : null,
-            skills.IsCompletedSuccessfully ? skills.Result : null);
+            skills.IsCompletedSuccessfully ? skills.Result : null, lasso);
         if (!debug)
         {
             _ = DescribeAsync(session, configured.Provider, configured.Config);
@@ -126,7 +153,7 @@ internal static partial class Program
     /// (started on the first send, stopped when the palette closes) and, when Settings turned it on, UI Automation on the
     /// window that was in front, every list and action of it asked.
     /// </summary>
-    private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection, SkillSet? skills)
+    private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection, SkillSet? skills, ContextChip? lasso)
     {
         var (app, title) = WindowContext.Describe(foreground);
         // The real shelf, so the Shelf chip offers what is on it and a file the AI makes stays there.
@@ -136,7 +163,7 @@ internal static partial class Program
         // One per store for the process: each holds a handler on the store.
         paletteGrants ??= new PermissionGrants(store);
         var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
-        var chips = ContextChips.For(null, selection, app, title, ct => WindowCapture.CapturePngAsync(foreground, ct), shelf, Scratchpad);
+        var chips = ContextChips.For(lasso, selection, app, title, ct => WindowCapture.CapturePngAsync(foreground, ct), shelf, Scratchpad);
         var settings = store.Current;
         var session = new PaletteSession(configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants, chips)
         {

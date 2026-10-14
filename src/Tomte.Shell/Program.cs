@@ -60,7 +60,7 @@ internal static partial class Program
         int paletteArg = Array.IndexOf(args, "--palette");
         string? palettePrompt = paletteArg >= 0 && paletteArg + 1 < args.Length ? args[paletteArg + 1] : null;
         bool rambler = args.Contains("--rambler");
-        // No prompt box renders yet, so circle-to-ask takes its typed question from here.
+        // --debug-capture "question": the circle-to-ask driver asks this about the lasso, then quits.
         string? captureQuestion = Arg(args, "--debug-capture");
         // --debug-timer <minutes>: the only way to start the timer until the island takes input.
         TimeSpan? debugTimer = null;
@@ -173,10 +173,10 @@ internal static partial class Program
             _ = PaletteRun(island, triggers, store, log!, palettePrompt);
         }
 
-        if (captureQuestion is not null)
-        {
-            triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
-        }
+        // After the lasso the palette opens with the region on, for the user to type the question; the driver asks its own.
+        triggers.Captured = captureQuestion is null
+            ? (overlay, crop, foreground) => CaptureToPalette(island, triggers, store, logLine, overlay, crop, foreground)
+            : (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
 
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
