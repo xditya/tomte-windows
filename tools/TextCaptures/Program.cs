@@ -318,7 +318,7 @@ internal static unsafe class Program
             brush->Release();
         }
 
-        /// <summary>The design's stand-in art: a diagonal gradient.</summary>
+        /// <summary>Stand-in album art: a diagonal gradient.</summary>
         public void Gradient(RectangleF r, float radius, uint from, uint to)
         {
             D2D1_GRADIENT_STOP* stops = stackalloc D2D1_GRADIENT_STOP[2];
