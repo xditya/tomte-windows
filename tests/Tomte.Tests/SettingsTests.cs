@@ -224,4 +224,29 @@ public sealed class SettingsTests : IDisposable
         pause.Resume();
         Assert.False(pause.IsPaused(now));
     }
+
+    [Fact]
+    public void EndingAPauseIsAnnouncedOnceAndSwitchingBetweenPausesIsNot()
+    {
+        var now = new DateTimeOffset(2026, 10, 14, 12, 0, 0, TimeSpan.Zero);
+        var pause = new PauseState();
+        int ended = 0;
+        pause.Ended += () => ended++;
+
+        pause.Resume();
+        Assert.Equal(0, ended);
+
+        pause.PauseFor(TimeSpan.FromHours(1), now);
+        pause.PauseUntilRestart();
+        pause.PauseFor(TimeSpan.FromHours(1), now);
+        Assert.Equal(0, ended);
+
+        pause.Resume();
+        pause.Resume();
+        Assert.Equal(1, ended);
+
+        pause.PauseUntilRestart();
+        pause.Resume();
+        Assert.Equal(2, ended);
+    }
 }
