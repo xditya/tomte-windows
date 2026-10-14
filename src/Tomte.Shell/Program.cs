@@ -5,6 +5,7 @@ using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
+using Tomte.Core.Media;
 using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
@@ -99,13 +100,16 @@ internal static class Program
         // --debug-settings <path>: a settings file of this run's own, so a test never edits the user's.
         using var store = new SettingsStore(Arg(args, "--debug-settings"));
         var pause = new PauseState();
-        var timer = new IslandTimer(IslandTimer.DefaultPath);
-        var triggers = new TriggerController(island, store, pause, timer, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
+        // Beside the settings file, so a run with its own settings keeps its timer to itself too.
+        var timer = new IslandTimer(Path.Combine(Path.GetDirectoryName(store.FilePath)!, Path.GetFileName(IslandTimer.DefaultPath)));
+        Action<string>? logLine = log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}");
+        var triggers = new TriggerController(island, store, pause, timer, logLine);
         if (debugTimer is TimeSpan length)
         {
             timer.Run = TimerRun.Starting(DateTimeOffset.Now, length);
         }
 
+        StartPanels(island, triggers, store, logLine, args.Contains("--debug-tabs"));
         if (rambler)
         {
             triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
@@ -177,6 +181,60 @@ internal static class Program
 
         settingsProcess?.Dispose();
         settingsProcess = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
+    }
+
+    /// <summary>
+    /// The panel host with the Media panel, the Compact now-playing row and the track-change event. The
+    /// event is the one thing that listens to media while the island is hidden, and only when the user
+    /// turned it on in settings.
+    /// </summary>
+    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, bool debugTabs)
+    {
+        var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
+        var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
+        panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
+        if (debugTabs)
+        {
+            // --debug-tabs: an empty Shelf-sized tab to switch to, until a second panel exists.
+            panels.Register(new BlankPanel());
+            panels.Select(PanelId.Media);
+        }
+
+        triggers.Panels = panels;
+        // The row lives on the state changes and ContentReady it listens to.
+        _ = new NowPlayingRow(island, triggers, media, log);
+
+        bool announcing = false;
+        media.TrackChanged += playing =>
+        {
+            if (announcing)
+            {
+                log?.Invoke($"media: track changed, raising the event ({playing.App})");
+                triggers.Raise(new IslandEvent(playing.Title, DateTimeOffset.Now) { Source = IslandEventSource.TrackChange });
+            }
+        };
+        Apply(store.Current);
+        // Changed arrives on a pool thread.
+        store.Changed += settings => island.Queue.TryEnqueue(() => Apply(settings));
+
+        void Apply(TomteSettings settings)
+        {
+            if (settings.MediaTrackChangeEvent == announcing)
+            {
+                return;
+            }
+
+            announcing = settings.MediaTrackChangeEvent;
+            // No positions and no art: a hidden island needs only the title to know the track changed.
+            if (announcing)
+            {
+                media.Watch(timeline: false, art: false);
+            }
+            else
+            {
+                media.Unwatch(timeline: false, art: false);
+            }
+        }
     }
 
     /// <summary>Debug stand-ins for the drag and the microphone: lean toward the cursor, and a synthetic level at 20 Hz.</summary>
@@ -404,6 +462,27 @@ internal static class Program
     {
         int i = Array.IndexOf(args, name);
         return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+    }
+
+    private sealed class BlankPanel : IPanel
+    {
+        public PanelId Id => PanelId.Shelf;
+
+        public void Shown(Windows.UI.Composition.ContainerVisual body, System.Numerics.Vector2 size)
+        {
+        }
+
+        public void Hidden()
+        {
+        }
+
+        public void Press(System.Numerics.Vector2 point)
+        {
+        }
+
+        public void Wheel(System.Numerics.Vector2 point, int delta)
+        {
+        }
     }
 
     /// <summary>Routes await continuations back to the UI thread's dispatcher queue.</summary>

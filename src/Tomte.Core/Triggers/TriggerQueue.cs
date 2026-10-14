@@ -1,7 +1,11 @@
 namespace Tomte.Core.Triggers;
 
 /// <summary>An internal event that may reveal the Compact pill: a timer done, a job result, an answer ready.</summary>
-public sealed record IslandEvent(string Text, DateTimeOffset At);
+public sealed record IslandEvent(string Text, DateTimeOffset At)
+{
+    /// <summary>The feature that raised it, when its pill shows that feature's content.</summary>
+    public IslandEventSource Source { get; init; }
+}
 
 /// <summary>
 /// Events arrive while Focus, Do Not Disturb or a fullscreen app may be on, or while the island is already

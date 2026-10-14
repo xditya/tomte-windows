@@ -24,6 +24,10 @@ public static class RetractionRules
     public static bool ShouldRetract(IslandState state, IslandActivity activity) =>
         state is not (IslandState.Hidden or IslandState.Capture) && activity == IslandActivity.None;
 
+    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler holds the pill.</summary>
+    public static bool OpensPanels(IslandState state, IslandActivity activity) =>
+        state == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling);
+
     /// <summary>Pointer inside a window rectangle grown by the margin on every side, in physical pixels.</summary>
     public static bool Inside(int x, int y, int left, int top, int right, int bottom, int margin) =>
         x >= left - margin && x <= right + margin && y >= top - margin && y <= bottom + margin;

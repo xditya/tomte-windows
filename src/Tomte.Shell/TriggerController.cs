@@ -59,6 +59,21 @@ internal sealed unsafe partial class TriggerController : IDisposable
         ArmTimer();
         settings = store.Current;
         island.Message = HandleMessage;
+        // Hover or scroll on Compact opens Panels; on the next turn, so the notch that opens them is not
+        // also taken as a tab switch by the panel host.
+        island.Wheel += (_, _) =>
+        {
+            if (RetractionRules.OpensPanels(machine.State, activity))
+            {
+                island.Queue.TryEnqueue(() =>
+                {
+                    if (RetractionRules.OpensPanels(machine.State, activity))
+                    {
+                        Go(IslandState.Panels);
+                    }
+                });
+            }
+        };
         island.LayoutChanged = () =>
         {
             PushZone();
@@ -87,6 +102,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 PInvoke.SetTimer(island.Hwnd, FirstRunTimer, FirstRunHintMs, null);
                 settings = settings with { FirstRunHintShown = true };
                 store.Save(settings);
+                // The hint's pill is settled only now; it carries no ring.
+                UpdateRing();
             }
         }
     }
@@ -123,6 +140,28 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
 
+    /// <summary>Which panel the Panels state shows and how large it is. Without one, Panels is an empty Shelf-sized shape.</summary>
+    public PanelHost? Panels { get; set; }
+
+    /// <summary>
+    /// What the Compact pill is up for, so a feature with Compact content knows whether the pill is its to
+    /// fill. Read it once the pill is up (from ContentReady on), not during the state change itself.
+    /// </summary>
+    public CompactReason Compact =>
+        machine.State != IslandState.Compact ? CompactReason.None
+        : activity.HasFlag(IslandActivity.Rambling) ? CompactReason.Rambler
+        : firstRunShowing ? CompactReason.Hint
+        : eventShowing ? CompactReason.Event
+        : activity.HasFlag(IslandActivity.Peek) ? CompactReason.Peek
+        : CompactReason.Summary;
+
+    /// <summary>
+    /// What the Compact pill's one line shows now, by <see cref="CompactRules.Content"/>: the ring and the
+    /// now-playing row both ask here. <paramref name="playing"/> says whether something plays.
+    /// </summary>
+    public CompactContent CompactShows(bool playing) =>
+        CompactRules.Content(Compact, eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other, (timer.Run ?? finished) is not null, playing);
+
     /// <summary>
     /// An internal event: shows Compact for the hold time. It waits while Focus, DND or fullscreen is on, and while
     /// the island is showing something else; then it shows once that ends. Nothing raised here is dropped for
@@ -150,11 +189,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         if (machine.State is not (IslandState.Panels or IslandState.Palette))
         {
-            Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Shelf, ignorePause: true);
+            Reveal(RevealTrigger.Hotkey, IslandState.Panels, ignorePause: true);
         }
         else
         {
             Hide();
+        }
+    }
+
+    /// <summary>The current panel changed while Panels is open (a tab switch): Panels re-enters itself and the shape morphs to the new size.</summary>
+    public void ResizePanels()
+    {
+        if (machine.State == IslandState.Panels)
+        {
+            Go(IslandState.Panels);
         }
     }
 
@@ -284,8 +332,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case RetractTimer when !pointerInside && RetractionRules.ShouldRetract(machine.State, activity):
                 Hide();
                 break;
-            case HoverTimer when machine.State == IslandState.Compact && pointerInside && !activity.HasFlag(IslandActivity.Rambling):
-                Go(IslandState.Panels, PanelSize.Shelf);
+            case HoverTimer when pointerInside && RetractionRules.OpensPanels(machine.State, activity):
+                Go(IslandState.Panels);
                 break;
             case EventTimer when eventShowing && machine.State == IslandState.Compact:
                 if (pointerInside)
@@ -320,7 +368,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     finished = run;
                     log?.Invoke($"timer: done, ended {run!.EndsAt:O}");
-                    Raise(new IslandEvent(TimerDoneText, DateTimeOffset.Now));
+                    Raise(new IslandEvent(TimerDoneText, DateTimeOffset.Now) { Source = IslandEventSource.Timer });
                 }
                 else
                 {
@@ -422,10 +470,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 Hide();
                 break;
             case HotkeyAction.Summon:
-                Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Shelf);
+                Reveal(RevealTrigger.Hotkey, IslandState.Panels);
                 break;
             case HotkeyAction.Scratchpad:
-                Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Scratchpad);
+                // Until the Scratchpad panel registers there is nothing to select and Panels opens on the last-used tab.
+                if (Allowed(RevealTrigger.Hotkey))
+                {
+                    Panels?.Select(PanelId.Scratchpad);
+                    Go(IslandState.Panels);
+                }
+
                 break;
             case HotkeyAction.Palette:
                 Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
@@ -573,14 +627,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// The ring shows in Compact while a timer runs, and full from the moment it ends until its done pill has
-    /// been shown. Not tied to the event pill being up: the done event takes a thread hop to show, and a peek
-    /// pill that is already up at the end would lose the ring for those frames.
+    /// The ring shows where <see cref="CompactShows"/> puts it: on the push pill while a timer runs, and full
+    /// from the moment it ends until its done pill has been shown; on the done pill itself; nowhere else. A push
+    /// pill that is up when the timer ends keeps the ring through the thread hop the done event takes. Called
+    /// again after the reason for the pill is settled (peek, the first-run hint, an event, the rambler).
     /// </summary>
     private void UpdateRing()
     {
         var run = timer.Run ?? finished;
-        if (machine.State == IslandState.Compact && run is not null && !activity.HasFlag(IslandActivity.Rambling))
+        if (run is not null && CompactShows(playing: false) == CompactContent.TimerRing)
         {
             ring.Show(run, DateTimeOffset.Now, island.Scale, island.Mascot.Enabled);
         }
@@ -590,7 +645,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    private static bool IsTimerDone(IslandEvent e) => e.Text == TimerDoneText;
+    private static bool IsTimerDone(IslandEvent e) => e.Source == IslandEventSource.Timer;
 
     private void OnWindowsChanged()
     {
@@ -623,6 +678,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact))
             {
                 activity |= IslandActivity.Peek;
+                // Peek is settled only now, after Go; the peek pill carries no ring.
+                UpdateRing();
             }
         }
         else if (activity.HasFlag(IslandActivity.Peek))
@@ -693,11 +750,17 @@ internal sealed unsafe partial class TriggerController : IDisposable
             activity &= ~IslandActivity.Peek;
         }
 
+        if (state == IslandState.Panels)
+        {
+            // The current panel decides the size; a tab switch comes through here again with another one.
+            size = Panels?.Size ?? PanelSize.Shelf;
+        }
+
         machine.TransitionTo(state);
         island.Mascot.Follow(from, state);
         island.PanelLook = state is IslandState.Panels or IslandState.Palette;
-        var (monitorW, monitorH) = island.MonitorSize;
-        var geometry = IslandGeometry.For(state, Math.Min(size.W, 0.6 * monitorW), Math.Min(size.H, 0.5 * monitorH));
+        var (width, height) = PanelSize.Fit(size, island.MonitorSize);
+        var geometry = IslandGeometry.For(state, width, height);
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.

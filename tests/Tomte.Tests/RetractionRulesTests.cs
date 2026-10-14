@@ -24,6 +24,18 @@ public class RetractionRulesTests
         Assert.Equal(expected, RetractionRules.ShouldRetract(state, activity));
     }
 
+    [Theory]
+    [InlineData(IslandState.Compact, IslandActivity.None, true)]
+    [InlineData(IslandState.Compact, IslandActivity.Peek, true)]
+    [InlineData(IslandState.Compact, IslandActivity.Rambling, false)]
+    [InlineData(IslandState.Panels, IslandActivity.None, false)]
+    [InlineData(IslandState.Hidden, IslandActivity.None, false)]
+    [InlineData(IslandState.Palette, IslandActivity.None, false)]
+    public void HoverOrScrollOnCompactOpensPanels(IslandState state, IslandActivity activity, bool expected)
+    {
+        Assert.Equal(expected, RetractionRules.OpensPanels(state, activity));
+    }
+
     [Fact]
     public void InsideIncludesTheMargin()
     {
