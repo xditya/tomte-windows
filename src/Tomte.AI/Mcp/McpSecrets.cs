@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Tomte.Core;
 
 namespace Tomte.AI.Mcp;
@@ -8,7 +9,7 @@ namespace Tomte.AI.Mcp;
 /// environment variables under <see cref="McpServerSettings.EnvCredentialId"/>. The settings file holds
 /// the names only. Reading, saving and deleting are passed in, so tests never touch the real vault.
 /// </summary>
-public static class McpSecrets
+public static partial class McpSecrets
 {
     /// <summary>
     /// The shortest value Settings saves. A shorter one cannot be cut out of what a server sends back
@@ -72,4 +73,36 @@ public static class McpSecrets
         static IEnumerable<string> Ids(McpServerSettings? server) =>
             server is null ? [] : [server.CredentialId, .. server.Environment.Select(server.EnvCredentialId)];
     }
+
+    /// <summary>
+    /// Whether an arguments line looks like it holds a token, for a warning in Settings that never blocks
+    /// a save. Three signs: a value after an option named like --token, --api-key, --secret or --password;
+    /// a word that starts the way known tokens do (sk-, ghp_, github_pat_, xoxb-, glpat-, AIza and
+    /// others below, or Bearer and a value); or a run of 24 or more letters, digits and _+=- with both
+    /// letters and digits that is as varied as a random key (4 bits of entropy per character or more),
+    /// or is 32 or more hex digits, which have only 16 symbols and score lower.
+    /// </summary>
+    public static bool LooksLikeToken(string arguments) =>
+        SecretOption().IsMatch(arguments) || KnownPrefix().IsMatch(arguments) || Run().Matches(arguments).Any(m => Random(m.Value));
+
+    private static bool Random(string run)
+    {
+        if (!run.Any(char.IsAsciiDigit) || !run.Any(char.IsAsciiLetter))
+            return false;
+        if (run.Length >= 32 && run.All(char.IsAsciiHexDigit))
+            return true;
+        double entropy = -run.GroupBy(c => c).Sum(g => (double)g.Count() / run.Length * Math.Log2((double)g.Count() / run.Length));
+        return entropy >= 4.0;
+    }
+
+    // a fixed list of option words and prefixes; a token that matches none of them and is not
+    // a long random run gets no warning.
+    [GeneratedRegex(@"--(?:[A-Za-z0-9]+[-_])*(?:token|api[-_]?key|secret(?:[-_]?key)?|password|access[-_]?key)(?:=|\s+)(?!-)\S", RegexOptions.IgnoreCase)]
+    private static partial Regex SecretOption();
+
+    [GeneratedRegex(@"(?<![A-Za-z0-9])(?:(?:sk-|sk_live_|ghp_|gho_|ghu_|ghs_|github_pat_|xox[abpr]-|glpat-|AIza)[A-Za-z0-9_-]{8,}|Bearer\s+\S{8,})")]
+    private static partial Regex KnownPrefix();
+
+    [GeneratedRegex(@"[A-Za-z0-9_+=-]{24,}")]
+    private static partial Regex Run();
 }

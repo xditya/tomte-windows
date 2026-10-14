@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Tomte.AI;
 using Tomte.AI.Mcp;
 using Tomte.Core;
@@ -26,6 +27,7 @@ public sealed partial class SettingsWindow
     private readonly Button mcpSave = new() { Content = "Add server" };
     private readonly Button mcpCancel = new() { Content = "Cancel", Visibility = Visibility.Collapsed };
     private readonly TextBlock mcpNote = Note();
+    private readonly TextBlock mcpArgumentsWarning = Note("These arguments look like they hold a token or key. Arguments are plain text in the settings file, and other programs can read them while the server runs. If the server reads the token from an environment variable, add it under Environment variable below instead.");
     private readonly StackPanel mcpEnvList = new() { Spacing = 12 };
     private readonly TextBox mcpEnvName = new() { PlaceholderText = "GITHUB_TOKEN", Width = 212 };
     private readonly Button mcpEnvAdd = new() { Content = "Add" };
@@ -39,6 +41,7 @@ public sealed partial class SettingsWindow
         mcpArgumentsRow = Row("Arguments", Note("Separated by spaces. Put an argument with spaces in double quotes. Arguments are stored as plain text in the settings file and shown in this window. Put a token under Environment variable instead."), mcpArguments);
         mcpHeaderNameRow = Row("Header name", Note("Optional. Sent with every request, for example Authorization. Needs an https URL."), mcpHeaderName);
         mcpHeaderValueRow = Row("Header value", Note("Kept in Windows Credential Manager, not in the settings file. At least 8 characters. Leave empty to keep the saved value. Enter it again after changing the URL."), mcpHeaderValue);
+        mcpArgumentsWarning.Foreground = (Brush)Application.Current.Resources["SystemFillColorCautionBrush"];
         mcpEnvSection = new StackPanel
         {
             Spacing = 12,
@@ -48,6 +51,7 @@ public sealed partial class SettingsWindow
                 Row("Environment variable", Note("Optional. Set only in this server's process, for a token the server reads from its environment. The value needs at least 8 characters and is kept in Windows Credential Manager, not in the settings file."), new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { mcpEnvName, mcpEnvAdd } }),
             },
         };
+        mcpArguments.TextChanged += (_, _) => ShowArgumentsWarning();
         mcpEnvAdd.Click += (_, _) => AddTypedMcpVariable();
         mcpKind.SelectionChanged += (_, _) => ShowMcpKind();
         mcpSave.Click += (_, _) => SaveMcpServer();
@@ -61,6 +65,7 @@ public sealed partial class SettingsWindow
             Row("Kind", null, mcpKind),
             Row("Command or URL", Note("For a command, the program to run, for example npx or uvx."), mcpTarget),
             mcpArgumentsRow,
+            mcpArgumentsWarning,
             mcpEnvSection,
             mcpHeaderNameRow,
             mcpHeaderValueRow,
@@ -75,7 +80,12 @@ public sealed partial class SettingsWindow
         mcpTarget.PlaceholderText = McpStdio ? "npx" : "https://example.com/mcp";
         mcpArgumentsRow!.Visibility = mcpEnvSection!.Visibility = McpStdio ? Visibility.Visible : Visibility.Collapsed;
         mcpHeaderNameRow!.Visibility = mcpHeaderValueRow!.Visibility = McpStdio ? Visibility.Collapsed : Visibility.Visible;
+        ShowArgumentsWarning();
     }
+
+    // A warning only: the arguments are saved as typed.
+    private void ShowArgumentsWarning() =>
+        mcpArgumentsWarning.Visibility = McpStdio && McpSecrets.LooksLikeToken(mcpArguments.Text) ? Visibility.Visible : Visibility.Collapsed;
 
     private void AddTypedMcpVariable()
     {

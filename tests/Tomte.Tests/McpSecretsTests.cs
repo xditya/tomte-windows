@@ -137,6 +137,38 @@ public class McpSecretsTests
     }
 
     [Fact]
+    public void ArgumentsThatLookLikeATokenAreNoticed()
+    {
+        string[] tokens =
+        [
+            "-y @modelcontextprotocol/server-github --token abc123",
+            "--api-key=abcdef",
+            "--github-token xyz",
+            "--client-secret \"two words\"",
+            "serve sk-proj-AbCdEf0123456789",
+            "ghp_16C7e42F292c6912E7710c838347Ae178B4a",
+            "--slack xoxb-1234567890-abcdefghij",
+            "--header \"Authorization: Bearer abcdefgh12345678\"",
+            "serve 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "serve aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW",
+        ];
+        string[] plain =
+        [
+            "",
+            "-y @modelcontextprotocol/server-filesystem C:\\Notes \"C:\\My Files\"",
+            "mcp-server-time --local-timezone=America/New_York",
+            "--token-file C:\\keys\\token.txt",
+            "run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server",
+            "--api-key",
+            "--token --verbose",
+            "--name my-server-for-project-2024 --port 8080",
+            "--mask-file x --desk-top yes",
+        ];
+        Assert.All(tokens, line => Assert.True(McpSecrets.LooksLikeToken(line), line));
+        Assert.All(plain, line => Assert.False(McpSecrets.LooksLikeToken(line), line));
+    }
+
+    [Fact]
     public void EverySavedValueIsHiddenLongestFirst()
     {
         Assert.Equal("a [hidden] b [hidden]", McpTools.Hide("a abcdefgh1234 b abcdefgh", ["abcdefgh", "abcdefgh1234"]));
