@@ -23,7 +23,8 @@
 // on, so the last file given is read, sized and sent as the palette would; --chip shelf attaches the
 // seeded shelf. --vision marks the model as one that reads images, --context n gives its context size
 // (local endpoints do not say). A send too large for the model asks truncate, chunk or cancel on stdin,
-// or takes --size truncate|chunk|cancel.
+// or takes --size truncate|chunk|cancel. --provider anthropic|gemini sends to that cloud provider instead,
+// with the key saved in Credential Manager under that name and the model given with --model.
 using System.Diagnostics;
 using Tomte.AI;
 using Tomte.AI.Automation;
@@ -38,6 +39,7 @@ bool yes = false, dry = false, undoAll = false, vision = false, automationOn = f
 int? context = null;
 string? size = null;
 var files = new List<string>();
+var kind = ProviderKind.OpenAICompatible;
 var chipsWanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 for (int i = 0; i < args.Length; i++)
 {
@@ -54,19 +56,22 @@ for (int i = 0; i < args.Length; i++)
         case "--vision": vision = true; break;
         case "--context": context = int.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--size": size = args[++i]; break;
+        case "--provider": kind = Enum.Parse<ProviderKind>(args[++i], ignoreCase: true); break;
         default: prompt = args[i]; break;
     }
 }
 
 if (prompt is null)
 {
-    Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--automation] [--model id] [--cap usd] [--file path]... [--vision] [--context tokens] [--size truncate|chunk|cancel]");
+    Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--automation] [--model id] [--cap usd] [--file path]... [--vision] [--context tokens] [--size truncate|chunk|cancel] [--provider anthropic|gemini]");
     return 1;
 }
 
-var config = new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", model);
+var config = kind == ProviderKind.OpenAICompatible
+    ? new ProviderConfig("ollama", kind, "http://127.0.0.1:11434/v1", model)
+    : new ProviderConfig(kind.ToString().ToLowerInvariant(), kind, null, model);
 using var http = new HttpClient();
-var provider = ProviderSetup.Create(config, http, null);
+var provider = kind == ProviderKind.OpenAICompatible ? ProviderSetup.Create(config, http, null) : ProviderSetup.Load(config, http);
 var seeded = new InMemoryShelf();
 seeded.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at 10.\nRenew the library card.");
 IShelf shelf = files.Count == 0 ? seeded : new DiskShelf(files);
