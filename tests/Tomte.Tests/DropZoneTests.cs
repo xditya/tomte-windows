@@ -84,6 +84,29 @@ public sealed class DropZoneTests : IDisposable
     }
 
     [Fact]
+    public void TheSettingsDecideWhetherZonesShowAndWhatTheSlotCarries()
+    {
+        var noModel = new TomteSettings { Provider = new ProviderConfig("api.anthropic.com", ProviderKind.Anthropic) };
+        Assert.Null(DropZoneLayout.For(new TomteSettings(), Surface.Width, Surface.Depth));
+        Assert.Null(DropZoneLayout.For(noModel, Surface.Width, Surface.Depth));
+        Assert.Null(DropZoneLayout.For(noModel with { Provider = noModel.Provider! with { DefaultModel = "" } }, Surface.Width, Surface.Depth));
+        Assert.False(DropZoneLayout.HasProvider(noModel));
+
+        var set = noModel with { Provider = noModel.Provider! with { DefaultModel = "claude-sonnet-4-5" } };
+        Assert.True(DropZoneLayout.HasProvider(set));
+        var layout = DropZoneLayout.For(set, Surface.Width, Surface.Depth)!;
+        Assert.True(layout.SlotEmpty);
+        Assert.Equal("Summarize: sends the file to api.anthropic.com", layout.Says(DropZone.Summarize));
+
+        // A picked skill shows only while it is on, by its own name, not one that starts the same way.
+        Assert.Null(DropZoneLayout.SlotSkill(set with { DropZoneSkill = "notes" }));
+        Assert.Null(DropZoneLayout.SlotSkill(set with { DropZoneSkill = "notes", EnabledSkills = ["notes-two#1a2b"] }));
+        var on = set with { DropZoneSkill = "notes", EnabledSkills = ["other#9f", "notes#1a2b"] };
+        Assert.Equal("notes", DropZoneLayout.SlotSkill(on));
+        Assert.False(DropZoneLayout.For(on, Surface.Width, Surface.Depth)!.SlotEmpty);
+    }
+
+    [Fact]
     public void TheZonesSitInARowBesideTheShelfAndTheirWordsFit()
     {
         var all = ShelfLayout.DropTarget(Surface.Width, Surface.Depth);
@@ -208,6 +231,8 @@ public sealed class DropZoneTests : IDisposable
     [InlineData("a,b\r\n\r\n1,2", "a,b\r\n1,2\r\n")]
     [InlineData("\"x\ny\",@SUM(A1)\n", "\"x\ny\",'@SUM(A1)\r\n")]
     [InlineData("=1+1,-3, padded \n", "'=1+1,-3,\" padded \"\r\n")]
+    [InlineData("a, =HYPERLINK(1),  @SUM(A1), -3, +4\n", "a,' =HYPERLINK(1),'  @SUM(A1),\" -3\",\" +4\"\r\n")]
+    [InlineData("\t=1,x\n", "'\t=1,x\r\n")]
     public void CsvIsWrittenFieldByField(string block, string expected) => Assert.Equal(expected, DropZoneRequest.Csv(block));
 
     [Fact]
@@ -262,6 +287,17 @@ public sealed class DropZoneTests : IDisposable
     {
         string name = DropZoneRequest.SuggestedName(new string('a', 90), "x.docx")!;
         Assert.Equal(new string('a', 60) + ".docx", name);
+        // The cut never leaves half of a character that takes two.
+        Assert.Equal(new string('a', 59) + ".txt", DropZoneRequest.SuggestedName(new string('a', 59) + "\U0001F600b", "x.txt"));
+        Assert.Equal(new string('a', 58) + "\U0001F600.txt", DropZoneRequest.SuggestedName(new string('a', 58) + "\U0001F600b", "x.txt"));
+    }
+
+    [Fact]
+    public void ASuggestedNameLosesTheCharactersThatReorderText()
+    {
+        // U+202E would show "Invoice exe.txt" as something else; the quote behind it still comes off.
+        Assert.Equal("Invoice for me.pdf", DropZoneRequest.SuggestedName("‮\"Invoice ⁦for⁩ me‏\"", "a.pdf"));
+        Assert.Equal("Report.pdf", DropZoneRequest.SuggestedName("‭‬\n؜Report", "a.pdf"));
     }
 
     // The size question
