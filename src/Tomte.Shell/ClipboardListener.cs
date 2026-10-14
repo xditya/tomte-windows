@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using Tomte.Core;
 using Tomte.Core.Clipboard;
 using Windows.Win32;
@@ -14,60 +15,51 @@ namespace Tomte.Shell;
 /// clipboard update event, started only while history is on. Opening the clipboard can wait on
 /// another app and reading a format can wait for its owner to render it, so this runs neither on the
 /// island's thread (frames) nor on the input thread (hook callbacks have 1 ms). Each update is read
-/// here and the text handed off; storing it is the watch's worker's job. The window is also the owner
-/// of what Tomte puts back on the clipboard, which is how the next update knows it is Tomte's own.
+/// here and the text, or an image's bytes, handed off; decoding and storing are the watch's worker's
+/// job. The window is also the owner of what Tomte puts back on the clipboard, which is how the next
+/// update knows it is Tomte's own.
 /// </summary>
 internal sealed unsafe class ClipboardListener : IClipboardListener
 {
     private const uint MsgPut = PInvoke.WM_APP + 1;
-    private const uint CF_UNICODETEXT = 13;
+    private const uint CF_UNICODETEXT = 13, CF_DIB = 8;
     private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, which CsWin32 does not emit
     private static readonly long Ticks = Stopwatch.Frequency / 1_000_000;
 
-    private readonly Action<string, DateTimeOffset> captured;
+    private readonly Action<ClipboardRead, DateTimeOffset> captured;
     private readonly Func<bool> paused;
     private readonly Func<IReadOnlyList<AppRule>> rules;
-    private readonly int maxChars;
+    private readonly ClipboardRetention limits;
     private readonly Action<string>? log;
     private readonly ManualResetEventSlim ready = new(false);
     private readonly Lock gate = new();
     private readonly Thread thread;
     private readonly Source source;
     private HWND window;
-    private string? toPut;
+    private (uint Format, byte[] Bytes)[]? toPut;
     private uint lastSequence;
 
-    private ClipboardListener(Action<string, DateTimeOffset> captured, Func<bool> paused, Func<IReadOnlyList<AppRule>> rules, int maxChars, Action<string>? log)
+    private ClipboardListener(Action<ClipboardRead, DateTimeOffset> captured, Func<bool> paused, Func<IReadOnlyList<AppRule>> rules, ClipboardRetention limits, Action<string>? log)
     {
-        (this.captured, this.paused, this.rules, this.maxChars, this.log) = (captured, paused, rules, maxChars, log);
+        (this.captured, this.paused, this.rules, this.limits, this.log) = (captured, paused, rules, limits, log);
         source = new Source(this);
         thread = new Thread(Loop) { IsBackground = true, Name = "tomte-clipboard" };
     }
 
     /// <summary>Starts the thread and returns once the window listens.</summary>
-    public static ClipboardListener Start(Action<string, DateTimeOffset> captured, Func<bool> paused, Func<IReadOnlyList<AppRule>> rules, int maxChars, Action<string>? log)
+    public static ClipboardListener Start(Action<ClipboardRead, DateTimeOffset> captured, Func<bool> paused, Func<IReadOnlyList<AppRule>> rules, ClipboardRetention limits, Action<string>? log)
     {
-        var listener = new ClipboardListener(captured, paused, rules, maxChars, log);
+        var listener = new ClipboardListener(captured, paused, rules, limits, log);
         listener.thread.Start();
         listener.ready.Wait();
         return listener;
     }
 
-    // Without a window there is no thread to post to; posting to no window would land on the caller's own queue.
-    public void Put(string text)
-    {
-        if (window == HWND.Null)
-        {
-            return;
-        }
+    // The text's own UTF-16 and its end mark, unpaired surrogates and all.
+    public void Put(string text) => Post([(CF_UNICODETEXT, MemoryMarshal.AsBytes((text + "\0").AsSpan()).ToArray())]);
 
-        lock (gate)
-        {
-            toPut = text;
-        }
-
-        PInvoke.PostMessage(window, MsgPut, 0, 0);
-    }
+    // The PNG first, for the apps that read it and the alpha it keeps; the bitmap for every other app.
+    public void Put(byte[] png, byte[] dib) => Post([(PInvoke.RegisterClipboardFormat(ClipboardReader.PngFormat), png), (CF_DIB, dib)]);
 
     /// <summary>Stops listening and ends the thread. Waits a moment for it, not for an app that hangs on a render.</summary>
     public void Dispose()
@@ -79,6 +71,22 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
 
         PInvoke.PostMessage(window, PInvoke.WM_CLOSE, 0, 0);
         thread.Join(500);
+    }
+
+    // Without a window there is no thread to post to; posting to no window would land on the caller's own queue.
+    private void Post((uint Format, byte[] Bytes)[] formats)
+    {
+        if (window == HWND.Null)
+        {
+            return;
+        }
+
+        lock (gate)
+        {
+            toPut = formats;
+        }
+
+        PInvoke.PostMessage(window, MsgPut, 0, 0);
     }
 
     private void Loop()
@@ -121,7 +129,14 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
                         OnUpdate();
                         continue;
                     case MsgPut:
-                        PutNow();
+                        // An image (two formats) was copied several times over on its way here; its memory goes back.
+                        // the worker that made the bitmap may still hold it for a moment; it then waits for
+                        // the next collection.
+                        if (PutNow() > 1)
+                        {
+                            ClipboardWatch.GiveBackImageMemory();
+                        }
+
                         continue;
                     case PInvoke.WM_CLOSE:
                         PInvoke.RemoveClipboardFormatListener(window);
@@ -152,55 +167,57 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
 
         lastSequence = sequence;
         long start = Stopwatch.GetTimestamp();
-        var read = ClipboardReader.Read(source, paused(), rules(), maxChars);
+        var read = ClipboardReader.Read(source, paused(), rules(), limits);
         long us = (Stopwatch.GetTimestamp() - start) / Ticks;
-        if (read.Text is { } text)
+        if (read.Text is not null || read.Image is not null)
         {
-            captured(text, DateTimeOffset.Now);
+            captured(read, DateTimeOffset.Now);
         }
 
         log?.Invoke($"clipboard: {read.Outcome} in {us} us");
     }
 
-    /// <summary>A picked item back on the clipboard as plain text, owned by this window.</summary>
-    private void PutNow()
+    /// <summary>A picked item back on the clipboard in its formats, owned by this window. Returns how many it was handed.</summary>
+    private int PutNow()
     {
-        string? text;
+        (uint Format, byte[] Bytes)[]? formats;
         lock (gate)
         {
-            (text, toPut) = (toPut, null);
+            (formats, toPut) = (toPut, null);
         }
 
-        if (text is null || !source.Open())
+        if (formats is null || !source.Open())
         {
             log?.Invoke("clipboard: could not put the item back, the clipboard stayed busy");
-            return;
+            return formats?.Length ?? 0;
         }
 
         try
         {
             PInvoke.EmptyClipboard();
-            nuint bytes = (nuint)(text.Length + 1) * 2;
-            var memory = PInvoke.GlobalAlloc(GLOBAL_ALLOC_FLAGS.GMEM_MOVEABLE, bytes);
-            if (memory.IsNull)
+            foreach (var (format, bytes) in formats)
             {
-                return;
-            }
+                var memory = PInvoke.GlobalAlloc(GLOBAL_ALLOC_FLAGS.GMEM_MOVEABLE, (nuint)bytes.Length);
+                if (memory.IsNull)
+                {
+                    break;
+                }
 
-            char* p = (char*)PInvoke.GlobalLock(memory);
-            text.CopyTo(new Span<char>(p, text.Length));
-            p[text.Length] = '\0';
-            PInvoke.GlobalUnlock(memory);
-            // On success the clipboard owns the memory; otherwise it is still ours to free.
-            if (PInvoke.SetClipboardData(CF_UNICODETEXT, (HANDLE)memory.Value).IsNull)
-            {
-                PInvoke.GlobalFree(memory);
+                bytes.CopyTo(new Span<byte>(PInvoke.GlobalLock(memory), bytes.Length));
+                PInvoke.GlobalUnlock(memory);
+                // On success the clipboard owns the memory; otherwise it is still ours to free.
+                if (PInvoke.SetClipboardData(format, (HANDLE)memory.Value).IsNull)
+                {
+                    PInvoke.GlobalFree(memory);
+                }
             }
         }
         finally
         {
             PInvoke.CloseClipboard();
         }
+
+        return formats.Length;
     }
 
     /// <summary>The Win32 clipboard as the reader asks for it, on the listener's thread.</summary>
@@ -304,6 +321,42 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
             {
                 PInvoke.GlobalUnlock(data);
             }
+        }
+
+        public (bool Png, long Bytes)? Image =>
+            Size(Id(ClipboardReader.PngFormat)) is > 0 and var png ? (true, png)
+            : Size(CF_DIB) is > 0 and var dib ? (false, dib)
+            : null;
+
+        public byte[] ReadImage(bool png)
+        {
+            var data = (HGLOBAL)PInvoke.GetClipboardData(png ? Id(ClipboardReader.PngFormat) : CF_DIB).Value;
+            byte* p = data.IsNull ? null : (byte*)PInvoke.GlobalLock(data);
+            if (p == null)
+            {
+                return [];
+            }
+
+            try
+            {
+                return new ReadOnlySpan<byte>(p, (int)Math.Min(int.MaxValue, PInvoke.GlobalSize(data))).ToArray();
+            }
+            finally
+            {
+                PInvoke.GlobalUnlock(data);
+            }
+        }
+
+        // A format whose handle is empty or not global memory has no size and counts as not there.
+        private static long Size(uint format)
+        {
+            if (!PInvoke.IsClipboardFormatAvailable(format))
+            {
+                return -1;
+            }
+
+            var data = PInvoke.GetClipboardData(format);
+            return data.IsNull ? -1 : (long)PInvoke.GlobalSize((HGLOBAL)data.Value);
         }
 
         private static uint Pid(HWND hwnd)

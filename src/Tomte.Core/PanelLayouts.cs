@@ -93,12 +93,12 @@ public sealed class ClipboardPanelLayout(Vector2 body)
 
     /// <summary>
     /// A row's age at its right end before the remove button, then its text from after the icon up to the age, in
-    /// the row's own coordinates.
+    /// the row's own coordinates. An image row's text starts after its thumbnail.
     /// </summary>
-    public static IReadOnlyList<TextSlot> RowText(string display, string ago, float rowWidth)
+    public static IReadOnlyList<TextSlot> RowText(string display, string ago, float rowWidth, bool image = false)
     {
         var remove = RemoveIn(rowWidth);
-        float x = Gap + Icon + Gap, age = TextSlot.Measure(ago, TextStyle.Small, 48);
+        float x = Gap + (image ? ThumbWidth : Icon) + Gap, age = TextSlot.Measure(ago, TextStyle.Small, 48);
         return
         [
             new(ago, Trailing(TextStyle.Small), new(remove.X - Gap - 48, 0, 48, RowHeight)),

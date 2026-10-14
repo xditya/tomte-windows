@@ -35,15 +35,28 @@ public interface IClipboardSource
 
     /// <summary>The Unicode text up to its end mark.</summary>
     string ReadText();
+
+    /// <summary>
+    /// The image on the clipboard: the "PNG" format if it is there, otherwise the device-independent bitmap,
+    /// which Windows also makes from a plain bitmap; with its size in bytes, rounded up by the allocator.
+    /// Null when there is neither. Reads none of it.
+    /// </summary>
+    (bool Png, long Bytes)? Image { get; }
+
+    /// <summary>A copy of the bytes of the format <see cref="Image"/> named.</summary>
+    byte[] ReadImage(bool png);
 }
 
-/// <summary>What one clipboard update came to: the text to keep, or null; and a line for the log that never contains the text.</summary>
-public readonly record struct ClipboardRead(string? Text, string Outcome);
+/// <summary>
+/// What one clipboard update came to: the text or the image to keep, or neither; and a line for the log that never
+/// contains the text.
+/// </summary>
+public readonly record struct ClipboardRead(string? Text, string Outcome, CopiedImage? Image = null);
 
 /// <summary>
 /// Decides for one clipboard update whether history keeps it, reading as little as it can. Paused,
 /// nothing is opened. Otherwise who wrote it is checked first, then the formats that ask not to be
-/// monitored; only when all of that passes is the text read.
+/// monitored; only when all of that passes is the text, or with no text the image, read.
 /// </summary>
 public static class ClipboardReader
 {
@@ -59,11 +72,15 @@ public static class ClipboardReader
     /// <summary>A number: 0 keeps the item off the cloud clipboard. Treated like the history flag.</summary>
     public const string CloudFormat = "CanUploadToCloudClipboard";
 
+    /// <summary>A PNG file's bytes, which browsers and most image apps put beside the bitmap.</summary>
+    public const string PngFormat = "PNG";
+
     // Windows' own history and other monitors open the clipboard right after every change. 250 ms in all.
     private static readonly int[] RetryMs = [5, 5, 10, 10, 20, 20, 40, 40, 50, 50];
 
-    public static ClipboardRead Read(IClipboardSource clipboard, bool paused, IReadOnlyList<AppRule> rules, int maxChars)
+    public static ClipboardRead Read(IClipboardSource clipboard, bool paused, IReadOnlyList<AppRule> rules, ClipboardRetention limits)
     {
+        int maxChars = limits.MaxChars;
         if (paused)
         {
             return Skip("paused");
@@ -104,10 +121,11 @@ public static class ClipboardReader
                 }
             }
 
+            // Text first: an app that copies text often adds a picture of it too, as a spreadsheet does for its cells.
             int length = clipboard.TextLength;
             if (length < 0)
             {
-                return Skip("no text");
+                return ReadImage(clipboard, limits.MaxImageBytes);
             }
 
             if (length > maxChars + 1)
@@ -127,6 +145,23 @@ public static class ClipboardReader
         {
             clipboard.Close();
         }
+    }
+
+    // Only the copy happens here, with the clipboard held; decoding and encoding are the watch's worker's.
+    private static ClipboardRead ReadImage(IClipboardSource clipboard, int maxBytes)
+    {
+        if (clipboard.Image is not var (png, bytes))
+        {
+            return Skip("no text or image");
+        }
+
+        if (bytes > maxBytes)
+        {
+            return Skip($"an image of {bytes} bytes, over the {maxBytes} kept");
+        }
+
+        var image = new CopiedImage(clipboard.ReadImage(png), png);
+        return new(null, $"kept an image of {image.Bytes.Length} bytes ({(png ? "PNG" : "bitmap")})", image);
     }
 
     private static bool Open(IClipboardSource clipboard)
