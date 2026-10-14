@@ -9,6 +9,65 @@ public enum PermissionAnswer { Deny, AllowOnce, AlwaysAllow }
 public sealed record ToolRequest(string Tool, string Summary, ActionTier Tier, bool OfferAlwaysAllow);
 
 /// <summary>
+/// The one question a palette has open, typed or by voice: the session asks it through <see cref="AskAsync"/> as its
+/// ConfirmTool, the palette draws <see cref="Asked"/>, and the user's answer settles it. So does anything that ends
+/// the session (its cancel answers no). An answer given for one question never lands on a later one, and a yes in the
+/// first <see cref="ReadMs"/> after a question opens is not taken: the next card can open right after the last tool
+/// ran, under a second Enter, click or chord meant for the one before. A no is always taken. One thread.
+/// </summary>
+public sealed class ToolQuestion
+{
+    /// <summary>How long a question shows before a yes counts, in milliseconds.</summary>
+    public const long ReadMs = 400;
+
+    private TaskCompletionSource<PermissionAnswer>? _answer;
+    private long _openedAt;
+
+    /// <summary>What is being asked now, or null.</summary>
+    public ToolRequest? Asked { get; private set; }
+
+    /// <summary>Milliseconds on a steady clock; tests set it.</summary>
+    public Func<long> Clock { get; init; } = () => Environment.TickCount64;
+
+    /// <summary>A question opened or closed; raised on the session's thread.</summary>
+    public event Action? Changed;
+
+    /// <summary>Opens the question; <see cref="Asked"/> is set before this returns.</summary>
+    public async Task<PermissionAnswer> AskAsync(ToolRequest request, CancellationToken ct)
+    {
+        var answer = _answer = new TaskCompletionSource<PermissionAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Asked = request;
+        _openedAt = Clock();
+        Changed?.Invoke();
+        using var cancel = ct.Register(() => answer.TrySetResult(PermissionAnswer.Deny));
+        try
+        {
+            return await answer.Task;
+        }
+        finally
+        {
+            if (_answer == answer)
+            {
+                (_answer, Asked) = (null, null);
+                Changed?.Invoke();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Answers the open question. With <paramref name="to"/>, only while that request is still the one asked; a yes only
+    /// once the question has shown for <see cref="ReadMs"/>. "Always allow" for a request that does not offer it counts
+    /// once. False when nothing was answered.
+    /// </summary>
+    public bool Answer(PermissionAnswer given, ToolRequest? to = null) =>
+        _answer is { } open && (to is null || ReferenceEquals(to, Asked))
+        && (given == PermissionAnswer.Deny || Clock() - _openedAt >= ReadMs)
+        && open.TrySetResult(given == PermissionAnswer.AlwaysAllow && Asked?.OfferAlwaysAllow != true ? PermissionAnswer.AllowOnce : given);
+
+    public bool Answer(bool allow, ToolRequest? to = null) => Answer(allow ? PermissionAnswer.AllowOnce : PermissionAnswer.Deny, to);
+}
+
+/// <summary>
 /// The "always allow this tool" grants and the tier rules. Read and app-local writes run on their
 /// own, external effects ask unless granted, destructive actions ask every time. Bound to a
 /// <see cref="SettingsStore"/> the grants live in settings.json, where the settings window shows

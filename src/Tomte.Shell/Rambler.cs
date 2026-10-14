@@ -16,16 +16,18 @@ namespace Tomte.Shell;
 /// between the press and the release, and the hold is the visible user action that lets audio (to a speech-to-text
 /// provider) or the transcript (to the AI provider) leave the PC.
 /// </summary>
-/// <param name="voice">A new voice session per transcript, made off the island's thread; null with the AI layer off or no provider.</param>
+/// <param name="voice">A new voice session per transcript, made from the provider set up at that moment; it returns null while there is none, and is null with no way to make one.</param>
+/// <param name="text">The island's text renderer: the voice palette shows the transcript, the answer and the question with it.</param>
 internal sealed class Rambler(
     IslandWindow island,
     IslandStateMachine machine,
     ISpeechToText speech,
     ProviderSend? speechSend,
-    Func<Task<PaletteSession>>? voice,
+    Func<Task<PaletteSession?>>? voice,
     ScratchpadNote scratchpad,
     SendLog sendLog,
     PaletteOptions prices,
+    TextRenderer text,
     Action<string> log)
 {
     // The design's rambler pill is wider than the 220 Compact so the bars fit beside the mascot.
@@ -46,7 +48,8 @@ internal sealed class Rambler(
     private bool transcribing;
     private PaletteSession? command;
     private PaletteHost? palette;
-    private readonly VoiceQuestion question = new();
+    private TaskCompletionSource? replyHold;
+    private readonly ToolQuestion question = new();
 
     /// <summary>Microphone level 0..1, once per capture packet while recording, on the UI thread. The mascot bounces to it.</summary>
     public event Action<double>? Bounce;
@@ -62,9 +65,14 @@ internal sealed class Rambler(
 
     /// <summary>
     /// The answer to the palette's question (Win+Alt+Enter is yes, Esc no); with <paramref name="to"/>, only while that
-    /// is still the question. False when nothing was answered.
+    /// is still the question. Without it a yes goes to the question the card shows, never to one that opened after the
+    /// press; a no ends whatever is asked. False when nothing was answered.
     /// </summary>
-    public bool Answer(bool allow, ToolRequest? to = null) => question.Answer(allow, to);
+    public bool Answer(bool allow, ToolRequest? to = null)
+    {
+        to ??= palette?.Shown;
+        return (to is not null || !allow) && question.Answer(allow, to);
+    }
 
     /// <summary>The palette is going away under a voice command: what it was about to ask or run never runs.</summary>
     public void Cancel()
@@ -75,15 +83,25 @@ internal sealed class Rambler(
 
     public void Begin()
     {
-        if (transcribing || capture is not null)
+        // A new hold during a spoken reply's hold ends that hold: the reply gives way to the new recording.
+        var hold = replyHold;
+        if (capture is not null || (transcribing && hold is null))
             return;
         clock.Restart();
         // The capture thread posts each packet's level; the bars change when a packet arrives, with no timer.
         capture = MicCapture.Start(rms => island.Queue.TryEnqueue(() => Level(rms)));
         ShowView();
+        var from = machine.State;
+        if (hold is not null && from == IslandState.Palette)
+        {
+            // The table has no Palette to Compact edge; the state passes through Hidden while the shape morphs across.
+            machine.TransitionTo(IslandState.Hidden);
+            island.PanelLook = false;
+            InputThread.SetEscape(false);
+        }
+
         if (IslandStateMachine.CanTransition(machine.State, IslandState.Compact))
         {
-            var from = machine.State;
             machine.TransitionTo(IslandState.Compact);
             island.Mascot.Follow(from, IslandState.Compact);
             _ = island.MorphTo(IslandGeometry.Compact with { Width = PillWidth }, SpringPreset.Snappy);
@@ -91,6 +109,8 @@ internal sealed class Rambler(
 
         island.Mascot.Set(MascotState.Rambler);
         log($"{DateTime.Now:HH:mm:ss.fff} rambler: recording");
+        // Last, so the reply's End sees this recording and leaves the island to it.
+        hold?.TrySetResult();
     }
 
     public async void End(bool keep)
@@ -114,10 +134,10 @@ internal sealed class Rambler(
             var watch = Stopwatch.StartNew();
             // whisper.cpp cannot be stopped mid-run; the timeout only bounds the provider path.
             using var speechTimeout = new CancellationTokenSource(SendTimeout);
-            string text;
+            string transcript;
             try
             {
-                text = await speech.TranscribeAsync(samples, speechTimeout.Token);
+                transcript = await speech.TranscribeAsync(samples, speechTimeout.Token);
             }
             finally
             {
@@ -128,9 +148,9 @@ internal sealed class Rambler(
 
             log($"{DateTime.Now:HH:mm:ss.fff} rambler: transcribed {samples.Length / (double)MicCapture.SampleRate:F1} s in {watch.ElapsedMilliseconds} ms");
             // whisper.cpp writes [BLANK_AUDIO] and similar for silence.
-            if (text.Length == 0 || (text.StartsWith('[') && text.EndsWith(']')))
+            if (transcript.Length == 0 || (transcript.StartsWith('[') && transcript.EndsWith(']')))
             {
-                log($"{DateTime.Now:HH:mm:ss.fff} rambler: nothing heard ({text})");
+                log($"{DateTime.Now:HH:mm:ss.fff} rambler: nothing heard ({transcript})");
                 return;
             }
 
@@ -156,15 +176,30 @@ internal sealed class Rambler(
             {
                 RemoveView();
                 command.ConfirmTool = ConfirmAsync;
-                log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{text}\"");
+                log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{transcript}\"");
             }
 
             var session = command;
-            await VoiceCommand.RouteAsync(text, KeepAsync, session, s => (palette = new PaletteHost(island, machine, log)).RunAsync(s));
+            await VoiceCommand.RouteAsync(transcript, KeepAsync, session, s => (palette = new PaletteHost(island, machine, log, text)).RunAsync(s, question));
             if (session is not null)
             {
                 log($"{DateTime.Now:HH:mm:ss.fff} voice: {session.Status}{(session.Error is null ? "" : ": " + session.Error)} steps={session.ToolSteps} reply=\"{session.AnswerText.ReplaceLineEndings(" | ")}\"");
                 CommandDone?.Invoke(session);
+                // A reply in words stays up long enough to read, at about 15 characters a second; Esc, anything else
+                // the user opens, or a new hold ends it sooner.
+                if (session.Status == PaletteStatus.Done && session.AnswerText.Trim() is { Length: > 0 } reply && machine.State == IslandState.Palette)
+                {
+                    var hold = replyHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    void OnState(IslandState from, IslandState to)
+                    {
+                        if (to != IslandState.Palette)
+                            hold.TrySetResult();
+                    }
+
+                    machine.Changed += OnState;
+                    await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(Math.Clamp(reply.Length / 15.0, 4, 15))), hold.Task);
+                    machine.Changed -= OnState;
+                }
             }
         }
         catch (Exception e)
@@ -174,11 +209,15 @@ internal sealed class Rambler(
         finally
         {
             transcribing = false;
-            // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill.
+            replyHold = null;
+            // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill. A
+            // new hold that ended the reply's hold owns the island, so nothing here takes it away.
             bool handedOver = palette is not null;
             command = null;
             palette = null;
-            if (handedOver)
+            if (capture is not null)
+                log($"{DateTime.Now:HH:mm:ss.fff} rambler: the reply gave way to a new hold");
+            else if (handedOver)
                 Retracted?.Invoke();
             else
                 await Retract();
@@ -192,7 +231,7 @@ internal sealed class Rambler(
         log($"{DateTime.Now:HH:mm:ss.fff} rambler: note {(saved ? "appended" : "kept until the database is free")} ({note.Length} chars)");
     }
 
-    /// <summary>Waits for the user's answer while the palette shows where the confirmation goes. A hide answers no.</summary>
+    /// <summary>Waits for the user's answer while the palette shows the question with its buttons. A hide answers no.</summary>
     private async Task<PermissionAnswer> ConfirmAsync(ToolRequest request, CancellationToken ct)
     {
         var asked = question.AskAsync(request, ct);
@@ -202,7 +241,7 @@ internal sealed class Rambler(
         Asking?.Invoke(request);
         try
         {
-            var given = await palette!.AskAsync(asked);
+            var given = await asked;
             log($"{DateTime.Now:HH:mm:ss.fff} voice: answer {given}");
             return given;
         }

@@ -1,17 +1,49 @@
 using System.Drawing;
 using System.Globalization;
 using System.Numerics;
+using Tomte.Core.Device;
 using Tomte.Core.Text;
 
 namespace Tomte.Core;
 
+/// <summary>The buttons of a tool's question, left to right.</summary>
+public enum ConfirmButton { AlwaysAllow, Cancel, Run }
+
+/// <summary>
+/// Which keys answer a question: Enter while the prompt box has them, the Win+Alt+Enter chord by voice, or none but Esc
+/// once the typed palette has lost them.
+/// </summary>
+public enum ConfirmKeys { Prompt, Voice, Pointer }
+
+/// <summary>
+/// A tool's question as the palette draws it: what will run, why it asks and which keys answer, whether "Always
+/// allow" is offered, and whether Run takes the warning colour because the action can never be always allowed.
+/// </summary>
+public sealed record Confirmation(string Summary, string Line, bool AlwaysAllow, bool Destructive)
+{
+    /// <summary>Why a tool asks, in plain words, then the keys that answer it.</summary>
+    public static string LineFor(ActionTier tier, ConfirmKeys keys) =>
+        (tier switch
+        {
+            ActionTier.Read => "Sends what it reads to the AI",
+            ActionTier.AppLocalWrite => "Changes Tomte's own data",
+            ActionTier.ExternalEffect => "Reaches outside Tomte",
+            _ => "Asks every time",
+        }) + keys switch
+        {
+            ConfirmKeys.Prompt => " · Enter runs it, Esc cancels",
+            ConfirmKeys.Voice => " · Win+Alt+Enter runs it, Esc cancels",
+            _ => " · Esc cancels",
+        };
+}
+
 /// <summary>
 /// The palette's content in DIPs from its top-left corner: the prompt box after the tomte, the chips under it in as
-/// many rows as they need, the answer, and the footer along the bottom. The palette is as tall as that needs, from
-/// 150 to 480 DIPs; an answer longer than the room left is cut at the last line that fits, with an ellipsis.
+/// many rows as they need, the answer, a tool's question while one is open, and the footer along the bottom. The
+/// palette is as tall as that needs, from 150 to 480 DIPs; an answer longer than the room left scrolls in its band.
 /// <paramref name="text"/> is the prompt's own height (the text box's content height), which the box grows with.
 /// </summary>
-public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<(string Label, bool On)>? chips = null)
+public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<(string Label, bool On)>? chips = null, Confirmation? confirm = null)
 {
     public const float Pad = 14, Top = 12, Bottom = 10, Gap = 10, BlockGap = 6;
     public const float PromptHeight = 36, PromptInsetX = 12, PromptInsetY = 9, PromptCorner = 8;
@@ -21,6 +53,11 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     public const float ChipHeight = 24, ChipPadX = 9, ChipGap = 6, ChipCorner = 12, ChipMaxText = 200;
     public const float FootHeight = 14;
+
+    /// <summary>A tool's question: a card above the footer, its summary on up to three lines, then why it asks and the buttons.</summary>
+    public const float AskPad = 10, AskGap = 6, ButtonHeight = 28, ButtonPadX = 14, ButtonGap = 6, ButtonCorner = 8, ButtonMinWidth = 64;
+
+    public const int AskLines = 3, PromptLines = 4;
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
     public const float WheelStep = 3 * 20;
@@ -37,11 +74,21 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public static readonly TextStyle Provider = TextStyle.Small with { Color = 0xFFBCD3FF };
     public static readonly TextStyle Spend = TextStyle.Small with { Align = TextAlign.Trailing };
 
+    /// <summary>What was said, where a palette with no text box (the voice palette) shows its prompt.</summary>
+    public static readonly TextStyle PromptText = new(PromptSize);
+
+    public static readonly TextStyle AskSummary = AnswerText with { Color = TextStyle.WhiteColor };
+    public static readonly TextStyle AskLine = new(11, Color: TextStyle.SecondaryColor);
+    public static readonly TextStyle Button = new(12, 500, Align: TextAlign.Center);
+    public static readonly TextStyle RunButton = Button with { Weight = 600, Color = 0xFF000000 };
+
     public const string Hint = "Ask about what is in front of you…";
     public const string Off = "The AI layer is off";
     public const string Setup = "Add a provider key to use the palette.";
+    public const string Run = "Run", Cancel = "Cancel", AlwaysAllow = "Always allow";
 
     private IReadOnlyList<(RectangleF Box, TextSlot Label)>? row;
+    private float? askHeight;
 
     public float Width => width;
 
@@ -88,7 +135,68 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     /// <summary>The palette's height for an answer this tall.</summary>
     public float Height(float answer) =>
-        (float)Math.Clamp(AnswerTop + (answer > 0 ? answer + Gap : 0) + FootHeight + Bottom, PanelSize.PaletteMinHeight, PanelSize.PaletteMaxHeight);
+        (float)Math.Clamp(AnswerTop + (answer > 0 ? answer + Gap : 0) + AskRoom + FootHeight + Bottom, PanelSize.PaletteMinHeight, PanelSize.PaletteMaxHeight);
+
+    /// <summary>The hint in an empty prompt box. With skill commands it names them: typing one is the only way to find them.</summary>
+    public static string HintFor(IEnumerable<string> commands) =>
+        commands.Any() ? $"Ask about what is in front of you, or type {string.Join(", ", commands.Select(c => "/" + c))}" : Hint;
+
+    /// <summary>
+    /// The open question's card in a palette of <paramref name="height"/>, above the footer: the summary from its top
+    /// left, then a row with why it asks on the left and the buttons on the right, Run last. Null with no question.
+    /// </summary>
+    public (RectangleF Card, TextRun Summary, Vector2 SummaryAt, TextSlot Line, IReadOnlyList<(ConfirmButton Button, RectangleF Box, TextSlot Label)> Buttons)? Ask(float height)
+    {
+        if (confirm is null)
+        {
+            return null;
+        }
+
+        var card = new RectangleF(Pad, height - Bottom - FootHeight - Gap - AskHeight, AnswerWidth, AskHeight);
+        float inner = card.Width - 2 * AskPad, rowY = card.Bottom - AskPad - ButtonHeight, right = card.Right - AskPad;
+        var buttons = new List<(ConfirmButton, RectangleF, TextSlot)>();
+        foreach (var (button, label, style) in new[] { (ConfirmButton.Run, Run, RunButton), (ConfirmButton.Cancel, Cancel, Button), (ConfirmButton.AlwaysAllow, AlwaysAllow, Button) })
+        {
+            if (button == ConfirmButton.AlwaysAllow && !confirm.AlwaysAllow)
+            {
+                continue;
+            }
+
+            float w = Math.Max(ButtonMinWidth, TextSlot.Measure(label, style, inner) + 2 * ButtonPadX);
+            var box = new RectangleF(right - w, rowY, w, ButtonHeight);
+            buttons.Insert(0, (button, box, new TextSlot(label, style, box)));
+            right = box.X - ButtonGap;
+        }
+
+        float left = card.X + AskPad;
+        return (card, new TextRun(confirm.Summary, AskSummary, inner, AskLines), new Vector2(left, card.Y + AskPad),
+            new TextSlot(confirm.Line, AskLine, new RectangleF(left, rowY, Math.Max(0, right - left), ButtonHeight)), buttons);
+    }
+
+    /// <summary>The question's button under a point, or null.</summary>
+    public ConfirmButton? ButtonAt(Vector2 point, float height)
+    {
+        foreach (var (button, box, _) in Ask(height)?.Buttons ?? [])
+        {
+            if (box.Contains(point.X, point.Y))
+            {
+                return button;
+            }
+        }
+
+        return null;
+    }
+
+    // The question's card: padding, the summary's lines, the gap and the row of buttons; 0 with none.
+    private float AskHeight => askHeight ??= confirm is null ? 0 : AskPad + SummaryHeight(confirm.Summary) + AskGap + ButtonHeight + AskPad;
+
+    private float AskRoom => AskHeight > 0 ? AskHeight + Gap : 0;
+
+    private float SummaryHeight(string summary)
+    {
+        using var laid = TextLayout.Of(new TextRun(summary, AskSummary, AnswerWidth - 2 * AskPad, AskLines));
+        return laid.Height;
+    }
 
     /// <summary>The footer: where the request went or is going on the left, the steps and the spend on the right.</summary>
     public IReadOnlyList<TextSlot> Foot(string provider, int steps, decimal spent, decimal? cap, float height)
@@ -129,8 +237,8 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         return (runs, y);
     }
 
-    /// <summary>Where the answer shows in a palette of <paramref name="height"/>: under the chips, above the footer. It scrolls inside.</summary>
-    public RectangleF AnswerBand(float height) => new(0, AnswerTop, width, Math.Max(0, height - Bottom - FootHeight - Gap - AnswerTop));
+    /// <summary>Where the answer shows in a palette of <paramref name="height"/>: under the chips, above the question and the footer. It scrolls inside.</summary>
+    public RectangleF AnswerBand(float height) => new(0, AnswerTop, width, Math.Max(0, height - Bottom - FootHeight - Gap - AskRoom - AnswerTop));
 
     public float MaxScroll(float answer, float height) => Math.Max(0, answer - AnswerBand(height).Height);
 

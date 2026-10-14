@@ -7,6 +7,9 @@ namespace Tomte.Core;
 /// </summary>
 public sealed record UiAutomationSettings
 {
+    /// <summary>Off by default: then the palette offers no UI Automation tool and nothing of UI Automation is made.</summary>
+    public bool Enabled { get; init; }
+
     public IReadOnlyList<string> AllowedApps { get; init; } = [];
 
     public IReadOnlyList<string> DeniedApps { get; init; } = UiAutomationRules.DefaultDenied;

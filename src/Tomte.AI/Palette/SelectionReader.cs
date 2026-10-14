@@ -31,6 +31,9 @@ public static partial class SelectionRule
     /// <summary>Both paths give the same text: one line-ending style, no trailing whitespace.</summary>
     public static string Normalize(string text) => text.ReplaceLineEndings("\n").TrimEnd();
 
+    /// <summary>What UIA says is selected, for a palette that has no fallback; null when nothing is, or only a Ctrl+C could tell.</summary>
+    public static string? Text(UiaSelection s) => ShouldFallBack(s) || string.IsNullOrWhiteSpace(s.Text) ? null : Normalize(s.Text);
+
     [GeneratedRegex("""isFromEmptySelection\\?["\\]*\s*:\s*true""")]
     private static partial Regex EmptySelectionFlag();
 }
@@ -51,6 +54,12 @@ public static unsafe class SelectionReader
             return ContextChips.Selection(string.IsNullOrEmpty(selection.Text) ? null : SelectionRule.Normalize(selection.Text));
         return ContextChips.Selection(null, () => Fallback(expectedForeground));
     }
+
+    /// <summary>
+    /// The focused element's selection through UI Automation alone, for the hotkey palette: its prompt takes the keys
+    /// right after, so by the time the user turns the chip on a Ctrl+C would land on the island. Off the UI thread.
+    /// </summary>
+    public static string? Read() => SelectionRule.Text(ReadUia());
 
     /// <summary>
     /// Simulated Ctrl+C with the clipboard put back. Null when nothing was copied, the copy was VS Code's

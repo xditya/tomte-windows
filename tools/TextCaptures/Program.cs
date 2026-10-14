@@ -242,6 +242,8 @@ internal static unsafe partial class Program
             new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, StreamingHeight()), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m)),
             new("palette-ai-off", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0)),
             new("palette-long-answer-scrolled", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight), c => Palette(c, "How do I fix a stuck Windows update?", Chips(false), "Sent to ollama · llama3.2:3b", Long, 2, 0.04m, scrolled: 0.5f)),
+            new("palette-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, AskHeight(Asking, voice: false)), c => Palette(c, "Open the Tomte repository", Chips(false), "Sending to ollama · llama3.2:3b", Asked, 0, 0.03m, confirm: Asking)),
+            new("palette-voice-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, AskHeight(PowerAsking, voice: true)), c => Palette(c, "Turn the computer off", [], "Sending to ollama · llama3.2:3b", [], 0, 0.01m, confirm: PowerAsking, voice: true)),
             new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
             new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
             new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
@@ -511,6 +513,33 @@ internal static unsafe partial class Program
         ]), PaletteLayout.AnswerText),
     ];
 
+    private static readonly (string, TextStyle)[] Asked = [("I can open it in your browser.", PaletteLayout.AnswerText)];
+
+    private static readonly Confirmation Asking = new("Open https://example.com/tomte/releases", Confirmation.LineFor(Tomte.Core.Device.ActionTier.ExternalEffect, ConfirmKeys.Prompt), AlwaysAllow: true, Destructive: false);
+
+    private static readonly Confirmation PowerAsking = new("Shut down the PC", Confirmation.LineFor(Tomte.Core.Device.ActionTier.Destructive, ConfirmKeys.Voice), AlwaysAllow: false, Destructive: true);
+
+    // The palette's height with a question open, from the prompt's own height (the text box's at 150%, or what was
+    // said by voice) and the answer, as the view lays it out.
+    private static double AskHeight(Confirmation confirm, bool voice)
+    {
+        var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true);
+        float text;
+        if (voice)
+        {
+            using var said = TextLayout.Of(new TextRun("Turn the computer off", PaletteLayout.PromptText, first.Editor.Width, PaletteLayout.PromptLines));
+            text = said.Height;
+        }
+        else
+        {
+            using var probe = Typing.Captured("Open the Tomte repository", PaletteLayout.PromptSize, first.Editor, 1.5, null);
+            text = (float)(probe.ContentHeight / 1.5);
+        }
+
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, voice ? [] : Chips(false), confirm);
+        return layout.Height(voice ? 0 : layout.Answer(Asked).Height);
+    }
+
     // The palette's height for the streaming scene, from the prompt's own height at 150% and the answer.
     private static double StreamingHeight()
     {
@@ -523,35 +552,49 @@ internal static unsafe partial class Program
     // The palette: the prompt's card with its text box (or the AI-off line), the chips, the answer and the footer, as
     // the palette view lays them out. A null prompt is a palette with no provider. The answer shows in its band, clipped
     // there and scrolled to <paramref name="scrolled"/> of its range (1 is the end, where a streaming answer stays).
-    private static void Palette(Canvas c, string? prompt, (string Label, bool On)[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1)
+    private static void Palette(Canvas c, string? prompt, (string Label, bool On)[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false)
     {
         var origin = new Vector2((float)(-PanelSize.PaletteWidth / 2), 0);
         c.Pill();
         c.Mascot();
         float text = 0;
         TextServices? editor = null;
-        if (prompt is not null)
+        var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true);
+        if (prompt is not null && voice)
         {
-            editor = Typing.Captured(prompt, PaletteLayout.PromptSize, new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true).Editor, c.Scale, prompt.Length);
+            // By voice there is no text box: what was said shows in its place.
+            using var said = TextLayout.Of(new TextRun(prompt, PaletteLayout.PromptText, first.Editor.Width, PaletteLayout.PromptLines));
+            text = said.Height;
+        }
+        else if (prompt is not null)
+        {
+            editor = Typing.Captured(prompt, PaletteLayout.PromptSize, first.Editor, c.Scale, prompt.Length);
             text = (float)(editor.ContentHeight / c.Scale);
         }
 
         // As the view does it: the prompt's height first, then the box grows to it and the rest follows.
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm);
         var card = layout.Prompt;
         c.RoundRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
         c.StrokeRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x1AFFFFFF);
         var box = layout.Editor;
-        if (editor is null)
+        if (prompt is null)
         {
             c.Text(PaletteLayout.Off, PaletteLayout.Placeholder, new RectangleF(box.X, card.Y, box.Width, card.Height), origin);
             c.Text(new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad, layout.ChipsTop + 4), origin);
             return;
         }
 
-        editor.Resize(PixelGrid.Cover(box.Width, c.Scale), PixelGrid.Cover(box.Height, c.Scale), EditorScale.Zoom(c.Scale, TextServices.SystemDpi));
-        c.Editor(editor, box, origin);
-        editor.Dispose();
+        if (editor is null)
+        {
+            c.Text(new TextRun(prompt, PaletteLayout.PromptText, box.Width, PaletteLayout.PromptLines), new Vector2(box.X, box.Y), origin);
+        }
+        else
+        {
+            editor.Resize(PixelGrid.Cover(box.Width, c.Scale), PixelGrid.Cover(box.Height, c.Scale), EditorScale.Zoom(c.Scale, TextServices.SystemDpi));
+            c.Editor(editor, box, origin);
+            editor.Dispose();
+        }
         foreach (var (pill, label) in layout.Chips)
         {
             c.RoundRect(Offset(pill, origin), PaletteLayout.ChipCorner, label.Style == PaletteLayout.ChipOn ? 0x336FA8FFu : 0x0FFFFFFFu);
@@ -569,6 +612,20 @@ internal static unsafe partial class Program
         }
 
         c.Clip = null;
+
+        // The question, with the view's colours: the chip blue round the card, Run filled white, or amber for what asks every time.
+        if (layout.Ask(height) is { } ask)
+        {
+            c.RoundRect(Offset(ask.Card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
+            c.StrokeRect(Offset(ask.Card, origin), PaletteLayout.PromptCorner, 0x666FA8FF);
+            c.Text(ask.Summary, ask.SummaryAt, origin);
+            c.Text(ask.Line, origin);
+            foreach (var (button, rect, label) in ask.Buttons)
+            {
+                c.RoundRect(Offset(rect, origin), PaletteLayout.ButtonCorner, button != ConfirmButton.Run ? 0x1AFFFFFFu : confirm!.Destructive ? 0xFFF0B35Au : 0xFFFFFFFFu);
+                c.Text(label, origin);
+            }
+        }
 
         foreach (var line in layout.Foot(provider, steps, spent, 2m, height))
         {

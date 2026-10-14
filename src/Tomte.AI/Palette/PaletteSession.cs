@@ -310,6 +310,8 @@ public sealed partial class PaletteSession : IPaletteSession
             var messages = new List<ChatMessage> { new(ChatRole.User, first) };
             while (true)
             {
+                // A palette closed while it asked sends nothing more, whatever the provider does with a cancelled token.
+                ct.ThrowIfCancellationRequested();
                 // A job stops hard at the cap: before every turn, not only before the first.
                 if (Job is not null && _options.DailyCapUsd is { } jobCap && SpentTodayUsd + SendLog.Estimate(_options, ModelId, inputTokens, outputTokens) >= jobCap)
                     throw new InvalidOperationException($"Daily cap of ${jobCap:0.00} reached for {ProviderName}, so the job stopped.");
@@ -332,6 +334,8 @@ public sealed partial class PaletteSession : IPaletteSession
                 bool capped = false;
                 foreach (var call in calls)
                 {
+                    // Nor does it run the turn's other calls, those that would not ask included.
+                    ct.ThrowIfCancellationRequested();
                     if (ToolSteps >= _options.MaxToolSteps)
                     {
                         Note($"Stopped after {_options.MaxToolSteps} tool steps.");

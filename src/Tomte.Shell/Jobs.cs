@@ -244,10 +244,9 @@ internal static class Jobs
     /// <summary>
     /// --debug-job "request" [--debug-answer yes]: the palette opens, the model turns the request into a job, and the
     /// confirmation is answered after 1.5 s: yes only with --debug-answer yes, which needs --debug-settings so the job
-    /// lands in the run's own folder. The answer goes to the placeholder the palette shows while it asks, because the
-    /// island cannot draw the confirmation's words yet, which is also why this stays a debug switch. A yes stores the
-    /// job and registers its real Task Scheduler entry (none in a packaged build). Provider as for --rambler: the
-    /// command line, else settings, else local Ollama.
+    /// lands in the run's own folder. The typed palette does not make jobs yet, which is why this stays a debug switch.
+    /// A yes stores the job and registers its real Task Scheduler entry (none in a packaged build). Provider as for
+    /// voice: the command line, else settings, else local Ollama.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task ScheduleAsync(JobContext c, string request, string[] args)
@@ -260,14 +259,14 @@ internal static class Jobs
         using var http = ProviderSetup.NewHttp();
         var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
         planner.Scheduled += next => Arm(c, next);
-        var host = new PaletteHost(c.Island, c.Triggers.Machine, line => c.Writer?.WriteLine(line));
+        var host = new PaletteHost(c.Island, c.Triggers.Machine, line => c.Writer?.WriteLine(line), Program.Text!);
         var session = new PaletteSession(configured?.Provider ?? ProviderSetup.Load(config, http), config, configured?.Options ?? new PaletteOptions(), new SendLog(c.SendLog),
             new BuiltInTools(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { }), new PermissionGrants(), [])
         {
             Scheduling = planner,
             Prompt = request,
         };
-        session.ConfirmTool = (asked, ct) => host.AskAsync(Answer(asked, ct));
+        session.ConfirmTool = Answer;
         await host.RunAsync(session);
         foreach (var step in session.Answer.OfType<ToolStepSegment>())
         {

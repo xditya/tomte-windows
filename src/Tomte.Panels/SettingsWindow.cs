@@ -92,6 +92,8 @@ public sealed partial class SettingsWindow : Window
             Note("Tools the AI layer can use when you ask for their effect. Nothing runs without a provider configured. Tools marked \"asks each time\" can be always allowed from the prompt; remove a grant here to be asked again."),
             Note("By voice (hold the rambler hotkey and speak), every tool asks before it runs, always allowed or not, and MCP server tools are not offered."),
             Row("Spoken replies", Note("Read the answer to a voice command aloud with Windows speech."), Toggle(s => s.SpokenReplies, (s, v) => s with { SpokenReplies = v })),
+            Row("Desktop automation", Note("Let the typed palette list, click, type into and select controls in other apps through UI Automation. Every action asks first, with no always allow. Never by voice."),
+                Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } })),
             Note("Always allowed"),
             grantsList,
             Note("All tools"),

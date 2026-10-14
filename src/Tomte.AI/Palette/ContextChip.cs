@@ -82,6 +82,13 @@ public static class ContextAssembly
 public static class ContextChips
 {
     /// <summary>
+    /// The hotkey palette's chips: the circled region first and on when circle-to-ask opened it, then the selection,
+    /// the window, its screenshot, the shelf and the scratchpad, each off until the user turns it on.
+    /// </summary>
+    public static List<ContextChip> For(ContextChip? lasso, string? selection, string app, string title, Func<CancellationToken, Task<byte[]>> screenshot, IShelf shelf, IScratchpad scratchpad) =>
+        [.. lasso is null ? [] : new[] { lasso }, Selection(selection), Window(app, title), Screenshot(app, screenshot), Shelf(shelf), Scratchpad(scratchpad)];
+
+    /// <summary>
     /// The UIA selection is read when the palette opens (focus moves once the user clicks in), so
     /// <paramref name="text"/> is already here. When UIA could not tell (<paramref name="fallback"/>
     /// given), the chip offers itself and runs the Ctrl+C fallback only when the user turns it on.

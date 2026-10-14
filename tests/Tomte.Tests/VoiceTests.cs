@@ -419,15 +419,47 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AVoiceCommandUsesTheProviderSetUpWhenItStartsAndWithoutOneTheWordsStayANote()
+    {
+        const string url = "http://127.0.0.1:11434/v1";
+        int skillReads = 0;
+        SkillSet Skills()
+        {
+            skillReads++;
+            return SkillSet.Load(Path.Combine(_dir, "skills"), []);
+        }
+
+        using var http = new HttpClient();
+        var settings = new TomteSettings();
+        // Nothing set up: no session, so the transcript is the raw note, and no skill is read for it.
+        Assert.Null(await VoiceCommand.StartAsync(ProviderSetup.ForPalette(settings, http, _ => null), Skills, new SendLog(LogPath), Tools(), new PermissionGrants()));
+        Assert.Equal(0, skillReads);
+
+        // A provider set up after Tomte started is what the next command reads, and it is a voice session.
+        var later = settings with { Provider = new ProviderConfig(ProviderSetup.IdFor(ProviderKind.OpenAICompatible, url), ProviderKind.OpenAICompatible, url, "llama3.2:3b") };
+        var command = await VoiceCommand.StartAsync(ProviderSetup.ForPalette(later, http, _ => null), Skills, new SendLog(LogPath), Tools(), new PermissionGrants());
+        Assert.NotNull(command);
+        Assert.True(command.Voice);
+        Assert.Equal("llama3.2:3b", command.ModelId);
+        Assert.Empty(command.Commands);
+        Assert.Equal(1, skillReads);
+        // Made, not sent: nothing went to the provider and nothing was logged.
+        Assert.False(File.Exists(LogPath));
+    }
+
+    [Fact]
     public async Task AnAnswerReachesOnlyTheQuestionItWasGivenFor()
     {
-        var question = new VoiceQuestion();
+        long now = 0;
+        var question = new ToolQuestion { Clock = () => now };
         var first = new ToolRequest(BuiltInTools.SetVolume, "Set volume to 20%", ActionTier.ExternalEffect, false);
         var second = new ToolRequest(BuiltInTools.SetVolume, "Set volume to 20%", ActionTier.ExternalEffect, false);
         Assert.False(question.Answer(allow: true));
 
         var a = question.AskAsync(first, CancellationToken.None);
         Assert.Same(first, question.Asked);
+        // The user has read the card.
+        now += ToolQuestion.ReadMs;
         Assert.True(question.Answer(allow: true, to: first));
         Assert.Equal(PermissionAnswer.AllowOnce, await a);
         Assert.Null(question.Asked);

@@ -1,3 +1,6 @@
+using Tomte.AI.Skills;
+using Tomte.Core;
+
 namespace Tomte.AI.Palette;
 
 /// <summary>Where a rambler transcript goes once it is text.</summary>
@@ -25,43 +28,21 @@ public static class VoiceCommand
         return true;
     }
 
+    /// <summary>
+    /// The session for one transcript, made from <paramref name="configured"/>, the provider set up at the moment the
+    /// command starts, so one set up after Tomte started is used from the next hold on. Null while there is none: the
+    /// transcript is then the raw note, and no skill is read. Voice is offered no skill; the turned-on ones are read,
+    /// off the island's thread, only so open_app keeps refusing the files in their folder.
+    /// </summary>
+    public static async Task<PaletteSession?> StartAsync((IChatProvider Provider, ProviderConfig Config, PaletteOptions Options)? configured, Func<SkillSet> skills, SendLog log, BuiltInTools tools, PermissionGrants grants)
+    {
+        if (configured is not { } now)
+            return null;
+        var loaded = await Task.Run(skills);
+        return new PaletteSession(now.Provider, now.Config, now.Options, log, tools, grants, []) { Voice = true, Skills = loaded };
+    }
+
     /// <summary>The reply to read aloud: only with spoken replies on, after a finished answer that has text.</summary>
     public static string? ReplyToSpeak(IPaletteSession session, bool spokenReplies) =>
         spokenReplies && session.Status == PaletteStatus.Done && session.AnswerText.Trim() is { Length: > 0 } reply ? reply : null;
-}
-
-/// <summary>
-/// The one question a voice palette has open. The user's yes or no answers it, and so does anything that ends the
-/// session (its cancel answers no). An answer given for one question never lands on a later one. One thread.
-/// </summary>
-public sealed class VoiceQuestion
-{
-    private TaskCompletionSource<PermissionAnswer>? _answer;
-
-    /// <summary>What is being asked now, or null.</summary>
-    public ToolRequest? Asked { get; private set; }
-
-    /// <summary>Opens the question; <see cref="Asked"/> is set before this returns.</summary>
-    public async Task<PermissionAnswer> AskAsync(ToolRequest request, CancellationToken ct)
-    {
-        var answer = _answer = new TaskCompletionSource<PermissionAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Asked = request;
-        using var cancel = ct.Register(() => answer.TrySetResult(PermissionAnswer.Deny));
-        try
-        {
-            return await answer.Task;
-        }
-        finally
-        {
-            if (_answer == answer)
-                (_answer, Asked) = (null, null);
-        }
-    }
-
-    /// <summary>
-    /// Answers the open question. With <paramref name="to"/>, only while that request is still the one asked. False
-    /// when nothing was answered.
-    /// </summary>
-    public bool Answer(bool allow, ToolRequest? to = null) =>
-        _answer is { } open && (to is null || ReferenceEquals(to, Asked)) && open.TrySetResult(allow ? PermissionAnswer.AllowOnce : PermissionAnswer.Deny);
 }

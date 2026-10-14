@@ -106,6 +106,26 @@ public class CaptureTests
     }
 
     [Fact]
+    public async Task TheHotkeyPaletteOpensOnTheLassoAndSendsItWithTheQuestionTheUserTypes()
+    {
+        byte[] png = [1, 2, 3];
+        var shelf = new InMemoryShelf();
+        shelf.CreateFile("notes.txt", "x");
+        var chips = ContextChips.For(ContextChips.Lasso(png, 312, 184), null, "msedge", "Store - Edge", _ => Task.FromResult(Array.Empty<byte>()), shelf, new InMemoryScratchpad());
+
+        // The region first and on; the palette's other chips after it, off, and no selection is read for a lasso.
+        Assert.Equal("Lasso · 312 × 184", chips[0].Label);
+        Assert.Equal([true, false, false, false, false, false], chips.Select(c => c.On));
+        Assert.Equal("Selection · none", chips[1].Label);
+
+        // The question is whatever the user typed, sent after the region.
+        var (parts, attached) = await ContextAssembly.BuildAsync(chips, "Which game is this?", CancellationToken.None);
+        Assert.Same(png, Assert.IsType<ImagePart>(parts[0]).Data);
+        Assert.Equal("Which game is this?", Assert.IsType<TextPart>(parts[^1]).Text);
+        Assert.Equal(["lasso"], attached);
+    }
+
+    [Fact]
     public void CaptureIsEnteredOnlyFromHiddenAndLeftToPaletteOrHidden()
     {
         // Esc: Hidden -> Capture -> Hidden. Lasso done: Hidden -> Capture -> Palette.

@@ -34,6 +34,22 @@ public sealed class SkillSet
     /// <summary>The palette commands these skills register, for the palette's command list.</summary>
     public IReadOnlyList<SkillCommand> Commands => [.. Skills.Select(s => s.Command).OfType<SkillCommand>()];
 
+    /// <summary>
+    /// "/name", or "/name" and more words, typed in the prompt box: that skill's command as sent, with the words after it
+    /// on a line of their own. Null for anything else, which is sent as typed.
+    /// </summary>
+    public static string? Expand(IReadOnlyList<SkillCommand> commands, string typed)
+    {
+        var line = typed.Trim();
+        if (!line.StartsWith('/'))
+            return null;
+        int end = line.IndexOfAny([' ', '\t', '\r', '\n']);
+        string name = end < 0 ? line[1..] : line[1..end], rest = end < 0 ? "" : line[end..].Trim();
+        return commands.FirstOrDefault(c => string.Equals(c.Skill, name, StringComparison.OrdinalIgnoreCase)) is { } command
+            ? rest.Length == 0 ? command.Text : $"{command.Text}\n{rest}"
+            : null;
+    }
+
     /// <summary>The drop zones these skills register, for the shelf-drop surface to offer.</summary>
     public IReadOnlyList<SkillDropZone> DropZones => [.. Skills.Select(s => s.DropZone).OfType<SkillDropZone>()];
 

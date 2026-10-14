@@ -239,7 +239,12 @@ internal sealed class TypingFocus
         // gone, a tab switch away from the note): it would close the island's window, and Tomte with it.
         if (IslandKeys.Hides(message, wParam, focused is not null))
         {
-            Escape?.Invoke();
+            // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel.
+            if (message != IslandKeys.KeyDown || focused?.Escape?.Invoke() != true)
+            {
+                Escape?.Invoke();
+            }
+
             return new LRESULT(0);
         }
 

@@ -60,7 +60,7 @@ internal static partial class Program
         int paletteArg = Array.IndexOf(args, "--palette");
         string? palettePrompt = paletteArg >= 0 && paletteArg + 1 < args.Length ? args[paletteArg + 1] : null;
         bool rambler = args.Contains("--rambler");
-        // No prompt box renders yet, so circle-to-ask takes its typed question from here.
+        // --debug-capture "question": the circle-to-ask driver asks this about the lasso, then quits.
         string? captureQuestion = Arg(args, "--debug-capture");
         // --debug-timer <minutes>: the only way to start the timer until the island takes input.
         TimeSpan? debugTimer = null;
@@ -173,10 +173,10 @@ internal static partial class Program
             _ = PaletteRun(island, triggers, store, log!, palettePrompt);
         }
 
-        if (captureQuestion is not null)
-        {
-            triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
-        }
+        // After the lasso the palette opens with the region on, for the user to type the question; the driver asks its own.
+        triggers.Captured = captureQuestion is null
+            ? (overlay, crop, foreground) => CaptureToPalette(island, triggers, store, logLine, overlay, crop, foreground)
+            : (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
 
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
@@ -455,7 +455,7 @@ internal static partial class Program
     /// A request from an MCP server's tool is always denied here, with --dry too: the dry run is Tomte's own, and
     /// a server's tool would really run. Such a tool runs in a driven run only when the user set it to Read or
     /// answered "always allow" for it before. --automation offers the UI Automation tools, and every request of
-    /// theirs is denied here: the island cannot show the prompt yet.
+    /// theirs is denied here, with nobody at the keyboard to read it.
     /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
     private static async Task PaletteRun(IslandWindow island, TriggerController triggers, SettingsStore store, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
@@ -520,7 +520,7 @@ internal static partial class Program
                 {
                     // Nobody is at the keyboard in a driven run: refuse what has no undo and no bound, and
                     // never approve a tool of an outside server on the user's behalf. Nor an automation request:
-                    // until the island draws text, nobody can read what it would send or click.
+                    // nobody reads what it would send or click.
                     bool outside = mcp?.Owns(request.Tool) == true || AutomationTools.Owns(request.Tool);
                     bool deny = outside || (!dry && (request.Tier == ActionTier.Destructive || request.Tool == BuiltInTools.OpenApp));
                     string answer = outside ? "deny, not approved with nobody at the keyboard" : deny ? "deny, needs --dry" : "allow once";
@@ -528,10 +528,10 @@ internal static partial class Program
                     return Task.FromResult(deny ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
                 },
             };
-            // "/name" runs the palette command of the skill called name, as picking it from the command list does.
-            if (session.Commands.FirstOrDefault(c => "/" + c.Skill == prompt) is { } command)
+            // "/name" runs the palette command of the skill called name, as the prompt box does.
+            if (SkillSet.Expand(session.Commands, prompt) is { } command)
             {
-                session.Prompt = command.Text;
+                session.Prompt = command;
             }
 
             int steps = 0;
@@ -543,7 +543,7 @@ internal static partial class Program
                     log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette tool {step.Tool}: {step.Summary} -> {(step.IsError ? "error: " : "")}{step.Result.ReplaceLineEndings(" | ")}");
                 }
             };
-            var host = new PaletteHost(island, triggers.Machine, log.WriteLine, text, focus);
+            var host = new PaletteHost(island, triggers.Machine, log.WriteLine, text!, focus);
             await host.RunAsync(session);
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette answer: {session.AnswerText.ReplaceLineEndings(" | ")}");
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory after answer: {Memory()}");
@@ -584,32 +584,32 @@ internal static partial class Program
 
     /// <summary>
     /// The hold-to-talk session the rambler hotkey drives, made on the first hold (at start with --rambler, which adds
-    /// the debug log and --debug-hold). The provider comes from the command line
-    /// (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential Manager under the id),
-    /// else from settings as the palette gets it, read once at start. Speech to text is local whisper.cpp when
-    /// tools/whisper/Get-Whisper.ps1 has run, or the provider's /audio/transcriptions with --stt-provider and
-    /// --stt-model; --debug-transcript "text" or --debug-wav file.wav stands in for what the microphone heard. Without
-    /// a provider, or without --rambler, the note is the raw transcript; with both the transcript is a voice command the
-    /// model reads with the voice tools, and --dry keeps device tools from changing anything. Voice commands wait for
-    /// --rambler because the voice palette cannot show what a tool asks yet. Null when there is no speech to text.
+    /// the debug log and --debug-hold). Each voice command reads the provider set up in settings when it starts, as the
+    /// palette does at each open, so one set up after Tomte started is used from the next hold on; the command line
+    /// (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential Manager under the id) names
+    /// one for the run instead. Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or the
+    /// provider's /audio/transcriptions with --stt-provider and --stt-model, read at the first hold;
+    /// --debug-transcript "text" or --debug-wav file.wav stands in for what the microphone heard. Without a provider
+    /// the note is the raw transcript; with one the transcript is a voice command the model reads with the voice tools,
+    /// shown and asked in the palette, and --dry keeps device tools from changing anything. Null when there is no
+    /// speech to text.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, ShortcutStore shortcuts, TextWriter log)
     {
-        ProviderConfig? config = Arg(args, "--provider-id") is { } id
+        ProviderConfig? named = Arg(args, "--provider-id") is { } id
             ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
             : null;
-        // Only a provider needs HTTP; local whisper with raw notes never opens a connection.
-        var configured = config is null && args.Contains("--rambler") ? Configured(store, log.WriteLine) : null;
-        config ??= configured?.Config;
-        var http = config is null ? null : paletteHttp ??= ProviderSetup.NewHttp();
+        // Only a speech provider needs HTTP now; local whisper never opens a connection.
+        var configured = args.Contains("--stt-provider") && named is null ? Configured(store, log.WriteLine) : null;
+        var speechConfig = named ?? configured?.Config;
         var options = configured?.Options ?? new PaletteOptions();
         ISpeechToText? speech = null;
         ProviderSend? speechSend = null;
-        if (args.Contains("--stt-provider") && config is { Kind: ProviderKind.OpenAICompatible, BaseUrl: { } url })
+        if (args.Contains("--stt-provider") && speechConfig is { Kind: ProviderKind.OpenAICompatible, BaseUrl: { } url })
         {
-            speechSend = new ProviderSend(config.Id, Arg(args, "--stt-model") ?? "whisper-1");
-            speech = new OpenAITranscriber(http!, url, CredentialStore.Read(config.Id), speechSend.Model);
+            speechSend = new ProviderSend(speechConfig.Id, Arg(args, "--stt-model") ?? "whisper-1");
+            speech = new OpenAITranscriber(paletteHttp ??= ProviderSetup.NewHttp(), url, CredentialStore.Read(speechConfig.Id), speechSend.Model);
         }
         else if (WhisperTranscriber.IsInstalled(WhisperTranscriber.DefaultDirectory))
         {
@@ -634,28 +634,25 @@ internal static partial class Program
         // The one note the palette and the Scratchpad panel use too.
         var scratchpad = Scratchpad;
         var sendLog = new SendLog(SendLogPath);
-        Func<Task<PaletteSession>>? voice = null;
-        if (config is { DefaultModel: not null })
+        // One per store, shared with the palette. A voice command asks every time, so the grants change nothing for it.
+        var grants = paletteGrants ??= new PermissionGrants(store);
+        // The real shelf, so a file made by voice is still there after a restart. The tiles open by name; that way
+        // never runs a script tile.
+        var tools = new BuiltInTools((IShelf?)Jobs.Shelf ?? new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
+            args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
+        async Task<PaletteSession?> Voice()
         {
-            var provider = configured?.Provider ?? ProviderSetup.Load(config, http!);
-            // One per store, kept as long as the store. A voice command asks every time, so the grants change nothing for it.
-            var grants = new PermissionGrants(store);
-            // The real shelf, so a file made by voice is still there after a restart. The tiles open by name; that way
-            // never runs a script tile.
-            var tools = new BuiltInTools((IShelf?)Jobs.Shelf ?? new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
-                args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
-            voice = async () =>
-            {
-                // Voice is offered no skill. The turned-on ones are still read, so open_app keeps refusing their scripts.
-                var skills = await Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
-                var command = new PaletteSession(provider, config, options, sendLog, tools, grants, []) { Voice = true, Skills = skills };
-                // Raised while the palette is up, the event waits in the triggers' queue and shows once the palette hides.
-                command.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
-                return command;
-            };
+            var now = named is null ? Configured(store, log.WriteLine)
+                : named.DefaultModel is null ? null
+                : (ProviderSetup.Load(named, paletteHttp ??= ProviderSetup.NewHttp()), named, new PaletteOptions());
+            var command = await VoiceCommand.StartAsync(now, () => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills), sendLog, tools, grants);
+            // Raised while the palette is up, the event waits in the triggers' queue and shows once the palette hides.
+            command?.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
+            log.WriteLine($"rambler: voice {(command is null ? "off, no provider set up: raw transcript" : command.ModelId)}");
+            return command;
         }
 
-        var session = new Rambler(island, triggers.Machine, speech, speechSend, voice, scratchpad, sendLog, options, log.WriteLine);
+        var session = new Rambler(island, triggers.Machine, speech, speechSend, Voice, scratchpad, sendLog, options, text!, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
         session.CommandDone += command =>
@@ -665,7 +662,7 @@ internal static partial class Program
                 _ = SpokenReply.SpeakAsync(reply, log.WriteLine);
             }
         };
-        log.WriteLine($"rambler: speech={speech.GetType().Name} voice={(voice is null ? "off, raw transcript" : config!.Id)}");
+        log.WriteLine($"rambler: speech={speech.GetType().Name} voice={named?.Id ?? "the provider in settings at each command"}");
         return session;
     }
 
