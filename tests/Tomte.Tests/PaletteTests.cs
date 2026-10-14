@@ -92,7 +92,7 @@ public class PaletteTests : IDisposable
         var request = Assert.Single(_provider.Requests);
         Assert.Equal("m", request.Model);
         Assert.NotNull(request.System);
-        Assert.Equal(BuiltInTools.Definitions.Count, request.Tools!.Count);
+        Assert.Equal(BuiltInTools.Definitions.Count - 1, request.Tools!.Count);  // read_shelf_item waits for the shelf chip.
         Assert.Equal("hi", ((TextPart)Assert.Single(request.Messages).Parts[0]).Text);
     }
 
@@ -163,7 +163,9 @@ public class PaletteTests : IDisposable
     {
         _provider.Turns.Add(ScriptedProvider.Call(BuiltInTools.ReadShelfItem, """{"name":"notes.txt"}"""));
         _provider.Turns.Add(ScriptedProvider.Text(10, 5, "Dentist on Monday."));
-        var session = Session();
+        var shelfChip = ContextChips.Shelf(_shelf);
+        shelfChip.On = true;
+        var session = Session(chips: [shelfChip]);
         int prompts = 0;
         session.ConfirmTool = (_, _) =>
         {
@@ -178,13 +180,14 @@ public class PaletteTests : IDisposable
         Assert.Equal(1, session.ToolSteps);
         var step = Assert.Single(session.Answer.OfType<ToolStepSegment>());
         Assert.False(step.IsError);
-        Assert.Equal(Notes, step.Result);
+        Assert.Contains(Notes, step.Result);
         var second = _provider.Requests[1];
         Assert.Equal(3, second.Messages.Count);
+        Assert.IsType<TextPart>(second.Messages[0].Parts[0]);
         Assert.IsType<ToolCallPart>(second.Messages[1].Parts[0]);
         var result = Assert.IsType<ToolResultPart>(second.Messages[2].Parts[0]);
         Assert.Equal("c1", result.CallId);
-        Assert.Equal(Notes, result.Content);
+        Assert.Equal(step.Result, result.Content);
         Assert.Equal("Dentist on Monday.", session.AnswerText);
     }
 
@@ -350,7 +353,8 @@ public class PaletteTests : IDisposable
         Assert.False(ContextChips.Shelf(new InMemoryShelf()).Available);
         var shelf = ContextChips.Shelf(_shelf);
         Assert.Equal("Shelf · notes.txt", shelf.Label);
-        Assert.Contains(Notes, ((TextPart)(await shelf.ReadAsync(CancellationToken.None))[0]).Text);
+        // The chip names the file; the session reads it at send.
+        Assert.Equal("notes.txt", Assert.IsType<Tomte.AI.Files.ShelfFilePart>(Assert.Single(await shelf.ReadAsync(CancellationToken.None))).Name);
 
         _scratchpad.Text = "todo";
         Assert.Contains("todo", ((TextPart)(await ContextChips.Scratchpad(_scratchpad).ReadAsync(CancellationToken.None))[0]).Text);

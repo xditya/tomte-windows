@@ -110,6 +110,9 @@ public sealed class BuiltInTools(
     public static readonly IReadOnlyDictionary<string, ActionTier> Tiers =
         Table.ToDictionary(t => t.Name, t => t.Action is null ? BuiltInTiers[t.Name] : DeviceActionTiers.All[t.Action]);
 
+    /// <summary>The shelf the read tool reads; the palette reads its files through the file readers instead of <see cref="IShelf.ReadText"/>.</summary>
+    internal IShelf Shelf => shelf;
+
     public static bool IsDeviceTool(string name) => DeviceTools.Contains(name);
 
     /// <summary>Device actions block on WinRT, COM and WMI, and the shortcut launcher reads the database: these run on the pool.</summary>

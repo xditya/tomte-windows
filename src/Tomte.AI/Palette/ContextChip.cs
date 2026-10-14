@@ -1,3 +1,4 @@
+using Tomte.AI.Files;
 using Tomte.Core;
 
 namespace Tomte.AI.Palette;
@@ -127,15 +128,19 @@ public static class ContextChips
         _ => Task.FromResult<IReadOnlyList<ContentPart>>([new ImagePart("image/png", png)]),
         on: true);
 
-    /// <summary>The newest shelf item. One chip is enough until the shelf has a picker.</summary>
+    /// <summary>
+    /// The newest shelf item, and the shelf: with this chip on, the model may read the other items with read_shelf_item,
+    /// and their names come along. One chip is enough until the shelf has a picker. The session reads the file at send.
+    /// </summary>
     public static ContextChip Shelf(IShelf shelf)
     {
         var name = shelf.ItemNames.Count > 0 ? shelf.ItemNames[0] : null;
         return new(ContextKind.ShelfItem,
             name is null ? "Shelf · empty" : $"Shelf · {name}",
             name is null ? "shelf" : $"shelf:{name}",
-            _ => Task.FromResult<IReadOnlyList<ContentPart>>(
-                [ContextAssembly.Block("shelf_item", shelf.ReadText(name!) ?? "(not a text item)", $"name=\"{name}\"")]),
+            _ => Task.FromResult<IReadOnlyList<ContentPart>>(shelf.ItemNames.Count > 1
+                ? [new ShelfFilePart(name!), ContextAssembly.Block("shelf_items", string.Join('\n', shelf.ItemNames.Skip(1).Select(PreparedFile.Clean)))]
+                : [new ShelfFilePart(name!)]),
             available: name is not null);
     }
 

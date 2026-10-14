@@ -11,6 +11,9 @@ public interface IShelf
     /// <summary>The item's text, or null when there is no such item or it is not text.</summary>
     string? ReadText(string name);
 
+    /// <summary>Where the item's file or folder is, or null when the shelf keeps its items in memory.</summary>
+    string? PathOf(string name) => null;
+
     /// <summary>Creates a text file on the shelf. Replaces an item of the same name.</summary>
     void CreateFile(string name, string content);
 

@@ -653,7 +653,7 @@ public class McpPaletteTests : IDisposable
 
         Assert.Equal(PaletteStatus.Done, session.Status);
         // Every built-in tool, plus the server's echo and broken.
-        Assert.Equal(BuiltInTools.Definitions.Count + 2, _provider.Requests[0].Tools!.Count);
+        Assert.Equal(BuiltInTools.Definitions.Count - 1 + 2, _provider.Requests[0].Tools!.Count);  // read_shelf_item waits for the shelf chip.
         var request = Assert.Single(_asked);
         Assert.Equal(new ToolRequest("files__echo", """Files: echo {"text":"hi"}""", ActionTier.ExternalEffect, OfferAlwaysAllow: true), request);
         var result = (ToolResultPart)_provider.Requests[1].Messages[^1].Parts[0];
