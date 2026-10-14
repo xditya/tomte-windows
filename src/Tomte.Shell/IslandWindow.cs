@@ -303,6 +303,12 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public Func<uint, nuint, nint, bool>? Message { get; set; }
 
+    /// <summary>
+    /// Keyboard, input method, focus and drag messages while a text box may be typed in: the answer, or null for
+    /// DefWindowProc. Only a typing state ever activates the window, so nothing else receives these.
+    /// </summary>
+    internal Func<uint, nuint, nint, LRESULT?>? Typing { get; set; }
+
     /// <summary>Where a failure inside the window procedure is written; an exception there would otherwise kill the process.</summary>
     public Action<string>? Log { get; set; }
 
@@ -806,11 +812,21 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// A point in the window's client pixels to island space, whose origin is the top of Content's centre line, rounded
     /// down to a whole pixel as the Dips container's is, so a press lands where its target is drawn.
     /// </summary>
-    private Vector2 ToIsland(int x, int y) =>
+    internal Vector2 ToIsland(int x, int y) =>
         PanelSpace.FromPixels(x, y, root.Offset.X + MathF.Floor((Content.Size.X - 2 * Margin) / 2), root.Offset.Y, scale);
 
+    /// <summary>A point in island space to screen pixels, for input method windows beside the caret.</summary>
+    internal System.Drawing.Point IslandToScreen(Vector2 island)
+    {
+        var point = new System.Drawing.Point(
+            (int)MathF.Round(root.Offset.X + MathF.Floor((Content.Size.X - 2 * Margin) / 2) + island.X * (float)scale),
+            (int)MathF.Round(root.Offset.Y + island.Y * (float)scale));
+        PInvoke.ClientToScreen(Hwnd, &point);
+        return point;
+    }
+
     /// <summary>The same from screen pixels, which is where the wheel message puts its point.</summary>
-    private Vector2 ScreenToIsland(int x, int y)
+    internal Vector2 ScreenToIsland(int x, int y)
     {
         var point = new System.Drawing.Point(x, y);
         PInvoke.ScreenToClient(Hwnd, &point);
@@ -894,6 +910,12 @@ internal sealed unsafe class IslandWindow : IDisposable
             case PInvoke.WM_DISPLAYCHANGE:
                 // A scaling change reaches a resting window here before its own WM_DPICHANGED does.
                 return GuardedRescale(instance?.MonitorScale());
+            case PInvoke.WM_KEYDOWN or PInvoke.WM_KEYUP or PInvoke.WM_CHAR or PInvoke.WM_SYSKEYDOWN or PInvoke.WM_SYSKEYUP or PInvoke.WM_SYSCHAR:
+            case >= PInvoke.WM_IME_STARTCOMPOSITION and <= PInvoke.WM_IME_COMPOSITION:
+            case >= PInvoke.WM_IME_SETCONTEXT and <= PInvoke.WM_IME_KEYUP:
+            case PInvoke.WM_ACTIVATE or PInvoke.WM_SETFOCUS or PInvoke.WM_KILLFOCUS or PInvoke.WM_SETCURSOR:
+            case PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP or PInvoke.WM_CAPTURECHANGED:
+                return RouteTyping(window, message, wParam, lParam);
             case PInvoke.WM_CLOSE:
                 PInvoke.DestroyWindow(window);
                 return new LRESULT(0);
@@ -909,6 +931,23 @@ internal sealed unsafe class IslandWindow : IDisposable
             default:
                 return PInvoke.DefWindowProc(window, message, wParam, lParam);
         }
+    }
+
+    private static LRESULT RouteTyping(HWND window, uint message, WPARAM wParam, LPARAM lParam)
+    {
+        try
+        {
+            if (instance?.Typing?.Invoke(message, wParam.Value, lParam.Value) is LRESULT handled)
+            {
+                return handled;
+            }
+        }
+        catch (Exception e)
+        {
+            instance?.Log?.Invoke($"typing message 0x{message:X} failed: {e}");
+        }
+
+        return PInvoke.DefWindowProc(window, message, wParam, lParam);
     }
 
     private static bool Route(uint message, nuint wParam, nint lParam)
