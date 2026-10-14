@@ -5,8 +5,8 @@ namespace Tomte.Core.Shortcuts;
 
 /// <summary>
 /// The Shortcuts panel body in DIPs, origin at its top-left corner under the tab strip: a head line, then four
-/// columns of 80 DIP tiles with a 34 DIP icon, as many rows as the body holds. At the 520 x 300 that is two
-/// rows, eight cells. The cell after the last tile shown is the add tile; with more tiles than cells, the ones that
+/// columns of 80 DIP tiles with a 34 DIP icon, as many rows as the body holds. At the panel's 520 x 300 that is
+/// two rows, eight cells. The cell after the last tile shown is the add tile; with more tiles than cells, the ones that
 /// do not fit are not shown (they stay in Settings and can still be opened by name).
 /// </summary>
 public static class ShortcutGrid

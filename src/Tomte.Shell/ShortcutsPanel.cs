@@ -183,7 +183,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         private static readonly Color Glyph = Color.FromArgb(97, 255, 255, 255);
         private static readonly Color Warn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
 
-        // A missing target's tile is drawn at the design's 55%.
+        // A missing target's tile is drawn at 55% opacity.
         private const float MissingOpacity = 0.55f;
 
         private readonly List<CompositionColorBrush> cards = [];
@@ -311,7 +311,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         ///   Each tile: tile.Row.Name, 12 DIP, #e9e9ee, one line centred in ShortcutGrid.Label(cell), ellipsis.
         ///   A tile with the warn dot: why it would not open, 10 DIP in the warn colour, in place of the dot:
         ///         "Scripts off", "Confirm in Settings", "Changed, confirm again", "Moved or deleted", "Can't open".
-        ///         The design puts that line under the name, which needs about 14 DIP more than the 80 DIP tile has.
+        ///         A line under the name instead would need about 14 DIP more than the 80 DIP tile has.
         ///   The add tile: "Add", centred in its label slot, 38% white.
         /// Until then a neutral bar stands where each name goes and a warn-coloured dot marks a tile that would not open.
         /// </summary>

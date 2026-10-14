@@ -418,7 +418,7 @@ public sealed class ShortcutsTests : IDisposable
     }
 
     [Fact]
-    public void TheGridHoldsTwoRowsOfFourAtTheSpecSizeAndKeepsClearOfTheCorners()
+    public void TheGridHoldsTwoRowsOfFourAtThePanelSizeAndKeepsClearOfTheCorners()
     {
         var (width, height) = PanelSize.Shortcuts;
         var body = new System.Numerics.Vector2((float)width, (float)height - 42);
