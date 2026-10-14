@@ -24,7 +24,8 @@
 // seeded shelf. --vision marks the model as one that reads images, --context n gives its context size
 // (local endpoints do not say). A send too large for the model asks truncate, chunk or cancel on stdin,
 // or takes --size truncate|chunk|cancel. --provider anthropic|gemini sends to that cloud provider instead,
-// with the key saved in Credential Manager under that name and the model given with --model.
+// with the key saved in Credential Manager under that name and the model given with --model, which it needs.
+// Without --vision or --context, a local Ollama is asked what the model reads and takes.
 using System.Diagnostics;
 using Tomte.AI;
 using Tomte.AI.Automation;
@@ -33,7 +34,12 @@ using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 
+// The palette starts this program again to read a PDF or Word file in a process of its own.
+if (args is ["--extract"])
+    return ChildExtractor.Run();
+
 string? prompt = null, model = "llama3.2:3b";
+bool modelGiven = false;
 decimal? cap = 2m;
 bool yes = false, dry = false, undoAll = false, vision = false, automationOn = false;
 int? context = null;
@@ -50,7 +56,7 @@ for (int i = 0; i < args.Length; i++)
         case "--dry": dry = true; break;
         case "--undo": undoAll = true; break;
         case "--automation": automationOn = true; break;
-        case "--model": model = args[++i]; break;
+        case "--model": (model, modelGiven) = (args[++i], true); break;
         case "--cap": cap = decimal.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--file": files.Add(Path.GetFullPath(args[++i])); break;
         case "--vision": vision = true; break;
@@ -61,7 +67,8 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
-if (prompt is null)
+// A cloud provider gets only the model named for it, never the local default.
+if (prompt is null || (kind != ProviderKind.OpenAICompatible && !modelGiven))
 {
     Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--automation] [--model id] [--cap usd] [--file path]... [--vision] [--context tokens] [--size truncate|chunk|cancel] [--provider anthropic|gemini]");
     return 1;
@@ -107,7 +114,7 @@ var session = new PaletteSession(provider, config, new PaletteOptions { DailyCap
     Prompt = prompt,
     Mcp = mcp,
     Automation = automation,
-    Model = vision || context is not null ? new ModelInfo(model, context, vision ? true : null) : null,
+    Model = vision || context is not null ? new ModelInfo(model, context, vision ? true : null) : await ProviderSetup.DescribeAsync(provider, config),
     ChooseSize = (question, _) =>
     {
         Console.WriteLine($"\nsize  {question.Reason}");
