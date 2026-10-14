@@ -8,8 +8,11 @@
 // a run that changed dark mode or the volume leaves them as they were. --chip selection reads the
 // selection of the foreground window, which from a console is the console itself; use it from a
 // script that launches the harness while another window is in front.
+// MCP servers come from the user's settings (Settings > MCP servers); they start on the send
+// and stop when the harness exits.
 using System.Diagnostics;
 using Tomte.AI;
+using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 
@@ -45,6 +48,7 @@ shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at
 var scratchpad = new InMemoryScratchpad { Text = "Ideas:\n- a quieter alarm" };
 var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
     dry ? (name, input) => BuiltInTools.RunDevice(name, input, dryRun: true) : null);
+await using var mcp = new McpTools(SettingsStore.Load(SettingsStore.DefaultPath).McpServers);
 var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
 
 nint foreground = WindowContext.Foreground();
@@ -67,6 +71,7 @@ foreach (var chip in chips)
 var session = new PaletteSession(provider, config, new PaletteOptions { DailyCapUsd = cap }, new SendLog(logPath), tools, new PermissionGrants(), chips)
 {
     Prompt = prompt,
+    Mcp = mcp,
     ConfirmTool = (request, _) =>
     {
         Console.WriteLine();

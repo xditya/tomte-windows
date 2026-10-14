@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Tomte.AI;
+using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
@@ -261,9 +262,12 @@ internal static class Program
             // --dry keeps device tools from changing anything; the grants come from settings.json as they will for the real palette.
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
             var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
+            // Servers start on the send; disposing at the end of the run stops them, as closing the palette does.
+            await using var mcp = new McpTools(store.Current.McpServers);
             var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
             {
                 Prompt = prompt,
+                Mcp = mcp,
                 ConfirmTool = (request, _) =>
                 {
                     // Nobody is at the keyboard in a driven run: refuse what has no undo and no bound.
