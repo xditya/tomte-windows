@@ -37,10 +37,16 @@ public static class IslandPlace
 
     /// <summary>
     /// A second click within the double-click time and inside the rectangle (SM_CXDOUBLECLK by SM_CYDOUBLECLK) centred
-    /// on the first one, as Windows counts it. Only presses on the pill's own surface count, the tomte included (on the
-    /// peek pill it is all there is), not a label or a control, whose press stays its own; the first click was
-    /// recorded only when it was one, and it waits out the double-click time before it opens anything.
+    /// on the first one, as Windows counts it. Only presses that <see cref="CountsForDoubleClick"/> count; the first
+    /// click was recorded only when it was one, and it waits out the double-click time before it opens anything.
     /// </summary>
     public static bool IsDoubleClick(bool onPill, int dx, int dy, long elapsedMs, int boxX, int boxY, uint timeMs) =>
         onPill && elapsedMs <= timeMs && Math.Abs(dx) <= boxX / 2 && Math.Abs(dy) <= boxY / 2;
+
+    /// <summary>
+    /// A press that may be half of a double click: on the pill's own surface (<paramref name="grabs"/>), not a label or
+    /// a control. The tomte opens the palette at once wherever it does, so it counts only on the peek badge, where it
+    /// is all there is.
+    /// </summary>
+    public static bool CountsForDoubleClick(bool grabs, bool onTomte, bool peekBadge) => grabs && (!onTomte || peekBadge);
 }

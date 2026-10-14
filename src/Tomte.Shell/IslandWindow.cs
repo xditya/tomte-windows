@@ -94,7 +94,7 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     // A press on the pill's own surface, held until it is a click or a drag; and the last such click, for a double click,
     // with where it landed while it waits to see whether a second one comes.
-    private bool grabbing, grabMoved;
+    private bool grabbing, grabMoved, grabPill;
     private System.Drawing.Point grabFrom, lastClickAt;
     private Vector2 grabAt, clickAt;
     private double grabOffset;
@@ -390,6 +390,12 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         var from = Current;
+        if (to.Depth != depth.Target)
+        {
+            // Another state: a click waiting for a second one was made on the one before, and must not land in this.
+            DropWaitingClick();
+        }
+
         targetGeometry = to;
         double lead = Mascot.TakeIslandLead();
         if (to.Depth <= 0.5 && Dips.Children.Count > 0)
@@ -735,6 +741,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             // Hidden costs nothing: no beat may wake the tick, and the next show starts from a clean tomte at its place.
             visible = false;
             wakeTimer.Stop();
+            DropWaitingClick();
             Mascot.Park();
             place.Jump(place.Target);
         }
@@ -1014,7 +1021,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         var screen = new System.Drawing.Point(x, y);
         PInvoke.ClientToScreen(Hwnd, &screen);
         bool grabs = Grabs?.Invoke(at) == true;
-        if (IslandPlace.IsDoubleClick(grabs, screen.X - lastClickAt.X, screen.Y - lastClickAt.Y, Environment.TickCount64 - lastClick,
+        bool pill = IslandPlace.CountsForDoubleClick(grabs, OnMascot(at), peekBadge: targetGeometry.Width <= IslandGeometry.Peek.Width);
+        if (IslandPlace.IsDoubleClick(pill, screen.X - lastClickAt.X, screen.Y - lastClickAt.Y, Environment.TickCount64 - lastClick,
             PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXDOUBLECLK), PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYDOUBLECLK), PInvoke.GetDoubleClickTime()))
         {
             // The second click of a double click on the pill: back to the middle, and both presses are used up.
@@ -1038,7 +1046,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             // From where the shape it rests in may be, so an inward drag moves it at once after an earlier one pushed a
             // narrower shape further out.
             double from = IslandPlace.Clamp(place.Value, targetGeometry, scale, screenWidth, attached);
-            (grabbing, grabMoved, grabFrom, grabAt, grabOffset) = (true, false, screen, at, from);
+            (grabbing, grabMoved, grabPill, grabFrom, grabAt, grabOffset) = (true, false, pill, screen, at, from);
             PInvoke.SetCapture(Hwnd);
             return;
         }
@@ -1088,10 +1096,11 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
         else if (message == PInvoke.WM_LBUTTONUP)
         {
-            if (place.Target != 0)
+            if (grabPill && place.Target != 0)
             {
                 // Off the middle a second click would send the island back there, so this one waits to see whether one
-                // comes rather than opening something the second would land on. In the middle it counts at once.
+                // comes rather than opening something the second would land on. In the middle, and on the tomte where
+                // it opens the palette, it counts at once.
                 (lastClick, lastClickAt, clickAt) = (Environment.TickCount64, grabFrom, grabAt);
                 clickTimer.Interval = TimeSpan.FromMilliseconds(PInvoke.GetDoubleClickTime());
                 clickTimer.Start();
@@ -1101,6 +1110,13 @@ internal sealed unsafe class IslandWindow : IDisposable
             lastClick = 0;
             Pressed?.Invoke(grabAt);
         }
+    }
+
+    // A click waiting for a second one is dropped with the state it was made on, and no later click pairs with it.
+    private void DropWaitingClick()
+    {
+        clickTimer.Stop();
+        lastClick = 0;
     }
 
     /// <summary>Pointer input for whoever listens; like every handler here, it must not throw into the caller.</summary>

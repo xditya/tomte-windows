@@ -77,4 +77,14 @@ public class IslandPlaceTests
     [InlineData(false, 0, 0, 100, false)]
     public void ASecondClickCountsOnThePillInsideTheDoubleClickBoxAndTime(bool onPill, int dx, int dy, long ms, bool twice) =>
         Assert.Equal(twice, IslandPlace.IsDoubleClick(onPill, dx, dy, ms, boxX: 4, boxY: 4, timeMs: 500));
+
+    [Theory]
+    [InlineData(true, false, false, true)]
+    // The tomte on the pill or in the strip opens the palette at once, so it is no half of a double click.
+    [InlineData(true, true, false, false)]
+    // On the peek badge the tomte is all there is.
+    [InlineData(true, true, true, true)]
+    [InlineData(false, false, true, false)]
+    public void OnlyThePillsOwnSurfaceCountsAndTheTomteOnlyOnTheBadge(bool grabs, bool onTomte, bool peekBadge, bool counts) =>
+        Assert.Equal(counts, IslandPlace.CountsForDoubleClick(grabs, onTomte, peekBadge));
 }
