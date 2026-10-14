@@ -345,14 +345,6 @@ internal sealed partial class PaletteHost
 
         view.TakeKeys();
         Grow(view.Height);
-        if (session is not null)
-        {
-            session.DeviceActionExecuted += e =>
-            {
-                Events.Add(e);
-                log($"{DateTime.Now:HH:mm:ss.fff} palette device event: {e.Line}");
-            };
-        }
     }
 
     private double Width => Math.Min(PanelSize.PaletteWidth, 0.6 * island.MonitorSize.Width);
