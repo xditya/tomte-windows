@@ -117,7 +117,9 @@ public sealed class SettingsStore : IDisposable
 
     private readonly FileSystemWatcher watcher;
     private readonly Lock gate = new();
+    private readonly Lock reloading = new();
     private string lastText;
+    private bool disposed;
 
     public SettingsStore(string? path = null)
     {
@@ -176,21 +178,41 @@ public sealed class SettingsStore : IDisposable
         Publish(settings, text);
     }
 
-    public void Dispose() => watcher.Dispose();
+    /// <summary>
+    /// Stops watching. A reload the watcher started before that may still be reading the file; Dispose
+    /// waits for it, so once it returns nothing holds the file and Changed is not raised again.
+    /// </summary>
+    public void Dispose()
+    {
+        watcher.Dispose();
+        lock (reloading)
+        {
+            disposed = true;
+        }
+    }
 
     private void Reload()
     {
-        try
+        // One reload at a time; the watcher raises several events for one write.
+        lock (reloading)
         {
-            string text = "";
-            Retry(() => text = File.ReadAllText(FilePath));
-            var settings = JsonSerializer.Deserialize<TomteSettings>(text, Json) ?? new();
-            Publish(settings, Serialize(settings));
-        }
-        catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
-        {
-            // A write still in progress, or a hand edit that does not parse: keep the current settings.
-            // The next write raises another event.
+            if (disposed)
+            {
+                return;
+            }
+
+            try
+            {
+                string text = "";
+                Retry(() => text = File.ReadAllText(FilePath));
+                var settings = JsonSerializer.Deserialize<TomteSettings>(text, Json) ?? new();
+                Publish(settings, Serialize(settings));
+            }
+            catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
+            {
+                // A write still in progress, or a hand edit that does not parse: keep the current settings.
+                // The next write raises another event.
+            }
         }
     }
 
