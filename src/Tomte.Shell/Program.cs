@@ -592,28 +592,26 @@ internal static class Program
 
     // Beside the settings file, so a run with its own settings file keeps its send log to itself too.
     private static string SendLogPath => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsFile))!, "send-log.jsonl");
-    // What a driven run may say yes to with nobody at the keyboard: settings it puts back at the end, and the app's own
-    // data. A page, an app, a radio or the power stays shut unless --dry makes the device actions dry runs; open_url
-    // has no dry run, so it is always refused.
-    private static readonly HashSet<string> UndoneInDebugRuns =
+
+    // What a driven run may say yes to with nobody at the keyboard: the app's own data, kept in the run's folder, and
+    // reads. A device action only as a dry run (--dry), so a test never changes a setting on the PC, not even for a
+    // moment; open_url has no dry run, so it is always refused.
+    private static readonly HashSet<string> KeptToTheRun =
     [
-        BuiltInTools.SetDarkMode, BuiltInTools.SetVolume, BuiltInTools.SetMute, BuiltInTools.SetBrightness, BuiltInTools.ListOutputDevices,
-        BuiltInTools.SetTimer, BuiltInTools.SaveNote, BuiltInTools.CreateShelfFile, BuiltInTools.ReadShelfItem,
+        BuiltInTools.SetTimer, BuiltInTools.SaveNote, BuiltInTools.CreateShelfFile, BuiltInTools.ReadShelfItem, BuiltInTools.ListOutputDevices,
     ];
 
     /// <summary>
     /// --debug-hold ms [--debug-answer yes|no]: one hold of the rambler chord, posted to the island the way the input
     /// thread posts it, so a run needs neither the global hotkey nor injected keys. Each question the palette asks is
-    /// answered after 1.5 s, yes only for what the run undoes or keeps to itself (see above); without --debug-answer it
-    /// waits for Win+Alt+Enter or Esc. After the hold the run waits out the event pill, undoes the device actions that
-    /// ran so the PC is left as it was, and quits.
+    /// answered after 1.5 s, yes only for what the run keeps to itself (see above); without --debug-answer it waits
+    /// for Win+Alt+Enter or Esc. After the hold the run waits out the event pill and quits.
     /// </summary>
     private static void DebugHold(IslandWindow island, Rambler rambler, int holdMs, string? answer, bool dry, TextWriter log)
     {
-        var undos = new List<Func<ActionResult>>();
         rambler.Asking += async request =>
         {
-            bool yes = answer == "yes" && (UndoneInDebugRuns.Contains(request.Tool) || (dry && BuiltInTools.IsDeviceTool(request.Tool)));
+            bool yes = answer == "yes" && (KeptToTheRun.Contains(request.Tool) || (dry && BuiltInTools.IsDeviceTool(request.Tool)));
             if (answer is null)
             {
                 return;
@@ -623,16 +621,9 @@ internal static class Program
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: answers {(yes ? "yes" : "no")}");
             rambler.Answer(yes);
         };
-        // Device settings are put back; a note, a shelf file or a timer stays in the run's own data folder to be looked at.
-        rambler.CommandDone += command => undos.AddRange(command.Answer.OfType<ToolStepSegment>().Where(step => BuiltInTools.IsDeviceTool(step.Tool)).Select(step => step.Undo).OfType<Func<ActionResult>>());
         rambler.Retracted += async () =>
         {
             await Task.Delay(4500);
-            foreach (var undo in undos)
-            {
-                log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: undo: {undo().Message}");
-            }
-
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: memory hidden again: {Memory()}");
             PInvoke.PostQuitMessage(0);
         };
