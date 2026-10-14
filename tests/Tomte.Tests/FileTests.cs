@@ -68,6 +68,11 @@ public sealed class FileTests : IDisposable
 
     private static ModelFacts Facts(ProviderKind kind, int context = 200_000, bool vision = true, bool pdf = true) => new(kind, "m", context, vision, pdf);
 
+    /// <summary>The reader process as the tests run it: this assembly again, answering --extract.</summary>
+    internal static ExtractorCommand Child { get; } = new("dotnet", [typeof(FileTests).Assembly.Location, "--extract"]);
+
+    private static FileLimits Limits => new() { Extractor = Child };
+
     // Plain text and code
 
     public static TheoryData<string> Encodings => ["utf-8-bom", "utf-8", "utf-16le", "utf-16be", "utf-32le"];
@@ -176,6 +181,81 @@ public sealed class FileTests : IDisposable
     {
         var e = Assert.Throws<FileReadException>(() => ReadDocx(Docx("<w:p/>", extraEntries: 10), new FileLimits { MaxDocxEntries = 5 }));
         Assert.Contains("more than 5 parts", e.Message);
+    }
+
+    private static byte[] DocxStream(Action<Stream> write)
+    {
+        var stream = new MemoryStream();
+        using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            using var part = zip.CreateEntry("word/document.xml", CompressionLevel.SmallestSize).Open();
+            write(part);
+        }
+
+        return stream.ToArray();
+    }
+
+    [Fact]
+    public void AHugeRunCostsNoMoreThanWhatIsKeptOfIt()
+    {
+        // 30 MB of one w:t in a file of about 30 KB.
+        var docx = DocxStream(s =>
+        {
+            s.Write(Encoding.UTF8.GetBytes($"<w:document xmlns:w=\"{W}\"><w:body><w:p><w:r><w:t>"));
+            var run = new byte[1 << 20];
+            Array.Fill(run, (byte)'a');
+            for (int i = 0; i < 30; i++)
+                s.Write(run);
+            s.Write(Encoding.UTF8.GetBytes("</w:t></w:r></w:p></w:body></w:document>"));
+        });
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        var read = ReadDocx(docx, new FileLimits { MaxChars = 100_000 });
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Assert.True(read.Cut);
+        Assert.Equal(100_000, read.Text.Length);
+        // Before, the whole run was read into one string: 325 MB allocated for a cap of a million.
+        Assert.True(allocated < 8 << 20, $"{allocated >> 20} MB allocated");
+    }
+
+    [Fact]
+    public void DeepNestingAndHundredsOfAttributesAreNoWordDocument()
+    {
+        var deep = DocxStream(s =>
+        {
+            s.Write(Encoding.UTF8.GetBytes($"<w:document xmlns:w=\"{W}\"><w:body>"));
+            var open = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("<a>", 1 << 16)));
+            for (int i = 0; i < 16; i++)
+                s.Write(open);
+        });
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Assert.Equal("could not be read: it is damaged or not a Word document.", Assert.Throws<FileReadException>(() => ReadDocx(deep)).Message);
+        Assert.True(GC.GetAllocatedBytesForCurrentThread() - before < 8 << 20, "a million nested elements were read before the depth was checked");
+
+        var attributes = DocxStream(s =>
+        {
+            s.Write(Encoding.UTF8.GetBytes($"<w:document xmlns:w=\"{W}\"><w:body><x "));
+            s.Write(Encoding.UTF8.GetBytes(string.Concat(Enumerable.Range(0, 300).Select(i => $"a{i}=\"\" "))));
+            s.Write(Encoding.UTF8.GetBytes("/></w:body></w:document>"));
+        });
+        Assert.Equal("could not be read: it is damaged or not a Word document.", Assert.Throws<FileReadException>(() => ReadDocx(attributes)).Message);
+    }
+
+    [Fact]
+    public void MarkupPastTheCharacterBoundKeepsWhatWasRead()
+    {
+        // Text, then markup with no text in it, more than 32 characters of markup for each one of the cap.
+        var docx = DocxStream(s =>
+        {
+            s.Write(Encoding.UTF8.GetBytes($"<w:document xmlns:w=\"{W}\"><w:body><w:p><w:r><w:t>Kept</w:t></w:r></w:p>"));
+            var empty = Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("<w:p><w:r><w:t/></w:r></w:p>", 2000)));
+            for (int i = 0; i < 10; i++)
+                s.Write(empty);
+            s.Write(Encoding.UTF8.GetBytes("<w:p><w:r><w:t>Never reached</w:t></w:r></w:p></w:body></w:document>"));
+        });
+        var read = ReadDocx(docx, new FileLimits { MaxChars = 10_000 });
+        Assert.True(read.Cut);
+        Assert.StartsWith("Kept", read.Text);
+        Assert.DoesNotContain("Never reached", read.Text);
     }
 
     [Theory]
@@ -303,6 +383,7 @@ public sealed class FileTests : IDisposable
         {
             Prompt = prompt,
             Model = model,
+            FileLimits = Limits,
             ConfirmTool = (request, _) =>
             {
                 _asked.Add(request);
@@ -354,12 +435,12 @@ public sealed class FileTests : IDisposable
     public async Task APdfPastTheProvidersPageLimitGoesAsItsText()
     {
         Put("long.pdf", Pdf([.. Enumerable.Range(1, 101).Select(i => $"Page {i}")]));
-        var (file, problem) = await FileAttachments.PrepareOneAsync(_shelf, "long.pdf", Facts(ProviderKind.Anthropic, context: 200_000), new FileLimits(), CancellationToken.None);
+        var (file, problem) = await FileAttachments.PrepareOneAsync(_shelf, "long.pdf", Facts(ProviderKind.Anthropic, context: 200_000), Limits, CancellationToken.None);
         Assert.Null(problem);
         Assert.False(file!.Native);
         Assert.Contains("Page 101", Assert.IsType<TextPart>(Assert.Single(file.Parts)).Text);
 
-        var (wide, _) = await FileAttachments.PrepareOneAsync(_shelf, "long.pdf", Facts(ProviderKind.Anthropic, context: 1_000_000), new FileLimits(), CancellationToken.None);
+        var (wide, _) = await FileAttachments.PrepareOneAsync(_shelf, "long.pdf", Facts(ProviderKind.Anthropic, context: 1_000_000), Limits, CancellationToken.None);
         Assert.True(wide!.Native);
         Assert.IsType<PdfPart>(wide.Parts[1]);
     }
@@ -746,7 +827,7 @@ public sealed class FileTests : IDisposable
         chip.On = true;
         var session = new PaletteSession(provider, config, new PaletteOptions(), new SendLog(LogPath),
             new BuiltInTools(_shelf, new InMemoryScratchpad(), _ => { }, _ => { }), new PermissionGrants(), [chip])
-        { Prompt = "When do we ship?" };
+        { Prompt = "When do we ship?", FileLimits = Limits };
 
         await session.SendAsync();
 
@@ -757,57 +838,271 @@ public sealed class FileTests : IDisposable
         Assert.Contains("read plan.docx · docx · extracted · 14 characters · about ", new SendLog(LogPath).ReadAll()[^1].Attached.Last());
     }
 
-    // Memory
+    // The reader process
 
-    [Fact]
-    public async Task ALargeExtractionStaysWithinItsMemory()
+    /// <summary>A PDF whose one page's content stream unpacks to <paramref name="megabytes"/> MB of spaces, as in the review.</summary>
+    private static byte[] FlateBomb(int megabytes)
     {
-        string page = string.Join('\n', Enumerable.Range(0, 40).Select(i => $"Line {i:00} of a long page with words in it, more words, and more, then some."));
-        string path = Path.Combine(_dir, "large.pdf");
-        await File.WriteAllBytesAsync(path, Pdf([.. Enumerable.Repeat(page, 1500)]));
-        using var child = Process.Start(new ProcessStartInfo("dotnet", [typeof(FileTests).Assembly.Location, "extract-memory", path])
+        var packed = new MemoryStream();
+        using (var z = new ZLibStream(packed, CompressionLevel.SmallestSize, leaveOpen: true))
         {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        })!;
-        string output = await child.StandardOutput.ReadToEndAsync();
-        await child.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(120)).Token);
-        Assert.True(child.ExitCode == 0, output + await child.StandardError.ReadToEndAsync());
-        // "before 7.8 peak 47.7 after 43.9 pages 334/1500 chars 1000000 ms 1849 heap 6.5 committed 26.8", in MB of private bytes.
-        var values = output.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        double before = double.Parse(values[1], CultureInfo.InvariantCulture), peak = double.Parse(values[3], CultureInfo.InvariantCulture);
-        Assert.True(peak - before < 60, output);
-    }
-
-    internal static int ExtractMemory(string path, int maxChars = 1_000_000)
-    {
-        using var process = Process.GetCurrentProcess();
-        long Private()
-        {
-            process.Refresh();
-            return process.PrivateMemorySize64;
+            var spaces = new byte[1 << 20];
+            Array.Fill(spaces, (byte)' ');
+            "BT /F1 12 Tf 72 712 Td (Hello) Tj ET\n"u8.CopyTo(spaces);
+            for (int i = 0; i < megabytes; i++)
+            {
+                z.Write(spaces);
+                spaces.AsSpan(0, 40).Fill((byte)' ');
+            }
         }
 
-        GC.Collect();
-        long before = Private(), peak = before;
-        using var done = new ManualResetEventSlim();
-        var sampler = new Thread(() =>
-        {
-            while (!done.Wait(5))
-                peak = Math.Max(peak, Private());
-        });
-        sampler.Start();
+        byte[] content = packed.ToArray();
+        var pdf = new MemoryStream();
+        var offsets = new List<long>();
+        void Put(string text) => pdf.Write(Encoding.ASCII.GetBytes(text));
+        Put("%PDF-1.4\n");
+        offsets.Add(pdf.Position);
+        Put("1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n");
+        offsets.Add(pdf.Position);
+        Put("2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n");
+        offsets.Add(pdf.Position);
+        Put("3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj\n");
+        offsets.Add(pdf.Position);
+        Put($"4 0 obj << /Length {content.Length} /Filter /FlateDecode >> stream\n");
+        pdf.Write(content);
+        Put("\nendstream endobj\n");
+        offsets.Add(pdf.Position);
+        Put("5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n");
+        long xref = pdf.Position;
+        Put("xref\n0 6\n0000000000 65535 f \n");
+        foreach (var offset in offsets)
+            Put($"{offset:D10} 00000 n \n");
+        Put($"trailer << /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n");
+        return pdf.ToArray();
+    }
+
+    [Fact]
+    public async Task TheReaderProcessReadsAPdfAndAWordFile()
+    {
+        string pdf = Put("report.pdf", Pdf("Quarterly report\nRevenue went up"));
+        var (read, peak) = await ChildExtractor.RunAsync(pdf, FileKind.Pdf, Limits, CancellationToken.None);
+        Assert.Contains("Revenue went up", read.Text);
+        Assert.Equal(1, read.Pages);
+        Assert.InRange(peak, 1, Limits.ChildMemoryBytes);
+
+        string docx = Put("plan.docx", Docx("<w:p><w:r><w:t>Ship on Friday</w:t></w:r></w:p>"));
+        Assert.Equal("Ship on Friday", (await ChildExtractor.ReadAsync(docx, FileKind.Docx, Limits, CancellationToken.None)).Text);
+
+        var damaged = await Assert.ThrowsAsync<FileReadException>(() => ChildExtractor.ReadAsync(Put("bad.pdf", "%PDF-1.4\n%%EOF"u8.ToArray()), FileKind.Pdf, Limits, CancellationToken.None));
+        Assert.StartsWith("could not be read", damaged.Message);
+    }
+
+    [Fact]
+    public async Task TheReaderProcessHoldsAFlateBombUnderItsMemoryLimit()
+    {
+        // 256 MB of content in a file of about 256 KB; the reader may commit 128 MB. In the shell's own process the
+        // review saw the same shape at 64 MB take 197 MB.
+        string path = Put("bomb.pdf", FlateBomb(256));
+        Assert.True(new FileInfo(path).Length < 1 << 20);
+        var limits = Limits with { ChildMemoryBytes = 128L << 20 };
         var clock = Stopwatch.StartNew();
-        using var file = File.OpenRead(path);
-        var read = PdfExtraction.Read(file, new FileLimits { MaxChars = maxChars }, CancellationToken.None);
-        clock.Stop();
-        done.Set();
-        sampler.Join();
-        peak = Math.Max(peak, Private());
-        GC.Collect();
-        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"before {before / 1048576.0:F1} peak {peak / 1048576.0:F1} after {Private() / 1048576.0:F1} pages {read.PagesRead}/{read.Pages} chars {read.Text.Length} ms {clock.ElapsedMilliseconds} heap {GC.GetGCMemoryInfo().HeapSizeBytes / 1048576.0:F1} committed {GC.GetGCMemoryInfo().TotalCommittedBytes / 1048576.0:F1}"));
+        try
+        {
+            // PdfPig gives up on a stream it cannot unpack within the limit and reads the page as empty.
+            var (text, peak) = await ChildExtractor.RunAsync(path, FileKind.Pdf, limits, CancellationToken.None);
+            Assert.Equal("", text.Text);
+            Assert.InRange(peak, 1, limits.ChildMemoryBytes);
+        }
+        catch (FileReadException e)
+        {
+            // Or the runtime stops at the limit, and the parent says so.
+            Assert.Equal("needs more than 128 MB to read, which can mean a damaged or hostile file, so it was not read.", e.Message);
+        }
+
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(15), $"{clock.Elapsed}");
+
+        // Through the palette's reader the file is one sentence and nothing is sent.
+        var (file, problem) = await FileAttachments.PrepareOneAsync(_shelf, "bomb.pdf", Facts(ProviderKind.OpenAICompatible, pdf: false), limits, CancellationToken.None);
+        Assert.Null(file);
+        Assert.StartsWith("bomb.pdf ", problem);
+    }
+
+    [Fact]
+    public async Task TheParentSaysWhenTheReaderRanOutOfMemory()
+    {
+        // A 30 MB run with the character cap raised past it: the text alone needs more than the reader may hold.
+        string path = Put("run.docx", DocxStream(s =>
+        {
+            s.Write(Encoding.UTF8.GetBytes($"<w:document xmlns:w=\"{W}\"><w:body><w:p><w:r><w:t>"));
+            var run = new byte[1 << 20];
+            Array.Fill(run, (byte)'a');
+            for (int i = 0; i < 30; i++)
+                s.Write(run);
+            s.Write(Encoding.UTF8.GetBytes("</w:t></w:r></w:p></w:body></w:document>"));
+        }));
+        var limits = Limits with { ChildMemoryBytes = 64L << 20, MaxChars = 40_000_000 };
+        var e = await Assert.ThrowsAsync<FileReadException>(() => ChildExtractor.RunAsync(path, FileKind.Docx, limits, CancellationToken.None));
+        Assert.Equal("needs more than 64 MB to read, which can mean a damaged or hostile file, so it was not read.", e.Message);
+    }
+
+    [Fact]
+    public async Task TheReaderProcessIsKilledAtTheTimeLimit()
+    {
+        string path = Put("report.pdf", Pdf("Quarterly report"));
+        var limits = Limits with { TimeLimit = TimeSpan.FromMilliseconds(30) };
+        var e = await Assert.ThrowsAsync<FileReadException>(() => ChildExtractor.RunAsync(path, FileKind.Pdf, limits, CancellationToken.None));
+        Assert.StartsWith("took longer than ", e.Message);
+        var (_, problem) = await FileAttachments.PrepareOneAsync(_shelf, "report.pdf", Facts(ProviderKind.OpenAICompatible), limits, CancellationToken.None);
+        Assert.StartsWith("report.pdf took longer than ", problem);
+    }
+
+    [Fact]
+    public async Task ReadingAPdfNeverLoadsPdfPigInTheProcessThatAsks()
+    {
+        string path = Put("report.pdf", Pdf("Revenue went up"));
+        using var parent = Process.Start(new ProcessStartInfo("dotnet", [typeof(FileTests).Assembly.Location, "prepare", path])
+        {
+            RedirectStandardOutput = true,
+            CreateNoWindow = true,
+        })!;
+        string output = (await parent.StandardOutput.ReadToEndAsync()).Trim();
+        await parent.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromSeconds(60)).Token);
+        Assert.Equal("read: Revenue went up; PdfPig loaded here: False", output);
+    }
+
+    /// <summary>The asking side, run as a process of its own: one PDF through the palette's reader, then which assemblies it loaded.</summary>
+    internal static async Task<int> PrepareInAnotherProcess(string path)
+    {
+        var shelf = new FileShelf();
+        shelf.Files.Add((Path.GetFileName(path), path));
+        var (file, problem) = await FileAttachments.PrepareOneAsync(shelf, Path.GetFileName(path), new ModelFacts(ProviderKind.OpenAICompatible, "m", 8192, false, false),
+            new FileLimits { Extractor = Child }, CancellationToken.None);
+        bool loaded = AppDomain.CurrentDomain.GetAssemblies().Any(a => a.GetName().Name!.StartsWith("UglyToad", StringComparison.Ordinal));
+        Console.WriteLine($"read: {file?.Text?.Trim() ?? problem}; PdfPig loaded here: {loaded}");
         return 0;
+    }
+
+    /// <summary>
+    /// Measurement for the report: `dotnet Tomte.Tests.dll measure-child (reader exe) (file) pdf|docx (runs)` prints, per
+    /// run, how long the reader took from start to answer, the most memory it committed, and what it answered.
+    /// </summary>
+    internal static async Task<int> MeasureChild(string exe, string path, string kind, int runs)
+    {
+        var limits = new FileLimits { Extractor = exe == "dotnet" ? Child : new ExtractorCommand(exe, ["--extract"]) };
+        for (int run = 0; run < runs; run++)
+        {
+            var clock = Stopwatch.StartNew();
+            string answer;
+            long peak = 0;
+            try
+            {
+                var (text, bytes) = await ChildExtractor.RunAsync(path, kind == "pdf" ? FileKind.Pdf : FileKind.Docx, limits, CancellationToken.None);
+                (answer, peak) = ($"ok, {text.Text.Length} characters, cut {text.Cut}", bytes);
+            }
+            catch (FileReadException e)
+            {
+                answer = e.Message;
+            }
+
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"run {run + 1}: {clock.ElapsedMilliseconds} ms, peak {peak / 1048576.0:F1} MB, {answer}"));
+        }
+
+        return 0;
+    }
+
+    // Errors and limits at the edges
+
+    [Fact]
+    public async Task WhateverAReaderThrowsBecomesOneSentence()
+    {
+        foreach (Exception thrown in new Exception[] { new OutOfMemoryException(), new ArgumentException("x"), new System.Runtime.InteropServices.COMException("x") })
+        {
+            var e = await Assert.ThrowsAsync<FileReadException>(() => FileAttachments.OffThread<int>(_ => throw thrown, new FileLimits(), CancellationToken.None));
+            Assert.Equal("could not be read: it is damaged or not supported.", e.Message);
+        }
+
+        // The user's own cancel goes through as it is.
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => FileAttachments.OffThread(c => Task.FromResult(1), new FileLimits(), cancelled.Token));
+    }
+
+    [Fact]
+    public async Task APdfOpenInAnEditorStillGoes()
+    {
+        string path = Put("report.pdf", Pdf("Revenue went up"));
+        using var editor = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        var (file, problem) = await FileAttachments.PrepareOneAsync(_shelf, "report.pdf", Facts(ProviderKind.Anthropic, context: 1_000_000), Limits, CancellationToken.None);
+        Assert.Null(problem);
+        Assert.IsType<PdfPart>(file!.Parts[1]);
+    }
+
+    [Fact]
+    public async Task TheRequestTimeStartsAfterTheSizeQuestion()
+    {
+        LargeLog();
+        var handler = Handler(ProviderKind.OpenAICompatible);
+        var session = Session(ProviderKind.OpenAICompatible, handler, new PaletteOptions { Timeout = TimeSpan.FromMilliseconds(300) });
+        session.ChooseSize = async (_, ct) =>
+        {
+            // The user thinks for longer than the request may take.
+            await Task.Delay(600, ct);
+            return SizeChoice.Truncate;
+        };
+
+        await session.SendAsync();
+
+        Assert.Equal(PaletteStatus.Done, session.Status);
+        Assert.Single(handler.Bodies);
+    }
+
+    [Fact]
+    public void TheShelfChipSaysTheOtherNamesGoToo()
+    {
+        Assert.Equal("Shelf · empty", ContextChips.Shelf(new FileShelf()).Label);
+        _shelf.Files.Add(("a.txt", "a"));
+        Assert.Equal("Shelf · a.txt", ContextChips.Shelf(_shelf).Label);
+        _shelf.Files.Insert(0, ("b.txt", "b"));
+        Assert.Equal("Shelf · b.txt and the name of 1 other", ContextChips.Shelf(_shelf).Label);
+        _shelf.Files.Insert(0, ("c.txt", "c"));
+        Assert.Equal("Shelf · c.txt and the names of 2 others", ContextChips.Shelf(_shelf).Label);
+    }
+
+    // What the model reads and takes
+
+    [Fact]
+    public async Task ALocalOllamaSaysWhatTheModelReadsAndTakesOncePerModel()
+    {
+        // Recorded from Ollama 0.5.7 on this machine (license, Modelfile with its local path, and template taken out). That
+        // version has no capabilities field, so vision stays unknown; the context comes from the model info.
+        var recorded = new RecordedHandler("ollama-show-llama3.2.json");
+        var ollama = new OpenAICompatibleProvider(new HttpClient(recorded), "http://127.0.0.1:11434/v1", null);
+        var info = await ollama.DescribeAsync("llama3.2:3b-file-tests");
+        Assert.Equal(new ModelInfo("llama3.2:3b-file-tests", 131_072, null), info);
+        Assert.Equal("http://127.0.0.1:11434/api/show", recorded.Request!.RequestUri!.ToString());
+        Assert.Equal("""{"model":"llama3.2:3b-file-tests"}""", recorded.Body);
+        Assert.Equal(info, await ollama.DescribeAsync("llama3.2:3b-file-tests"));
+        Assert.Single(recorded.Bodies);
+        var facts = ModelFacts.For(new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", "llama3.2:3b-file-tests"), ollama.Capabilities, info);
+        Assert.Equal((131_072, false), (facts.ContextTokens, facts.Vision));
+
+        // Ollama 0.6 and later add "capabilities"; this is the same answer with a vision model's list.
+        var vision = new OpenAICompatibleProvider(new HttpClient(new RecordedHandler("ollama-show-vision.json")), "http://localhost:11434/v1", null);
+        Assert.True((await vision.DescribeAsync("vision-file-tests"))!.Vision);
+
+        // Only a loopback endpoint is asked; nothing goes to a server elsewhere.
+        var remote = new RecordedHandler("ollama-show-vision.json");
+        Assert.Null(await new OpenAICompatibleProvider(new HttpClient(remote), "https://openrouter.ai/api/v1", "k").DescribeAsync("m"));
+        Assert.Empty(remote.Bodies);
+    }
+
+    [Fact]
+    public void OpenAIsOwnApiIsTakenAsAVisionModelWithALargeContext()
+    {
+        var caps = ProviderCapabilities.Streaming | ProviderCapabilities.Vision | ProviderCapabilities.ToolUse;
+        var openAI = ModelFacts.For(new ProviderConfig("openai", ProviderKind.OpenAICompatible, "https://api.openai.com/v1", "gpt-4o"), caps, null);
+        Assert.Equal((128_000, true, false), (openAI.ContextTokens, openAI.Vision, openAI.NativePdf));
+        var local = ModelFacts.For(new ProviderConfig("lm", ProviderKind.OpenAICompatible, "http://127.0.0.1:1234/v1", "m"), caps, null);
+        Assert.Equal((8_192, false), (local.ContextTokens, local.Vision));
     }
 }
