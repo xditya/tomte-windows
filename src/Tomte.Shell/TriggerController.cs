@@ -9,12 +9,12 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// Turns trigger messages into state changes on the UI thread. The pause and the suppression check run before
-/// every MorphTo. Owns the retraction, hover, event, peek, first-run and drag timers, all SetTimer one-shots on
-/// the island window, so nothing runs while nothing happens.
+/// every MorphTo. Owns the retraction, hover, event, peek, first-run, drag, timer-done and quiet-recheck timers,
+/// all SetTimer one-shots on the island window, so nothing runs while nothing happens.
 /// </summary>
 internal sealed unsafe partial class TriggerController : IDisposable
 {
-    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6, TimerDoneTimer = 7;
+    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6, TimerDoneTimer = 7, QuietTimer = 8;
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
 
@@ -65,7 +65,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0);
         watch.Changed += OnSuppressionChanged;
-        watch.WindowsChanged += SchedulePeek;
+        watch.WindowsChanged += OnWindowsChanged;
         dropTarget = new DropTarget(island.Hwnd);
         dropTarget.Entered += OnDragEnter;
 
@@ -303,6 +303,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 break;
             case PeekTimer:
                 EvaluatePeek();
+                break;
+            case QuietTimer:
+                // A change in the answer comes back through OnSuppressionChanged, which releases the queue.
+                watch.ReadNotificationState();
                 break;
             case TimerDoneTimer:
                 var run = timer.Run;
@@ -548,6 +552,18 @@ internal sealed unsafe partial class TriggerController : IDisposable
         else
         {
             ring.Hide();
+        }
+    }
+
+    private void OnWindowsChanged()
+    {
+        SchedulePeek();
+        if (events.Count > 0)
+        {
+            // Focus and quiet hours end with no event to hear, and the notification state was last read when the
+            // waiting event was raised. A window change is the next sign of the user doing something, so the
+            // state is read again then, after the same debounce as peek. No event waiting, no read.
+            PInvoke.SetTimer(island.Hwnd, QuietTimer, PeekDebounceMs, null);
         }
     }
 
