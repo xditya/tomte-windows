@@ -103,15 +103,19 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         }
     }
 
-    /// <summary>Delete on a row or its remove button removes the row.</summary>
-    public bool KeyDown(string id, int virtualKey)
+    /// <summary>Delete on a row or its remove button removes the row; a held Delete removes that one only.</summary>
+    public bool KeyDown(string id, int virtualKey, bool repeat)
     {
         if (virtualKey != (int)VIRTUAL_KEY.VK_DELETE || Find(id) is not ({ } index, _))
         {
             return false;
         }
 
-        Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
+        if (!repeat)
+        {
+            Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
+        }
+
         return true;
     }
 
