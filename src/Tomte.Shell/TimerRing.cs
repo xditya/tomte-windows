@@ -12,10 +12,9 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed class TimerRing
 {
-    private const float Size = 18, Stroke = 3.5f;
+    private const float Size = CompactLayout.RingSize, Stroke = CompactLayout.RingStroke;
 
-    // The gap between the mascot and the ring, and the ring's top so it sits centred in the 38 DIP pill.
-    private const float Gap = 9;
+    // The ring's top, so it sits centred in the 38 DIP pill.
     private static readonly float Top = (float)(IslandGeometry.Compact.Depth - Size) / 2;
 
     // The fill moves in this many steps over the time left, not on every frame. A linear fill made the compositor
@@ -58,7 +57,7 @@ internal sealed class TimerRing
     {
         float s = (float)scale;
         // From the pill's centre; the parent's half width is one margin pixel right of it.
-        float fromCenter = (float)(-IslandGeometry.Compact.Width / 2) + Left(mascotOn);
+        float fromCenter = (float)(-IslandGeometry.Compact.Width / 2) + CompactLayout.RingLeft(mascotOn);
         visual.Scale = new Vector3(s, s, 1);
         visual.Offset = new Vector3(fromCenter * s - 1, Top * s, 0);
 
@@ -76,11 +75,6 @@ internal sealed class TimerRing
 
         visual.IsVisible = true;
     }
-
-    /// <summary>Where the ring starts, from the pill's left edge, in DIPs; what follows it starts at <see cref="After"/>.</summary>
-    public static float Left(bool mascotOn) => mascotOn ? MascotVisual.InsetX + MascotVisual.SizeDips + Gap : MascotVisual.InsetX;
-
-    public static float After(bool mascotOn) => Left(mascotOn) + Size + Gap;
 
     public void Hide()
     {

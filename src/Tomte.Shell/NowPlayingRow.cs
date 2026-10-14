@@ -3,7 +3,6 @@ using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
-using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
@@ -18,15 +17,13 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed class NowPlayingRow
 {
-    // Island space, x from the centre line. The pill is 220 wide: the mascot (8 + 26) and the row's 9 DIP
-    // gap come first on the left, and 12 DIPs stay free on the right.
-    private const float BarsLeft = 80, BarsTop = 9, BarsHeight = 20;
-    private static readonly RectangleF Art = new(-67, 8, 22, 22);
-    private static readonly RectangleF Title = new(-36, 9, 107, 20);
-    private static readonly TextStyle TitleStyle = new(13, 600);
+    // Island space, x from the centre line; where things sit is CompactLayout's.
+    private const float BarsLeft = CompactLayout.BarsLeft, BarsTop = CompactLayout.BarsTop, BarsHeight = CompactLayout.BarsHeight;
+    private static readonly RectangleF Art = CompactLayout.Art;
+    private static readonly RectangleF Title = CompactLayout.Title;
 
     // The four bars: how far each one reaches and how long one of its breaths takes.
-    private static readonly float[] Reach = [.35f, .62f, .85f, 1f];
+    private static readonly float[] Reach = CompactLayout.BarReach;
     private static readonly double[] Period = [.9, 1.07, 1.24, .9];
 
     private readonly IslandWindow island;
@@ -145,7 +142,7 @@ internal sealed class NowPlayingRow
         public View(Compositor compositor, TextRenderer text, bool bars)
         {
             Root = compositor.CreateContainerVisual();
-            Art = new ArtVisual(compositor, NowPlayingRow.Art, 6);
+            Art = new ArtVisual(compositor, NowPlayingRow.Art, CompactLayout.ArtCorner);
             Root.Children.InsertAtTop(Art.Visual);
             title = text.Create(Root);
 
@@ -202,7 +199,7 @@ internal sealed class NowPlayingRow
         public ArtVisual Art { get; }
 
         /// <summary>The title in its slot: 13 DIP semibold, white, one line, ellipsis.</summary>
-        public void DrawTextRuns(NowPlaying playing) => title.Show(playing.Title, TitleStyle, Title);
+        public void DrawTextRuns(NowPlaying playing) => title.Show(playing.Title, CompactLayout.TitleStyle, Title);
 
         public void Dispose()
         {

@@ -40,6 +40,12 @@ public static class MascotArt
 {
     public const float ViewBox = 64;
 
+    /// <summary>Rendered size of the 64-unit viewBox and its inset from the island's top-left, in DIPs.</summary>
+    public const float SizeDips = 26, InsetX = 8;
+
+    /// <summary>Low enough that the reveal start pose (PeekFromY) is fully above the island's top edge on the first frame.</summary>
+    public const float InsetY = 3.5f;
+
     /// <summary>Whole character and body: bottom centre. Cap: brim centre. Tip: where it leaves the cone.</summary>
     public static readonly Vector2 RootPivot = new(32, 61);
     public static readonly Vector2 BodyPivot = new(32, 61);

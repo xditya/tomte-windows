@@ -41,7 +41,7 @@ internal static unsafe class Program
         report.Add(Memory("start"));
 
         var watch = Stopwatch.StartNew();
-        using (var first = TextLayout.Of(new TextRun("Nightfall", new TextStyle(14, 600), 272)))
+        using (var first = TextLayout.Of(new TextRun("Nightfall", MediaPanelLayout.TitleStyle, MediaPanelLayout.Title.Width)))
         {
             report.Add($"first layout (DirectWrite factory, font and format): {watch.Elapsed.TotalMilliseconds:F1} ms");
         }
@@ -105,7 +105,7 @@ internal static unsafe class Program
     /// <summary>Lays a two-line cut out in a box six lines tall and looks for ink under the second line.</summary>
     private static bool TwoLinesOnly(ID2D1DeviceContext* dc)
     {
-        using var layout = TextLayout.Of(new TextRun("A very long title that will not fit in the slot at all, not even close, and goes on for a while", new TextStyle(14, 600), 120, 2));
+        using var layout = TextLayout.Of(new TextRun("A very long title that will not fit in the slot at all, not even close, and goes on for a while", MediaPanelLayout.TitleStyle, 120, 2));
         const double scale = 1.5;
         int width = PixelGrid.Cover(120, scale), height = PixelGrid.Cover(layout.Height * 3, scale), cut = PixelGrid.Cover(layout.Height, scale) + 1;
         var pixels = Canvas.Render(dc, width, height, scale, layout, Vector2.Zero);
@@ -188,16 +188,12 @@ internal static unsafe class Program
 
         c.Glyph(Offset(MediaPanelLayout.Next, body), lit, [new(16, 4, 2, 16)], [[new(4, 4), new(15, 12), new(4, 20)]]);
 
-        var titleStyle = new TextStyle(14, 600);
-        var artistStyle = new TextStyle(12, Color: TextStyle.Secondary);
-        var failedStyle = new TextStyle(12, Color: TextStyle.Warn);
-        var elapsedStyle = new TextStyle(11, Color: TextStyle.Tertiary, Tabular: true);
-        c.Text(track is null ? NowPlaying.NothingPlaying : track.Title, titleStyle, MediaPanelLayout.Title, body);
-        c.Text(failure ?? (track is null ? "" : track.Artist.Length > 0 ? track.Artist : track.App), failure is null ? artistStyle : failedStyle, MediaPanelLayout.Artist, body);
+        c.Text(track is null ? NowPlaying.NothingPlaying : track.Title, MediaPanelLayout.TitleStyle, MediaPanelLayout.Title, body);
+        c.Text(failure ?? (track is null ? "" : track.Artist.Length > 0 ? track.Artist : track.App), failure is null ? MediaPanelLayout.ArtistStyle : MediaPanelLayout.FailedStyle, MediaPanelLayout.Artist, body);
         if (track is { Timeline: true })
         {
-            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Position)), elapsedStyle, MediaPanelLayout.Elapsed, body);
-            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Length)), elapsedStyle with { Align = TextAlign.Trailing }, MediaPanelLayout.Total, body);
+            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Position)), MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed, body);
+            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Length)), MediaPanelLayout.TotalStyle, MediaPanelLayout.Total, body);
         }
     }
 
@@ -206,30 +202,29 @@ internal static unsafe class Program
     {
         c.Pill();
         c.Mascot();
-        c.Gradient(new RectangleF(-67, 8, 22, 22), 6, 0xFF6A4A86, 0xFFC07A8E);
-        c.Text(title, new TextStyle(13, 600), new RectangleF(-36, 9, 107, 20), Vector2.Zero);
-        float[] reach = [.35f, .62f, .85f, 1f];
-        for (int i = 0; i < reach.Length; i++)
+        c.Gradient(CompactLayout.Art, CompactLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
+        c.Text(title, CompactLayout.TitleStyle, CompactLayout.Title, Vector2.Zero);
+        for (int i = 0; i < CompactLayout.BarReach.Length; i++)
         {
-            float h = Waveform.MinHeight + Waveform.Swing * reach[i] * 0.7f;
-            c.RoundRect(new RectangleF(80 + i * (Waveform.BarWidth + Waveform.Gap), 9 + (20 - h) / 2, Waveform.BarWidth, h), Waveform.BarWidth / 2, 0xFFFFFFFF);
+            float h = Waveform.MinHeight + Waveform.Swing * CompactLayout.BarReach[i] * 0.7f;
+            var bar = new RectangleF(CompactLayout.BarsLeft + i * (Waveform.BarWidth + Waveform.Gap), CompactLayout.BarsTop + (CompactLayout.BarsHeight - h) / 2, Waveform.BarWidth, h);
+            c.RoundRect(bar, Waveform.BarWidth / 2, 0xFFFFFFFF);
         }
     }
 
-    // The Compact line: after the mascot (8 + 26 + 9), or after the ring (18 + 9 more) when the ring shows.
+    // The Compact line in its slot, after the ring when the ring shows; the tomte is on.
     private static void CompactLine(Canvas c, string line, float? ring, bool tabular = false)
     {
         var pill = IslandGeometry.Compact;
-        float left = (float)(-pill.Width / 2) + 43;
         c.Pill();
         c.Mascot();
         if (ring is { } fill)
         {
-            c.Ring(new Vector2(left + 9, (float)pill.Depth / 2), (18 - 3.5f) / 2, 3.5f, fill);
-            left += 18 + 9;
+            float left = (float)(-pill.Width / 2) + CompactLayout.RingLeft(true);
+            c.Ring(new Vector2(left + CompactLayout.RingSize / 2, (float)pill.Depth / 2), (CompactLayout.RingSize - CompactLayout.RingStroke) / 2, CompactLayout.RingStroke, fill);
         }
 
-        c.Text(line, new TextStyle(13, 600, Tabular: tabular), new RectangleF(left, 0, (float)(pill.Width / 2) - 12 - left, (float)pill.Depth), Vector2.Zero);
+        c.Text(line, tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle, CompactLayout.Line(true, ring is not null), Vector2.Zero);
     }
 
     private static RectangleF Offset(RectangleF r, Vector2 by) => new(r.X + by.X, r.Y + by.Y, r.Width, r.Height);
@@ -295,11 +290,11 @@ internal static unsafe class Program
             path->Release();
         }
 
-        /// <summary>The tomte at rest, 26 DIPs for its 64-unit art, 8 in from the pill's left and 3.5 down.</summary>
+        /// <summary>The tomte at rest, at its inset from the pill's top-left corner.</summary>
         public void Mascot()
         {
-            var at = new Vector2((float)(-g.Width / 2) + 8, 3.5f);
-            float k = 26 / MascotArt.ViewBox;
+            var at = new Vector2((float)(-g.Width / 2) + MascotArt.InsetX, MascotArt.InsetY);
+            float k = MascotArt.SizeDips / MascotArt.ViewBox;
             uint cap = 0xFF000000 | MascotArt.CapRed, shade = 0xFF000000 | MascotArt.Shade(MascotArt.CapRed);
             Fill(MascotArt.Beard, at, k, 0xFF000000 | MascotArt.BeardColor);
             Fill(MascotArt.BeardShade, at, k, 0xFF000000 | MascotArt.BeardShadeColor);

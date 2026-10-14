@@ -1,3 +1,5 @@
+using System.Drawing;
+using Tomte.Core;
 using Tomte.Core.Media;
 using Tomte.Core.Text;
 using Xunit;
@@ -122,12 +124,16 @@ public class TextTests
     [Fact]
     public void TheCompactLinesFitThe220Pill()
     {
-        // The pill is 220 wide; the mascot and its gap take 8 + 26 + 9 on the left, 12 stay free on the right,
+        // The pill is 220 wide; the tomte and its gap take 8 + 26 + 9 on the left, 12 stay free on the right,
         // and the timer's ring takes 18 + 9 more on its done pill.
-        var line = new TextStyle(13, 600);
-        using var hint = Lay("Push your cursor up here", line, 220 - 43 - 12);
-        using var done = Lay("Timer done · 25:00", line, 220 - 43 - 27 - 12);
+        var free = CompactLayout.Line(mascot: true, ring: false);
+        var afterRing = CompactLayout.Line(mascot: true, ring: true);
+        using var hint = Lay("Push your cursor up here", CompactLayout.LineStyle, free.Width);
+        using var done = Lay("Timer done · 25:00", CompactLayout.LineStyle, afterRing.Width);
 
+        Assert.Equal(new RectangleF(-67, 0, 165, 38), free);
+        Assert.Equal(new RectangleF(-40, 0, 138, 38), afterRing);
+        Assert.Equal(new RectangleF(-102, 0, 200, 38), CompactLayout.Line(mascot: false, ring: false));
         Assert.False(hint.Trimmed);
         Assert.False(done.Trimmed);
     }

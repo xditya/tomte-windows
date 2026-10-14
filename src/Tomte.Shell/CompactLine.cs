@@ -1,6 +1,4 @@
-using System.Drawing;
 using Tomte.Core;
-using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Windows.UI.Composition;
 
@@ -15,13 +13,6 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed class CompactLine
 {
-    // The pill's line is 13 DIP semibold white; the countdown keeps its digits still.
-    private static readonly TextStyle Words = new(13, 600);
-    private static readonly TextStyle Clock = new(13, 600, Tabular: true);
-
-    // Room kept free on the pill's right, as on the now-playing row.
-    private const float RightPad = 12;
-
     private readonly IslandWindow island;
     private readonly TriggerController triggers;
     private readonly TextRenderer text;
@@ -82,11 +73,8 @@ internal sealed class CompactLine
             view.Root.StartAnimation("Opacity", fadeIn);
         }
 
-        // Where the ring would start, or after it when it shows; island space has x = 0 on the pill's centre.
-        bool mascot = island.Mascot.Enabled;
-        var pill = IslandGeometry.Compact;
-        float x = (float)(-pill.Width / 2) + (triggers.CompactShows(playing: false) == CompactContent.TimerRing ? TimerRing.After(mascot) : TimerRing.Left(mascot));
-        view.Text.Show(line, left is null ? Words : Clock, new RectangleF(x, 0, (float)(pill.Width / 2) - RightPad - x, (float)pill.Depth));
+        bool ring = triggers.CompactShows(playing: false) == CompactContent.TimerRing;
+        view.Text.Show(line, left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle, CompactLayout.Line(island.Mascot.Enabled, ring));
 
         if (left is { } l && l > TimeSpan.Zero)
         {
