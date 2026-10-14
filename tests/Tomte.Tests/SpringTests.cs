@@ -95,6 +95,7 @@ public class SpringTests
     [InlineData(IslandState.Hidden, IslandState.Panels, SpringPreset.Snappy)]
     [InlineData(IslandState.Hidden, IslandState.Palette, SpringPreset.Snappy)]
     [InlineData(IslandState.Hidden, IslandState.ShelfDrop, SpringPreset.Snappy)]
+    [InlineData(IslandState.Capture, IslandState.Palette, SpringPreset.Snappy)]
     [InlineData(IslandState.Compact, IslandState.Hidden, SpringPreset.Snappy)]
     [InlineData(IslandState.Panels, IslandState.Hidden, SpringPreset.Snappy)]
     [InlineData(IslandState.Compact, IslandState.Panels, SpringPreset.Gentle)]

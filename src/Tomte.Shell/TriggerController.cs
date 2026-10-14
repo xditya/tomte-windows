@@ -12,7 +12,7 @@ namespace Tomte.Shell;
 /// every MorphTo. Owns the retraction, hover, event, peek, first-run and drag timers, all SetTimer one-shots on
 /// the island window, so nothing runs while nothing happens.
 /// </summary>
-internal sealed unsafe class TriggerController : IDisposable
+internal sealed unsafe partial class TriggerController : IDisposable
 {
     private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6;
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
@@ -31,6 +31,8 @@ internal sealed unsafe class TriggerController : IDisposable
     private readonly DropTarget dropTarget;
     private readonly Action<string>? log;
     private Rambler? rambler;
+    private CaptureOverlay? overlay;
+    private bool capturing;
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
@@ -95,6 +97,13 @@ internal sealed unsafe class TriggerController : IDisposable
         }
     }
 
+    /// <summary>
+    /// What a finished lasso does: crop the monitor region, then ask with it in the palette, which takes the state
+    /// from Capture to Palette. Gets the overlay, the box in its monitor's pixels and the foreground window from
+    /// before the overlay took focus. Null until a question can be supplied; then the chord only logs.
+    /// </summary>
+    public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
+
     /// <summary>An internal event: shows Compact for the hold time, or waits while Focus, DND or fullscreen is on.</summary>
     public void Raise(IslandEvent e)
     {
@@ -123,6 +132,7 @@ internal sealed unsafe class TriggerController : IDisposable
 
     public void Dispose()
     {
+        overlay?.Dispose();
         InputThread.Stop();
         dropTarget.Dispose();
         watch.Dispose();
@@ -195,7 +205,8 @@ internal sealed unsafe class TriggerController : IDisposable
             case InputThread.MsgDragEnd:
                 activity &= ~IslandActivity.DragInProgress;
                 armed = true;
-                if (machine.State != IslandState.Hidden && !pointerInside)
+                // A lasso is a drag too. Its release must not arm a retract that fires into the palette it opens.
+                if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !pointerInside)
                 {
                     PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
                 }
@@ -294,6 +305,11 @@ internal sealed unsafe class TriggerController : IDisposable
     /// </summary>
     private void OnDragCandidate((int X, int Y) at)
     {
+        // The overlay answers HTCLIENT, and a lasso through the reveal zone is not a file drag.
+        if (machine.State == IslandState.Capture)
+        {
+            return;
+        }
         var child = PInvoke.WindowFromPoint(new System.Drawing.Point(at.X, at.Y));
         if (child == HWND.Null)
         {
@@ -372,8 +388,22 @@ internal sealed unsafe class TriggerController : IDisposable
                 }
 
                 break;
+            case HotkeyAction.CircleToAsk when Captured is null:
+                log?.Invoke("circle to ask: no question configured (start with --debug-capture)");
+                break;
+            case HotkeyAction.CircleToAsk when capturing:
+                break;
+            case HotkeyAction.CircleToAsk when watch.State.ExclusiveFullscreen:
+                // Unlike the island the overlay takes the foreground, which would drop a game out of exclusive
+                // mode, so an allow rule for the app does not apply here.
+                log?.Invoke("circle to ask: exclusive fullscreen, nothing shown");
+                break;
             case HotkeyAction.CircleToAsk:
-                log?.Invoke("circle to ask: capture overlay not built yet");
+                if (Allowed(RevealTrigger.Hotkey))
+                {
+                    _ = Capture(Captured);
+                }
+
                 break;
         }
     }
@@ -382,7 +412,14 @@ internal sealed unsafe class TriggerController : IDisposable
     {
         var s = watch.State;
         log?.Invoke($"desktop: fullscreen={s.Fullscreen} exclusive={s.ExclusiveFullscreen} secure={s.Secure} quiet={s.Quiet} exe={s.ForegroundExe}");
-        if (machine.State != IslandState.Hidden && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
+        // The capture overlay is itself a monitor-sized topmost window, so the shell reports it as fullscreen and
+        // that must not hide anything. A secure surface closes it; Capture() then returns to Hidden.
+        if (machine.State == IslandState.Capture && s.Secure)
+        {
+            overlay?.Dispose();
+        }
+
+        if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
         {
             Hide();
         }
@@ -486,6 +523,12 @@ internal sealed unsafe class TriggerController : IDisposable
     private void Go(IslandState state, (double W, double H) size = default)
     {
         var from = machine.State;
+        if (from == IslandState.Capture)
+        {
+            // A hotkey, the tray or the pause took over while the overlay was up; Capture() resumes as a cancel.
+            overlay?.Dispose();
+        }
+
         if (!IslandStateMachine.CanTransition(from, state))
         {
             machine.TransitionTo(IslandState.Hidden);
@@ -543,6 +586,63 @@ internal sealed unsafe class TriggerController : IDisposable
         if (peekWanted && !wasPeek)
         {
             SchedulePeek();
+        }
+    }
+}
+
+// Await is not allowed in an unsafe context, so the capture flow lives in a part without the modifier.
+internal sealed partial class TriggerController
+{
+    /// <summary>
+    /// The overlay on the monitor under the cursor with the island hidden under it. The guard holds from the
+    /// overlay through the crop and the palette run, so a second press never lands under a running ask.
+    /// </summary>
+    private async Task Capture(Func<CaptureOverlay, PixelRect, nint, Task> captured)
+    {
+        capturing = true;
+        long triggered = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            nint foreground = (nint)PInvoke.GetForegroundWindow();
+            Hide();
+            PInvoke.GetCursorPos(out var cursor);
+            machine.TransitionTo(IslandState.Capture);
+            island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);
+            var open = overlay = new CaptureOverlay(island.Compositor, cursor);
+            log?.Invoke($"capture overlay shown in {System.Diagnostics.Stopwatch.GetElapsedTime(triggered).TotalMilliseconds:F1}ms monitor={open.Bounds} scale={open.Lasso.Scale} activated={open.Activated}");
+            var box = await open.Result;
+            overlay = null;
+            if (box is not PixelRect crop)
+            {
+                log?.Invoke("capture cancelled");
+                ToHiddenFromCapture();
+                return;
+            }
+
+            // Nothing armed before or during the lasso may retract the palette this opens.
+            PInvoke.KillTimer(island.Hwnd, RetractTimer);
+            armed = false;
+            await captured(open, crop, foreground);
+        }
+        catch (Exception e)
+        {
+            overlay?.Dispose();
+            overlay = null;
+            log?.Invoke($"capture failed: {e}");
+            ToHiddenFromCapture();
+        }
+        finally
+        {
+            capturing = false;
+        }
+    }
+
+    private void ToHiddenFromCapture()
+    {
+        if (machine.State == IslandState.Capture)
+        {
+            machine.TransitionTo(IslandState.Hidden);
+            island.Mascot.Follow(IslandState.Capture, IslandState.Hidden);
         }
     }
 }

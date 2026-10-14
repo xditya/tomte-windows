@@ -117,6 +117,16 @@ public static class ContextChips
         $"screenshot:{app}",
         async ct => [new ImagePart("image/png", await capture(ct))]);
 
+    /// <summary>
+    /// The circled region from circle-to-ask, captured when the lasso was released. Drawing the lasso is the
+    /// user's opt-in for this request, so the chip starts on; the size in the label is in DIPs.
+    /// </summary>
+    public static ContextChip Lasso(byte[] png, double widthDips, double heightDips) => new(ContextKind.Screenshot,
+        $"Lasso · {widthDips:F0} × {heightDips:F0}",
+        "lasso",
+        _ => Task.FromResult<IReadOnlyList<ContentPart>>([new ImagePart("image/png", png)]),
+        on: true);
+
     /// <summary>The newest shelf item. One chip is enough until the shelf has a picker.</summary>
     public static ContextChip Shelf(IShelf shelf)
     {
