@@ -5,7 +5,10 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.XamlTypeInfo;
+using Tomte.AI;
+using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Device;
 using Windows.ApplicationModel;
 using Windows.Graphics;
 using Windows.Win32;
@@ -25,6 +28,7 @@ public sealed class SettingsWindow : Window
 
     private readonly SettingsStore store = new();
     private readonly StackPanel rulesList = new() { Spacing = 4 };
+    private readonly StackPanel grantsList = new() { Spacing = 4 };
     private readonly ToggleSwitch startup = new() { OnContent = "On", OffContent = "Off" };
     private readonly TextBlock startupNote = Note();
     private StartupTask? startupTask;
@@ -67,8 +71,17 @@ public sealed class SettingsWindow : Window
             rulesList,
             AddRuleRow()));
 
+        page.Children.Add(Header("AI tools"));
+        page.Children.Add(Card(
+            Note("Tools the AI layer can use when you ask for their effect. Nothing runs without a provider configured. Tools marked \"asks each time\" can be always allowed from the prompt; remove a grant here to be asked again."),
+            Note("Always allowed"),
+            grantsList,
+            Note("All tools"),
+            Card([.. BuiltInTools.Definitions.Select(ToolRow)])));
+
         Content = new ScrollViewer { Content = page };
         RenderRules();
+        RenderGrants();
         _ = LoadStartupAsync();
         startup.Toggled += async (_, _) => await SetStartupAsync(startup.IsOn);
         Closed += (_, _) => store.Dispose();
@@ -216,6 +229,35 @@ public sealed class SettingsWindow : Window
     }
 
     private static bool SameApp(AppRule a, AppRule b) => AppRules.Normalize(a.Exe) == AppRules.Normalize(b.Exe);
+
+    private void RenderGrants()
+    {
+        grantsList.Children.Clear();
+        if (store.Current.AlwaysAllowedTools.Count == 0)
+        {
+            grantsList.Children.Add(Note("No tool is always allowed. Every external effect asks first."));
+        }
+
+        foreach (string tool in store.Current.AlwaysAllowedTools)
+        {
+            var remove = new Button { Content = "Remove" };
+            remove.Click += (_, _) =>
+            {
+                Save(s => s with { AlwaysAllowedTools = [.. s.AlwaysAllowedTools.Where(t => t != tool)] });
+                RenderGrants();
+            };
+            grantsList.Children.Add(Row(tool, Note("Runs without asking."), remove));
+        }
+    }
+
+    private static UIElement ToolRow(ToolDefinition tool) =>
+        Row(tool.Name, Note(tool.Description), Note(BuiltInTools.Tiers[tool.Name] switch
+        {
+            ActionTier.Read => "Read: runs on its own.",
+            ActionTier.AppLocalWrite => "App-local write: runs on its own, can be undone.",
+            ActionTier.ExternalEffect => "External effect: asks each time unless always allowed.",
+            _ => "Destructive: always asks, never in scheduled jobs.",
+        }));
 
     private static ComboBox ModeBox(AppRuleMode selected) =>
         new() { ItemsSource = new[] { "Allow", "Deny", "Deny with hotkeys" }, SelectedIndex = (int)selected, MinWidth = 180 };
