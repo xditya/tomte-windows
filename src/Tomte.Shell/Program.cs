@@ -48,8 +48,9 @@ internal static partial class Program
 
         if (args.Contains("--settings"))
         {
-            // --settings [path]: the shell passes the settings file it uses, so both open the same folder.
-            RunSettings(Arg(args, "--settings"));
+            // --settings [path] [--section name]: the shell passes the settings file it uses, so both open the same
+            // folder, and the section to open at when a button asked for one.
+            RunSettings(Arg(args, "--settings"), Arg(args, "--section"));
             return 0;
         }
 
@@ -202,7 +203,7 @@ internal static partial class Program
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
         tray.Ask += () => AskFromTray(island, triggers, store, logLine);
-        tray.OpenSettings += OpenSettings;
+        tray.OpenSettings += () => OpenSettings();
         tray.Paused += triggers.Hide;
         tray.Quit += () => PInvoke.PostQuitMessage(0);
         TellAboutDamagedDatabase(island, triggers, db);
@@ -281,12 +282,13 @@ internal static partial class Program
 
     // Kept out of Main so the WinUI assemblies load only in the settings process.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void RunSettings(string? settingsPath) => Tomte.Panels.SettingsWindow.Run(settingsPath);
+    private static void RunSettings(string? settingsPath, string? section) => Tomte.Panels.SettingsWindow.Run(settingsPath, section);
 
     // The settings window runs in its own process and exits when closed, so none of its memory stays in the shell.
     // Called on the island's thread after the user's own click (the tray menu, a tile), which is when Windows lets
-    // Tomte hand the foreground on.
-    private static async void OpenSettings()
+    // Tomte hand the foreground on. A new window opens at <paramref name="section"/>'s header; one already open stays
+    // where it is.
+    private static async void OpenSettings(string? section = null)
     {
         if (settingsProcess is { HasExited: false })
         {
@@ -310,7 +312,14 @@ internal static partial class Program
             // gets the foreground right this one has from the click, so its window opens in front.
             settingsProcess = await Task.Run(() =>
             {
-                var started = Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { ArgumentList = { "--settings", settingsFile } });
+                var start = new ProcessStartInfo(Environment.ProcessPath!) { ArgumentList = { "--settings", settingsFile } };
+                if (section is not null)
+                {
+                    start.ArgumentList.Add("--section");
+                    start.ArgumentList.Add(section);
+                }
+
+                var started = Process.Start(start);
                 if (started is not null)
                 {
                     PInvoke.AllowSetForegroundWindow((uint)started.Id);
@@ -346,7 +355,12 @@ internal static partial class Program
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, text, log));
-        panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, text, log));
+        // The island goes before the settings window comes up over where it was.
+        panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, () =>
+        {
+            triggers.Hide();
+            OpenSettings(Tomte.Panels.SettingsWindow.ShortcutsHeader);
+        }, text, log));
         panels.Register(new MediaPanel(island, media, text, () => DateTimeOffset.UtcNow, log));
         var scratchpad = new ScratchpadPanel(island, Scratchpad, text, typing, log);
         panels.Register(scratchpad);

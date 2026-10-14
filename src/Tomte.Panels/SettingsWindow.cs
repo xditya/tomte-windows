@@ -27,7 +27,10 @@ public sealed partial class SettingsWindow : Window
 {
     private const string StartupTaskId = "TomteStartup";
 
-    private static string? settingsFile;
+    /// <summary>The header of the section the shortcuts' add tile opens the window at.</summary>
+    public const string ShortcutsHeader = "Shortcuts";
+
+    private static string? settingsFile, startSection;
     private readonly SettingsStore store = new(settingsFile);
     private readonly StackPanel rulesList = new() { Spacing = 4 };
     private readonly StackPanel grantsList = new() { Spacing = 4 };
@@ -67,7 +70,7 @@ public sealed partial class SettingsWindow : Window
             Note("When an app takes something you dragged out: a link to one of your files leaves the shelf, and the file stays where it is on your PC. A copy the shelf keeps itself (an image, a note, an attachment) stays on the shelf, unless it went out as content rather than as a file, as notes and images dragged out on their own do."),
             Toggle(s => s.RemoveAfterDragOut, (s, v) => s with { RemoveAfterDragOut = v }))));
 
-        page.Children.Add(Header("Shortcuts"));
+        page.Children.Add(Header(ShortcutsHeader));
         page.Children.Add(ShortcutsSection());
 
         page.Children.Add(Header("Reveal zone and thresholds"));
@@ -126,7 +129,14 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("Skills"));
         page.Children.Add(SkillsSection());
 
-        Content = new ScrollViewer { Content = page };
+        var scroller = new ScrollViewer { Content = page };
+        Content = scroller;
+        if (page.Children.OfType<TextBlock>().FirstOrDefault(h => h.Text == startSection) is { } start)
+        {
+            // Once laid out, the section's header goes to the top of the window.
+            scroller.Loaded += (_, _) => start.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, AnimationDesired = false });
+        }
+
         RenderRules();
         RenderGrants();
         RenderMcpServers();
@@ -138,11 +148,12 @@ public sealed partial class SettingsWindow : Window
 
     /// <summary>
     /// Starts WinUI on this thread, shows the window and returns when it closes. <paramref name="settingsPath"/> is the
-    /// shell's settings file (null for the default); tomte.db is the one next to it.
+    /// shell's settings file (null for the default); tomte.db is the one next to it. <paramref name="section"/> is the
+    /// header of a section to open at, such as <see cref="ShortcutsHeader"/>; null opens at the top.
     /// </summary>
-    public static void Run(string? settingsPath = null)
+    public static void Run(string? settingsPath = null, string? section = null)
     {
-        settingsFile = settingsPath;
+        (settingsFile, startSection) = (settingsPath, section);
         WinRT.ComWrappersSupport.InitializeComWrappers();
         Application.Start(p =>
         {
