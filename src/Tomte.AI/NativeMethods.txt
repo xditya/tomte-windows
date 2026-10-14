@@ -42,3 +42,7 @@ ID3D11Device
 AddClipboardFormatListener
 RemoveClipboardFormatListener
 WM_CLIPBOARDUPDATE
+CreateJobObject
+SetInformationJobObject
+AssignProcessToJobObject
+JOBOBJECT_EXTENDED_LIMIT_INFORMATION

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Tomte.AI;
+using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
@@ -221,6 +222,9 @@ internal static class Program
     /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
     /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
     /// Destructive requests (lock, sleep, restart, shut down) are denied without --dry: nobody is there to answer.
+    /// A request from an MCP server's tool is always denied here, with --dry too: the dry run is Tomte's own, and
+    /// a server's tool would really run. Such a tool runs in a driven run only when the user set it to Read or
+    /// answered "always allow" for it before.
     /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
     private static async Task PaletteRun(IslandWindow island, TriggerController triggers, SettingsStore store, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
@@ -261,14 +265,20 @@ internal static class Program
             // --dry keeps device tools from changing anything; the grants come from settings.json as they will for the real palette.
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
             var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
+            // Servers start on the send; disposing at the end of the run stops them, as closing the palette does.
+            await using var mcp = McpTools.For(store.Current.McpServers);
             var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
             {
                 Prompt = prompt,
+                Mcp = mcp,
                 ConfirmTool = (request, _) =>
                 {
-                    // Nobody is at the keyboard in a driven run: refuse what has no undo and no bound.
-                    bool deny = !dry && (request.Tier == ActionTier.Destructive || request.Tool == BuiltInTools.OpenApp);
-                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette confirm {request.Tier}: {request.Summary} -> {(deny ? "deny, needs --dry" : "allow once")}");
+                    // Nobody is at the keyboard in a driven run: refuse what has no undo and no bound, and
+                    // never approve a tool of an outside server on the user's behalf.
+                    bool outside = mcp?.Owns(request.Tool) == true;
+                    bool deny = outside || (!dry && (request.Tier == ActionTier.Destructive || request.Tool == BuiltInTools.OpenApp));
+                    string answer = outside ? "deny, an MCP tool is not approved with nobody at the keyboard" : deny ? "deny, needs --dry" : "allow once";
+                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette confirm {request.Tier}: {request.Summary} -> {answer}");
                     return Task.FromResult(deny ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
                 },
             };
