@@ -238,6 +238,20 @@ public sealed class McpProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task AValueWithANulIsRefusedBeforeTheServerStarts()
+    {
+        // The environment block ends each variable with a NUL, so this value would start another variable.
+        var server = Echo(InFolder("info.json")) with { Environment = ["TOMTE_ECHO_X"] };
+        await using var tools = new McpTools([server], readSecret: _ => "abcd\0efgh1234");
+
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(_limit.Token));
+        Assert.Contains("The value of TOMTE_ECHO_X holds a character that cannot be passed to a program.", e.Message);
+        Assert.DoesNotContain("abcd\0efgh1234", e.ToString());
+        Assert.DoesNotContain("efgh1234", e.ToString());
+        Assert.False(File.Exists(InFolder("info.json")));
+    }
+
+    [Fact]
     public async Task SettingsListsAToolLeftOutForItsSchema()
     {
         // The path the settings window takes: start the server, list, stop.
