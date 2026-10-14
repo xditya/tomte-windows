@@ -13,8 +13,8 @@ namespace Tomte.Shell;
 /// prompt box, a text box when a session can send and the "AI layer is off" line when none can; the chips, which a
 /// click turns on and off; the answer as it streams, drawn by the text renderer; and the footer with where the
 /// request goes and what today cost. It fades in with the shape and goes when the island leaves the Palette state.
-/// The answer is plain text runs, not a read-only text box: the palette needs no selection in it, and a third set
-/// of text services would cost a module instance, input routing and a surface for nothing Tomte needs.
+/// The answer is plain text runs, not a read-only text box: nothing asks for selecting or copying it, and a third
+/// set of text services would cost a module instance, input routing and a surface for that alone.
 /// </summary>
 internal sealed class PaletteView : IDisposable
 {
