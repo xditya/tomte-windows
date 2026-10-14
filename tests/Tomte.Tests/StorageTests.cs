@@ -79,7 +79,27 @@ public sealed class StorageTests : IDisposable
             Assert.Equal("1", Scalar(connection, "PRAGMA synchronous"));
             Assert.Equal("1", Scalar(connection, "PRAGMA foreign_keys"));
             Assert.Equal("5000", Scalar(connection, "PRAGMA busy_timeout"));
+            Assert.Equal("1", Scalar(connection, "PRAGMA secure_delete"));
         }
+    }
+
+    [Fact]
+    public void DeletedTextIsGoneFromTheFile()
+    {
+        var db = new TomteDb(DbPath);
+        using (var connection = db.Open("shelf", Shelf))
+        {
+            Execute(connection, "INSERT INTO shelf_items(name) VALUES ('copied-from-a-password-manager')");
+        }
+
+        Assert.Contains("copied-from-a-password-manager", File.ReadAllText(DbPath));
+
+        using (var connection = db.Open("shelf", Shelf))
+        {
+            Execute(connection, "DELETE FROM shelf_items WHERE name LIKE 'copied%'");
+        }
+
+        Assert.DoesNotContain("copied-from-a-password-manager", File.ReadAllText(DbPath));
     }
 
     [Fact]

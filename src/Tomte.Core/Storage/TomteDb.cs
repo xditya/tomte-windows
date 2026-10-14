@@ -104,10 +104,13 @@ public sealed class TomteDb(string? path = null)
             SQLitePCL.raw.sqlite3_busy_timeout(db.Handle, BusySeconds * 1000);
             // Write-ahead log: the shell, the settings window and a job run read while one of them writes, and the last
             // connection to close folds the log back into the file. NORMAL: no flush per commit; a power cut can drop the
-            // commits made since the log was last folded back, but cannot damage the file.
+            // commits made since the log was last folded back, but cannot damage the file. secure_delete: a deleted row is
+            // overwritten with zeros, so clipboard history or a send log the user cleared is gone from the file as well; it
+            // can only be set here, for every feature, and costs extra page writes on delete.
             Run(db, """
                 PRAGMA journal_mode = WAL;
                 PRAGMA synchronous = NORMAL;
+                PRAGMA secure_delete = ON;
                 CREATE TABLE IF NOT EXISTS schema_versions(feature TEXT PRIMARY KEY, version INTEGER NOT NULL) WITHOUT ROWID;
                 """);
             Migrate(db, feature, steps);
