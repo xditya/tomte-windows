@@ -1,0 +1,242 @@
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Tomte.AI;
+using Tomte.AI.Mcp;
+using Tomte.Core;
+using Tomte.Core.Device;
+
+namespace Tomte.Panels;
+
+/// <summary>
+/// The MCP servers section: add, edit, turn on or off and remove servers, and list a server's
+/// tools with the tier each one runs under. Listing starts the server for a moment and stops it again.
+/// </summary>
+public sealed partial class SettingsWindow
+{
+    private static readonly string[] Kinds = ["Command (stdio)", "URL (Streamable HTTP)"];
+
+    private readonly StackPanel mcpList = new() { Spacing = 12 };
+    private readonly TextBox mcpName = new() { PlaceholderText = "Files", Width = 280 };
+    private readonly ComboBox mcpKind = new() { ItemsSource = Kinds, SelectedIndex = 0, Width = 280 };
+    private readonly TextBox mcpTarget = new() { Width = 280 };
+    private readonly TextBox mcpArguments = new() { PlaceholderText = "-y @modelcontextprotocol/server-filesystem C:\\Notes", Width = 280 };
+    private readonly TextBox mcpHeaderName = new() { PlaceholderText = "Authorization", Width = 280 };
+    private readonly PasswordBox mcpHeaderValue = new() { Width = 280 };
+    private readonly Button mcpSave = new() { Content = "Add server" };
+    private readonly Button mcpCancel = new() { Content = "Cancel", Visibility = Visibility.Collapsed };
+    private readonly TextBlock mcpNote = Note();
+    private Grid? mcpArgumentsRow, mcpHeaderNameRow, mcpHeaderValueRow;
+    private string? mcpEditing;
+
+    private Border McpSection()
+    {
+        mcpArgumentsRow = Row("Arguments", Note("Separated by spaces. Put an argument with spaces in double quotes."), mcpArguments);
+        mcpHeaderNameRow = Row("Header name", Note("Optional. Sent with every request, for example Authorization."), mcpHeaderName);
+        mcpHeaderValueRow = Row("Header value", Note("Kept in Windows Credential Manager, not in the settings file. Leave empty to keep the saved value."), mcpHeaderValue);
+        mcpKind.SelectionChanged += (_, _) => ShowMcpKind();
+        mcpSave.Click += (_, _) => SaveMcpServer();
+        mcpCancel.Click += (_, _) => ResetMcpForm();
+        ShowMcpKind();
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { mcpSave, mcpCancel } };
+        return Card(
+            Note("Tools from these servers are offered to the AI palette. A server starts when you send a request and stops when the palette closes. Each tool asks before it runs unless you mark it otherwise below."),
+            mcpList,
+            Row("Name", null, mcpName),
+            Row("Kind", null, mcpKind),
+            Row("Command or URL", Note("For a command, the program to run, for example npx or uvx."), mcpTarget),
+            mcpArgumentsRow,
+            mcpHeaderNameRow,
+            mcpHeaderValueRow,
+            buttons,
+            mcpNote);
+    }
+
+    private bool McpStdio => mcpKind.SelectedIndex == 0;
+
+    private void ShowMcpKind()
+    {
+        mcpTarget.PlaceholderText = McpStdio ? "npx" : "https://example.com/mcp";
+        mcpArgumentsRow!.Visibility = McpStdio ? Visibility.Visible : Visibility.Collapsed;
+        mcpHeaderNameRow!.Visibility = mcpHeaderValueRow!.Visibility = McpStdio ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void RenderMcpServers()
+    {
+        mcpList.Children.Clear();
+        if (store.Current.McpServers.Count == 0)
+        {
+            mcpList.Children.Add(Note("No servers yet."));
+        }
+
+        foreach (var server in store.Current.McpServers)
+        {
+            var enabled = new ToggleSwitch { IsOn = server.Enabled, OnContent = "On", OffContent = "Off" };
+            enabled.Toggled += (_, _) => SaveMcp(s => s.Name == server.Name ? s with { Enabled = enabled.IsOn } : s);
+            var tools = new StackPanel { Spacing = 8, Margin = new Thickness(16, 0, 0, 0) };
+            var list = new Button { Content = "Tools" };
+            list.Click += async (_, _) => await ShowMcpToolsAsync(server.Name, tools, list);
+            var edit = new Button { Content = "Edit" };
+            edit.Click += (_, _) => EditMcpServer(server);
+            var remove = new Button { Content = "Remove" };
+            remove.Click += (_, _) =>
+            {
+                TryCredential(() => CredentialStore.Delete(server.CredentialId));
+                Save(s => s with { McpServers = [.. s.McpServers.Where(o => o.Name != server.Name)] });
+                RenderMcpServers();
+            };
+            var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { enabled, list, edit, remove } };
+            mcpList.Children.Add(new StackPanel { Spacing = 8, Children = { Row(server.Name, Note(server.Summary), controls), tools } });
+        }
+    }
+
+    private async Task ShowMcpToolsAsync(string name, StackPanel panel, Button button)
+    {
+        var server = store.Current.McpServers.FirstOrDefault(s => s.Name == name);
+        if (server is null)
+        {
+            return;
+        }
+
+        button.IsEnabled = false;
+        panel.Children.Clear();
+        panel.Children.Add(Note("Starting the server to ask for its tools..."));
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            var tools = await McpTools.ProbeAsync(server, timeout.Token);
+            panel.Children.Clear();
+            if (tools.Count == 0)
+            {
+                panel.Children.Add(Note("This server has no tools."));
+            }
+
+            foreach (var (tool, description) in tools)
+            {
+                var tiers = server.AllowedTiers;
+                var box = new ComboBox { ItemsSource = tiers.Select(TierName).ToArray(), SelectedIndex = IndexOf(tiers, server.TierFor(tool)), MinWidth = 200 };
+                box.SelectionChanged += (_, _) => SaveMcp(s => s.Name == name
+                    ? s with { ToolTiers = new Dictionary<string, ActionTier>(s.ToolTiers) { [tool] = tiers[box.SelectedIndex] } }
+                    : s);
+                panel.Children.Add(Row(tool, description.Length == 0 ? null : Note(FirstSentence(description)), box));
+            }
+        }
+        catch (Exception e)
+        {
+            // Called from an async void handler: an exception leaving here would end the settings process.
+            panel.Children.Clear();
+            var note = Note();
+            Show(note, $"Could not list the tools: {e.Message}");
+            panel.Children.Add(note);
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
+    }
+
+    // Server descriptions are written for the model and run long; the first sentence is enough to recognise a tool.
+    private static string FirstSentence(string text)
+    {
+        int end = text.IndexOf(". ", StringComparison.Ordinal);
+        return end > 0 ? text[..(end + 1)] : text;
+    }
+
+    private static string TierName(ActionTier tier) => tier switch
+    {
+        ActionTier.Read => "Read: runs without asking",
+        ActionTier.Destructive => "Destructive: asks every time",
+        _ => "External effect: asks, can be always allowed",
+    };
+
+    private static int IndexOf(IReadOnlyList<ActionTier> tiers, ActionTier tier) => Math.Max(0, tiers.ToList().IndexOf(tier));
+
+    private void EditMcpServer(McpServerSettings server)
+    {
+        mcpEditing = server.Name;
+        mcpName.Text = server.Name;
+        mcpKind.SelectedIndex = server.Transport == McpTransport.Stdio ? 0 : 1;
+        mcpTarget.Text = server.Transport == McpTransport.Stdio ? server.Command : server.Url;
+        mcpArguments.Text = McpServerSettings.JoinArguments(server.Arguments);
+        mcpHeaderName.Text = server.HeaderName;
+        mcpHeaderValue.Password = "";
+        mcpSave.Content = "Save changes";
+        mcpCancel.Visibility = Visibility.Visible;
+        Show(mcpNote, null);
+    }
+
+    private void ResetMcpForm()
+    {
+        mcpEditing = null;
+        mcpName.Text = mcpTarget.Text = mcpArguments.Text = mcpHeaderName.Text = "";
+        mcpHeaderValue.Password = "";
+        mcpSave.Content = "Add server";
+        mcpCancel.Visibility = Visibility.Collapsed;
+        Show(mcpNote, null);
+    }
+
+    private void SaveMcpServer()
+    {
+        var existing = store.Current.McpServers.FirstOrDefault(s => s.Name == mcpEditing);
+        var server = new McpServerSettings
+        {
+            Name = mcpName.Text.Trim(),
+            Transport = McpStdio ? McpTransport.Stdio : McpTransport.Http,
+            Command = McpStdio ? mcpTarget.Text.Trim() : "",
+            Arguments = McpStdio ? McpServerSettings.SplitArguments(mcpArguments.Text) : [],
+            Url = McpStdio ? "" : mcpTarget.Text.Trim(),
+            HeaderName = McpStdio ? "" : mcpHeaderName.Text.Trim(),
+            Enabled = existing?.Enabled ?? true,
+            ToolTiers = existing?.ToolTiers ?? new Dictionary<string, ActionTier>(),
+        };
+        string? error = McpServerSettings.Validate(store.Current.McpServers.Where(s => s.Name != mcpEditing), server);
+        // An empty box keeps the saved value; a rename moves it to the new name.
+        string? secret = mcpHeaderValue.Password.Length > 0 ? mcpHeaderValue.Password : null;
+        if (error is null && secret is null && existing is not null && !TryCredential(() => secret = CredentialStore.Read(existing.CredentialId)))
+        {
+            return;
+        }
+
+        if (error is null && server.HeaderName.Length > 0 && secret is null)
+        {
+            error = "Enter the header value.";
+        }
+
+        Show(mcpNote, error);
+        if (error is not null || !TryCredential(() =>
+            {
+                if (existing is not null && existing.CredentialId != server.CredentialId)
+                    CredentialStore.Delete(existing.CredentialId);
+                if (server.HeaderName.Length > 0)
+                    CredentialStore.Save(server.CredentialId, secret!);
+                else
+                    CredentialStore.Delete(server.CredentialId);
+            }))
+        {
+            return;
+        }
+
+        Save(s => s with
+        {
+            McpServers = existing is null ? [.. s.McpServers, server] : [.. s.McpServers.Select(o => o.Name == existing.Name ? server : o)],
+        });
+        ResetMcpForm();
+        RenderMcpServers();
+    }
+
+    private void SaveMcp(Func<McpServerSettings, McpServerSettings> change) =>
+        Save(s => s with { McpServers = [.. s.McpServers.Select(change)] });
+
+    private bool TryCredential(Action action)
+    {
+        try
+        {
+            action();
+            return true;
+        }
+        catch (InvalidOperationException e)
+        {
+            Show(mcpNote, e.Message);
+            return false;
+        }
+    }
+}

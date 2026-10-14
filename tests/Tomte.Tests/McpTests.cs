@@ -352,6 +352,7 @@ public class McpSettingsTests
         };
         string json = SettingsStore.Serialize(settings);
         Assert.Contains("\"read\": \"Read\"", json);
+        Assert.DoesNotContain("credentialId", json);
         var path = Path.Combine(Path.GetTempPath(), $"tomte-mcp-{Guid.NewGuid():N}.json");
         File.WriteAllText(path, json);
         try

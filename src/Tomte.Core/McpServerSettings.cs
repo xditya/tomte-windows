@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using Tomte.Core.Device;
 
 namespace Tomte.Core;
@@ -30,15 +31,18 @@ public sealed record McpServerSettings
     /// <summary>Tier overrides by the server's own tool name. A tool not listed is an External effect.</summary>
     public IReadOnlyDictionary<string, ActionTier> ToolTiers { get; init; } = new Dictionary<string, ActionTier>();
 
+    [JsonIgnore]
     public string CredentialId => "mcp/" + Name;
 
     /// <summary>What the model sees in front of each of this server's tool names.</summary>
+    [JsonIgnore]
     public string Prefix => Slug(Name);
 
     /// <summary>
     /// The tiers a tool of this server may have. Every call to an HTTP server is a network call by an
     /// MCP tool, so it cannot be Read. No MCP tool is app-local: Tomte cannot undo what it did.
     /// </summary>
+    [JsonIgnore]
     public IReadOnlyList<ActionTier> AllowedTiers => Transport == McpTransport.Stdio
         ? [ActionTier.Read, ActionTier.ExternalEffect, ActionTier.Destructive]
         : [ActionTier.ExternalEffect, ActionTier.Destructive];
@@ -46,6 +50,7 @@ public sealed record McpServerSettings
     public ActionTier TierFor(string tool) =>
         ToolTiers.TryGetValue(tool, out var tier) && AllowedTiers.Contains(tier) ? tier : ActionTier.ExternalEffect;
 
+    [JsonIgnore]
     public string Summary => Transport == McpTransport.Stdio
         ? string.Join(' ', [Command, .. Arguments.Select(Quote)])
         : Url;

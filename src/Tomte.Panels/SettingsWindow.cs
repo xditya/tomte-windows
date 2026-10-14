@@ -22,7 +22,7 @@ namespace Tomte.Panels;
 /// initialised; closing the window ends the process. Every change is saved at once, and the shell
 /// picks it up from the file.
 /// </summary>
-public sealed class SettingsWindow : Window
+public sealed partial class SettingsWindow : Window
 {
     private const string StartupTaskId = "TomteStartup";
 
@@ -79,9 +79,13 @@ public sealed class SettingsWindow : Window
             Note("All tools"),
             Card([.. BuiltInTools.Definitions.Select(ToolRow)])));
 
+        page.Children.Add(Header("MCP servers"));
+        page.Children.Add(McpSection());
+
         Content = new ScrollViewer { Content = page };
         RenderRules();
         RenderGrants();
+        RenderMcpServers();
         _ = LoadStartupAsync();
         startup.Toggled += async (_, _) => await SetStartupAsync(startup.IsOn);
         Closed += (_, _) => store.Dispose();
