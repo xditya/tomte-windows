@@ -214,6 +214,34 @@ public class McpToolsTests
     }
 
     [Fact]
+    public async Task ANullTheSchemaAsksForIsSent()
+    {
+        // assignee is required and may be null: null clears the field, leaving it out is a different request.
+        _fake.MoreTools.Add(McpServerTool.Create((int id, string? assignee) => $"id={id} assignee={assignee ?? "NULL"}", new McpServerToolCreateOptions { Name = "update_issue" }));
+        await using var tools = Tools(null, Files);
+        var definition = (await tools.ListAsync(default)).Single(d => d.Name == "files__update_issue");
+        Assert.Contains("assignee", definition.InputSchema.GetProperty("required").EnumerateArray().Select(r => r.GetString()));
+
+        var call = Call("files__update_issue", """{"id":5,"assignee":null,"unused":null}""");
+        // The prompt shows what is sent.
+        Assert.Equal("""Files: update_issue {"id":5,"assignee":null}""", tools.Describe(call.Name, call.Input));
+        Assert.Equal("id=5 assignee=NULL", (await tools.CallAsync(call, default)).Content);
+    }
+
+    [Theory]
+    [InlineData("""{"type":"object","properties":{"a":{"type":"string"}}}""", """{}""")]
+    [InlineData("""{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]}""", """{"a":null}""")]
+    [InlineData("""{"type":"object","properties":{"a":{"type":["string","null"]}}}""", """{"a":null}""")]
+    [InlineData("""{"type":"object","properties":{"a":{"anyOf":[{"type":"string"},{"type":"null"}]}}}""", """{"a":null}""")]
+    [InlineData("""{"type":"object"}""", """{}""")]
+    public void ANullIsLeftOutOnlyWhenTheSchemaDoesNotAskForIt(string schema, string sent)
+    {
+        var tool = new Tool { Name = "t", InputSchema = JsonDocument.Parse(schema).RootElement };
+        var args = McpTools.Arguments(tool, JsonDocument.Parse("""{"a":null}""").RootElement);
+        Assert.Equal(sent, JsonSerializer.Serialize(args));
+    }
+
+    [Fact]
     public void ResultContentIsMappedToText()
     {
         var result = new CallToolResult

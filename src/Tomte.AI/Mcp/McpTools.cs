@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -40,6 +41,9 @@ public sealed class McpTools : IAsyncDisposable
 
     /// <summary>Longest argument schema of one tool; the model gets every schema on every send, so a server with a longer one is refused.</summary>
     public const int MaxSchema = 20_000;
+
+    // For the confirmation prompt: readable, so letters outside ASCII and characters such as & are written as they are.
+    private static readonly JsonSerializerOptions Shown = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     private readonly McpServerSettings[] _servers;
     private readonly string? _invalid;
@@ -95,8 +99,10 @@ public sealed class McpTools : IAsyncDisposable
     public string Describe(string tool, JsonElement input)
     {
         var (server, mcpTool, _) = _tools[tool];
-        string args = input.ValueKind == JsonValueKind.Object && input.EnumerateObject().Any() ? " " + Clean(input.GetRawText(), 120) : "";
-        return $"{Clean(server.Name, MaxName)}: {Clean(mcpTool.Name, MaxName)}{args}";
+        // What is shown is what is sent, not what the model wrote.
+        var args = Arguments(mcpTool, input);
+        string shown = args.Count == 0 ? "" : " " + Clean(JsonSerializer.Serialize(args, Shown), 120);
+        return $"{Clean(server.Name, MaxName)}: {Clean(mcpTool.Name, MaxName)}{shown}";
     }
 
     /// <summary>Starts the servers that are not running and returns every tool, prefixed. A server that fails throws, naming it.</summary>
@@ -144,10 +150,7 @@ public sealed class McpTools : IAsyncDisposable
             if (!_tools.TryGetValue(call.Name, out var now) || now.Key != key)
                 return new ToolResultPart(call.Id, call.Name, $"{Clean(server.Name, MaxName)} changed this tool when it restarted, so the call was not made. Call it again to use it as it is now.", IsError: true);
 
-            // Small models send null for optional arguments they do not use; servers read that as a wrong type.
-            var args = call.Input.ValueKind == JsonValueKind.Object
-                ? call.Input.EnumerateObject().Where(p => p.Value.ValueKind != JsonValueKind.Null).ToDictionary(p => p.Name, p => (object?)p.Value.Clone())
-                : [];
+            var args = Arguments(tool, call.Input);
             try
             {
                 var result = await UnlessGoneAsync(c => client.CallToolAsync(tool.Name, args, cancellationToken: c).AsTask(), client.Completion, ct);
@@ -194,6 +197,53 @@ public sealed class McpTools : IAsyncDisposable
     {
         string name = server.Prefix + Separator + new string([.. tool.Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_')]);
         return name.Length > 64 ? name[..64] : name;
+    }
+
+    /// <summary>
+    /// The arguments as they are sent. Small models send null for optional arguments they do not use,
+    /// and servers read that as a wrong type, so such a null is left out. A null the schema asks for
+    /// stays: the argument is required, or its type includes null (which is how a field is cleared).
+    /// </summary>
+    internal static Dictionary<string, object?> Arguments(Tool tool, JsonElement input)
+    {
+        var args = new Dictionary<string, object?>();
+        if (input.ValueKind != JsonValueKind.Object)
+            return args;
+        foreach (var property in input.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.Null || WantsNull(tool.InputSchema, property.Name))
+                args[property.Name] = property.Value.Clone();
+        }
+
+        return args;
+    }
+
+    private static bool WantsNull(JsonElement schema, string name)
+    {
+        if (schema.ValueKind != JsonValueKind.Object)
+            return false;
+        if (schema.TryGetProperty("required", out var required) && required.ValueKind == JsonValueKind.Array
+            && required.EnumerateArray().Any(r => r.ValueKind == JsonValueKind.String && r.ValueEquals(name)))
+        {
+            return true;
+        }
+
+        return schema.TryGetProperty("properties", out var properties) && properties.ValueKind == JsonValueKind.Object
+            && properties.TryGetProperty(name, out var property) && AllowsNull(property);
+    }
+
+    private static bool AllowsNull(JsonElement schema)
+    {
+        if (schema.ValueKind != JsonValueKind.Object)
+            return false;
+        if (schema.TryGetProperty("type", out var type))
+        {
+            IEnumerable<JsonElement> types = type.ValueKind == JsonValueKind.Array ? type.EnumerateArray() : [type];
+            if (types.Any(t => t.ValueKind == JsonValueKind.String && t.ValueEquals("null")))
+                return true;
+        }
+
+        return ((string[])["anyOf", "oneOf"]).Any(k => schema.TryGetProperty(k, out var options) && options.ValueKind == JsonValueKind.Array && options.EnumerateArray().Any(AllowsNull));
     }
 
     /// <summary>
