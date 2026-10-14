@@ -190,6 +190,10 @@ internal static partial class Program
         tray.Paused += triggers.Hide;
         tray.Quit += () => PInvoke.PostQuitMessage(0);
         TellAboutDamagedDatabase(island, triggers, db);
+        if (args.Contains("--debug-swell") && logLine is not null)
+        {
+            _ = DebugSwell(island, logLine);
+        }
 
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
@@ -315,7 +319,7 @@ internal static partial class Program
         panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), text, log));
         triggers.Panels = panels;
         // The row and the line live on the state changes and ContentReady they listen to.
-        _ = new CompactLine(island, triggers, text, new NowPlayingRow(island, triggers, media, text, log));
+        _ = new CompactLine(island, triggers, text, new NowPlayingRow(island, triggers, media, text, log), log);
 
         bool announcing = false;
         media.TrackChanged += playing =>
@@ -364,6 +368,44 @@ internal static partial class Program
         triggers.Dropped += drop => shelf.Accept(drop);
         _ = new DropZones(island, triggers, shelf, text, store, db, log);
         return new ShelfPanel(island, triggers, shelf, text, log);
+    }
+
+    /// <summary>
+    /// --debug-swell with --debug-log=path, and --debug-cloak so nothing shows: the push pill's swell asked for while the
+    /// pill is still opening, as an edge push under a resting pointer asks for it, then let go. Logs the shape the island
+    /// comes to rest on each time and whether that is the swollen pill and then the resting one, and quits.
+    /// </summary>
+    private static async Task DebugSwell(IslandWindow island, Action<string> log)
+    {
+        var settled = new TaskCompletionSource();
+        island.Settled += () => settled.TrySetResult();
+        async Task<string> Rest()
+        {
+            var timedOut = await Task.WhenAny(settled.Task, Task.Delay(3000)) != settled.Task;
+            settled = new TaskCompletionSource();
+            // The settle that started the swell ran a moment ago; give the swell its own.
+            await Task.Delay(50);
+            if (island.Moving && !timedOut)
+            {
+                timedOut = await Task.WhenAny(settled.Task, Task.Delay(3000)) != settled.Task;
+                settled = new TaskCompletionSource();
+            }
+
+            var g = island.Current;
+            return FormattableString.Invariant($"{g.Width:F1} x {g.Depth:F1} corner {g.Corner:F1}, moving={island.Moving}{(timedOut ? ", timed out" : "")}");
+        }
+
+        var compact = island.Attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact;
+        _ = island.MorphTo(IslandGeometry.Compact, SpringPreset.Snappy);
+        island.Swell(true);
+        string up = await Rest();
+        island.Swell(false);
+        string down = await Rest();
+        string want = FormattableString.Invariant($"{compact.Swollen().Width:F1} x {compact.Swollen().Depth:F1}");
+        bool ok = up.StartsWith(want, StringComparison.Ordinal) && up.Contains("moving=False", StringComparison.Ordinal)
+            && down.StartsWith(FormattableString.Invariant($"{compact.Width:F1} x {compact.Depth:F1}"), StringComparison.Ordinal) && down.Contains("moving=False", StringComparison.Ordinal);
+        log($"swell check: up {up}; down {down}; {(ok ? "ok" : "FAILED")}");
+        PInvoke.PostQuitMessage(0);
     }
 
     /// <summary>Debug stand-ins for the drag and the microphone: lean toward the cursor, and a synthetic level at 20 Hz.</summary>

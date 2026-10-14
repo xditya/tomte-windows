@@ -228,6 +228,15 @@ internal static unsafe partial class Program
             new("compact-device-event", IslandGeometry.Compact, c => CompactLine(c, "Volume 40%.", ring: null)),
             new("compact-digest", IslandGeometry.Compact, c => CompactLine(c, CompactRules.EventLine([new IslandEvent(CompactRules.TimerDone(TimeSpan.FromMinutes(25)), default), new IslandEvent("Opened Spotify.", default)]), ring: null)),
             new("compact-first-run-hint", IslandGeometry.Compact, c => CompactLine(c, CompactRules.Hint, ring: null)),
+            new("compact-glance-job", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts { Job = ("Weekly report", GlanceNow.AddMinutes(19)) }), ring: null)),
+            new("compact-glance-job-long", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts { Job = ("Send the weekly status report to the team", GlanceNow.AddMinutes(19)) }), ring: null)),
+            new("compact-glance-waiting", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts { Waiting = [new IslandEvent("Tomte found a damaged database and started a new one.", default)] }), ring: null)),
+            new("compact-glance-waiting-two", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts { Waiting = [new IslandEvent("Summary ready", default), new IslandEvent("Timer done", default)] }), ring: null)),
+            new("compact-glance-battery", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts { Battery = 15, ShelfCount = 3 }), ring: null)),
+            new("compact-glance-shelf", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts { ShelfCount = 3 }), ring: null)),
+            new("compact-glance-date", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts()), ring: null)),
+            // The push pill while the pointer rests on it, about to open: grown on its springs, the line where it was.
+            new("compact-glance-swollen", IslandGeometry.Compact.Swollen(), c => CompactLine(c, Glance(new GlanceFacts { ShelfCount = 3 }), ring: null)),
             new("compact-peek", IslandGeometry.Peek, c =>
             {
                 c.Pill();
@@ -319,6 +328,12 @@ internal static unsafe partial class Program
             c.RoundRect(bar, Waveform.BarWidth / 2, 0xFFFFFFFF);
         }
     }
+
+    // 18:41 on the day the captures were made, in this PC's culture, as the push pill lays it out.
+    private static readonly DateTimeOffset GlanceNow = new(DateTime.Today.AddHours(18).AddMinutes(41));
+
+    private static string Glance(GlanceFacts facts) =>
+        CompactRules.Glance(GlanceNow, facts, CompactLayout.Line(true, ring: false).Width, line => TextSlot.Measure(line, CompactLayout.LineStyle, 4096));
 
     // The Compact line in its slot, after the ring when the ring shows; the tomte is on.
     private static void CompactLine(Canvas c, string line, float? ring, bool tabular = false)

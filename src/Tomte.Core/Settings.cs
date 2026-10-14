@@ -131,6 +131,15 @@ public sealed record RevealSettings
     /// <summary>Resting in the zone this long also reveals. 0 turns dwell off.</summary>
     public int DwellMs { get; init; } = 350;
 
+    public const int ExpandDwellMinMs = 300, ExpandDwellMaxMs = 3000;
+
+    /// <summary>Resting on the pill this long opens the panels; a click or the wheel opens them at once.</summary>
+    public int ExpandDwellMs { get; init; } = 1000;
+
+    /// <summary>The expand dwell as used: held to its range, so a hand-edited file cannot open the panels at once or never.</summary>
+    [JsonIgnore]
+    public int ExpandDwellHeldMs => Math.Clamp(ExpandDwellMs, ExpandDwellMinMs, ExpandDwellMaxMs);
+
     public bool DragReveal { get; init; } = true;
 
     /// <summary>A drag within this many DIPs of the top edge, inside the zone, shows the drop surface.</summary>

@@ -20,6 +20,9 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
     /// <summary>Panels and the palette share one corner; only the size differs.</summary>
     public static IslandGeometry Panel(double width, double height) => new(width, height, 22);
 
+    /// <summary>The resting pill grown a little while the pointer rests on it: 6 wider, 2 deeper, and a corner that keeps a capsule a capsule.</summary>
+    public IslandGeometry Swollen() => this with { Width = Width + 6, Depth = Depth + 2, Corner = Corner + 1 };
+
     /// <summary>Width of the outline including both ramps.</summary>
     public double OuterWidth => Width + 2 * RampW;
 

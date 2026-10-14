@@ -1,3 +1,6 @@
+using System.Globalization;
+using Tomte.Core;
+using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Xunit;
 
@@ -109,5 +112,144 @@ public class CompactRulesTests
     public void TheDonePillSaysHowLongTheTimerRan(double seconds, string reads)
     {
         Assert.Equal(reads, CompactRules.TimerDone(TimeSpan.FromSeconds(seconds)));
+    }
+}
+
+public class GlanceTests
+{
+    private static readonly CultureInfo British = CultureInfo.GetCultureInfo("en-GB");
+    private static readonly DateTimeOffset Now = new(new DateTime(2026, 10, 14, 18, 41, 0, DateTimeKind.Local));
+
+    // Seven DIPs a character, so a width says how many characters fit; wide enough here for any line.
+    private static float Chars(string line) => line.Length * 7f;
+
+    private static string Glance(GlanceFacts facts, float width = 1000) => CompactRules.Glance(Now, facts, width, Chars, British);
+
+    private static readonly GlanceFacts All = new()
+    {
+        Job = ("Weekly report", Now.AddMinutes(19)),
+        Waiting = [new IslandEvent("Summary ready", Now.AddMinutes(-5))],
+        Battery = 15,
+        ShelfCount = 3,
+    };
+
+    [Fact]
+    public void TheTimeOfDayComesWithTheFirstThingThatApplies()
+    {
+        Assert.Equal("18:41 · Weekly report at 19:00", Glance(All));
+        Assert.Equal("18:41 · Summary ready", Glance(All with { Job = null }));
+        Assert.Equal("18:41 · Battery 15%", Glance(All with { Job = null, Waiting = [] }));
+        Assert.Equal("18:41 · 3 on the shelf", Glance(All with { Job = null, Waiting = [], Battery = null }));
+        Assert.Equal("18:41 · Wed 14 Oct", Glance(new GlanceFacts()));
+    }
+
+    [Fact]
+    public void AJobCountsOnlyWithinTheHourAhead()
+    {
+        Assert.Equal("18:41 · Weekly report at 19:41", Glance(All with { Job = ("Weekly report", Now.AddHours(1)) }));
+        Assert.Equal("18:41 · Summary ready", Glance(All with { Job = ("Weekly report", Now.AddMinutes(61)) }));
+        Assert.Equal("18:41 · Summary ready", Glance(All with { Job = ("Weekly report", Now) }));
+        Assert.Equal("18:41 · Summary ready", Glance(All with { Job = ("Weekly report", Now.AddMinutes(-3)) }));
+    }
+
+    [Fact]
+    public void SeveralWaitingEventsAreCountedAndTheBatteryOnlyWhenLow()
+    {
+        var two = new GlanceFacts { Waiting = [new IslandEvent("Timer done · 25:00", Now), new IslandEvent("Summary ready", Now)] };
+        Assert.Equal("18:41 · 2 events waiting", Glance(two));
+        Assert.Equal("18:41 · Battery 20%", Glance(new GlanceFacts { Battery = 20, ShelfCount = 2 }));
+        Assert.Equal("18:41 · 2 on the shelf", Glance(new GlanceFacts { Battery = 21, ShelfCount = 2 }));
+        Assert.Equal("18:41 · 1 on the shelf", Glance(new GlanceFacts { ShelfCount = 1 }));
+    }
+
+    [Fact]
+    public void DuringFocusWaitingEventsAreCountedNeverNamed()
+    {
+        var one = new GlanceFacts { Waiting = [new IslandEvent("Summary ready", Now)], Quiet = true };
+        Assert.Equal("18:41 · 1 event waiting", Glance(one));
+        Assert.Equal("18:41 · 2 events waiting", Glance(one with { Waiting = [new IslandEvent("Summary ready", Now), new IslandEvent("Timer done", Now)] }));
+        Assert.Equal("18:41 · Summary ready", Glance(one with { Quiet = false }));
+        // A job due soon still comes first, and with nothing waiting Focus changes nothing.
+        Assert.Equal("18:41 · Weekly report at 19:00", Glance(All with { Quiet = true }));
+        Assert.Equal("18:41 · 3 on the shelf", Glance(new GlanceFacts { ShelfCount = 3, Quiet = true }));
+    }
+
+    [Fact]
+    public void DuringThePauseWaitingEventsAreCountedNeverNamed()
+    {
+        var one = new GlanceFacts { Waiting = [new IslandEvent("Summary ready", Now)], Paused = true };
+        Assert.Equal("18:41 · 1 event waiting", Glance(one));
+        Assert.Equal("18:41 · 1 event waiting", Glance(one with { Quiet = true }));
+        Assert.Equal("18:41 · Summary ready", Glance(one with { Paused = false }));
+    }
+
+    [Fact]
+    public void ATwelveHourCultureKeepsAJobsTimeWithItsPm()
+    {
+        var us = CultureInfo.GetCultureInfo("en-US");
+        string now = CompactRules.TimeOfDay(Now, us), at = CompactRules.TimeOfDay(Now.AddMinutes(19), us);
+        Assert.EndsWith("PM", now);
+        Assert.EndsWith("PM", at);
+        Assert.Equal($"{now} · Weekly report at {at}", CompactRules.Glance(Now, All, 1000, Chars, us));
+        // "6:41 PM · " and " at 7:00 PM" take 21 of 28 characters; the name gives way, both times stay whole.
+        Assert.Equal($"{now} · Weekly… at {at}", CompactRules.Glance(Now, All, 28 * 7, Chars, us));
+        Assert.Equal(now, CompactRules.Glance(Now, All, 22 * 7, Chars, us));
+    }
+
+    [Theory]
+    [InlineData("en-GB", "Wed 14 Oct")]
+    [InlineData("en-US", "Wed Oct 14")]
+    [InlineData("de-DE", "Mi 14. Okt.")]
+    public void TheDateIsShortInTheCulturesOwnOrder(string culture, string reads)
+    {
+        Assert.Equal(reads, CompactRules.ShortDate(Now, CultureInfo.GetCultureInfo(culture)));
+    }
+
+    [Fact]
+    public void ALongLineIsCutAndAJobKeepsItsTime()
+    {
+        // 24 characters fit.
+        Assert.Equal("18:41 · Weekly… at 19:00", Glance(All with { Job = ("Weekly report summary", Now.AddMinutes(19)) }, 24 * 7));
+        Assert.Equal("18:41 · Tomte found a d…", Glance(new GlanceFacts { Waiting = [new IslandEvent("Tomte found a damaged database and started a new one.", Now)] }, 24 * 7));
+        // A space before the cut goes, so the ellipsis follows the word.
+        Assert.Equal("18:41 · Weekly…", Glance(new GlanceFacts { Waiting = [new IslandEvent("Weekly report", Now)] }, 15 * 7));
+        // What fits exactly is not cut.
+        Assert.Equal("18:41 · Summary ready", Glance(new GlanceFacts { Waiting = [new IslandEvent("Summary ready", Now)] }, 21 * 7));
+    }
+
+    [Fact]
+    public void TheCutNeverSplitsACharacter()
+    {
+        // An emoji outside the BMP is two UTF-16 units; 14 units fit, which would end in its first half.
+        string emoji = "Rep 📊 summary";
+        Assert.Equal("18:41 · Rep…", Glance(new GlanceFacts { Waiting = [new IslandEvent(emoji, Now)] }, 14 * 7));
+        Assert.Equal("18:41 · Rep 📊…", Glance(new GlanceFacts { Waiting = [new IslandEvent(emoji, Now)] }, 15 * 7));
+        // An accent typed as a combining mark stays with its letter.
+        Assert.Equal("18:41 · Caf…", Glance(new GlanceFacts { Waiting = [new IslandEvent("Café au lait", Now)] }, 13 * 7));
+    }
+
+    [Fact]
+    public void WithNoRoomForTheMentionTheTimeStandsAlone()
+    {
+        Assert.Equal("18:41", Glance(new GlanceFacts { ShelfCount = 3 }, 9 * 7));
+        // The job's own time needs room too: no name is better than no time.
+        Assert.Equal("18:41", Glance(All, 18 * 7));
+        Assert.Equal("18:41 · W… at 19:00", Glance(All, 19 * 7));
+    }
+
+    [Fact]
+    public void TheLineFitsThePillAsDirectWriteLaysItOut()
+    {
+        var slot = CompactLayout.Line(mascot: true, ring: false);
+        float Measure(string line) => TextSlot.Measure(line, CompactLayout.LineStyle, 4096);
+        var facts = All with { Job = ("Send the weekly status report to the whole team", Now.AddMinutes(19)) };
+        string line = CompactRules.Glance(Now, facts, slot.Width, Measure, British);
+        Assert.EndsWith("… at 19:00", line);
+        Assert.StartsWith("18:41 · Send", line);
+        Assert.True(Measure(line) <= slot.Width);
+        using var drawn = TextLayout.Of(new TextRun(line, CompactLayout.LineStyle, slot.Width));
+        Assert.False(drawn.Trimmed);
+        // The short ones fit whole.
+        Assert.Equal("18:41 · 3 on the shelf", CompactRules.Glance(Now, new GlanceFacts { ShelfCount = 3 }, slot.Width, Measure, British));
     }
 }

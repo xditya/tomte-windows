@@ -31,6 +31,7 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(60, s.Reveal.PushCounts);
         Assert.Equal(400, s.Reveal.PushWindowMs);
         Assert.Equal(350, s.Reveal.DwellMs);
+        Assert.Equal(1000, s.Reveal.ExpandDwellMs);
         Assert.Equal(48, s.Reveal.DragApproachDip);
         Assert.Equal(600, s.Reveal.DragEnterTimeoutMs);
         Assert.Equal(24, s.Reveal.RetractMarginDip);
@@ -108,6 +109,35 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal("Win+Alt+J", s.Hotkeys.Summon);
         Assert.Equal("Win+Alt+N", s.Hotkeys.Scratchpad);
         Assert.True(s.DesktopPeek);
+    }
+
+    [Fact]
+    public void AFileFromBeforeTheExpandDwellGetsTheDefaultAndKeepsItsOwnDwell()
+    {
+        Directory.CreateDirectory(dir);
+        System.IO.File.WriteAllText(File, """{ "reveal": { "dwellMs": 500, "retractDelayMs": 600 } }""");
+        var s = SettingsStore.Load(File);
+        Assert.Equal(1000, s.Reveal.ExpandDwellMs);
+        Assert.Equal(500, s.Reveal.DwellMs);
+        Assert.Equal(600, s.Reveal.RetractDelayMs);
+        // Saved and read again it is in the file under its own name, and the held value is not.
+        string text = SettingsStore.Serialize(s with { Reveal = s.Reveal with { ExpandDwellMs = 1500 } });
+        Assert.Contains("\"expandDwellMs\": 1500", text);
+        Assert.DoesNotContain("expandDwellHeldMs", text);
+    }
+
+    [Theory]
+    [InlineData(1000, 1000)]
+    [InlineData(300, 300)]
+    [InlineData(3000, 3000)]
+    [InlineData(0, 300)]
+    [InlineData(-5, 300)]
+    [InlineData(299, 300)]
+    [InlineData(3001, 3000)]
+    [InlineData(60000, 3000)]
+    public void TheExpandDwellIsHeldToItsRange(int written, int used)
+    {
+        Assert.Equal(used, new RevealSettings { ExpandDwellMs = written }.ExpandDwellHeldMs);
     }
 
     [Fact]

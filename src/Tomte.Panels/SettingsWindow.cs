@@ -71,6 +71,7 @@ public sealed partial class SettingsWindow : Window
             Row("Push strength, touchpad", Note("The same for a precision touchpad."), Number(10, 1000, r => r.TouchpadPushCounts, (r, v) => r with { TouchpadPushCounts = (int)v })),
             Row("Push time", Note("The push has to happen within this many milliseconds."), Number(100, 2000, r => r.PushWindowMs, (r, v) => r with { PushWindowMs = (int)v })),
             Row("Dwell", Note("Resting in the zone this many milliseconds also reveals. 0 turns it off."), Number(0, 3000, r => r.DwellMs, (r, v) => r with { DwellMs = (int)v })),
+            Row("Open the panels", Note("Open the panels after resting on the pill, in milliseconds."), Number(RevealSettings.ExpandDwellMinMs, RevealSettings.ExpandDwellMaxMs, r => r.ExpandDwellMs, (r, v) => r with { ExpandDwellMs = (int)v })),
             Row("Drag reveal", Note("Dragging a file to the top edge shows the shelf."), RevealToggle(r => r.DragReveal, (r, v) => r with { DragReveal = v })),
             Row("Drag distance", Note("How close to the top edge a drag has to come, in pixels at 100% scale."), Number(8, 200, r => r.DragApproachDip, (r, v) => r with { DragApproachDip = (int)v })),
             Row("Drop wait", Note("Milliseconds to wait for a real drop before the shelf goes away."), Number(200, 3000, r => r.DragEnterTimeoutMs, (r, v) => r with { DragEnterTimeoutMs = (int)v })),

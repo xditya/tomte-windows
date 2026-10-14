@@ -42,8 +42,29 @@ internal static class Jobs
     private static readonly JobClock Clock = new();
     private static bool running;
 
+    private static TomteDb? db;
+
     /// <summary>The shelf the Shelf panel uses, so a job reads the same items. Set when the shelf starts.</summary>
     public static ShelfStore? Shelf { get; set; }
+
+    /// <summary>The one-shot was armed for another time, or for none: the job due next may have changed. On the island's thread.</summary>
+    public static event Action? NextChanged;
+
+    /// <summary>What the one-shot is armed for: the next run over all jobs, or null with none. Read without the database.</summary>
+    public static DateTimeOffset? NextDue => Clock.Next;
+
+    /// <summary>The job due soonest after now, with its name: a read of the database on the pool. Null with no job ahead.</summary>
+    public static async Task<(string Name, DateTimeOffset At)?> NextJobAsync()
+    {
+        if (db is not { } open)
+        {
+            return null;
+        }
+
+        var now = DateTimeOffset.Now;
+        var jobs = await Task.Run(() => new JobStore(open).All());
+        return jobs.Where(j => j.NextDue > now).MinBy(j => j.NextDue) is { NextDue: { } at } job ? (job.Name, at) : null;
+    }
 
     /// <summary>
     /// A --run-job (id) start: handed to the Tomte running on the same data folder, which checks what is due, or, with
@@ -65,6 +86,7 @@ internal static class Jobs
         try
         {
             JobTask.Tag((nint)c.Island.Hwnd, Path.GetDirectoryName(c.Db.FilePath)!);
+            db = c.Db;
             var inner = c.Island.Message;
             c.Island.Message = (message, wParam, lParam) => OnMessage(c, message, wParam, lParam) || (inner?.Invoke(message, wParam, lParam) ?? false);
             if (Arg(args, "--debug-remove-job") is { } remove)
@@ -91,7 +113,11 @@ internal static class Jobs
         }
     }
 
-    private static void Arm(JobContext c, DateTimeOffset? due) => SetOneShot(c, Clock.Arm(due));
+    private static void Arm(JobContext c, DateTimeOffset? due)
+    {
+        SetOneShot(c, Clock.Arm(due));
+        NextChanged?.Invoke();
+    }
 
     private static unsafe void SetOneShot(JobContext c, uint? wait)
     {

@@ -126,3 +126,64 @@ public class RetractionRulesTests
         static (int, int) Span(RevealZone zone) => (zone.Left, zone.Right);
     }
 }
+
+// The hover dwell that opens Panels from the pill, driven as the controller drives its one-shot: Start arms it, Cancel
+// disarms it, and it opens the panels when it runs out before the next report.
+public class HoverDwellTests
+{
+    [Theory]
+    [InlineData(false, true, HoverStep.Start)]
+    [InlineData(true, false, HoverStep.Cancel)]
+    [InlineData(true, true, HoverStep.None)]
+    [InlineData(false, false, HoverStep.None)]
+    public void ComingOnStartsItAndLeavingCancelsIt(bool wasOn, bool on, HoverStep expected)
+    {
+        Assert.Equal(expected, RetractionRules.Hover(wasOn, on));
+    }
+
+    [Fact]
+    public void RestingOnThePillOpensThePanelsOnceTheDwellHasRun()
+    {
+        Assert.Equal(1000, OpensAt(1000, (0, true)));
+        // Moves about the pill, and the same place reported again for new bounds, do not start it over.
+        Assert.Equal(1000, OpensAt(1000, (0, true), (200, true), (600, true), (950, true)));
+        // A short dwell set in settings opens sooner, from the same rest.
+        Assert.Equal(300, OpensAt(300, (0, true), (100, true)));
+    }
+
+    [Fact]
+    public void LeavingThePillCancelsItAndComingBackStartsOver()
+    {
+        Assert.Null(OpensAt(1000, (0, true), (900, false)));
+        Assert.Equal(2200, OpensAt(1000, (0, true), (900, false), (1200, true), (1500, true)));
+        // The margin around the pill holds the island open but is not on the pill, so resting there never opens it.
+        Assert.Null(OpensAt(1000, (0, false), (500, false), (3000, false)));
+    }
+
+    private static double? OpensAt(int dwellMs, params (double At, bool OnPill)[] reports)
+    {
+        bool on = false;
+        double? due = null;
+        foreach (var (at, onPill) in reports)
+        {
+            if (due <= at)
+            {
+                return due;
+            }
+
+            switch (RetractionRules.Hover(on, onPill))
+            {
+                case HoverStep.Start:
+                    due = at + dwellMs;
+                    break;
+                case HoverStep.Cancel:
+                    due = null;
+                    break;
+            }
+
+            on = onPill;
+        }
+
+        return due;
+    }
+}
