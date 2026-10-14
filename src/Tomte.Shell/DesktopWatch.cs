@@ -303,7 +303,7 @@ internal sealed unsafe class DesktopWatch : IDisposable
             && new ReadOnlySpan<char>(name, (int)needed / 2 - 1).SequenceEqual("Default");
     }
 
-    private static string? ExeName(uint pid)
+    internal static string? ExeName(uint pid)
     {
         using var process = PInvoke.OpenProcess_SafeHandle(PROCESS_ACCESS_RIGHTS.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
         if (process.IsInvalid)

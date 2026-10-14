@@ -5,6 +5,7 @@ using Tomte.AI;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Clipboard;
 using Tomte.Core.Device;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
@@ -119,11 +120,16 @@ internal static class Program
             timer.Run = TimerRun.Starting(DateTimeOffset.Now, length);
         }
 
-        // The note lives beside the settings file too. Nothing here opens the database: the note loads when something
-        // first reads it.
+        // The note and clipboard history live beside the settings file too. Nothing here opens the database: the note
+        // loads when something first reads it, history on the first copy.
         string data = Path.GetDirectoryName(store.FilePath)!;
         var db = new TomteDb(Path.Combine(data, "tomte.db"));
         Scratchpad = new ScratchpadNote(db, Path.Combine(data, "scratchpad.md"));
+        var history = new ClipboardHistory(db);
+        var clipboard = new ClipboardWatch(history, captured => ClipboardListener.Start(captured, () => pause.IsPaused(DateTimeOffset.Now), () => store.Current.AppRules, history.Retention.MaxChars, logLine), logLine);
+        // Off means no listener at all. Changed arrives on a pool thread.
+        clipboard.Apply(store.Current.KeepClipboardHistory);
+        store.Changed += s => island.Queue.TryEnqueue(() => clipboard.Apply(s.KeepClipboardHistory));
         StartPanels(island, triggers, store, logLine, args.Contains("--debug-tabs"));
 
         if (rambler)
@@ -176,7 +182,8 @@ internal static class Program
             settingsProcess.Kill();
         }
 
-        // Typing not yet saved is saved now.
+        // Quitting keeps the history; only turning it off clears it. Typing not yet saved is saved now.
+        clipboard.Dispose();
         try
         {
             Scratchpad.FlushAsync().Wait(TimeSpan.FromSeconds(6));

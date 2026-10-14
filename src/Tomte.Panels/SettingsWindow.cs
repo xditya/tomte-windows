@@ -76,6 +76,13 @@ public sealed partial class SettingsWindow : Window
             rulesList,
             AddRuleRow()));
 
+        var kept = new Tomte.Core.Clipboard.ClipboardRetention();
+        page.Children.Add(Header("Clipboard history"));
+        page.Children.Add(Card(Row(
+            "Keep history",
+            Note($"Keep the last {kept.MaxItems} pieces of text you copy on this PC, for up to {kept.MaxDays} days. Items password managers mark are never kept, and nothing is kept while Tomte is paused or an app with a deny rule is in front. Turning it off deletes the history."),
+            Toggle(s => s.KeepClipboardHistory, (s, v) => s with { KeepClipboardHistory = v }))));
+
         page.Children.Add(Header("AI tools"));
         page.Children.Add(Card(
             Note("Tools the AI layer can use when you ask for their effect. Nothing runs without a provider configured. Tools marked \"asks each time\" can be always allowed from the prompt; remove a grant here to be asked again."),
