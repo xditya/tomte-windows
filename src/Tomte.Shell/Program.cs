@@ -168,7 +168,7 @@ internal static class Program
         tray.OpenSettings += OpenSettings;
         tray.Paused += triggers.Hide;
         tray.Quit += () => PInvoke.PostQuitMessage(0);
-        TellAboutDamagedDatabase(island, triggers, store);
+        TellAboutDamagedDatabase(island, triggers, db);
 
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
@@ -383,9 +383,8 @@ internal static class Program
     /// at once for one in this process. One made by the settings window while the shell runs waits for the next start.
     /// Touches no SQLite type, so a start with nothing to tell loads none.
     /// </summary>
-    private static void TellAboutDamagedDatabase(IslandWindow island, TriggerController triggers, SettingsStore store)
+    private static void TellAboutDamagedDatabase(IslandWindow island, TriggerController triggers, TomteDb db)
     {
-        var db = new TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db"));
         // Raised on the worker thread that opened the file.
         TomteDb.FileSetAside += path =>
         {
