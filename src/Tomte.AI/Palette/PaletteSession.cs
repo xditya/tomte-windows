@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Tomte.AI.Mcp;
+using Tomte.AI.Skills;
 using Tomte.Core;
 using Tomte.Core.Device;
 
@@ -78,6 +79,9 @@ public interface IPaletteSession
 
     decimal? DailyCapUsd { get; }
 
+    /// <summary>Palette commands from the skills the user turned on. Picking one puts its Text in Prompt.</summary>
+    IReadOnlyList<SkillCommand> Commands { get; }
+
     event Action? Changed;
 
     Task SendAsync();
@@ -105,6 +109,7 @@ public sealed class PaletteSession : IPaletteSession
     private readonly PermissionGrants _grants;
     private readonly List<AnswerSegment> _answer = [];
     private readonly SortedSet<string> _mcpContacted = new(StringComparer.Ordinal);
+    private readonly List<string> _skillFiles = [];
     private readonly string _model;
     private CancellationTokenSource? _userCancel;
     private string _indicator = "Nothing sent";
@@ -131,6 +136,11 @@ public sealed class PaletteSession : IPaletteSession
 
     /// <summary>The user's MCP servers. Their tools are listed (and stdio servers started) on the first send; the owner disposes it when the palette closes.</summary>
     public McpTools? Mcp { get; init; }
+
+    /// <summary>The skills the user turned on, found when the palette opened. Their text reaches the provider only with a send.</summary>
+    public SkillSet? Skills { get; init; }
+
+    public IReadOnlyList<SkillCommand> Commands => Skills?.Commands ?? [];
 
     /// <summary>Clock for the daily cap; tests set it.</summary>
     public Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.Now;
@@ -167,6 +177,7 @@ public sealed class PaletteSession : IPaletteSession
 
         _answer.Clear();
         _mcpContacted.Clear();
+        _skillFiles.Clear();
         ToolSteps = 0;
         Error = null;
         if (_options.DailyCapUsd is { } cap && SpentTodayUsd >= cap)
@@ -188,7 +199,9 @@ public sealed class PaletteSession : IPaletteSession
         {
             List<ContentPart> parts;
             (parts, attached) = await ContextAssembly.BuildAsync(Chips, Prompt, ct);
-            IReadOnlyList<ToolDefinition> tools = BuiltInTools.Definitions;
+            if (Skills?.Sent is { } skills)
+                attached.Add(skills);
+            IReadOnlyList<ToolDefinition> tools = Skills?.Tool is { } read ? [.. BuiltInTools.Definitions, read] : BuiltInTools.Definitions;
             if (Mcp is not null)
             {
                 // Starting or connecting a server sends it data (an HTTP server gets its header), so the user sees which ones.
@@ -255,7 +268,7 @@ public sealed class PaletteSession : IPaletteSession
             if (sent)
             {
                 var cost = SendLog.Estimate(_options.Prices, _model, inputTokens, outputTokens);
-                _log.Append(new SendLogEntry(Now(), _config.Id, _model, inputTokens, outputTokens, cost, attached,
+                _log.Append(new SendLogEntry(Now(), _config.Id, _model, inputTokens, outputTokens, cost, [.. attached, .. _skillFiles],
                     _options.LogContent ? $"{Prompt}\n---\n{AnswerText}" : null));
                 SpentTodayUsd += cost;
             }
@@ -275,7 +288,7 @@ public sealed class PaletteSession : IPaletteSession
     private async Task<(List<ContentPart> Assistant, List<ToolCallPart> Calls, TurnDone Usage)> StreamTurnAsync(List<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken ct)
     {
         // A copy: the list keeps growing, and a request must not change after it was sent.
-        var request = new ChatRequest(_model, [.. messages], SystemPrompt, tools, _options.MaxTokens);
+        var request = new ChatRequest(_model, [.. messages], SystemPrompt + Skills?.Prompt, tools, _options.MaxTokens);
         var assistant = new List<ContentPart>();
         var calls = new List<ToolCallPart>();
         TurnDone usage = new(null, 0, 0);
@@ -328,6 +341,20 @@ public sealed class PaletteSession : IPaletteSession
 
     private async Task<ToolResultPart> RunToolAsync(ToolCallPart call, CancellationToken ct)
     {
+        if (Skills?.Refuse(call) is { } refused)
+            return Step(call, call.Name, refused, isError: true);
+
+        // A skill's own files are a read and run without asking. Nothing a skill says reaches a tier or a grant.
+        if (Skills is not null && call.Name == SkillSet.ReadTool)
+        {
+            if (Skills.Validate(call.Input) is { } bad)
+                return Step(call, call.Name, bad, isError: true);
+            var read = await Task.Run(() => Skills.Run(call), ct);
+            if (!read.IsError)
+                _skillFiles.Add("skill file " + SkillSet.FileOf(call.Input));
+            return Step(call, "Read skill file " + SkillSet.FileOf(call.Input), read.Content, read.IsError);
+        }
+
         bool mcp = !BuiltInTools.Tiers.ContainsKey(call.Name) && Mcp?.Owns(call.Name) == true;
         // MCP servers check their own arguments; the only shape rule here is the one every tool shares.
         string? invalid = mcp

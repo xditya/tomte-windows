@@ -50,6 +50,9 @@ public sealed record TomteSettings
     /// listens for media changes while the island is hidden.
     /// </summary>
     public bool MediaTrackChangeEvent { get; init; }
+
+    /// <summary>Skills the user turned on, by folder name. A skill not listed is off, so a new one starts off.</summary>
+    public IReadOnlyList<string> EnabledSkills { get; init; } = [];
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>
