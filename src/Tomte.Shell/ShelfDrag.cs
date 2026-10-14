@@ -46,6 +46,12 @@ internal static unsafe class ShelfDrag
         var source = OleObjects.Wrap<IDropSource>(new DropSource());
         log?.Invoke($"drag out: {present.Count} items as {(data.VirtualFiles ? "virtual files" : "CF_HDROP")}, effects {effects}{(shift ? " (shift)" : "")}, image {image}, ready in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
 
+        if (log is not null)
+        {
+            // Says whether the island's queue, which carries the compositor tick, runs while DoDragDrop holds the thread.
+            island.Queue.TryEnqueue(() => log($"drag out: the island's queue ran {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0}ms after the drag was ready"));
+        }
+
         triggers.DraggingOut(true);
         triggers.Drops.Refusing = true;
         DROPEFFECT effect = default;
