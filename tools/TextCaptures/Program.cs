@@ -268,7 +268,24 @@ internal static unsafe partial class Program
             new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
             new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
             .. DropZoneScenes(),
+            CaptureHint(),
         ];
+    }
+
+    // The capture overlay's hint at the top of a monitor, as CaptureOverlay builds it: over the dim, the capsule and its line.
+    private static Scene CaptureHint()
+    {
+        float text = TextSlot.Measure(LassoHint.Text, LassoHint.Style, 4096);
+        float width = MathF.Ceiling(text) + 2 * LassoHint.Side + 80;
+        return new("capture-hint", new IslandGeometry(width, 60, 0), c =>
+        {
+            var host = new Vector2(-width / 2, 0);
+            var card = Offset(LassoHint.Card(width, text), host);
+            c.RoundRect(new RectangleF(-width / 2 - 24, -24, width + 48, 108), 0, 0x59000000);
+            c.RoundRect(card, card.Height / 2, 0xFF101012);
+            c.StrokeRect(card, card.Height / 2, 0x1AFFFFFF);
+            c.Text(LassoHint.Text, LassoHint.Style, LassoHint.Line(LassoHint.Card(width, text)), host);
+        });
     }
 
     private sealed record Track(string Title, string Artist, double Position, double Length, bool Playing, string App = "Spotify", bool Timeline = true);

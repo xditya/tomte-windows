@@ -1,4 +1,28 @@
+using System.Drawing;
+using Tomte.Core.Text;
+
 namespace Tomte.Core;
+
+/// <summary>
+/// The line the capture overlay shows at the top of its monitor until the first press, on a dark capsule as tall as the
+/// island's pill and the island's top gap below the edge, centred. In DIPs from the monitor's top-left.
+/// </summary>
+public static class LassoHint
+{
+    public const string Text = "Drag around what you want to ask about · Esc cancels";
+    public const float Height = 38, Side = 18;
+    public static readonly TextStyle Style = TextStyle.Primary;
+
+    /// <summary>The capsule for a line <paramref name="textWidth"/> wide on a monitor <paramref name="monitorWidth"/> wide.</summary>
+    public static RectangleF Card(float monitorWidth, float textWidth)
+    {
+        float width = MathF.Ceiling(textWidth) + 2 * Side;
+        return new(MathF.Round((monitorWidth - width) / 2), (float)IslandOutline.Gap, width, Height);
+    }
+
+    /// <summary>Where the line goes in its card.</summary>
+    public static RectangleF Line(RectangleF card) => new(card.X + Side, card.Y, card.Width - 2 * Side, card.Height);
+}
 
 /// <summary>A rectangle in physical pixels. A lasso box or crop is monitor-relative; a monitor's bounds are virtual-screen.</summary>
 public readonly record struct PixelRect(int X, int Y, int Width, int Height);

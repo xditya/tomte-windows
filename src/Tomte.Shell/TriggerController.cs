@@ -1197,7 +1197,7 @@ internal sealed partial class TriggerController
             PInvoke.GetCursorPos(out var cursor);
             machine.TransitionTo(IslandState.Capture);
             island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);
-            var open = overlay = new CaptureOverlay(island.Compositor, cursor);
+            var open = overlay = new CaptureOverlay(island.Compositor, cursor, Program.Text);
             log?.Invoke($"capture overlay shown in {System.Diagnostics.Stopwatch.GetElapsedTime(triggered).TotalMilliseconds:F1}ms monitor={open.Bounds} scale={open.Lasso.Scale} activated={open.Activated}");
             var box = await open.Result;
             overlay = null;
