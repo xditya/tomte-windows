@@ -132,7 +132,7 @@ internal static class Program
         // waits for its window and stopping it waits for its thread, neither of which belongs on the island's thread.
         clipboard.Apply(store.Current.KeepClipboardHistory);
         store.Changed += s => clipboard.Apply(s.KeepClipboardHistory);
-        StartPanels(island, triggers, store, db, clipboard, logLine, args.Contains("--debug-tabs"));
+        StartPanels(island, triggers, store, db, clipboard, logLine);
 
         if (rambler)
         {
@@ -252,29 +252,23 @@ internal static class Program
     }
 
     /// <summary>
-    /// The panel host with the Media panel, the Compact now-playing row and the track-change event. The
-    /// event is the one thing that listens to media while the island is hidden, and only when the user
+    /// The panel host with the Shelf and Media panels, the Compact now-playing row and the track-change event.
+    /// The event is the one thing that listens to media while the island is hidden, and only when the user
     /// turned it on in settings.
     /// </summary>
-    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ClipboardWatch clipboard, Action<string>? log, bool debugTabs)
+    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ClipboardWatch clipboard, Action<string>? log)
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
-        // own tiles, note and history too.
+        // own shelf, tiles, note and history too.
+        panels.Register(StartShelf(island, triggers, store, db, log));
         var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
         panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
         panels.Register(new ScratchpadPanel(island, Scratchpad, log));
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
         panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), log));
-        if (debugTabs)
-        {
-            // --debug-tabs: an empty Shelf-sized tab to switch to, until a second panel exists.
-            panels.Register(new BlankPanel());
-            panels.Select(PanelId.Media);
-        }
-
         triggers.Panels = panels;
         // The row lives on the state changes and ContentReady it listens to.
         _ = new NowPlayingRow(island, triggers, media, log);
@@ -310,6 +304,19 @@ internal static class Program
                 media.Unwatch(timeline: false, art: false);
             }
         }
+    }
+
+    /// <summary>
+    /// The shelf takes what is dropped on the island and is the Shelf tab. Its database and its folder sit next to
+    /// the settings file, and neither is opened before the first drop or the first time the shelf shows.
+    /// </summary>
+    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, Action<string>? log)
+    {
+        string dir = Path.GetDirectoryName(store.FilePath)!;
+        var shelf = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log);
+        triggers.Drops.Dropped += drop => shelf.Accept(drop);
+        _ = new ShelfDropSurface(island, triggers.Machine, triggers.Drops);
+        return new ShelfPanel(island, triggers, shelf, log);
     }
 
     /// <summary>Debug stand-ins for the drag and the microphone: lean toward the cursor, and a synthetic level at 20 Hz.</summary>
@@ -552,27 +559,6 @@ internal static class Program
     {
         int i = Array.IndexOf(args, name);
         return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
-    }
-
-    private sealed class BlankPanel : IPanel
-    {
-        public PanelId Id => PanelId.Shelf;
-
-        public void Shown(Windows.UI.Composition.ContainerVisual body, System.Numerics.Vector2 size)
-        {
-        }
-
-        public void Hidden()
-        {
-        }
-
-        public void Press(System.Numerics.Vector2 point)
-        {
-        }
-
-        public void Wheel(System.Numerics.Vector2 point, int delta)
-        {
-        }
     }
 
     /// <summary>Routes await continuations back to the UI thread's dispatcher queue.</summary>

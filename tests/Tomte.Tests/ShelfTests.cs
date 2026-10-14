@@ -334,7 +334,7 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal("c.txt", ShelfStore.Unique("c.txt", taken));
     }
 
-    private static readonly System.Numerics.Vector2 Body = new(560, 260 - ShelfLayout.TabStrip);
+    private static readonly System.Numerics.Vector2 Body = new(560, 260 - PanelSpace.TabStripHeight);
 
     [Fact]
     public void TheGridFitsTheShelfPanelClearOfItsCorners()
@@ -401,15 +401,17 @@ public sealed class ShelfTests : IDisposable
     [InlineData(1.5)]
     public void APressInWindowPixelsLandsOnTheSameTileAtEveryScale(double scale)
     {
-        // The settled Panels window: the shape's box plus one pixel each side, the shape centred in it.
-        int clientWidth = (int)Math.Ceiling((560 + 2 * 24) * scale) + 2;
+        // A press arrives in window pixels; the panel host maps it into island space and then into the body, as for
+        // Media. The island's DIP space starts one pixel in plus half the outline's width and carries the scale.
+        var size = PanelSize.Shelf;
+        float originX = 1 + (float)(IslandGeometry.Panel(size.W, size.H).OuterWidth / 2 * scale);
         for (int slot = 0; slot < 8; slot++)
         {
             var tile = ShelfLayout.Tile(slot, Body);
             foreach (var (x, y) in new[] { (tile.Left + 1, tile.Top + 1), (tile.Right - 1, tile.Bottom - 1) })
             {
-                int px = (int)Math.Round((x - 280) * scale + clientWidth / 2.0), py = (int)Math.Round((y + ShelfLayout.TabStrip) * scale + 1);
-                var back = ShelfLayout.BodyPoint(px, py, clientWidth, scale, 560);
+                int px = (int)Math.Round(originX + (x - size.W / 2) * scale), py = (int)Math.Round(1 + (y + PanelSpace.TabStripHeight) * scale);
+                var back = PanelSpace.ToBody(PanelSpace.FromPixels(px, py, originX, 1, scale), size.W);
                 Assert.Equal(slot, ShelfLayout.At(back, Body, 0, 8, _ => false).Index);
             }
         }

@@ -14,7 +14,6 @@ public static class ShelfLayout
     public const int Columns = 4;
     public const float PadX = 14, PadY = 12, HeadHeight = 16, HeadGap = 10, Gap = 8, TileHeight = 80;
     public const float TilePad = 10, Icon = 30, Button = 22, ButtonGap = 2, ButtonInset = 6;
-    public const float TabStrip = 42;
 
     // The drop target leaves the mascot its column on the left: its inset, its size and a gap.
     public const float DropLeft = 8 + 26 + 10, DropRight = 14, DropPadY = 12;
@@ -91,13 +90,6 @@ public static class ShelfLayout
     /// <summary>The drop surface's target in island space, for a shape this wide and deep.</summary>
     public static RectangleF DropTarget(double width, double depth) =>
         new(-(float)width / 2 + DropLeft, DropPadY, (float)width - DropLeft - DropRight, (float)depth - 2 * DropPadY);
-
-    /// <summary>
-    /// A press in the island window's client pixels as a point in a panel body. The window is the shape's box plus a one
-    /// pixel margin, centred on the shape; the body starts under the tab strip at the panel's left edge.
-    /// </summary>
-    public static Vector2 BodyPoint(int clientX, int clientY, int clientWidth, double scale, double panelWidth) =>
-        new((float)((clientX - clientWidth / 2.0) / scale + panelWidth / 2), (float)((clientY - 1) / scale - TabStrip));
 
     public static string Head(int count) => FormattableString.Invariant($"{count} item{(count == 1 ? "" : "s")} · references by default");
 

@@ -117,31 +117,14 @@ internal sealed class Parts(Compositor compositor) : IDisposable
     }
 }
 
-/// <summary>Island space, until the panel host's container merges: DIPs, x = 0 on the island's centre line, y = 0 at its top edge.</summary>
-internal static class IslandSpace
+/// <summary>The content fades: in over 0.15 s once the shape is 60% along (ContentReady), out over 0.1 s before it goes.</summary>
+internal static class Fades
 {
-    // the scale is read when the part is built; a DPI change while it shows is picked up on the next showing.
-    public static ContainerVisual Create(IslandWindow island, Parts parts)
-    {
-        var c = island.Compositor;
-        var space = parts.Attach(island.Content, c.CreateContainerVisual());
-        space.Scale = new Vector3((float)island.Scale, (float)island.Scale, 1);
-        // Content is the outline's box plus a one pixel margin each side; the compositor keeps this on its centre line.
-        var centre = parts.Keep(c.CreateExpressionAnimation("Vector3((content.Size.X - 2) / 2, 0, 0)"));
-        centre.SetReferenceParameter("content", island.Content);
-        space.StartAnimation("Offset", centre);
-        return space;
-    }
-
-    /// <summary>Fades a part in once the shape is most of the way out (0.15 s), or out before it goes (0.1 s).</summary>
-    public static void Fade(Visual visual, Parts parts, bool show)
+    public static void Run(Visual visual, Parts parts, bool show)
     {
         var fade = parts.Keep(visual.Compositor.CreateScalarKeyFrameAnimation());
         fade.InsertKeyFrame(1, show ? 1 : 0);
         fade.Duration = TimeSpan.FromMilliseconds(show ? 150 : 100);
-        // The snappy spring has the shape 60% open about 80 ms in.
-        fade.DelayTime = TimeSpan.FromMilliseconds(show ? 80 : 0);
-        visual.Opacity = show ? 0 : visual.Opacity;
         visual.StartAnimation("Opacity", fade);
     }
 }
@@ -157,6 +140,7 @@ internal sealed class ShelfDropSurface
     private Parts? parts, leaving;
     private ContainerVisual? space;
     private CompositionColorBrush? fill, stroke;
+    private bool fadeInPending;
 
     public ShelfDropSurface(IslandWindow island, IslandStateMachine machine, DropTarget drops)
     {
@@ -178,13 +162,24 @@ internal sealed class ShelfDropSurface
         };
         drops.Entered += () => Hot(true);
         drops.Left += () => Hot(false);
+        island.ContentReady += () =>
+        {
+            if (fadeInPending && space is not null)
+            {
+                fadeInPending = false;
+                Fades.Run(space, parts!, show: true);
+            }
+        };
     }
 
     private void Show()
     {
         Release();
         var p = parts = new Parts(island.Compositor);
-        space = IslandSpace.Create(island, p);
+        // Island space: DIPs from the island's centre line and top edge, scaled and kept centred by the island.
+        space = p.Attach(island.Dips, island.Compositor.CreateContainerVisual());
+        space.Opacity = 0;
+        fadeInPending = true;
         var g = IslandGeometry.ShelfDrop;
         var r = ShelfLayout.DropTarget(g.Width, g.Depth);
         var shapes = p.Shapes(space, r);
@@ -201,7 +196,6 @@ internal sealed class ShelfDropSurface
         p.Box(shapes, new RectangleF(x, y - 7, 7, 4), 1.5f, null, ink, 1.4f);
         p.Box(shapes, new RectangleF(x, y - 5, glyph, 12), 2, null, ink, 1.4f);
         p.TextSlot(shapes, ShelfLayout.DropHere, new RectangleF(x + glyph + gap, y - 6, label, 12), ShelfColors.Ink);
-        IslandSpace.Fade(space, p, show: true);
     }
 
     private void Hot(bool on)
@@ -223,7 +217,7 @@ internal sealed class ShelfDropSurface
 
         Release();
         leaving = parts;
-        IslandSpace.Fade(space!, leaving, show: false);
+        Fades.Run(space!, leaving, show: false);
         (parts, space, fill, stroke) = (null, null, null, null);
 
         // A one-shot timer, not the fade's end: with the display asleep the compositor finishes no animation.
