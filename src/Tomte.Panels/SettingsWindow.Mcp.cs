@@ -178,6 +178,12 @@ public sealed partial class SettingsWindow
 
             foreach (var tool in tools)
             {
+                if (tool.LeftOut is not null)
+                {
+                    panel.Children.Add(Row(tool.Name, Note(tool.LeftOut), Note("Not offered")));
+                    continue;
+                }
+
                 var tiers = server.AllowedTiers;
                 var box = new ComboBox { ItemsSource = tiers.Select(TierName).ToArray(), SelectedIndex = IndexOf(tiers, server.TierFor(tool.Key)), MinWidth = 200 };
                 box.SelectionChanged += (_, _) => SaveMcp(s => s.Name == name ? s.WithTier(tool.Key, tiers[box.SelectedIndex]) : s);

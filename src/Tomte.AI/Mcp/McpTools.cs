@@ -12,8 +12,11 @@ using Tomte.Core.Device;
 
 namespace Tomte.AI.Mcp;
 
-/// <summary>One tool as Settings lists it: the key its tier is stored under, and its name and description cleaned for display.</summary>
-public sealed record McpToolInfo(string Key, string Name, string Description);
+/// <summary>
+/// One tool as Settings lists it: the key its tier is stored under, and its name and description cleaned
+/// for display. <paramref name="LeftOut"/> says why the model is not offered the tool, or is null when it is.
+/// </summary>
+public sealed record McpToolInfo(string Key, string Name, string Description, string? LeftOut = null);
 
 /// <summary>
 /// The MCP servers one palette uses. Nothing starts until the first <see cref="ListAsync"/>: a stdio
@@ -57,6 +60,9 @@ public sealed class McpTools : IAsyncDisposable
 
     // By the name the model sees, in a fixed order: the model gets the same tool list on every send.
     private readonly SortedDictionary<string, Entry> _tools = new(StringComparer.Ordinal);
+
+    // Tools the model is not offered because their schema is too long; Settings lists them with the reason.
+    private readonly List<Entry> _leftOut = [];
     private readonly Timer _idle;
     private int _busy;
     private bool _disposed;
@@ -96,7 +102,12 @@ public sealed class McpTools : IAsyncDisposable
 
     /// <summary>Every tool listed so far, for Settings.</summary>
     public IReadOnlyList<McpToolInfo> Tools =>
-        [.. _tools.Values.Select(t => new McpToolInfo(t.Key, Clean(t.Tool.Name, MaxName), Clean(t.Tool.Description, MaxDescription)))];
+    [
+        .. _tools.Values.Select(t => Info(t, null)),
+        .. _leftOut.Select(t => Info(t, $"The AI is not offered this tool: the description of its arguments is {t.Tool.InputSchema.GetRawText().Length:N0} characters long, and Tomte passes on at most {MaxSchema:N0}.")),
+    ];
+
+    private static McpToolInfo Info(Entry t, string? leftOut) => new(t.Key, Clean(t.Tool.Name, MaxName), Clean(t.Tool.Description, MaxDescription), leftOut);
 
     /// <summary>The servers a listing would start or connect now, by name: what the "where data goes" indicator shows.</summary>
     public IReadOnlyList<string> NotRunning => [.. _servers.Where(s => !_clients.ContainsKey(s.Name)).Select(s => Clean(s.Name, MaxName))];
@@ -559,6 +570,7 @@ public sealed class McpTools : IAsyncDisposable
     private string? Register(McpServerSettings server, IList<Tool> tools)
     {
         var mine = new Dictionary<string, Entry>(StringComparer.Ordinal);
+        var leftOut = new List<Entry>();
         foreach (var tool in tools)
         {
             // Different names can become one name for the model (read.file and read_file, or two long
@@ -571,14 +583,17 @@ public sealed class McpTools : IAsyncDisposable
                 return $"its tool {Clean(tool.Name, MaxName)} would be called {name}, which {Clean(other.Server.Name, MaxName)} already uses";
             // Left out, not offered: the model gets every schema on every send. The server's other tools stay.
             if (tool.InputSchema.GetRawText().Length > MaxSchema)
-                continue;
-            mine[name] = new Entry(server, tool, Key(server, tool));
+                leftOut.Add(new Entry(server, tool, Key(server, tool)));
+            else
+                mine[name] = new Entry(server, tool, Key(server, tool));
         }
 
         foreach (string stale in _tools.Where(t => t.Value.Server.Name == server.Name).Select(t => t.Key).ToArray())
             _tools.Remove(stale);
         foreach (var (name, entry) in mine)
             _tools[name] = entry;
+        _leftOut.RemoveAll(t => t.Server.Name == server.Name);
+        _leftOut.AddRange(leftOut);
         return null;
     }
 

@@ -550,6 +550,20 @@ public class McpToolsTests
         Assert.Equal(["files__broken", "files__echo"], (await tools.ListAsync(default)).Select(d => d.Name));
         Assert.False(tools.Owns("files__huge"));
         Assert.Equal(1, tools.Running);
+
+        // Settings lists it under the server with the reason; the others have none.
+        Assert.Equal(["broken", "echo", "huge"], tools.Tools.Select(t => t.Name));
+        var left = tools.Tools.Single(t => t.Name == "huge");
+        Assert.StartsWith("The AI is not offered this tool: the description of its arguments is ", left.LeftOut);
+        Assert.Contains($"at most {McpTools.MaxSchema:N0}", left.LeftOut);
+        Assert.All(tools.Tools.Where(t => t.Name != "huge"), t => Assert.Null(t.LeftOut));
+
+        // Listed again after the server died and started again, it is not listed twice.
+        _fake.Kill("Files");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => tools.CallAsync(Call("files__echo", """{"text":"x"}"""), default));
+        await tools.ListAsync(default);
+        Assert.Equal(2, _fake.Starts);
+        Assert.Single(tools.Tools, t => t.LeftOut is not null);
     }
 
     [Fact]
