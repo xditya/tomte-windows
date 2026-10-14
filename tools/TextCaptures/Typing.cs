@@ -114,6 +114,7 @@ internal static unsafe class Typing
         Prompt(queue, graphics);
         Note(queue, graphics, dir);
         Styled(queue, graphics, dir);
+        Opening(queue, graphics, dir);
         if (measure)
         {
             StyleTimes(queue, graphics, dir);
@@ -294,6 +295,21 @@ internal static unsafe class Typing
         keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
         Pump();
         Check("one Ctrl+Z takes the typed run out, and its look with it", s.Text == text && Look(s, At("after")) == plain, Esc(s.Text[^12..]));
+        // The styling after the undo, with undo suspended, leaves the redo stack alone.
+        keys.Press(VIRTUAL_KEY.VK_Y, ctrl: true);
+        Pump();
+        Check("Ctrl+Y brings the typed run back, styled", s.Text == text + " **x**" && Look(s, s.Text.Length - 3).Weight == 700, Esc(s.Text[^12..]));
+        keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+        Pump();
+
+        // A paste goes in as the user's own text, one undo step, never read as RTF.
+        s.Selection = (text.Length, text.Length);
+        s.Insert("\n{\\rtf1 pasted}");
+        Pump();
+        Check("pasted text that looks like RTF goes in as it is, the caret after it", s.Text == text + "\n{\\rtf1 pasted}" && s.Selection.End == s.Text.Length, Esc(s.Text[^16..]));
+        keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+        Pump();
+        Check("one Ctrl+Z takes the paste out", s.Text == text, Esc(s.Text[^16..]));
         s.Selection = (0, 0);
         keys.Press(VIRTUAL_KEY.VK_DELETE);
         Pump();
@@ -386,49 +402,110 @@ internal static unsafe class Typing
         Check("at another scale a list item's hang follows the zoom", MathF.Abs(zoomed - open.Hang * s.Zoom) < 0.2f, $"{zoomed} at zoom {s.Zoom:F3}, {open.Hang} at 1");
     }
 
+    // A note of this many lines of mixed Markdown.
+    private static string LongNote(int count) => string.Join("\n", Enumerable.Range(0, count).Select(i => (i % 5) switch
+    {
+        0 => $"## Section {i}",
+        1 => $"- item {i} with **bold** and `code`",
+        2 => $"Plain line {i} with *italic* and a [link](https://example.com/{i})",
+        3 => $"1. [ ] task {i}",
+        _ => "",
+    }));
+
+    // A box bound to a note of this text with the caret at its end, focused, each paint's styling timed; nothing is
+    // pumped yet.
+    private static (EditorView Box, NoteEditor Binding, List<double> Times) Bound(Windows.System.DispatcherQueue queue, CompositionGraphicsDevice graphics, string dir, string text, string name, Func<bool>? moving = null)
+    {
+        var note = new ScratchpadNote(new TomteDb(Path.Combine(dir, "note-db", name)));
+        note.LoadAsync().GetAwaiter().GetResult();
+        note.Edit(text, text.Length);
+        var box = Box(queue, graphics, new RectangleF(0, 0, 468, 182), 1.5);
+        var times = new List<double>();
+        var binding = new NoteEditor(box, note, queue, new StringBuilder()) { Moving = moving };
+        var restyle = box.BeforePaint!;
+        box.BeforePaint = () =>
+        {
+            long t = Stopwatch.GetTimestamp();
+            restyle();
+            times.Add(Stopwatch.GetElapsedTime(t).TotalMilliseconds);
+        };
+        box.Focus();
+        return (box, binding, times);
+    }
+
+    // Turns of the loop until the note is styled to its end, at least one and at most a few hundred.
+    private static void StyledToTheEnd(NoteEditor binding)
+    {
+        int turns = 0;
+        do
+        {
+            Pump();
+        }
+        while (binding.Unstyled > 0 && ++turns < 400);
+    }
+
+    private static string Pieces(List<double> times)
+    {
+        var pieces = times.Skip(1).Where(t => t > 0.05).Order().ToList();
+        return $"the lines around the caret in {times[0]:F1} ms, then {pieces.Count} pieces"
+            + (pieces.Count > 0 ? $", median {pieces[pieces.Count / 2]:F2} ms, max {pieces[^1]:F2} ms" : "");
+    }
+
+    // A long note is not styled while the island moves; at rest the lines around the caret are styled first and the
+    // rest a piece per paint, and the caret at the end stays in view.
+    private static void Opening(Windows.System.DispatcherQueue queue, CompositionGraphicsDevice graphics, string dir)
+    {
+        string text = LongNote(2000);
+        bool moving = true;
+        var (box, binding, times) = Bound(queue, graphics, dir, text, "opening.db", () => moving);
+        using var disposeBox = box;
+        using var disposeBinding = binding;
+        var s = box.Services;
+        int first = 0, middle = text.IndexOf("## Section 1000", StringComparison.Ordinal), last = text.LastIndexOf("## Section", StringComparison.Ordinal);
+        for (int i = 0; i < 20; i++)
+        {
+            Pump();
+        }
+
+        Check("nothing is styled while the island moves", Look(s, first).Size == 13 && Look(s, middle).Size == 13 && Look(s, last).Size == 13 && times.Count > 0,
+            $"{Look(s, last)}, {times.Count} paints");
+        moving = false;
+        times.Clear();
+        // What the first paint at rest styled: the end, where the caret is, and not yet the top.
+        bool? caretFirst = null;
+        var timed = box.BeforePaint!;
+        box.BeforePaint = () =>
+        {
+            timed();
+            caretFirst ??= Look(s, last).Size == 16 && Look(s, first).Size == 13;
+        };
+        binding.Settled();
+        StyledToTheEnd(binding);
+        Check("at rest the lines around the caret are styled first, then the rest a piece at a time", caretFirst == true && binding.Unstyled == 0
+            && Look(s, first).Size == 16 && Look(s, middle).Size == 16 && Look(s, last).Size == 16, $"{binding.Unstyled} pieces left");
+        var caret = s.Caret;
+        Check("the caret at the end of a long note stays in view", s.Selection.End == text.Length && caret.Shown && caret.Y >= 0 && caret.Y + caret.Height <= s.Client.bottom,
+            $"caret {caret}, client height {s.Client.bottom}");
+        Log($"opening a 2,000-line note at rest: {Pieces(times)}");
+    }
+
     // How long styling takes on the island's thread, in a note of 2,000 lines of Markdown: opening it, a key in its
     // middle, and a fence typed there, which restyles everything after it.
     private static void StyleTimes(Windows.System.DispatcherQueue queue, CompositionGraphicsDevice graphics, string dir)
     {
-        var lines = Enumerable.Range(0, 2000).Select(i => (i % 5) switch
-        {
-            0 => $"## Section {i}",
-            1 => $"- item {i} with **bold** and `code`",
-            2 => $"Plain line {i} with *italic* and a [link](https://example.com/{i})",
-            3 => $"1. [ ] task {i}",
-            _ => "",
-        });
-        // A box bound to a note of this text, opened and painted, with each paint's styling timed.
-        (EditorView, NoteEditor, List<double>) Opened(string text, string name)
-        {
-            var note = new ScratchpadNote(new TomteDb(Path.Combine(dir, "note-db", name)));
-            note.LoadAsync().GetAwaiter().GetResult();
-            note.Text = text;
-            var box = Box(queue, graphics, new RectangleF(0, 0, 468, 182), 1.5);
-            var times = new List<double>();
-            var binding = new NoteEditor(box, note, queue, new StringBuilder());
-            var restyle = box.BeforePaint!;
-            box.BeforePaint = () =>
-            {
-                long t = Stopwatch.GetTimestamp();
-                restyle();
-                times.Add(Stopwatch.GetElapsedTime(t).TotalMilliseconds);
-            };
-            box.Focus();
-            Pump();
-            Log($"styling: a note of {text.Count(c => c == '\n') + 1:N0} lines ({text.Length:N0} characters) styled on open in {times.Max():F1} ms");
-            return (box, binding, times);
-        }
-
-        var (smallBox, small, _) = Opened(string.Join("\n", lines.Take(100)), "times-100.db");
+        var (smallBox, small, smallTimes) = Bound(queue, graphics, dir, LongNote(100), "times-100.db");
+        Pump();
+        Log($"styling: a note of 100 lines styled on open in {smallTimes.Max():F1} ms, {small.Unstyled} pieces left");
         small.Dispose();
         smallBox.Dispose();
-        string text = string.Join("\n", lines);
+        string text = LongNote(2000);
         GC.Collect();
         Log(Memory("before the 2,000-line note"));
-        var (box, binding, times) = Opened(text, "times.db");
+        var (box, binding, times) = Bound(queue, graphics, dir, text, "times.db");
         using var disposeBox = box;
         using var disposeBinding = binding;
+        StyledToTheEnd(binding);
+        Log($"styling: a note of 2,000 lines ({text.Length:N0} characters) on open: {Pieces(times)}");
         Log(Memory("the 2,000-line note open and styled"));
         int middle = text.IndexOf("Plain line 1002", StringComparison.Ordinal) + "Plain line 1002".Length;
         box.Services.Selection = (middle, middle);
@@ -446,8 +523,10 @@ internal static unsafe class Typing
         Check("styling after a key in a 2,000-line note takes under 2 ms (median)", each[each.Count / 2] < 2, $"{each[each.Count / 2]:F3} ms");
         times.Clear();
         keys.Type("\n```");
-        Pump();
-        Log($"styling: a fence typed in the middle, which restyles the 1,000 lines after it: {times.Max():F1} ms");
+        StyledToTheEnd(binding);
+        Log($"styling: a fence typed in the middle, which restyles the 1,000 lines after it: {Pieces(times).Replace("around the caret", "after it")}");
+        int lastTask = box.Services.Text.LastIndexOf("task", StringComparison.Ordinal);
+        Check("after the fence the note's last line is code", Look(box.Services, lastTask).Font == "Consolas", $"{Look(box.Services, lastTask)}");
         Log(Memory("after typing in it"));
         binding.Dispose();
         box.Dispose();
