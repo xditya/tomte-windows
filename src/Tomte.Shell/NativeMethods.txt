@@ -209,4 +209,3 @@ ID2D1Device
 ID2D1DeviceContext
 ID2D1SolidColorBrush
 IDXGIDevice
-SetWindowText

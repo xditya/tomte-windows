@@ -77,18 +77,43 @@ public static class JobTask
 
     public static string Name(long jobId, string dataFolder) => $"Tomte job {jobId} {Key(dataFolder)}";
 
-    /// <summary>The island window's title, so a --run-job start finds the Tomte on its own data folder and no other.</summary>
-    public static string WindowTitle(string dataFolder) => "Tomte " + Key(dataFolder);
+    // A window property, not a title: scripts that look for the island window by class with no title would stop
+    // finding it once it had one.
+    private const string FolderProperty = "Tomte.DataFolder";
+
+    /// <summary>Marks a window as the Tomte on <paramref name="dataFolder"/>, so a --run-job start there finds it and no other.</summary>
+    public static unsafe void Tag(nint window, string dataFolder)
+    {
+        fixed (char* name = FolderProperty)
+        {
+            PInvoke.SetProp(new HWND(window), name, new HANDLE(FolderValue(dataFolder)));
+        }
+    }
 
     /// <summary>
-    /// Hands a --run-job start to the Tomte already running on <paramref name="dataFolder"/>: posts the id to the window
-    /// with that folder's title. False when none is running there; the caller then runs the job itself.
+    /// Hands a --run-job start to the Tomte already running on <paramref name="dataFolder"/>: posts the id to the
+    /// top-level window tagged with that folder. False when none is running there; the caller then runs the job itself.
     /// </summary>
-    public static bool HandOff(string dataFolder, long jobId)
+    public static unsafe bool HandOff(string dataFolder, long jobId)
     {
-        var target = PInvoke.FindWindow(null, WindowTitle(dataFolder));
-        return !target.IsNull && PInvoke.PostMessage(target, MsgRunJob, (nuint)jobId, 0);
+        nint tag = FolderValue(dataFolder);
+        fixed (char* name = FolderProperty)
+        {
+            for (var window = PInvoke.FindWindowEx(HWND.Null, HWND.Null, null, null); !window.IsNull; window = PInvoke.FindWindowEx(HWND.Null, window, null, null))
+            {
+                if ((nint)PInvoke.GetProp(window, name).Value == tag)
+                {
+                    return PInvoke.PostMessage(window, MsgRunJob, (nuint)jobId, 0);
+                }
+            }
+        }
+
+        return false;
     }
+
+    // The key as a number, with the top bit set so it is never 0, which GetProp answers for a window without the property.
+    private static nint FolderValue(string dataFolder) =>
+        (nint)(uint.Parse(Key(dataFolder), NumberStyles.HexNumber, CultureInfo.InvariantCulture) | 0x80000000);
 
     public static string Arguments(long jobId, string settingsPath) =>
         string.Equals(Path.GetFullPath(settingsPath), Path.GetFullPath(SettingsStore.DefaultPath), StringComparison.OrdinalIgnoreCase)

@@ -650,8 +650,8 @@ public sealed class JobTests : IDisposable
     [Fact]
     public async Task ARunJobStartHandsOverToTheTomteRunningOnTheSameFolder()
     {
-        // The island window of a Tomte on this folder carries this title; a plain window stands in for it.
-        await using var tomte = await TitledWindow.OpenAsync(JobTask.WindowTitle(_dir));
+        // A Tomte on this folder tags its island window so; a plain window stands in for it.
+        await using var tomte = await TaggedWindow.OpenAsync(_dir);
 
         Assert.True(JobTask.HandOff(_dir, 42));
         // No Tomte runs on another folder, so a start there is not handed over: it runs the job itself.
@@ -744,16 +744,22 @@ public sealed class JobTests : IDisposable
         public void Remove(long jobId) => Removed.Add(jobId);
     }
 
-    /// <summary>A hidden top-level window with a given title, on a thread of its own, standing in for the island window.</summary>
-    private sealed class TitledWindow : IAsyncDisposable
+    /// <summary>A hidden top-level window tagged with a data folder, on a thread of its own, standing in for the island window.</summary>
+    private sealed class TaggedWindow : IAsyncDisposable
     {
         private readonly DispatcherQueueController _thread = DispatcherQueueController.CreateOnDedicatedThread();
 
-        public static async Task<TitledWindow> OpenAsync(string title)
+        public static async Task<TaggedWindow> OpenAsync(string dataFolder)
         {
-            var window = new TitledWindow();
+            var window = new TaggedWindow();
             var made = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            window._thread.DispatcherQueue.TryEnqueue(() => made.SetResult(Create(title)));
+            window._thread.DispatcherQueue.TryEnqueue(() =>
+            {
+                nint hwnd = Create();
+                if (hwnd != 0)
+                    JobTask.Tag(hwnd, dataFolder);
+                made.SetResult(hwnd != 0);
+            });
             Assert.True(await made.Task);
             return window;
         }
@@ -761,7 +767,7 @@ public sealed class JobTests : IDisposable
         // The window goes with its thread.
         public async ValueTask DisposeAsync() => await _thread.ShutdownQueueAsync();
 
-        private static unsafe bool Create(string title) =>
-            !ai::Windows.Win32.PInvoke.CreateWindowEx(0, "STATIC", title, ai::Windows.Win32.UI.WindowsAndMessaging.WINDOW_STYLE.WS_POPUP, 0, 0, 0, 0, default, null, null, null).IsNull;
+        private static unsafe nint Create() =>
+            (nint)ai::Windows.Win32.PInvoke.CreateWindowEx(0, "STATIC", "", ai::Windows.Win32.UI.WindowsAndMessaging.WINDOW_STYLE.WS_POPUP, 0, 0, 0, 0, default, null, null, null).Value;
     }
 }

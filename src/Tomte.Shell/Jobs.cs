@@ -24,7 +24,7 @@ internal sealed record JobContext(
     Action<string>? Log);
 
 /// <summary>
-/// Scheduled jobs in the shell. Every start titles the island window with its data folder, so a --run-job start can
+/// Scheduled jobs in the shell. Every start tags the island window with its data folder, so a --run-job start can
 /// hand its job over, and reads the small next-due file beside tomte.db on the pool: with no file there are no jobs
 /// and nothing else happens. With one, the island window holds one SetTimer one-shot for the next run; the database
 /// opens and Tomte.AI loads only when a run is due. A --run-job start with no Tomte running on its folder runs what is
@@ -64,7 +64,7 @@ internal static class Jobs
     {
         try
         {
-            Title(c);
+            JobTask.Tag((nint)c.Island.Hwnd, Path.GetDirectoryName(c.Db.FilePath)!);
             var inner = c.Island.Message;
             c.Island.Message = (message, wParam, lParam) => OnMessage(c, message, wParam, lParam) || (inner?.Invoke(message, wParam, lParam) ?? false);
             if (Arg(args, "--debug-remove-job") is { } remove)
@@ -88,14 +88,6 @@ internal static class Jobs
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             c.Log?.Invoke($"jobs: start failed: {e}");
-        }
-    }
-
-    private static unsafe void Title(JobContext c)
-    {
-        fixed (char* title = JobTask.WindowTitle(Path.GetDirectoryName(c.Db.FilePath)!))
-        {
-            PInvoke.SetWindowText(c.Island.Hwnd, title);
         }
     }
 

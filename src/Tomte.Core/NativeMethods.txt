@@ -60,7 +60,9 @@ ITaskDefinition
 IRegisteredTask
 TASK_CREATION
 TASK_LOGON_TYPE
-FindWindow
+FindWindowEx
+GetProp
+SetProp
 PostMessage
 WM_APP
 GetCurrentPackageFullName
