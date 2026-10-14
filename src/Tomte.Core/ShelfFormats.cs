@@ -138,20 +138,27 @@ public static class ShelfFormats
     }
 
     /// <summary>
-    /// A virtual file's whole stream. Read until the stream says it is done: the size in the descriptor is a hint
-    /// that browsers set to 0, so it is never used to stop early.
+    /// A virtual file's stream copied into <paramref name="into"/> in 64 KB chunks until the stream says it is done: the
+    /// size in the descriptor is a hint that browsers set to 0, so it never stops the read early. False when the stream
+    /// holds more than <paramref name="cap"/> bytes; the read stops there, so a stream that never ends cannot hang it.
     /// </summary>
-    public static byte[] ReadToEnd(ReadChunk read)
+    public static bool CopyCapped(ReadChunk read, Stream into, long cap)
     {
-        var all = new MemoryStream();
         var buffer = new byte[64 * 1024];
+        long total = 0;
         int got;
         while ((got = read(buffer)) > 0)
         {
-            all.Write(buffer, 0, got);
+            total += got;
+            if (total > cap)
+            {
+                return false;
+            }
+
+            into.Write(buffer, 0, got);
         }
 
-        return all.ToArray();
+        return true;
     }
 
     /// <summary>
@@ -186,12 +193,12 @@ public static class ShelfFormats
     public static bool AsVirtualFiles(IReadOnlyList<ShelfItem> items) => items.All(i => i.Kind == ShelfKind.Content);
 
     /// <summary>
-    /// The user's own files may be moved by the target (the shell moves on the same volume and copies across), unless
-    /// Shift was held when the drag started. Anything the shelf holds itself is copy only: a moved copy would leave the
-    /// shelf without its file and the target would report nothing.
+    /// The user's own files may be copied or moved, and the target decides from the keys as in any Windows drag: Ctrl
+    /// copies, Shift moves, and with neither Explorer moves on the same volume and copies across. Anything the shelf
+    /// holds itself is copy only: a moved copy would leave the shelf without its file and the target would report nothing.
     /// </summary>
-    public static ShelfEffect Effects(IReadOnlyList<ShelfItem> items, bool shiftAtStart) =>
-        !shiftAtStart && items.All(i => i.Kind == ShelfKind.Reference) ? ShelfEffect.Copy | ShelfEffect.Move : ShelfEffect.Copy;
+    public static ShelfEffect Effects(IReadOnlyList<ShelfItem> items) =>
+        items.All(i => i.Kind == ShelfKind.Reference) ? ShelfEffect.Copy | ShelfEffect.Move : ShelfEffect.Copy;
 
     /// <summary>
     /// The items that left the shelf with a drag: references the target moved away. Explorer's same-volume move returns
@@ -199,4 +206,44 @@ public static class ShelfFormats
     /// </summary>
     public static List<ShelfItem> MovedAway(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed, Func<string, bool> exists) =>
         ((returned | performed) & ShelfEffect.Move) == 0 ? [] : [.. dragged.Where(i => i.Kind == ShelfKind.Reference && !exists(i.Path))];
+}
+
+/// <summary>
+/// When the drop target lets the system's drag image helper in on a drag. The helper's DragEnter costs tens of
+/// milliseconds (it reads the drag image from the source across processes), so while the island's shape is moving it
+/// waits for the first DragOver after the shape has stopped. Its DragOver, DragLeave and Drop follow only an enter.
+/// One per drop target, on the island's thread.
+/// </summary>
+public sealed class DragImageGate
+{
+    private bool waiting;
+
+    public bool Entered { get; private set; }
+
+    /// <summary>A drag entered the island. True when the helper should enter now.</summary>
+    public bool Begin(bool shapeMoving)
+    {
+        (waiting, Entered) = (shapeMoving, !shapeMoving);
+        return Entered;
+    }
+
+    /// <summary>A DragOver. True on the first one after the shape stopped, when the helper should enter.</summary>
+    public bool Over(bool shapeMoving)
+    {
+        if (!waiting || shapeMoving)
+        {
+            return false;
+        }
+
+        (waiting, Entered) = (false, true);
+        return true;
+    }
+
+    /// <summary>The drag left or dropped. True when the helper had entered and must hear it.</summary>
+    public bool End()
+    {
+        bool was = Entered;
+        (waiting, Entered) = (false, false);
+        return was;
+    }
 }

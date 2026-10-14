@@ -160,7 +160,8 @@ internal sealed class ShelfDropSurface
                 Hide();
             }
         };
-        drops.Entered += () => Hot(true);
+        // A drag the island refuses (its own drag out, a format it does not take) does not light the target.
+        drops.Entered += () => Hot(drops.Accepting);
         drops.Left += () => Hot(false);
         island.ContentReady += () =>
         {

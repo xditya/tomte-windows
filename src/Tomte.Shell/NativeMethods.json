@@ -2,6 +2,6 @@
   "$schema": "https://aka.ms/CsWin32.schema.json",
   "allowMarshaling": false,
   "comInterop": {
-    "preserveSigMethods": ["IDataObject", "IEnumFORMATETC", "IShellItemImageFactory", "IDragSourceHelper"]
+    "preserveSigMethods": ["IDataObject", "IEnumFORMATETC", "IShellItemImageFactory", "IDragSourceHelper", "IDropTargetHelper"]
   }
 }

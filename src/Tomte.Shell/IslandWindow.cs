@@ -309,6 +309,9 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     public double LastMorphMs { get; private set; }
 
+    /// <summary>The shape's springs are moving; costly work that would drop frames can wait until they stop.</summary>
+    public bool Moving => islandMoving;
+
     /// <summary>
     /// Retarget the springs toward <paramref name="to"/>; safe mid-flight. The task completes when the
     /// shape comes to rest, whichever target it rests on; a retarget shares the task of the running morph.

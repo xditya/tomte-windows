@@ -22,7 +22,18 @@ public sealed class ShelfTests : IDisposable
 
     private string ShelfFolder => Path.Combine(dir, "Shelf");
 
-    public void Dispose() => Directory.Delete(dir, recursive: true);
+    public void Dispose()
+    {
+        // Junctions go first and on their own: a recursive delete treats one as a mount point and is refused.
+        var links = Directory.EnumerateDirectories(dir, "*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 })
+            .Where(d => new DirectoryInfo(d).LinkTarget is not null).ToList();
+        foreach (string link in links)
+        {
+            Directory.Delete(link);
+        }
+
+        Directory.Delete(dir, recursive: true);
+    }
 
     [Fact]
     public async Task ItemsSurviveARestartNewestFirst()
@@ -30,7 +41,7 @@ public sealed class ShelfTests : IDisposable
         string report = Write(user, "report.pdf", "pdf");
         var first = Store();
         await first.Accept(new DroppedItems([report], [], null, KeepCopy: false));
-        await first.Accept(new DroppedItems([], [("img.png", [1, 2, 3])], null, KeepCopy: false));
+        await first.Accept(new DroppedItems([], [Received(first, "img.png", [1, 2, 3])], null, KeepCopy: false));
 
         var second = Store();
         await second.Load();
@@ -64,13 +75,15 @@ public sealed class ShelfTests : IDisposable
         Assert.True(File.Exists(mine) && File.Exists(stick) && File.Exists(kept));
     }
 
-    [Fact]
-    public async Task ATemporaryFileIsCopiedBeforeTheDropReturns()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ATemporaryFileIsTakenInBeforeTheDropReturns(bool link)
     {
         string attachment = Write(temp, "attachment.docx", "body");
         string folder = Directory.CreateDirectory(Path.Combine(temp, "Extracted")).FullName;
         Write(folder, "inside.txt", "inside");
-        var shelf = Store();
+        var shelf = Store(link: link);
 
         var queued = shelf.Accept(new DroppedItems([attachment, folder], [], null, KeepCopy: false));
         // The source cleans its temporary files up the moment the drop returns.
@@ -118,14 +131,81 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    public async Task ATemporaryFileOnTheShelfVolumeBecomesAHardLink()
+    {
+        string attachment = Write(temp, "big.bin", "first");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([attachment], [], null, KeepCopy: false));
+        string copy = shelf.Items.Single().Path;
+
+        // One file under two names: a write through the source shows in the copy, and the copy outlives the source.
+        File.AppendAllText(attachment, " second");
+        Assert.Equal("first second", File.ReadAllText(copy));
+        File.Delete(attachment);
+        Assert.Equal("first second", File.ReadAllText(copy));
+    }
+
+    [Fact]
+    public async Task ALargeTemporaryFileIsCopiedOffTheDropFromAHandleOpenedInIt()
+    {
+        var bytes = Enumerable.Range(0, 5000).Select(i => (byte)i).ToArray();
+        string attachment = Path.Combine(temp, "large.bin");
+        File.WriteAllBytes(attachment, bytes);
+        var shelf = Store(link: false, inDrop: 1000);
+
+        var queued = shelf.Accept(new DroppedItems([attachment], [], null, KeepCopy: false));
+        // The source deletes its file as the drop returns; the handle opened in the drop keeps the data readable.
+        File.Delete(attachment);
+        await queued;
+
+        var item = shelf.Items.Single();
+        Assert.Equal(ShelfKind.Copy, item.Kind);
+        Assert.Equal(bytes, File.ReadAllBytes(item.Path));
+    }
+
+    [Fact]
+    public async Task ALargeTemporaryFolderIsCopiedAfterTheDrop()
+    {
+        string folder = Directory.CreateDirectory(Path.Combine(temp, "Large")).FullName;
+        Write(folder, "a.txt", new string('a', 3000));
+        var shelf = Store(link: false, inDrop: 1000);
+
+        await shelf.Accept(new DroppedItems([folder], [], null, KeepCopy: false));
+
+        var item = shelf.Items.Single();
+        Assert.True(item.IsFolder);
+        Assert.Equal(3000, new FileInfo(Path.Combine(item.Path, "a.txt")).Length);
+    }
+
+    [Fact]
+    public async Task ACopiedFolderSkipsLinksAndKeepsEverythingElse()
+    {
+        string folder = Directory.CreateDirectory(Path.Combine(user, "project")).FullName;
+        Write(folder, "top.txt", "top");
+        Write(Directory.CreateDirectory(Path.Combine(folder, "sub")).FullName, "deep.txt", "deep");
+        string outside = Directory.CreateDirectory(Path.Combine(dir, "outside")).FullName;
+        Write(outside, "elsewhere.txt", "not copied");
+        Junction(Path.Combine(folder, "link"), outside);
+        var shelf = Store();
+
+        await shelf.Accept(new DroppedItems([folder], [], null, KeepCopy: true));
+
+        string copy = shelf.Items.Single().Path;
+        Assert.Equal("top", File.ReadAllText(Path.Combine(copy, "top.txt")));
+        Assert.Equal("deep", File.ReadAllText(Path.Combine(copy, "sub", "deep.txt")));
+        Assert.False(Directory.Exists(Path.Combine(copy, "link")));
+    }
+
+    [Fact]
     public async Task ARemovedCopyKeepsItsFilesUntilTheNextProcess()
     {
         string mine = Write(user, "mine.txt", "mine");
         var shelf = Store();
-        await shelf.Accept(new DroppedItems([mine], [("drag.txt", "dragged out"u8.ToArray()), ("held.txt", "held"u8.ToArray())], null, KeepCopy: false));
+        await shelf.Accept(new DroppedItems([mine], [Received(shelf, "drag.txt", "dragged out"u8.ToArray()), Received(shelf, "held.txt", "held"u8.ToArray())], null, KeepCopy: false));
         var dragged = shelf.Items.Single(i => i.Name == "drag.txt");
         var held = shelf.Items.Single(i => i.Name == "held.txt");
         string stray = Directory.CreateDirectory(Path.Combine(ShelfFolder, "left-over")).FullName;
+        string strayWithAnId = Directory.CreateDirectory(Path.Combine(ShelfFolder, "0123456789ab")).FullName;
 
         await shelf.Remove([dragged, shelf.Items.Single(i => i.Name == "mine.txt")]);
         // A browser that was given this path by a drag may read it later in this session.
@@ -135,10 +215,107 @@ public sealed class ShelfTests : IDisposable
         var next = Store();
         await next.Load();
         Assert.False(Directory.Exists(Path.GetDirectoryName(dragged.Path)));
-        Assert.False(Directory.Exists(stray));
+        // Only a removed item's own folder goes: a folder no row names may be the user's only copy of something.
+        Assert.True(Directory.Exists(stray));
+        Assert.True(Directory.Exists(strayWithAnId));
         Assert.True(File.Exists(held.Path));
         Assert.True(File.Exists(mine));
         Assert.Equal(["held.txt"], next.ItemNames);
+    }
+
+    [Fact]
+    public async Task ASetAsideDatabaseLeavesTheCopiesWhereTheyAre()
+    {
+        string attachment = Write(temp, "only-copy.docx", "body");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([attachment], [Received(shelf, "img.png", [1, 2])], null, KeepCopy: false));
+        await shelf.Remove([shelf.Items.Single(i => i.Name == "img.png")]);
+        var slots = Directory.GetDirectories(ShelfFolder);
+
+        // A damaged file set aside and an empty one in its place: no row says anything about these folders now.
+        foreach (string file in Directory.GetFiles(dir, "tomte.db*"))
+        {
+            File.Delete(file);
+        }
+
+        var fresh = Store();
+        await fresh.Load();
+        Assert.Empty(fresh.Items);
+        Assert.All(slots, slot => Assert.True(Directory.Exists(slot)));
+    }
+
+    [Fact]
+    public async Task TheSweepLeavesALinkedFolderAlone()
+    {
+        var shelf = Store();
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, "note.txt", Content: "note"u8.ToArray())]);
+        var item = shelf.Items.Single();
+        await shelf.Remove([item]);
+        string slot = Path.GetDirectoryName(item.Path)!;
+        Directory.Delete(slot, recursive: true);
+        string outside = Directory.CreateDirectory(Path.Combine(dir, "outside")).FullName;
+        string kept = Write(outside, "note.txt", "the user's");
+        Junction(slot, outside);
+
+        await Store().Load();
+        Assert.True(File.Exists(kept));
+    }
+
+    [Fact]
+    public async Task TheSweepDoesNothingWhenTheShelfFolderIsALink()
+    {
+        string real = Directory.CreateDirectory(Path.Combine(dir, "real-shelf")).FullName;
+        Junction(ShelfFolder, real);
+        var shelf = Store();
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, "note.txt", Content: "note"u8.ToArray())]);
+        var item = shelf.Items.Single();
+        await shelf.Remove([item]);
+
+        await Store().Load();
+        Assert.True(File.Exists(item.Path));
+    }
+
+    [Fact]
+    public void TheSweepTakesOnlyTheShelfsOwnFolders()
+    {
+        string folder = Path.Combine(dir, "Shelf");
+        Assert.Equal(Path.Combine(folder, "0123456789ab"), ShelfStore.OwnSlot(folder, Path.Combine(folder, "0123456789ab", "a.txt")));
+        Assert.Null(ShelfStore.OwnSlot(folder, Path.Combine(folder, "0123456789a", "a.txt")));
+        Assert.Null(ShelfStore.OwnSlot(folder, Path.Combine(folder, "0123456789az", "a.txt")));
+        Assert.Null(ShelfStore.OwnSlot(folder, Path.Combine(folder, "Pictures", "a.txt")));
+        Assert.Null(ShelfStore.OwnSlot(folder, Path.Combine(folder, "0123456789ab", "inner", "a.txt")));
+        Assert.Null(ShelfStore.OwnSlot(folder, Path.Combine(dir, "0123456789ab", "a.txt")));
+        Assert.Null(ShelfStore.OwnSlot(folder, Path.Combine(folder, "a.txt")));
+    }
+
+    [Fact]
+    public async Task AReferenceTheTargetMovedAwayLeavesTheShelfOnTheWorker()
+    {
+        string moved = Write(user, "moved.txt", "m");
+        string stayed = Write(user, "stayed.txt", "s");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([moved, stayed], [], null, KeepCopy: false));
+        File.Move(moved, Path.Combine(temp, "moved.txt"));
+
+        await shelf.ForgetMovedAway(shelf.Items, ShelfEffect.None, ShelfEffect.Move);
+        Assert.Equal(["stayed.txt"], shelf.ItemNames);
+        await shelf.ForgetMovedAway(shelf.Items, ShelfEffect.Copy, ShelfEffect.None);
+        Assert.Equal(["stayed.txt"], shelf.ItemNames);
+    }
+
+    [Fact]
+    public void AReceivedVirtualFileGoesStraightToDiskAndStopsAtTheCap()
+    {
+        var shelf = Store(maxReceived: 1000);
+        string? path = shelf.Receive("CON.txt", Reader(new byte[1000]));
+        Assert.Equal("_CON.txt", Path.GetFileName(path));
+        Assert.Equal(1000, new FileInfo(path!).Length);
+
+        // One byte over the cap is refused and leaves nothing behind; so is a stream that never ends.
+        int before = Directory.GetDirectories(ShelfFolder).Length;
+        Assert.Null(shelf.Receive("big.bin", Reader(new byte[1001])));
+        Assert.Null(shelf.Receive("endless.bin", buffer => buffer.Length));
+        Assert.Equal(before, Directory.GetDirectories(ShelfFolder).Length);
     }
 
     [Fact]
@@ -178,7 +355,7 @@ public sealed class ShelfTests : IDisposable
     public async Task ReadTextOnlyReadsText()
     {
         var shelf = Store();
-        await shelf.Accept(new DroppedItems([], [("bin.dat", [0x50, 0x00, 0x4B]), ("utf16.txt", [0xFF, 0xFE, (byte)'h', 0, (byte)'i', 0])], "plain text\nmore", KeepCopy: false));
+        await shelf.Accept(new DroppedItems([], [Received(shelf, "bin.dat", [0x50, 0x00, 0x4B]), Received(shelf, "utf16.txt", [0xFF, 0xFE, (byte)'h', 0, (byte)'i', 0])], "plain text\nmore", KeepCopy: false));
         Assert.Null(shelf.ReadText("bin.dat"));
         Assert.Equal("hi", shelf.ReadText("utf16.txt"));
         Assert.Equal("plain text\nmore", shelf.ReadText("plain text.txt"));
@@ -244,16 +421,11 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal([new VirtualFile("img.png", null, false), new VirtualFile("short.txt", 5, false)], files);
 
         var content = Enumerable.Range(0, 1538).Select(i => (byte)i).ToArray();
-        int at = 0;
-        var read = ShelfFormats.ReadToEnd(buffer =>
-        {
-            // A stream that hands out 100 bytes at a time, like a pipe from the source process.
-            int n = Math.Min(100, Math.Min(buffer.Length, content.Length - at));
-            content.AsSpan(at, n).CopyTo(buffer);
-            at += n;
-            return n;
-        });
-        Assert.Equal(content, read);
+        var into = new MemoryStream();
+        // A stream that hands out 100 bytes at a time, like a pipe from the source process.
+        Assert.True(ShelfFormats.CopyCapped(Reader(content, 100), into, cap: 1538));
+        Assert.Equal(content, into.ToArray());
+        Assert.False(ShelfFormats.CopyCapped(Reader(content, 100), new MemoryStream(), cap: 1537));
 
         // An HGLOBAL block can be larger than its file; the declared size wins only when it fits.
         Assert.Equal(5, ShelfFormats.ContentLength(5, 4096));
@@ -283,10 +455,10 @@ public sealed class ShelfTests : IDisposable
         var copy = Item(ShelfKind.Copy);
         var content = Item(ShelfKind.Content);
 
-        Assert.Equal(ShelfEffect.Copy | ShelfEffect.Move, ShelfFormats.Effects([reference, reference], shiftAtStart: false));
-        Assert.Equal(ShelfEffect.Copy, ShelfFormats.Effects([reference], shiftAtStart: true));
-        Assert.Equal(ShelfEffect.Copy, ShelfFormats.Effects([reference, copy], shiftAtStart: false));
-        Assert.Equal(ShelfEffect.Copy, ShelfFormats.Effects([content], shiftAtStart: false));
+        // The target reads the keys: Ctrl copies and Shift moves, as in any Windows drag.
+        Assert.Equal(ShelfEffect.Copy | ShelfEffect.Move, ShelfFormats.Effects([reference, reference]));
+        Assert.Equal(ShelfEffect.Copy, ShelfFormats.Effects([reference, copy]));
+        Assert.Equal(ShelfEffect.Copy, ShelfFormats.Effects([content]));
 
         Assert.True(ShelfFormats.AsVirtualFiles([content, content]));
         Assert.False(ShelfFormats.AsVirtualFiles([content, reference]));
@@ -323,7 +495,35 @@ public sealed class ShelfTests : IDisposable
     [InlineData("a:b*c?.txt", "a_b_c_.txt")]
     [InlineData("  ends with dots...  ", "ends with dots")]
     [InlineData("", "Item")]
+    [InlineData("CON", "_CON")]
+    [InlineData("nul.txt", "_nul.txt")]
+    [InlineData("COM1.tar.gz", "_COM1.tar.gz")]
+    [InlineData("lpt9", "_lpt9")]
+    [InlineData("CONSOLE.txt", "CONSOLE.txt")]
+    [InlineData("COM10.txt", "COM10.txt")]
     public void SafeNames(string name, string expected) => Assert.Equal(expected, ShelfStore.SafeName(name));
+
+    [Fact]
+    public void TheDragImageHelperWaitsForTheShapeToStop()
+    {
+        var gate = new DragImageGate();
+        Assert.True(gate.Begin(shapeMoving: false));
+        Assert.False(gate.Over(shapeMoving: false));
+        Assert.True(gate.End());
+
+        // Entered during the reveal: the helper comes in on the first DragOver after the shape stops, once.
+        Assert.False(gate.Begin(shapeMoving: true));
+        Assert.False(gate.Over(shapeMoving: true));
+        Assert.True(gate.Over(shapeMoving: false));
+        Assert.False(gate.Over(shapeMoving: false));
+        Assert.True(gate.Entered);
+        Assert.True(gate.End());
+
+        // Left before the shape stopped: the helper never entered and hears nothing.
+        Assert.False(gate.Begin(shapeMoving: true));
+        Assert.False(gate.End());
+        Assert.False(gate.Over(shapeMoving: false));
+    }
 
     [Fact]
     public void UniqueNames()
@@ -450,9 +650,37 @@ public sealed class ShelfTests : IDisposable
         return path;
     }
 
-    private ShelfStore Store() => new(new TomteDb(Path.Combine(dir, "tomte.db")), ShelfFolder, action => action())
+    private static ReadChunk Reader(byte[] content, int chunk = 4096)
     {
-        TempRoots = [temp],
-        DriveTypeOf = p => p.StartsWith(usb, StringComparison.OrdinalIgnoreCase) ? DriveType.Removable : DriveType.Fixed,
-    };
+        int at = 0;
+        return buffer =>
+        {
+            int n = Math.Min(chunk, Math.Min(buffer.Length, content.Length - at));
+            content.AsSpan(at, n).CopyTo(buffer);
+            at += n;
+            return n;
+        };
+    }
+
+    // A virtual file as a drop hands it to Accept: already written into the shelf folder.
+    private static (string, string) Received(ShelfStore shelf, string name, byte[] content) => (name, shelf.Receive(name, Reader(content))!);
+
+    // A directory junction, which needs no privilege to make.
+    private static void Junction(string link, string target)
+    {
+        using var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{target}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true })!;
+        mklink.StandardOutput.ReadToEnd();
+        mklink.WaitForExit();
+        Assert.True(Directory.Exists(link), $"no junction at {link}");
+    }
+
+    private ShelfStore Store(bool link = true, long inDrop = ShelfStore.InDropCopyBytesDefault, long maxReceived = ShelfStore.MaxReceivedBytesDefault) =>
+        new(new TomteDb(Path.Combine(dir, "tomte.db")), ShelfFolder, action => action())
+        {
+            TempRoots = [temp],
+            DriveTypeOf = p => p.StartsWith(usb, StringComparison.OrdinalIgnoreCase) ? DriveType.Removable : DriveType.Fixed,
+            LinkTemporaryFiles = link,
+            InDropCopyBytes = inDrop,
+            MaxReceivedBytes = maxReceived,
+        };
 }

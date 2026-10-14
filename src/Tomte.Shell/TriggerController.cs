@@ -85,10 +85,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0);
         watch.Changed += OnSuppressionChanged;
         watch.WindowsChanged += OnWindowsChanged;
-        dropTarget = new DropTarget(island.Hwnd, log);
+        dropTarget = new DropTarget(island.Hwnd, () => island.Moving, log);
         dropTarget.Entered += OnDragEnter;
         dropTarget.Over += x => island.Mascot.Lean(x - island.MascotScreenX);
-        dropTarget.Dropped += _ => OnDropped();
+        dropTarget.Dropped += OnDropped;
 
         InputThread.Start(island.Hwnd, store);
         // Changed arrives on a pool thread; the input thread re-reads the store where it runs.
@@ -117,6 +117,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>The island's drop target; the shelf takes what is dropped on it.</summary>
     internal DropTarget Drops => dropTarget;
+
+    /// <summary>A drop on the island, raised inside the drop and before the island morphs to Panels.</summary>
+    public event Action<DroppedItems>? Dropped;
 
     /// <summary>The one state machine; the palette host and the rambler drive their states on it.</summary>
     internal IslandStateMachine Machine => machine;
@@ -471,8 +474,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>A drop morphs the drop surface (or an open island) to Panels on the Shelf tab; the mascot nods on the way.</summary>
-    private void OnDropped()
+    private void OnDropped(DroppedItems drop)
     {
+        // The shelf takes the drop first: a temporary file's copy then runs before the morph, not during its first frames.
+        Dropped?.Invoke(drop);
         if (machine.State is IslandState.ShelfDrop or IslandState.Compact or IslandState.Panels)
         {
             // While Panels is open on another tab this is a tab switch.

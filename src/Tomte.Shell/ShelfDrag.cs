@@ -7,7 +7,6 @@ using Windows.Win32.System.Com;
 using Windows.Win32.System.Memory;
 using Windows.Win32.System.Ole;
 using Windows.Win32.System.SystemServices;
-using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.Shell;
 
 namespace Tomte.Shell;
@@ -36,15 +35,14 @@ internal static unsafe class ShelfDrag
             return;
         }
 
-        bool shift = (PInvoke.GetKeyState((int)VIRTUAL_KEY.VK_SHIFT) & 0x8000) != 0;
-        var effects = ShelfFormats.Effects(present, shift);
+        var effects = ShelfFormats.Effects(present);
         long started = Stopwatch.GetTimestamp();
         previous?.Dispose();
         var data = previous = new ShelfDataObject(present);
         bool image = SetImage(data.Inner, present[0].Path, (int)Math.Round(DragImageDips * island.Scale));
         var dataObject = OleObjects.Wrap<IDataObject>(data);
         var source = OleObjects.Wrap<IDropSource>(new DropSource());
-        log?.Invoke($"drag out: {present.Count} items as {(data.VirtualFiles ? "virtual files" : "CF_HDROP")}, effects {effects}{(shift ? " (shift)" : "")}, image {image}, ready in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
+        log?.Invoke($"drag out: {present.Count} items as {(data.VirtualFiles ? "virtual files" : "CF_HDROP")}, effects {effects}, image {image}, ready in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
 
         if (log is not null)
         {
@@ -70,12 +68,8 @@ internal static unsafe class ShelfDrag
 
         var performed = data.Performed();
         log?.Invoke($"drag out: DoDragDrop 0x{result.Value:X8} effect {effect} performed {performed} after {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0}ms");
-        var gone = ShelfFormats.MovedAway(present, (ShelfEffect)effect, performed, p => File.Exists(p) || Directory.Exists(p));
-        if (gone.Count > 0)
-        {
-            log?.Invoke($"drag out: {gone.Count} moved away, off the shelf");
-            shelf.Remove(gone);
-        }
+        // Whether the files are still there is asked on the shelf's worker, not here: a network path can take seconds.
+        _ = shelf.ForgetMovedAway(present, (ShelfEffect)effect, performed);
     }
 
     /// <summary>The item's thumbnail, or its icon when no thumbnail is cached, as a 32-bit bitmap; default when the shell has neither.</summary>

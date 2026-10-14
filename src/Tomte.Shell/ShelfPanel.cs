@@ -231,8 +231,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadY);
             var box = p.Shapes(body, empty);
             p.Box(box, new RectangleF(0, 0, empty.Width, empty.Height), 8, null, p.Brush(Color.FromArgb(46, 255, 255, 255)), 1).StrokeDashArray.Add(3);
-            p.TextSlot(box, ShelfLayout.Empty, new RectangleF(empty.Width / 2 - 140, empty.Height / 2 - 14, 280, 12), ShelfColors.Ink3);
-            p.TextSlot(box, ShelfLayout.Empty, new RectangleF(empty.Width / 2 - 120, empty.Height / 2 + 4, 240, 12), ShelfColors.Ink3);
+            var lines = ShelfLayout.Empty.Split('\n');
+            p.TextSlot(box, lines[0], new RectangleF(empty.Width / 2 - 140, empty.Height / 2 - 14, 280, 12), ShelfColors.Ink3);
+            p.TextSlot(box, lines[1], new RectangleF(empty.Width / 2 - 120, empty.Height / 2 + 4, 240, 12), ShelfColors.Ink3);
             return;
         }
 

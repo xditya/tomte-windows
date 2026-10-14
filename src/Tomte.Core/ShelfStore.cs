@@ -49,23 +49,41 @@ public sealed record ShelfItem(long Id, string Name, string Path, ShelfKind Kind
     public bool IsFolder { get; init; }
 }
 
-/// <summary>Something to put on the shelf: a path for a reference or a copy, bytes for content.</summary>
+/// <summary>
+/// Something to put on the shelf: a path for a reference or a copy, and for content either its bytes or a file already
+/// in the shelf folder (a virtual file received during a drop).
+/// </summary>
 public sealed record ShelfEntry(ShelfKind Kind, string Name, string? Path = null, byte[]? Content = null);
 
-/// <summary>What one drop carried, read inside the drop while the source still holds it. KeepCopy is Ctrl at the drop.</summary>
-public sealed record DroppedItems(IReadOnlyList<string> Paths, IReadOnlyList<(string Name, byte[] Bytes)> Files, string? Text, bool KeepCopy);
+/// <summary>
+/// What one drop carried, read inside the drop while the source still holds it. Files are virtual files already written
+/// into the shelf folder by <see cref="ShelfStore.Receive"/>. KeepCopy is Ctrl at the drop.
+/// </summary>
+public sealed record DroppedItems(IReadOnlyList<string> Paths, IReadOnlyList<(string Name, string Path)> Files, string? Text, bool KeepCopy);
 
 /// <summary>
 /// The shelf: items in tomte.db (feature "shelf"), copies and content as files under <see cref="Folder"/>, one folder
 /// per item so names never collide on disk. Every database and disk operation runs in order on one worker task chain;
 /// the island's thread only reads <see cref="Items"/>, which the worker replaces through <c>post</c>. Nothing is
 /// opened until the first call that needs the shelf.
-/// Files of a removed copy are not deleted when it is removed: a browser or an editor given its path by a drag may read
-/// it minutes later. The first load in the next process deletes every folder no item holds.
+/// Removing an item marks its row; its files stay, because a browser or an editor given their path by a drag may read
+/// them minutes later. The first load in the next process deletes the folders of marked rows, then the rows. Nothing
+/// else in the shelf folder is ever deleted: a folder no row names may be the only copy the user has, for example after
+/// a damaged database was set aside.
 /// </summary>
 public sealed class ShelfStore : IShelf
 {
     public const string FallbackName = "Item";
+
+    /// <summary>
+    /// A temporary folder's file up to this size is copied inside the drop, which holds the island and the source for
+    /// as long as the copy takes. A larger file is copied off the island's thread from a handle opened in the drop.
+    /// </summary>
+    public const long InDropCopyBytesDefault = 64L << 20;
+
+    /// <summary>A virtual file larger than this is refused.</summary>
+    public const long MaxReceivedBytesDefault = 256L << 20;
+
     private const string Feature = "shelf";
 
     // ReadText gives up above this size; text extraction for large and binary files is the AI files task's.
@@ -74,8 +92,13 @@ public sealed class ShelfStore : IShelf
     // The whole history, oldest first. Never edit or reorder a step that has merged; add at the end.
     private static readonly string[] Schema =
     [
-        "CREATE TABLE shelf_items(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, kind INTEGER NOT NULL, added INTEGER NOT NULL)",
+        "CREATE TABLE shelf_items(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, kind INTEGER NOT NULL, added INTEGER NOT NULL, removed INTEGER NOT NULL DEFAULT 0)",
     ];
+
+    // Names Windows keeps for devices, with or without an extension.
+    private static readonly HashSet<string> DeviceNames = new(
+        ["CON", "PRN", "AUX", "NUL", .. Enumerable.Range(0, 10).SelectMany(n => new[] { $"COM{n}", $"LPT{n}" }), "COM¹", "COM²", "COM³", "LPT¹", "LPT²", "LPT³"],
+        StringComparer.OrdinalIgnoreCase);
 
     private static readonly Lazy<string[]> TempFolders = new(() =>
         [.. new[]
@@ -89,7 +112,6 @@ public sealed class ShelfStore : IShelf
     private readonly Action<Action> post;
     private readonly Action<string>? log;
     private readonly Lock gate = new();
-    private readonly HashSet<string> slotsMadeHere = new(StringComparer.OrdinalIgnoreCase);
     private Task chain = Task.CompletedTask;
 
     // Worker only.
@@ -109,11 +131,18 @@ public sealed class ShelfStore : IShelf
 
     public string Folder { get; }
 
-    /// <summary>Folders whose files are copied in during the drop, because their owner may delete them right after it.</summary>
+    /// <summary>Folders whose files are taken in during the drop, because their owner may delete them right after it.</summary>
     public IReadOnlyList<string> TempRoots { get; init; } = [];
 
     /// <summary>The drive type of a path; injected by tests. Removable and optical drives are copied in.</summary>
     public Func<string, DriveType> DriveTypeOf { get; init; } = DriveTypeOfPath;
+
+    /// <summary>A temporary file on the shelf's volume becomes a hard link, instant at any size; tests turn it off to reach the copies.</summary>
+    public bool LinkTemporaryFiles { get; init; } = true;
+
+    public long InDropCopyBytes { get; init; } = InDropCopyBytesDefault;
+
+    public long MaxReceivedBytes { get; init; } = MaxReceivedBytesDefault;
 
     /// <summary>Newest first, as last published; read on the island's thread.</summary>
     public IReadOnlyList<ShelfItem> Items { get; private set; } = [];
@@ -134,12 +163,48 @@ public sealed class ShelfStore : IShelf
     });
 
     /// <summary>
-    /// Takes a drop. Called inside the drop on the island's thread: a path in a temporary folder is copied here and
-    /// now, because its source may delete it as soon as the drop returns. Everything else is queued.
+    /// Writes one virtual file into a new folder of the shelf as it is read. Called inside the drop, where the stream is
+    /// valid. Null when it is larger than <see cref="MaxReceivedBytes"/> or cannot be written; nothing is left behind then.
+    /// </summary>
+    public string? Receive(string name, ReadChunk read)
+    {
+        string slot = Slot();
+        string path = Path.Combine(slot, SafeName(Path.GetFileName(name)));
+        try
+        {
+            bool whole;
+            using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16))
+            {
+                // the island's thread waits for the whole read inside the drop, up to the cap.
+                // IDataObjectAsyncCapability would let the source be read after the drop returns.
+                whole = ShelfFormats.CopyCapped(read, file, MaxReceivedBytes);
+            }
+
+            if (whole)
+            {
+                return path;
+            }
+
+            log?.Invoke($"shelf: refused {name}: larger than {MaxReceivedBytes >> 20} MB");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            log?.Invoke($"shelf: could not receive {name}: {e.Message}");
+        }
+
+        TryDelete(slot);
+        return null;
+    }
+
+    /// <summary>
+    /// Takes a drop. Called inside the drop on the island's thread: a path in a temporary folder is taken here and now,
+    /// because its source may delete it as soon as the drop returns. Everything else is queued. The task completes when
+    /// every item, a large temporary copy included, is on the shelf.
     /// </summary>
     public Task Accept(DroppedItems drop)
     {
         var entries = new List<ShelfEntry>();
+        var later = new List<Task>();
         var temp = TempRoots.Count > 0 ? TempRoots : TempFolders.Value;
         foreach (string path in drop.Paths)
         {
@@ -149,11 +214,18 @@ public sealed class ShelfStore : IShelf
                 case DropDecision.CopyNow:
                     try
                     {
-                        entries.Add(new ShelfEntry(ShelfKind.Copy, name, CopyIn(path)));
+                        if (TakeTemporary(path, name) is { } done)
+                        {
+                            entries.Add(done);
+                        }
+                        else
+                        {
+                            later.Add(TakeLargeTemporary(path, name));
+                        }
                     }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                     {
-                        log?.Invoke($"shelf: could not copy {path} in, keeping a reference: {e.Message}");
+                        log?.Invoke($"shelf: could not take {path} in, keeping a reference: {e.Message}");
                         entries.Add(new ShelfEntry(ShelfKind.Reference, name, path));
                     }
 
@@ -167,9 +239,9 @@ public sealed class ShelfStore : IShelf
             }
         }
 
-        foreach (var (name, bytes) in drop.Files)
+        foreach (var (name, received) in drop.Files)
         {
-            entries.Add(new ShelfEntry(ShelfKind.Content, Path.GetFileName(name), Content: bytes));
+            entries.Add(new ShelfEntry(ShelfKind.Content, Path.GetFileName(name), received));
         }
 
         if (drop.Text is { Length: > 0 } text)
@@ -178,7 +250,12 @@ public sealed class ShelfStore : IShelf
             entries.Add(new ShelfEntry(ShelfKind.Content, name, Content: bytes));
         }
 
-        return entries.Count == 0 ? Task.CompletedTask : Run(() => AddAll(entries));
+        if (entries.Count > 0)
+        {
+            later.Add(Run(() => AddAll(entries)));
+        }
+
+        return Task.WhenAll(later);
     }
 
     public Task Add(IReadOnlyList<ShelfEntry> entries) => Run(() => AddAll(entries));
@@ -188,6 +265,17 @@ public sealed class ShelfStore : IShelf
         var ids = items.Select(i => i.Id).ToHashSet();
         return Run(() => RemoveAll(ids));
     }
+
+    /// <summary>After a drag out: the references a target moved away leave the shelf. The disk is looked at on the worker.</summary>
+    public Task ForgetMovedAway(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed) => Run(() =>
+    {
+        var gone = ShelfFormats.MovedAway(dragged, returned, performed, p => File.Exists(p) || Directory.Exists(p));
+        if (gone.Count > 0)
+        {
+            log?.Invoke($"shelf: {gone.Count} moved away by the target, off the shelf");
+            RemoveAll(gone.Select(i => i.Id).ToHashSet());
+        }
+    });
 
     /// <summary>The item's text: a file of at most 1 MB that is UTF-8, or Unicode with a byte order mark.</summary>
     public string? ReadText(string name) =>
@@ -207,7 +295,7 @@ public sealed class ShelfStore : IShelf
     /// <summary>Queued; returns at once.</summary>
     public void Remove(string name) => Run(() => RemoveAll(rows.Where(r => Same(r.Name, name)).Select(r => r.Id).ToHashSet()));
 
-    /// <summary>A temporary folder's files are copied in during the drop; Ctrl, a removable or an optical drive copy on the worker.</summary>
+    /// <summary>A temporary folder's files are taken in during the drop; Ctrl, a removable or an optical drive copy on the worker.</summary>
     public static DropDecision Decide(string path, bool keepCopy, IReadOnlyList<string> tempRoots, Func<string, DriveType> driveType)
     {
         if (tempRoots.Any(root => IsUnder(path, root)))
@@ -224,7 +312,10 @@ public sealed class ShelfStore : IShelf
     /// <summary>What Copy path puts on the clipboard: one path per line, unquoted.</summary>
     public static string PathsText(IReadOnlyList<ShelfItem> items) => string.Join(Environment.NewLine, items.Select(i => i.Path));
 
-    /// <summary>A name that is a valid file name: no path or reserved characters, no trailing dots, at most 120 characters.</summary>
+    /// <summary>
+    /// A name that is a valid file name: no path or reserved characters, no trailing dots, at most 120 characters, and no
+    /// device name (CON, NUL, COM1 and the rest), which Windows reads as the device with any extension.
+    /// </summary>
     public static string SafeName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
@@ -233,6 +324,11 @@ public sealed class ShelfStore : IShelf
         {
             string ext = Path.GetExtension(safe);
             safe = ext.Length < 20 ? safe[..(120 - ext.Length)] + ext : safe[..120];
+        }
+
+        if (DeviceNames.Contains(safe.Split('.')[0].TrimEnd(' ')))
+        {
+            safe = "_" + safe;
         }
 
         return safe.Length == 0 ? FallbackName : safe;
@@ -255,6 +351,27 @@ public sealed class ShelfStore : IShelf
                 return candidate;
             }
         }
+    }
+
+    /// <summary>
+    /// The folder of an item that the sweep may delete: a direct child of the shelf folder with the 12 hex digits the
+    /// shelf names its folders with, and no link. Null for anything else.
+    /// </summary>
+    public static string? OwnSlot(string folder, string itemPath)
+    {
+        string? slot = Path.GetDirectoryName(itemPath);
+        if (slot is null || !string.Equals(Path.GetDirectoryName(slot), Path.TrimEndingDirectorySeparator(folder), StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        string name = Path.GetFileName(slot);
+        if (name.Length != 12 || !name.All(char.IsAsciiHexDigit))
+        {
+            return null;
+        }
+
+        return Directory.Exists(slot) && new DirectoryInfo(slot).Attributes.HasFlag(FileAttributes.ReparsePoint) ? null : slot;
     }
 
     internal static string? ReadTextFile(string path)
@@ -322,6 +439,15 @@ public sealed class ShelfStore : IShelf
         }
     }
 
+    private static unsafe bool HardLink(string link, string existing)
+    {
+        fixed (char* l = link)
+        fixed (char* e = existing)
+        {
+            return PInvoke.CreateHardLink(l, e, null);
+        }
+    }
+
     private static ShelfItem Probe(ShelfItem item)
     {
         try
@@ -344,13 +470,19 @@ public sealed class ShelfStore : IShelf
         return item with { Missing = true, Size = null };
     }
 
-    private static void CopyTree(string from, string to)
+    private static long TreeSize(string folder) =>
+        new DirectoryInfo(folder).EnumerateFiles("*", new EnumerationOptions { RecurseSubdirectories = true, AttributesToSkip = 0 }).Sum(f => f.Length);
+
+    /// <summary>
+    /// A folder's files and subfolders. Links (symbolic links and junctions) are skipped, not followed, so a junction
+    /// loop cannot fill the disk; other reparse points, OneDrive's online-only files among them, are copied.
+    /// </summary>
+    private static void CopyTree(string from, string to, bool link)
     {
         Directory.CreateDirectory(to);
         foreach (var entry in new DirectoryInfo(from).EnumerateFileSystemInfos())
         {
-            // links inside a copied folder are skipped, not followed, so a junction loop cannot fill the disk.
-            if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            if (entry.LinkTarget is not null)
             {
                 continue;
             }
@@ -358,12 +490,23 @@ public sealed class ShelfStore : IShelf
             string target = Path.Combine(to, entry.Name);
             if (entry is DirectoryInfo)
             {
-                CopyTree(entry.FullName, target);
+                CopyTree(entry.FullName, target, link);
             }
-            else
+            else if (!link || !HardLink(target, entry.FullName))
             {
                 File.Copy(entry.FullName, target);
             }
+        }
+    }
+
+    private static void TryDelete(string slot)
+    {
+        try
+        {
+            Directory.Delete(slot, recursive: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
         }
     }
 
@@ -406,54 +549,80 @@ public sealed class ShelfStore : IShelf
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var loadedRows = new List<ShelfItem>();
         using (var connection = db.Open(Feature, Schema))
-        using (var command = connection.CreateCommand())
         {
-            command.CommandText = "SELECT id, name, path, kind, added FROM shelf_items ORDER BY added DESC, id DESC";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
+            using (var command = connection.CreateCommand())
             {
-                var added = DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(4));
-                loadedRows.Add(Probe(new ShelfItem(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), (ShelfKind)reader.GetInt32(3), added)));
+                command.CommandText = "SELECT id, name, path, kind, added FROM shelf_items WHERE removed = 0 ORDER BY added DESC, id DESC";
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    var added = DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(4));
+                    loadedRows.Add(Probe(new ShelfItem(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), (ShelfKind)reader.GetInt32(3), added)));
+                }
             }
+
+            Sweep(connection);
         }
 
         rows = loadedRows;
         loaded = true;
-        Sweep();
         log?.Invoke($"shelf: loaded {rows.Count} items ({rows.Count(r => r.Missing)} missing) in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
     }
 
-    /// <summary>Deletes the folders of items removed in an earlier process. Folders this process made are never touched.</summary>
-    private void Sweep()
+    /// <summary>
+    /// Deletes what items removed in an earlier process left behind, then their rows. Only on that evidence: a marked
+    /// row's folder, when <see cref="OwnSlot"/> accepts it and the shelf folder itself is no link. A folder that is in
+    /// use keeps its row for the next process. Two processes sweeping at once delete the same folders; the second finds
+    /// them gone.
+    /// </summary>
+    private void Sweep(SqliteConnection connection)
     {
-        if (!Directory.Exists(Folder))
+        var marked = new List<(long Id, string Path, ShelfKind Kind)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id, path, kind FROM shelf_items WHERE removed = 1";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                marked.Add((reader.GetInt64(0), reader.GetString(1), (ShelfKind)reader.GetInt32(2)));
+            }
+        }
+
+        if (marked.Count == 0)
         {
             return;
         }
 
-        var held = rows.Where(r => r.Kind != ShelfKind.Reference).Select(r => Path.GetDirectoryName(r.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (string slot in Directory.EnumerateDirectories(Folder))
+        bool folderIsLink = Directory.Exists(Folder) && new DirectoryInfo(Folder).Attributes.HasFlag(FileAttributes.ReparsePoint);
+        var done = new List<long>();
+        foreach (var (id, path, kind) in marked)
         {
-            bool ours;
-            lock (slotsMadeHere)
+            if (kind != ShelfKind.Reference && !folderIsLink && OwnSlot(Folder, path) is { } slot && Directory.Exists(slot))
             {
-                ours = slotsMadeHere.Contains(slot);
+                try
+                {
+                    Directory.Delete(slot, recursive: true);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // Something still has a file open, or another process got there first and it is half gone.
+                    continue;
+                }
             }
 
-            if (ours || held.Contains(slot))
-            {
-                continue;
-            }
-
-            try
-            {
-                Directory.Delete(slot, recursive: true);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                // Something still has a file open; the next process tries again.
-            }
+            done.Add(id);
         }
+
+        using var transaction = connection.BeginTransaction();
+        foreach (long id in done)
+        {
+            using var delete = connection.CreateCommand();
+            delete.CommandText = "DELETE FROM shelf_items WHERE id = $id";
+            delete.Parameters.AddWithValue("$id", id);
+            delete.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
     }
 
     private void AddAll(IReadOnlyList<ShelfEntry> entries)
@@ -470,10 +639,11 @@ public sealed class ShelfStore : IShelf
             string path;
             try
             {
-                path = entry.Kind switch
+                path = entry switch
                 {
-                    ShelfKind.Content => Store(name, entry.Content ?? []),
-                    ShelfKind.Copy when !IsUnder(entry.Path!, Folder) => CopyIn(entry.Path!),
+                    { Kind: ShelfKind.Content, Content: { } bytes } => Store(name, bytes),
+                    { Kind: ShelfKind.Content } => Rename(entry.Path!, name),
+                    { Kind: ShelfKind.Copy } when !IsUnder(entry.Path!, Folder) => CopyIn(entry.Path!),
                     _ => entry.Path!,
                 };
             }
@@ -499,6 +669,7 @@ public sealed class ShelfStore : IShelf
         log?.Invoke($"shelf: added {string.Join(", ", added.Select(i => $"{i.Name} ({i.Kind})"))} in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
     }
 
+    /// <summary>Marks the rows removed. Their files stay until the next process sweeps them.</summary>
     private void RemoveAll(HashSet<long> ids)
     {
         if (ids.Count == 0)
@@ -511,10 +682,10 @@ public sealed class ShelfStore : IShelf
         {
             foreach (long id in ids)
             {
-                using var delete = connection.CreateCommand();
-                delete.CommandText = "DELETE FROM shelf_items WHERE id = $id";
-                delete.Parameters.AddWithValue("$id", id);
-                delete.ExecuteNonQuery();
+                using var mark = connection.CreateCommand();
+                mark.CommandText = "UPDATE shelf_items SET removed = 1 WHERE id = $id";
+                mark.Parameters.AddWithValue("$id", id);
+                mark.ExecuteNonQuery();
             }
 
             transaction.Commit();
@@ -526,11 +697,6 @@ public sealed class ShelfStore : IShelf
     private string Slot()
     {
         string slot = Path.Combine(Folder, Guid.NewGuid().ToString("N")[..12]);
-        lock (slotsMadeHere)
-        {
-            slotsMadeHere.Add(slot);
-        }
-
         Directory.CreateDirectory(slot);
         return slot;
     }
@@ -542,6 +708,101 @@ public sealed class ShelfStore : IShelf
         return path;
     }
 
+    /// <summary>A received file takes its shelf name inside its own folder, so a drag out gives it the name the tile shows.</summary>
+    private static string Rename(string path, string name)
+    {
+        string target = Path.Combine(Path.GetDirectoryName(path)!, name);
+        if (!string.Equals(target, path, StringComparison.OrdinalIgnoreCase))
+        {
+            File.Move(path, target);
+        }
+
+        return target;
+    }
+
+    /// <summary>
+    /// A temporary file or folder taken in inside the drop, or null when it is too large to copy here. A file on the
+    /// shelf's volume becomes a hard link, which is instant and keeps the data when the source deletes its name; a
+    /// folder on that volume becomes a tree of hard links.
+    /// </summary>
+    private ShelfEntry? TakeTemporary(string path, string name)
+    {
+        string target = Path.Combine(Slot(), SafeName(name));
+        bool sameVolume = string.Equals(Path.GetPathRoot(path), Path.GetPathRoot(Folder), StringComparison.OrdinalIgnoreCase);
+        if (File.Exists(path))
+        {
+            if (LinkTemporaryFiles && HardLink(target, path))
+            {
+                return new ShelfEntry(ShelfKind.Copy, name, target);
+            }
+
+            if (new FileInfo(path).Length > InDropCopyBytes)
+            {
+                TryDelete(Path.GetDirectoryName(target)!);
+                return null;
+            }
+
+            // up to InDropCopyBytes is copied here, holding the island and the source for the copy's length;
+            // IDataObjectAsyncCapability would let the source wait while the copy runs elsewhere.
+            File.Copy(path, target);
+            return new ShelfEntry(ShelfKind.Copy, name, target);
+        }
+
+        if (!Directory.Exists(path))
+        {
+            throw new FileNotFoundException("Nothing to take in.", path);
+        }
+
+        // sizing a folder walks the whole tree inside the drop.
+        if ((LinkTemporaryFiles && sameVolume) || TreeSize(path) <= InDropCopyBytes)
+        {
+            CopyTree(path, target, link: LinkTemporaryFiles && sameVolume);
+            return new ShelfEntry(ShelfKind.Copy, name, target);
+        }
+
+        TryDelete(Path.GetDirectoryName(target)!);
+        return null;
+    }
+
+    /// <summary>
+    /// A large temporary file or folder, copied off the island's thread and then put on the shelf. A file is opened here,
+    /// inside the drop, with delete sharing: its source can still delete it, but the data stays readable until the copy
+    /// is done.
+    /// </summary>
+    private Task TakeLargeTemporary(string path, string name)
+    {
+        string target = Path.Combine(Slot(), SafeName(name));
+        FileStream? source = File.Exists(path) ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16) : null;
+        return Task.Run(() =>
+        {
+            try
+            {
+                if (source is not null)
+                {
+                    using (source)
+                    using (var copy = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16))
+                    {
+                        source.CopyTo(copy);
+                    }
+                }
+                else
+                {
+                    // a large folder is copied after the drop returns, and a source that deletes it at once
+                    // wins; IDataObjectAsyncCapability would let it wait.
+                    CopyTree(path, target, link: false);
+                }
+
+                return Run(() => AddAll([new ShelfEntry(ShelfKind.Copy, name, target)]));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                log?.Invoke($"shelf: could not copy {path} in, keeping a reference: {e.Message}");
+                TryDelete(Path.GetDirectoryName(target)!);
+                return Run(() => AddAll([new ShelfEntry(ShelfKind.Reference, name, path)]));
+            }
+        });
+    }
+
     private string CopyIn(string source)
     {
         string target = Path.Combine(Slot(), SafeName(NameOf(source)));
@@ -551,7 +812,7 @@ public sealed class ShelfStore : IShelf
         }
         else if (Directory.Exists(source))
         {
-            CopyTree(source, target);
+            CopyTree(source, target, link: false);
         }
         else
         {

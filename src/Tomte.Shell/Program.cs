@@ -314,7 +314,9 @@ internal static class Program
     {
         string dir = Path.GetDirectoryName(store.FilePath)!;
         var shelf = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log);
-        triggers.Drops.Dropped += drop => shelf.Accept(drop);
+        // Virtual files are written into the shelf folder as the drop reads them; the drop then goes to the shelf.
+        triggers.Drops.Receive = shelf.Receive;
+        triggers.Dropped += drop => shelf.Accept(drop);
         _ = new ShelfDropSurface(island, triggers.Machine, triggers.Drops);
         return new ShelfPanel(island, triggers, shelf, log);
     }
