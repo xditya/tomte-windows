@@ -66,15 +66,34 @@ public sealed class PanelTabs
 /// <summary>
 /// The tab labels in the 42 DIP strip, in DIPs from the panel's left edge and top: after the tomte (or the left
 /// padding with it off), each label centred in a pill 10 DIP wider than its text on each side, 2 DIP apart, the
-/// current one white, the others at 60%. A label that would run past the right padding is cut to the room left; one
-/// with almost no room is left out.
+/// current one white, the others at 60%. The Ask pill, which opens the palette, always ends at the right padding; a
+/// label that would run into it is cut to the room left, and one with almost no room is left out.
 /// </summary>
 public static class TabStrip
 {
     public const float PadX = 10, Gap = 2, Height = 28, Corner = 8, AfterMascot = 6, LeftPad = 8, RightPad = 10, MinWidth = 32;
 
+    /// <summary>The sparkle before the Ask pill's word: this tall, this far before the word.</summary>
+    public const float GlyphHeight = 11, GlyphGap = 5;
+
+    /// <summary>The Ask pill's word and sparkle are light blue, so it reads as an action and not a tab; its card is the same blue, faint.</summary>
+    public const uint AskColor = 0xFFBCD3FF, AskCard = 0x1FBCD3FF;
+
+    public const string AskText = "Ask";
+
     public static readonly TextStyle Label = new(12.5f, Color: TextStyle.SecondaryColor, Align: TextAlign.Center);
     public static readonly TextStyle Current = Label with { Color = TextStyle.WhiteColor };
+    public static readonly TextStyle AskLabel = Label with { Color = AskColor };
+
+    /// <summary>The sparkle's box, in the units of <see cref="Sparkle"/>.</summary>
+    public static readonly Vector2 SparkleBox = new(17.5f, 19);
+
+    /// <summary>The sparkle: a large four-pointed star and a small one below it to the right, one closed figure each.</summary>
+    public static readonly OutlineSegment[][] Sparkle =
+    [
+        Polygon(7, 0, 8.8f, 5.2f, 14, 7, 8.8f, 8.8f, 7, 14, 5.2f, 8.8f, 0, 7, 5.2f, 5.2f),
+        Polygon(14, 12, 14.9f, 14.6f, 17.5f, 15.5f, 14.9f, 16.4f, 14, 19, 13.1f, 16.4f, 10.5f, 15.5f, 13.1f, 14.6f),
+    ];
 
     public static string Name(PanelId id) => id switch
     {
@@ -90,10 +109,11 @@ public static class TabStrip
     {
         float x = mascot ? MascotArt.InsetX + MascotArt.SizeDips + AfterMascot : LeftPad;
         float y = (PanelSpace.TabStripHeight - Height) / 2;
+        float end = AskPill(panelWidth).Card.Left - Gap;
         var labels = new List<TextSlot>();
         foreach (var id in tabs)
         {
-            float room = panelWidth - RightPad - x;
+            float room = end - x;
             if (room < MinWidth)
             {
                 break;
@@ -124,6 +144,31 @@ public static class TabStrip
 
         return null;
     }
+
+    /// <summary>
+    /// The Ask pill at the strip's right padding, as tall as a tab's: its card, the sparkle's box and the word, with
+    /// <see cref="PadX"/> before the sparkle and after the word.
+    /// </summary>
+    public static (System.Drawing.RectangleF Card, System.Drawing.RectangleF Glyph, TextSlot Label) AskPill(float panelWidth)
+    {
+        float text = TextSlot.Measure(AskText, AskLabel, panelWidth);
+        float glyph = GlyphHeight * SparkleBox.X / SparkleBox.Y;
+        float width = PadX + glyph + GlyphGap + text + PadX;
+        float x = panelWidth - RightPad - width, y = (PanelSpace.TabStripHeight - Height) / 2;
+        return (new(x, y, width, Height),
+            new(x + PadX, (PanelSpace.TabStripHeight - GlyphHeight) / 2, glyph, GlyphHeight),
+            new(AskText, AskLabel, new(x + PadX + glyph + GlyphGap, y, text, Height)));
+    }
+
+    /// <summary>Whether <paramref name="x"/>, in DIPs from the panel's left edge, is on the Ask pill.</summary>
+    public static bool OnAsk(float x, float panelWidth)
+    {
+        var card = AskPill(panelWidth).Card;
+        return x >= card.Left && x < card.Right;
+    }
+
+    private static OutlineSegment[] Polygon(params float[] xy) =>
+        [OutlineSegment.Move(new(xy[0], xy[1])), .. Enumerable.Range(1, (xy.Length / 2) - 1).Select(i => OutlineSegment.Line(new(xy[2 * i], xy[(2 * i) + 1])))];
 }
 
 /// <summary>
@@ -141,6 +186,12 @@ public static class PanelSpace
 
     public static Vector2 ToBody(Vector2 island, double panelWidth) =>
         new(island.X + (float)panelWidth / 2, island.Y - TabStripHeight);
+
+    /// <summary>
+    /// An island point's x from the tab strip's left edge, which is the shape's body edge, as <see cref="TabStrip"/>
+    /// lays it out: the ramps an attached shape flares into the top edge with lie outside it, and the tomte sits inside.
+    /// </summary>
+    public static float ToStrip(Vector2 island, in IslandGeometry shape) => island.X + (float)shape.Width / 2;
 
     /// <summary>
     /// Whether an island point is on the shape itself: no further than half its width from the centre line,

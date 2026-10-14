@@ -233,6 +233,8 @@ internal static unsafe partial class Program
                 c.Pill();
                 c.Mascot();
             }),
+            new("strip-ask-widest", IslandGeometry.Panel(PanelSize.Shelf.W, 64), c => Strip(c, PanelId.Shelf, PanelSize.Shelf)),
+            new("strip-ask-narrowest", IslandGeometry.Panel(PanelSize.Media.W, 64), c => Strip(c, PanelId.Media, PanelSize.Media)),
             new("shelf", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems)),
             new("shelf-empty", Panel(PanelSize.Shelf), c => Shelf(c, [])),
             new("shelf-drop", IslandGeometry.ShelfDrop, ShelfDrop),
@@ -335,7 +337,7 @@ internal static unsafe partial class Program
 
     private static IslandGeometry Panel((double W, double H) size) => IslandGeometry.Panel(size.W, size.H);
 
-    // The strip row as the panel host draws it: every tab on main, the current one white on a card.
+    // The strip row as the panel host draws it: every tab on main, the current one white on a card, and the Ask pill.
     private static void Tabs(Canvas c, PanelId current, (double W, double H) size)
     {
         var strip = new Vector2((float)(-size.W / 2), 0);
@@ -349,6 +351,19 @@ internal static unsafe partial class Program
 
             c.Text(line, strip);
         }
+
+        var (card, glyph, word) = TabStrip.AskPill((float)size.W);
+        c.RoundRect(Offset(card, strip), TabStrip.Corner, TabStrip.AskCard);
+        c.Sparkle(Offset(glyph, strip), TabStrip.AskColor);
+        c.Text(word, strip);
+    }
+
+    // The strip alone over a short pill, at a panel's width.
+    private static void Strip(Canvas c, PanelId current, (double W, double H) size)
+    {
+        c.Pill();
+        c.Mascot();
+        Tabs(c, current, size);
     }
 
     private static Vector2 Body((double W, double H) size) => new((float)size.W, (float)size.H - PanelSpace.TabStripHeight);
@@ -864,6 +879,15 @@ internal static unsafe partial class Program
             foreach (var t in triangles)
             {
                 Fill([OutlineSegment.Move(t[0]), OutlineSegment.Line(t[1]), OutlineSegment.Line(t[2])], at, k, argb);
+            }
+        }
+
+        /// <summary>The Ask pill's sparkle, scaled from its box to fill <paramref name="glyph"/>'s height.</summary>
+        public void Sparkle(RectangleF glyph, uint argb)
+        {
+            foreach (var star in TabStrip.Sparkle)
+            {
+                Fill(star, new Vector2(glyph.X, glyph.Y), glyph.Height / TabStrip.SparkleBox.Y, argb);
             }
         }
 

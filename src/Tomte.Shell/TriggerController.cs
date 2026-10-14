@@ -254,6 +254,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
+    /// <summary>
+    /// The tray's "Ask AI", after the menu has closed: the Palette state at its smallest, as the palette hotkey opens it,
+    /// for the shell to fill. Like "Open island" it ignores the pause, not the suppression. False when it did not open.
+    /// </summary>
+    public bool Ask() => Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), ignorePause: true);
+
+    /// <summary>The window the user last worked in, if it is still up, else 0 (<see cref="DesktopWatch.LastApp"/>).</summary>
+    public nint LastApp => watch.LastApp;
+
     /// <summary>The current panel changed while Panels is open (a tab switch): Panels re-enters itself and the shape morphs to the new size.</summary>
     public void ResizePanels()
     {
@@ -416,12 +425,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact, peek or Panels; with no provider set up
-    /// the palette says the AI layer is off. A press anywhere else on Compact opens Panels.
+    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact, peek or Panels, and so does one on the
+    /// strip's Ask pill; with no provider set up the palette says the AI layer is off. A press anywhere else on Compact
+    /// opens Panels.
     /// </summary>
     private void OnPressed(System.Numerics.Vector2 at)
     {
-        if (island.OnMascot(at) && OpensPalette())
+        if ((island.OnMascot(at) || Panels?.OnAsk(at) == true) && OpensPalette())
         {
             island.Queue.TryEnqueue(() =>
             {

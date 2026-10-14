@@ -167,7 +167,7 @@ internal sealed class PaletteView : IDisposable
     public event Action? HeightChanged;
 
     /// <summary>The prompt takes the keys, after the palette hotkey or a click on the tomte. False when there is no prompt or Windows refused.</summary>
-    public bool TakeKeys() => prompt is not null && focus!.Take(prompt);
+    public bool TakeKeys() => !disposed && prompt is not null && focus!.Take(prompt);
 
     /// <summary>The question the card shows now, which a yes from the chord may answer; null with none.</summary>
     public ToolRequest? Shown => laidAsk;
@@ -547,6 +547,11 @@ internal sealed class PaletteView : IDisposable
 /// <summary>The palette hotkey's half of the host: the prompt box that takes the keys.</summary>
 internal sealed partial class PaletteHost
 {
+    private PaletteView? typed;
+
+    /// <summary>The prompt of the palette <see cref="Type"/> last opened takes the keys again, while that palette is still up. False when it has none or Windows refused.</summary>
+    public bool TakeKeys() => typed?.TakeKeys() == true;
+
     /// <summary>
     /// The palette hotkey or a click on the tomte, once the triggers have opened the Palette state: the prompt box takes
     /// the keys at once, while that press is the last input, and Enter sends. A tool that asks shows its question with
@@ -564,6 +569,7 @@ internal sealed partial class PaletteHost
         Task sending = Task.CompletedTask;
         PaletteView? view = null;
         view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question);
+        typed = view;
         view.HeightChanged += () => Grow(view.Height);
         if (hide is not null)
         {

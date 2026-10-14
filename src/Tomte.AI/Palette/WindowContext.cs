@@ -10,8 +10,14 @@ public static unsafe class WindowContext
 {
     public static nint Foreground() => (nint)PInvoke.GetForegroundWindow().Value;
 
+    /// <summary>The app and title of a window; both empty for no window (0), which process 0, the idle process, is not.</summary>
     public static (string App, string Title) Describe(nint hwnd)
     {
+        if (hwnd == 0)
+        {
+            return ("", "");
+        }
+
         var window = new HWND(hwnd);
         Span<char> buffer = stackalloc char[512];
         int length = PInvoke.GetWindowText(window, buffer);

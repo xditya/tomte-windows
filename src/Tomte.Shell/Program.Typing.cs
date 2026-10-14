@@ -48,6 +48,32 @@ internal static partial class Program
         return focus;
     }
 
+    /// <summary>
+    /// The tray's "Ask AI": the palette about the window the user last worked in, since the menu and the taskbar have had
+    /// the foreground after it. A palette already up, which the menu took the keys from, has its prompt take them again.
+    /// </summary>
+    private static async void AskFromTray(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log)
+    {
+        // An exception leaving an async void ends the process, so the whole of it is guarded.
+        try
+        {
+            if (triggers.Machine.State == IslandState.Palette)
+            {
+                hotkeyPalette?.TakeKeys();
+                return;
+            }
+
+            if (triggers.Ask())
+            {
+                await OpenPalette(island, triggers, store, log, front: triggers.LastApp);
+            }
+        }
+        catch (Exception e)
+        {
+            NotOpened(triggers, log, e);
+        }
+    }
+
     // A palette that failed to open would leave the island in the Palette state with nothing in it.
     private static void NotOpened(TriggerController triggers, Action<string>? log, Exception e)
     {
@@ -92,10 +118,11 @@ internal static partial class Program
     /// against local Ollama instead, as the --palette driver uses, whose device tools only pretend. The selection in the
     /// app in front is read through UI Automation, off the island's thread, before the prompt takes the keys; a read
     /// slower than <see cref="SelectionWait"/> offers no selection. Circle-to-ask passes its region and the window that
-    /// was in front before its overlay, and no selection is read then.
+    /// was in front before its overlay, the tray the window the user last worked in (0 for none), and no selection is
+    /// read then.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, ContextChip? lasso = null, nint foreground = 0)
+    private static async Task OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, ContextChip? lasso = null, nint? front = null)
     {
         hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide);
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
@@ -106,12 +133,8 @@ internal static partial class Program
         }
 
         // Read now, while the island is still not the foreground window.
-        if (lasso is null)
-        {
-            foreground = WindowContext.Foreground();
-        }
-
-        var selection = lasso is null ? Task.Run(SelectionReader.Read) : Task.FromResult<string?>(null);
+        nint foreground = front ?? WindowContext.Foreground();
+        var selection = front is null ? Task.Run(SelectionReader.Read) : Task.FromResult<string?>(null);
         // Skills come from beside the settings file on each open, only those turned on, so one added or turned on since
         // the last open is there; their text goes to the provider only with a send.
         var skills = Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
@@ -198,7 +221,8 @@ internal static partial class Program
         {
             Skills = skills,
             Mcp = McpTools.For(settings.McpServers),
-            Automation = AutomationTools.For(settings.UiAutomation.Enabled, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),
+            // With no window to point them at (the tray's Ask AI with none remembered) the tools are not offered.
+            Automation = AutomationTools.For(settings.UiAutomation.Enabled && foreground != 0, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),
         };
         // The palette is up, so the event waits in the triggers' queue and shows once it hides.
         session.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
