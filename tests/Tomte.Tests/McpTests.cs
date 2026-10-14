@@ -337,6 +337,53 @@ public class McpSettingsTests
     }
 
     [Fact]
+    public void HeadersOnlyGoWhereTheyAreSafe()
+    {
+        static string? Check(string url, string header) =>
+            McpServerSettings.Validate([], new() { Name = "Web", Transport = McpTransport.Http, Url = url, HeaderName = header });
+
+        // The SDK puts the value of a header it cannot add into its error text; content headers are the known case.
+        Assert.NotNull(Check("https://x/mcp", "Content-Type"));
+        Assert.NotNull(Check("https://x/mcp", "Content-Length"));
+        Assert.Null(Check("https://x/mcp", "X-Api-Key"));
+        Assert.NotNull(Check("http://example.com/mcp", "Authorization"));
+        Assert.Null(Check("http://example.com/mcp", ""));
+        Assert.Null(Check("http://localhost:8080/mcp", "Authorization"));
+        Assert.Null(Check("http://127.0.0.1:8080/mcp", "Authorization"));
+    }
+
+    [Fact]
+    public void PrefixesAreLettersFirstAndNeverHoldTheSeparator()
+    {
+        static string Prefix(string name) => new McpServerSettings { Name = name }.Prefix;
+
+        Assert.Equal("a_b", Prefix("a  b"));
+        Assert.Equal("a_b", Prefix("a__b"));
+        Assert.Equal("s1password", Prefix("1Password"));
+        Assert.Equal("", Prefix("##"));
+        Assert.Equal("my_very_long_server", Prefix("My very long server name, really"));
+        // "a" with tool "b__c" and "a  b" with tool "c" used to give the model the same name.
+        Assert.NotNull(McpServerSettings.Validate([new() { Name = "a b", Command = "x" }], new() { Name = "a  b", Command = "x" }));
+    }
+
+    [Fact]
+    public void AnEditKeepsToolTiersOnlyForTheSameNameAndTarget()
+    {
+        var tiers = new Dictionary<string, ActionTier> { ["files__read#1"] = ActionTier.Read };
+        var before = new McpServerSettings { Name = "Files", Command = "npx", Arguments = ["a"], Enabled = false, ToolTiers = tiers };
+
+        var same = new McpServerSettings { Name = "Files", Command = "npx", Arguments = ["a"] }.After(before);
+        Assert.Same(tiers, same.ToolTiers);
+        Assert.False(same.Enabled);
+
+        Assert.Empty(new McpServerSettings { Name = "Files", Command = "npx", Arguments = ["b"] }.After(before).ToolTiers);
+        Assert.Empty(new McpServerSettings { Name = "Files", Command = "evil", Arguments = ["a"] }.After(before).ToolTiers);
+        Assert.Empty(new McpServerSettings { Name = "Docs", Command = "npx", Arguments = ["a"] }.After(before).ToolTiers);
+        Assert.Empty(new McpServerSettings { Name = "Files", Transport = McpTransport.Http, Url = "https://x" }.After(before).ToolTiers);
+        Assert.True(new McpServerSettings { Name = "New", Command = "npx" }.After(null).Enabled);
+    }
+
+    [Fact]
     public void ArgumentsSplitAtSpacesOutsideQuotes()
     {
         Assert.Equal(["-y", "@modelcontextprotocol/server-filesystem", @"C:\My Files", ""], McpServerSettings.SplitArguments(@" -y  @modelcontextprotocol/server-filesystem ""C:\My Files"" """""));

@@ -28,7 +28,10 @@ public sealed record McpServerSettings
 
     public bool Enabled { get; init; } = true;
 
-    /// <summary>Tier overrides by the server's own tool name. A tool not listed is an External effect.</summary>
+    /// <summary>
+    /// Tier overrides by tool key: the name the model sees plus a hash of what the tool is (the AI layer
+    /// makes the key). A tool not listed, or one that changed since the user chose, is an External effect.
+    /// </summary>
     public IReadOnlyDictionary<string, ActionTier> ToolTiers { get; init; } = new Dictionary<string, ActionTier>();
 
     [JsonIgnore]
@@ -47,8 +50,24 @@ public sealed record McpServerSettings
         ? [ActionTier.Read, ActionTier.ExternalEffect, ActionTier.Destructive]
         : [ActionTier.ExternalEffect, ActionTier.Destructive];
 
-    public ActionTier TierFor(string tool) =>
-        ToolTiers.TryGetValue(tool, out var tier) && AllowedTiers.Contains(tier) ? tier : ActionTier.ExternalEffect;
+    public ActionTier TierFor(string toolKey) =>
+        ToolTiers.TryGetValue(toolKey, out var tier) && AllowedTiers.Contains(tier) ? tier : ActionTier.ExternalEffect;
+
+    /// <summary>What Tomte starts or connects to. A tool's permissions hold only while this stays the same.</summary>
+    [JsonIgnore]
+    public string Target => Transport == McpTransport.Stdio
+        ? "stdio:" + string.Join('\0', [Command, .. Arguments])
+        : "http:" + Url;
+
+    /// <summary>
+    /// This server as an edit of <paramref name="previous"/>: the on/off switch stays, and the per-tool
+    /// tiers stay only when the name and the target did not change, since they were chosen for those tools.
+    /// </summary>
+    public McpServerSettings After(McpServerSettings? previous) => previous is null ? this : this with
+    {
+        Enabled = previous.Enabled,
+        ToolTiers = previous.Name == Name && previous.Target == Target ? previous.ToolTiers : new Dictionary<string, ActionTier>(),
+    };
 
     [JsonIgnore]
     public string Summary => Transport == McpTransport.Stdio
@@ -66,8 +85,15 @@ public sealed record McpServerSettings
             return server.Command.Trim().Length == 0 ? "Enter the command that starts the server, for example npx." : null;
         if (!Uri.TryCreate(server.Url, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
             return "Enter the server's http or https URL.";
-        if (server.HeaderName.Length > 0 && !server.HeaderName.All(c => c is > ' ' and < (char)127 && !"()<>@,;:\\\"/[]?={}".Contains(c)))
-            return "The header name can only hold letters, digits and - _ . characters.";
+        if (server.HeaderName.Length == 0)
+            return null;
+        // The platform's own rule: false for a name that is not a token and for content headers such as
+        // Content-Type, which a request cannot carry here.
+        using var probe = new HttpRequestMessage();
+        if (!probe.Headers.TryAddWithoutValidation(server.HeaderName, "x"))
+            return "That header cannot be used. Use a request header such as Authorization or X-Api-Key.";
+        if (uri.Scheme == "http" && !uri.IsLoopback)
+            return "A header is only sent over https. Use an https URL or remove the header.";
         return null;
     }
 
@@ -107,10 +133,22 @@ public sealed record McpServerSettings
 
     private static string Quote(string argument) => argument.Length == 0 || argument.Any(char.IsWhiteSpace) ? $"\"{argument}\"" : argument;
 
-    // Tool names must match ^[a-zA-Z0-9_-]{1,64}$ at every provider, so the prefix keeps to that and stays short.
+    // Tool names must match ^[a-zA-Z0-9_-]{1,64}$ at every provider and start with a letter at Gemini,
+    // so the prefix keeps to that and stays short. Runs of other characters become one underscore: the
+    // prefix never holds the double underscore that separates it from the tool name.
     private static string Slug(string name)
     {
-        var slug = new string([.. name.Trim().ToLowerInvariant().Select(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') ? c : '_')]).Trim('_');
-        return slug.Length > 20 ? slug[..20].TrimEnd('_') : slug;
+        var slug = new StringBuilder();
+        foreach (char c in name.ToLowerInvariant())
+        {
+            if (c is (>= 'a' and <= 'z') or (>= '0' and <= '9'))
+                slug.Append(c);
+            else if (slug.Length > 0 && slug[^1] != '_')
+                slug.Append('_');
+        }
+
+        if (slug.Length > 0 && char.IsAsciiDigit(slug[0]))
+            slug.Insert(0, 's');
+        return slug.ToString(0, Math.Min(slug.Length, 20)).TrimEnd('_');
     }
 }
