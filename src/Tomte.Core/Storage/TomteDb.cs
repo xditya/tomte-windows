@@ -228,23 +228,38 @@ public sealed class TomteDb(string? path = null)
     private void SetAside()
     {
         string bad = $"{FilePath}.bad-{DateTime.Now:yyyyMMdd-HHmmss-fff}";
+        string log = FilePath + "-wal";
         for (int attempt = 0; ; attempt++)
         {
+            // The log first, when SQLite left one: commits that were never folded back stay with the file they belong to.
+            bool logMoved = File.Exists(log);
             try
             {
-                // The log first, when SQLite left one: commits that were never folded back stay with the file they belong to.
-                if (File.Exists(FilePath + "-wal"))
+                if (logMoved)
                 {
-                    File.Move(FilePath + "-wal", bad + "-wal");
+                    File.Move(log, bad + "-wal");
                 }
 
                 File.Move(FilePath, bad);
                 return;
             }
-            catch (IOException) when (attempt < 20)
+            catch (IOException)
             {
+                // The file would not move, so its log goes back beside it and the two stay a pair.
+                // this covers a rename refused because something still has the file open. Access denied on the
+                // file alone, or a failure to put the log back, can still leave the log under this stamp without its file.
+                if (logMoved && File.Exists(bad + "-wal"))
+                {
+                    File.Move(bad + "-wal", log);
+                }
+
                 // A connection that is failing on the same file right now still holds it and lets go within milliseconds.
                 // one second of retries; after that the IOException reaches the caller and the next Open tries again.
+                if (attempt == 20)
+                {
+                    throw;
+                }
+
                 Thread.Sleep(50);
             }
         }

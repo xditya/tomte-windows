@@ -354,6 +354,25 @@ public sealed class StorageTests : IDisposable
     }
 
     [Fact]
+    public void ALogIsNeverSetAsideWithoutItsFile()
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(DbPath, Garbage);
+        File.WriteAllText(DbPath + "-wal", "commits that were never folded back");
+        File.SetAttributes(DbPath + "-wal", FileAttributes.ReadOnly);
+
+        // SQLite can still read the file, but nothing can rename it while this handle is open.
+        using (new FileStream(DbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.Throws<IOException>(() => new TomteDb(DbPath).Open("shelf", Shelf));
+        }
+
+        Assert.Empty(Directory.GetFiles(dir, "*.bad-*"));
+        Assert.Equal(Garbage, File.ReadAllText(DbPath));
+        Assert.Equal("commits that were never folded back", File.ReadAllText(DbPath + "-wal"));
+    }
+
+    [Fact]
     public void DamageInOneFeaturesIndexSetsNothingAside()
     {
         var db = new TomteDb(DbPath);
