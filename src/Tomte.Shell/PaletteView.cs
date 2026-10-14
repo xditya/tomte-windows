@@ -11,8 +11,9 @@ namespace Tomte.Shell;
 /// <summary>
 /// The palette's content on the island, laid out by <see cref="PaletteLayout"/> in a container in island space: the
 /// prompt box, a text box when a session can send and the "AI layer is off" line when none can; the chips, which a
-/// click turns on and off; the answer as it streams, drawn by the text renderer; and the footer with where the
-/// request goes and what today cost. It fades in with the shape and goes when the island leaves the Palette state.
+/// click turns on and off; the answer as it streams, drawn by the text renderer in a band that scrolls with the wheel
+/// and follows the newest line until the user scrolls up; and the footer with where the request goes and what today
+/// cost. It fades in with the shape and goes when the island leaves the Palette state.
 /// The answer is plain text runs, not a read-only text box: nothing asks for selecting or copying it, and a third
 /// set of text services would cost a module instance, input routing and a surface for that alone.
 /// </summary>
@@ -37,7 +38,11 @@ internal sealed class PaletteView : IDisposable
     private readonly List<(CompositionRoundedRectangleGeometry Geometry, CompositionColorBrush Brush)> pills = [];
     private readonly List<TextVisual> labels = [], runs = [];
     private readonly TextVisual placeholder, provider, spend;
+    private readonly ContainerVisual band, scrolled;
     private readonly EditorView? prompt;
+    private TextVisual? setup;
+    private float answerHeight, scroll;
+    private bool pinned = true;
     private Action? retract;
     private bool fadeInPending = true, disposed;
 
@@ -65,6 +70,12 @@ internal sealed class PaletteView : IDisposable
         cardShape.StrokeBrush = c.CreateColorBrush(Line);
         cardShape.StrokeThickness = 1;
         shapes.Shapes.Add(cardShape);
+        // The answer's runs sit in one container clipped to the answer's band and moved by the scroll.
+        band = c.CreateContainerVisual();
+        band.Clip = c.CreateInsetClip();
+        scrolled = c.CreateContainerVisual();
+        band.Children.InsertAtTop(scrolled);
+        root.Children.InsertAtTop(band);
         placeholder = text.Create(root);
         provider = text.Create(root);
         spend = text.Create(root);
@@ -85,6 +96,7 @@ internal sealed class PaletteView : IDisposable
         island.Dips.Children.InsertAtTop(root);
         island.ContentReady += FadeIn;
         island.Pressed += OnPressed;
+        island.Wheel += OnWheel;
         machine.Changed += OnState;
         if (session is not null)
         {
@@ -146,8 +158,8 @@ internal sealed class PaletteView : IDisposable
         if (session is null)
         {
             // No provider: what the palette needs, under the box, and nothing to type in.
-            Show(0, new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad, layout.ChipsTop + 4));
-            Trim(1);
+            setup ??= text.Create(root);
+            setup.Show(new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad, layout.ChipsTop + 4));
             SetHeight(layout.Height(0));
             return;
         }
@@ -175,9 +187,18 @@ internal sealed class PaletteView : IDisposable
             labels[i].Show(shown ? chipRow[i].Label : new TextSlot("", PaletteLayout.Chip, default));
         }
 
-        var blocks = Blocks(session);
-        float height = layout.Height(layout.Measure(blocks));
-        var answer = layout.Answer(blocks, height);
+        // every streamed word lays the answer out again (and its run once more to draw it); cache the blocks
+        // that did not change if long answers cost frames.
+        var (answer, measured) = layout.Answer(Blocks(session));
+        float height = layout.Height(measured);
+        var area = layout.AnswerBand(height);
+        band.Offset = new Vector3(area.X, area.Y, 0);
+        band.Size = new Vector2(area.Width, area.Height);
+        // A new answer starts at the top and follows its newest line again.
+        pinned |= measured == 0;
+        answerHeight = measured;
+        scroll = layout.Follow(scroll, pinned, measured, height);
+        scrolled.Offset = new Vector3(0, -scroll, 0);
         for (int i = 0; i < answer.Count; i++)
         {
             Show(i, answer[i].Run, answer[i].At);
@@ -200,6 +221,7 @@ internal sealed class PaletteView : IDisposable
         disposed = true;
         island.ContentReady -= FadeIn;
         island.Pressed -= OnPressed;
+        island.Wheel -= OnWheel;
         machine.Changed -= OnState;
         if (session is not null)
         {
@@ -217,6 +239,9 @@ internal sealed class PaletteView : IDisposable
             visual.Dispose();
         }
 
+        setup?.Dispose();
+        scrolled.Dispose();
+        band.Dispose();
         island.Dips.Children.Remove(root);
         shapes.Dispose();
         root.Dispose();
@@ -257,7 +282,7 @@ internal sealed class PaletteView : IDisposable
     {
         while (runs.Count <= i)
         {
-            runs.Add(text.Create(root));
+            runs.Add(text.Create(scrolled));
         }
 
         runs[i].Show(run, at);
@@ -289,6 +314,29 @@ internal sealed class PaletteView : IDisposable
         {
             fadeInPending = false;
             root.StartAnimation("Opacity", PanelHost.Fade(island.Compositor, 1, PanelHost.FadeInMs));
+        }
+    }
+
+    // The wheel over the answer scrolls it, three lines a notch; scrolled back to its end, it follows a streaming answer again.
+    private void OnWheel(Vector2 at, int delta)
+    {
+        if (disposed || session is null || machine.State != IslandState.Palette)
+        {
+            return;
+        }
+
+        var local = at - new Vector2(root.Offset.X, root.Offset.Y);
+        if (!layout.AnswerBand(Height).Contains(local.X, local.Y))
+        {
+            return;
+        }
+
+        scroll = layout.Scrolled(scroll, delta, answerHeight, Height);
+        pinned = layout.AtEnd(scroll, answerHeight, Height);
+        scrolled.Offset = new Vector3(0, -scroll, 0);
+        foreach (var run in runs)
+        {
+            run.Refresh();
         }
     }
 

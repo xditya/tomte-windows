@@ -188,7 +188,7 @@ public sealed class TypingTests : IDisposable
     }
 
     [Fact]
-    public void ThePaletteGrowsWithItsAnswerAndCutsWhatDoesNotFit()
+    public void ThePaletteGrowsWithItsAnswerUpTo480()
     {
         (string, bool)[] chips = [("Selection · none", false), ("Window · notepad · notes.txt - Notepad", false), ("Screenshot of window", false), ("Shelf · Q3-report.pdf", true), ("Scratchpad", false)];
         var layout = new PaletteLayout(640, mascot: true, text: 0, chips);
@@ -204,22 +204,27 @@ public sealed class TypingTests : IDisposable
 
         // No answer: the smallest palette.
         Assert.Equal(150, layout.Height(0));
-        List<(string, TextStyle)> answer = [("Read notes.txt", PaletteLayout.StepText), ("The dentist is on Monday at 10.", PaletteLayout.AnswerText)];
-        float measured = layout.Measure(answer);
+        List<(string, TextStyle)> answer = [("Read notes.txt", PaletteLayout.StepText), ("", PaletteLayout.AnswerText), ("The dentist is on Monday at 10.", PaletteLayout.AnswerText)];
+        var (runs, measured) = layout.Answer(answer);
+        // Laid out from the answer's top, one block under the other; an empty block takes no room.
         Assert.Equal(18 + PaletteLayout.BlockGap + 20, measured, 1);
+        Assert.Equal(2, runs.Count);
+        Assert.Equal(0, runs[0].At.Y);
+        Assert.Equal(18 + PaletteLayout.BlockGap, runs[1].At.Y, 1);
         float height = layout.Height(measured);
         Assert.Equal(layout.AnswerTop + measured + PaletteLayout.Gap + PaletteLayout.FootHeight + PaletteLayout.Bottom, Math.Max(height, 150), 1);
-        var runs = layout.Answer(answer, height);
-        Assert.Equal(2, runs.Count);
-        Assert.Equal(layout.AnswerTop + 18 + PaletteLayout.BlockGap, runs[1].At.Y, 1);
+        // The band the answer shows in runs from under the chips to above the footer.
+        var band = layout.AnswerBand(height);
+        Assert.Equal(layout.AnswerTop, band.Y);
+        Assert.Equal(height - PaletteLayout.Bottom - PaletteLayout.FootHeight - PaletteLayout.Gap, band.Bottom, 1);
+        Assert.Equal(0, layout.MaxScroll(measured, height));
 
-        // A long answer stops the palette at 480 and is cut at its last line that fits.
+        // A long answer stops the palette at 480 and is laid out whole: the band scrolls over it.
         var longer = new List<(string, TextStyle)> { (string.Join(' ', Enumerable.Repeat("A sentence that keeps the answer going.", 120)), PaletteLayout.AnswerText) };
-        float tall = layout.Height(layout.Measure(longer));
-        Assert.Equal(480, tall);
-        var cut = layout.Answer(longer, tall);
-        Assert.Single(cut);
-        Assert.True(cut[0].At.Y + cut[0].Run.Lines * 20 <= tall - PaletteLayout.Bottom - PaletteLayout.FootHeight - PaletteLayout.Gap + 0.5f);
+        var (whole, tall) = layout.Answer(longer);
+        Assert.Equal(480, layout.Height(tall));
+        Assert.Equal(whole[0].Run.Lines * 20, tall, 1);
+        Assert.Equal(tall - layout.AnswerBand(480).Height, layout.MaxScroll(tall, 480), 1);
 
         // The prompt grows with its lines up to about four, and everything under it moves down with it.
         var grown = new PaletteLayout(640, mascot: true, text: 52, chips);

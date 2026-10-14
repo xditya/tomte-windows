@@ -236,6 +236,7 @@ internal static unsafe class Program
             new("palette-prompt", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, "What does this error mean?", Chips(false), "Nothing sent", [], 0, 0.03m)),
             new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, StreamingHeight()), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m)),
             new("palette-ai-off", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0)),
+            new("palette-long-answer-scrolled", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight), c => Palette(c, "How do I fix a stuck Windows update?", Chips(false), "Sent to ollama · llama3.2:3b", Long, 2, 0.04m, scrolled: 0.5f)),
             new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
             new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
             new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
@@ -490,18 +491,33 @@ internal static unsafe class Program
         ("Tomte is a Windows utility that stays out of sight until you call it from the top edge of the screen. It holds a file shelf, shortcuts, media controls and a scratchpad, and an optional AI layer on your own key, and it", PaletteLayout.AnswerText),
     ];
 
+    private static readonly (string, TextStyle)[] Long =
+    [
+        ("Read the window title", PaletteLayout.StepText),
+        (string.Join("\n\n", [
+            "1. Restart the PC once. Many stuck updates finish on their own after a restart, because a file the update needs was in use.",
+            "2. Run the Windows Update troubleshooter: Settings, System, Troubleshoot, Other troubleshooters, Windows Update. It resets the update services and clears common errors.",
+            "3. Make room on the system drive. An update needs several gigabytes free; Settings, System, Storage shows what can go.",
+            "4. Pause updates for a week and resume them. Resuming makes Windows look for the update again from the start.",
+            "5. Clear the update cache. Stop the Windows Update service, delete the contents of C:\\Windows\\SoftwareDistribution\\Download, then start the service again.",
+            "6. Install the update by hand. The Microsoft Update Catalog has every cumulative update; search for its KB number and run the installer.",
+            "7. If none of this works, check the update history for the error code and search for it; most codes point to one cause.",
+        ]), PaletteLayout.AnswerText),
+    ];
+
     // The palette's height for the streaming scene, from the prompt's own height at 150% and the answer.
     private static double StreamingHeight()
     {
         var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true);
         using var probe = Typing.Captured("Summarize the selected text\nin two lines", PaletteLayout.PromptSize, first.Editor, 1.5, null);
         var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, probe.ContentHeight / 1.5f, Chips(true));
-        return layout.Height(layout.Measure(Streaming));
+        return layout.Height(layout.Answer(Streaming).Height);
     }
 
     // The palette: the prompt's card with its text box (or the AI-off line), the chips, the answer and the footer, as
-    // the palette view lays them out. A null prompt is a palette with no provider.
-    private static void Palette(Canvas c, string? prompt, (string Label, bool On)[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent)
+    // the palette view lays them out. A null prompt is a palette with no provider. The answer shows in its band, clipped
+    // there and scrolled to <paramref name="scrolled"/> of its range (1 is the end, where a streaming answer stays).
+    private static void Palette(Canvas c, string? prompt, (string Label, bool On)[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1)
     {
         var origin = new Vector2((float)(-PanelSize.PaletteWidth / 2), 0);
         c.Pill();
@@ -536,11 +552,17 @@ internal static unsafe class Program
             c.Text(label, origin);
         }
 
-        float height = layout.Height(layout.Measure(answer));
-        foreach (var (run, at) in layout.Answer(answer, height))
+        var (runs, measured) = layout.Answer(answer);
+        float height = layout.Height(measured);
+        var band = layout.AnswerBand(height);
+        float scroll = layout.MaxScroll(measured, height) * scrolled;
+        c.Clip = Offset(band, origin);
+        foreach (var (run, at) in runs)
         {
-            c.Text(run, at, origin);
+            c.Text(run, new Vector2(at.X, band.Y + at.Y - scroll), origin);
         }
+
+        c.Clip = null;
 
         foreach (var line in layout.Foot(provider, steps, spent, 2m, height))
         {
@@ -627,7 +649,7 @@ internal static unsafe class Program
         private readonly double scale;
         private readonly int width, height;
         private readonly Vector2 origin;
-        private readonly List<(byte[] Pixels, int Width, int Height, Vector2 At, float Opacity)> runs = [];
+        private readonly List<(byte[] Pixels, int Width, int Height, Vector2 At, float Opacity, RectangleF? Clip)> runs = [];
 
         public Canvas(ID2D1DeviceContext* dc, IslandGeometry g, double scale)
         {
@@ -790,6 +812,9 @@ internal static unsafe class Program
 
         public double Scale => scale;
 
+        /// <summary>Where the runs added from now on are cut off, as a container's clip cuts them; null for none.</summary>
+        public RectangleF? Clip { get; set; }
+
         /// <summary>
         /// A text box as the island shows it: the services drawn into a transparent surface of the box's size in whole
         /// pixels at the box's snapped corner, and the caret as a white sprite where the services put it, the user's
@@ -816,7 +841,7 @@ internal static unsafe class Program
             dc->BeginDraw();
             dc->SetTransform(&transform);
             var at = new Vector2(host.X + PixelGrid.Snap(host.X, box.X, scale), host.Y + PixelGrid.Snap(host.Y, box.Y, scale));
-            runs.Add((pixels, w, h, at, 1));
+            runs.Add((pixels, w, h, at, 1, Clip));
             var (x, y, caretHeight, shown) = editor.Caret;
             if (shown && caretHeight > 0)
             {
@@ -825,7 +850,7 @@ internal static unsafe class Program
                 int cw = Math.Max(1, (int)Math.Round(width * scale));
                 var caret = new byte[cw * caretHeight * 4];
                 Array.Fill(caret, (byte)255);
-                runs.Add((caret, cw, caretHeight, at + new Vector2((float)(x / scale), (float)(y / scale)), 1));
+                runs.Add((caret, cw, caretHeight, at + new Vector2((float)(x / scale), (float)(y / scale)), 1, Clip));
             }
         }
 
@@ -864,7 +889,7 @@ internal static unsafe class Program
                 OffGrid++;
             }
 
-            runs.Add((pixels, w, h, at, opacity));
+            runs.Add((pixels, w, h, at, opacity, Clip));
         }
 
         /// <summary>A run alone on a transparent surface of its own, as the island draws it, read back as pixels.</summary>
@@ -906,8 +931,14 @@ internal static unsafe class Program
         public void Save(string file)
         {
             // The runs go over everything else, as the island's text sprites sit on top in their hosts.
-            foreach (var (pixels, w, h, at, opacity) in runs)
+            foreach (var (pixels, w, h, at, opacity, clip) in runs)
             {
+                if (clip is { } cut)
+                {
+                    var r = Rect(cut);
+                    dc->PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE.D2D1_ANTIALIAS_MODE_ALIASED);
+                }
+
                 var props = new D2D1_BITMAP_PROPERTIES1 { pixelFormat = Format, dpiX = (float)(96 * scale), dpiY = (float)(96 * scale) };
                 ID2D1Bitmap1* run;
                 fixed (byte* bits = pixels)
@@ -918,6 +949,10 @@ internal static unsafe class Program
                 var dest = new D2D_RECT_F { left = at.X, top = at.Y, right = at.X + (float)(w / scale), bottom = at.Y + (float)(h / scale) };
                 dc->DrawBitmap((ID2D1Bitmap*)run, &dest, opacity, D2D1_INTERPOLATION_MODE.D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, null, null);
                 run->Release();
+                if (clip is not null)
+                {
+                    dc->PopAxisAlignedClip();
+                }
             }
 
             dc->EndDraw(null, null);

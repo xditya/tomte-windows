@@ -22,6 +22,9 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const float ChipHeight = 24, ChipPadX = 9, ChipGap = 6, ChipCorner = 12, ChipMaxText = 200;
     public const float FootHeight = 14;
 
+    /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
+    public const float WheelStep = 3 * 20;
+
     /// <summary>The prompt's own text: 13 DIP white, as the text box draws it.</summary>
     public const float PromptSize = 13;
 
@@ -102,32 +105,13 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public static string SpendLine(int steps, decimal spent, decimal? cap) =>
         string.Create(CultureInfo.InvariantCulture, $"{steps} tool step{(steps == 1 ? "" : "s")} · ${spent:0.00} today{(cap is { } c ? $" of ${c:0.00} cap" : "")}");
 
-    /// <summary>How tall the answer's blocks are laid out at the answer's width, with the gaps between them.</summary>
-    public float Measure(IReadOnlyList<(string Text, TextStyle Style)> blocks)
-    {
-        float total = 0;
-        int shown = 0;
-        foreach (var (block, style) in blocks)
-        {
-            if (block.Length == 0)
-            {
-                continue;
-            }
-
-            using var layout = TextLayout.Of(new TextRun(block, style, AnswerWidth, Lines: int.MaxValue));
-            total += layout.Height + (shown++ > 0 ? BlockGap : 0);
-        }
-
-        return total;
-    }
-
     /// <summary>
-    /// The answer's blocks as runs and where they start, in a palette of <paramref name="height"/>: whole while they
-    /// fit, then the block that does not is cut at its last line that does, and the rest are left out.
+    /// The answer's blocks laid out whole, one under the other, each where it starts from the top of the answer, and the
+    /// height of them all. Empty blocks take no room.
     /// </summary>
-    public IReadOnlyList<(TextRun Run, Vector2 At)> Answer(IReadOnlyList<(string Text, TextStyle Style)> blocks, float height)
+    public (IReadOnlyList<(TextRun Run, Vector2 At)> Runs, float Height) Answer(IReadOnlyList<(string Text, TextStyle Style)> blocks)
     {
-        float bottom = height - Bottom - FootHeight - Gap, y = AnswerTop;
+        float y = 0;
         var runs = new List<(TextRun, Vector2)>();
         foreach (var (block, style) in blocks)
         {
@@ -137,26 +121,30 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
             }
 
             using var layout = TextLayout.Of(new TextRun(block, style, AnswerWidth, Lines: int.MaxValue));
-            if (y + layout.Height <= bottom + 0.5f)
-            {
-                runs.Add((new TextRun(block, style, AnswerWidth, layout.LineCount), new Vector2(Pad, y)));
-                y += layout.Height + BlockGap;
-                continue;
-            }
-
-            int lines = (int)((bottom - y) / LineHeight(style));
-            if (lines >= 1)
-            {
-                runs.Add((new TextRun(block, style, AnswerWidth, lines), new Vector2(Pad, y)));
-            }
-
-            break;
+            y += runs.Count > 0 ? BlockGap : 0;
+            runs.Add((new TextRun(block, style, AnswerWidth, layout.LineCount), new Vector2(Pad, y)));
+            y += layout.Height;
         }
 
-        return runs;
+        return (runs, y);
     }
 
-    private static float LineHeight(TextStyle style) => style.LineHeight > 0 ? style.LineHeight : style.Size * 4 / 3;
+    /// <summary>Where the answer shows in a palette of <paramref name="height"/>: under the chips, above the footer. It scrolls inside.</summary>
+    public RectangleF AnswerBand(float height) => new(0, AnswerTop, width, Math.Max(0, height - Bottom - FootHeight - Gap - AnswerTop));
+
+    public float MaxScroll(float answer, float height) => Math.Max(0, answer - AnswerBand(height).Height);
+
+    /// <summary>A wheel delta (120 a notch, positive away from the user) moves the answer three lines a notch, back toward its start.</summary>
+    public float Scrolled(float scroll, int delta, float answer, float height) => Math.Clamp(scroll - delta / 120f * WheelStep, 0, MaxScroll(answer, height));
+
+    /// <summary>
+    /// The scroll for an answer that changed: at its end while pinned there, so a streaming answer shows its newest
+    /// line; else where the user left it, clamped to what the answer now allows.
+    /// </summary>
+    public float Follow(float scroll, bool pinned, float answer, float height) => pinned ? MaxScroll(answer, height) : Math.Clamp(scroll, 0, MaxScroll(answer, height));
+
+    /// <summary>Pinned to the end: scrolled to the end, or to where the end shows anyway.</summary>
+    public bool AtEnd(float scroll, float answer, float height) => scroll >= MaxScroll(answer, height) - 0.5f;
 
     private List<(RectangleF, TextSlot)> LayChips()
     {
