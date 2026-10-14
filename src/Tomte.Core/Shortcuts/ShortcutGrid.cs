@@ -7,7 +7,7 @@ namespace Tomte.Core.Shortcuts;
 
 /// <summary>
 /// The Shortcuts panel body in DIPs, origin at its top-left corner under the tab strip: a head line, then four
-/// columns of 80 DIP tiles with a 34 DIP icon, as many rows as the body holds (two at the panel's 520 x 300). The
+/// columns of 80 DIP tiles with a 34 DIP icon, as many rows as the body holds (two at the panel's 560 x 300). The
 /// cells run on past the last row: tile after tile, then the add tile, and the wheel scrolls them by whole rows.
 /// Cell counts from the first row that shows.
 /// </summary>
@@ -86,7 +86,7 @@ public static class ShortcutGrid
     /// The icon's square in a cell, in body DIPs, placed on whole pixels at this scale so each of the shell's pixels
     /// lands on one screen pixel. <paramref name="bodyTop"/> is how far the body starts below the island's top edge
     /// (the tab strip, 42 DIP, which is 52.5 pixels at 125%); the snap is to the island's pixels. Horizontally the
-    /// body starts on a whole pixel at 520 DIP wide, so no offset is needed there.
+    /// body starts on a whole pixel at 560 DIP wide, so no offset is needed there.
     /// </summary>
     public static RectangleF Icon(RectangleF cell, double scale, float bodyTop)
     {

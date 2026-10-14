@@ -49,12 +49,15 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
 /// <summary>Panel sizes in DIPs (width, height). The caller caps them at 60% x 50% of the monitor.</summary>
 public static class PanelSize
 {
-    public static readonly (double W, double H) Media = (380, 140);
-    public static readonly (double W, double H) Shortcuts = (520, 300);
-    public static readonly (double W, double H) Scratchpad = (520, 320);
-    public static readonly (double W, double H) Shelf = (560, 260);
-    public static readonly (double W, double H) Clipboard = (560, 360);
-    public static readonly (double W, double H) History = (560, 400);
+    /// <summary>Every panel is this wide, so the tab strip and its labels stay where they are from tab to tab; only the height differs.</summary>
+    public const double Width = 560;
+
+    public static readonly (double W, double H) Media = (Width, 140);
+    public static readonly (double W, double H) Shortcuts = (Width, 300);
+    public static readonly (double W, double H) Scratchpad = (Width, 320);
+    public static readonly (double W, double H) Shelf = (Width, 260);
+    public static readonly (double W, double H) Clipboard = (Width, 360);
+    public static readonly (double W, double H) History = (Width, 400);
     public const double PaletteWidth = 640;
     public const double PaletteMinHeight = 150;
     public const double PaletteMaxHeight = 480;

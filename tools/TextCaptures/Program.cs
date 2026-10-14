@@ -255,7 +255,8 @@ internal static unsafe partial class Program
                 c.Mascot();
             }),
             new("strip-ask-widest", IslandGeometry.Panel(PanelSize.Shelf.W, 64), c => Strip(c, PanelId.Shelf, PanelSize.Shelf)),
-            new("strip-ask-narrowest", IslandGeometry.Panel(PanelSize.Media.W, 64), c => Strip(c, PanelId.Media, PanelSize.Media)),
+            // Every panel is one width; a narrower strip is a panel cut to 60% of an 800 x 600 screen.
+            new("strip-ask-narrowest", IslandGeometry.Panel(480, 64), c => Strip(c, PanelId.Media, (480, PanelSize.Media.H))),
             // The interaction host's looks over the strip: hover and pressed on a tab, the focus ring on the current one,
             // the Ask pill's tooltip and a "Copied" acknowledgement.
             new("strip-hover", StripLooks, c => StripLook(c, layer: StateLook.Hover)),

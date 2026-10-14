@@ -562,8 +562,8 @@ public sealed class ShortcutsTests : IDisposable
         var body = new System.Numerics.Vector2((float)width, (float)height - PanelSpace.TabStripHeight);
         Assert.Equal(2, ShortcutGrid.Rows(body));
 
-        Assert.Equal(new System.Drawing.RectangleF(14, 39, 117, 80), ShortcutGrid.Cell(0, body));
-        Assert.Equal(new System.Drawing.RectangleF(139, 127, 117, 80), ShortcutGrid.Cell(5, body));
+        Assert.Equal(new System.Drawing.RectangleF(14, 39, 127, 80), ShortcutGrid.Cell(0, body));
+        Assert.Equal(new System.Drawing.RectangleF(149, 127, 127, 80), ShortcutGrid.Cell(5, body));
         // The rounded corners reach 22 DIP in from every edge of the island; the last row ends well above them.
         float corner = (float)IslandGeometry.Panel(width, height).Corner;
         Assert.True(ShortcutGrid.Cell(7, body).Bottom <= body.Y - corner);
@@ -573,7 +573,7 @@ public sealed class ShortcutsTests : IDisposable
         var targets = ShortcutGrid.Targets(Tiles(3), 0, body);
         Assert.Equal("add", HitId(targets, new(ShortcutGrid.Cell(3, body).X + 50, 60)));
         Assert.Equal("tile:2", HitId(targets, new(ShortcutGrid.Cell(1, body).X + 50, 60)));
-        Assert.Null(HitId(targets, new(135, 60)));
+        Assert.Null(HitId(targets, new(145, 60)));
         Assert.Null(HitId(targets, new(150, 150)));
         Assert.Null(HitId(targets, new(10, 10)));
     }
