@@ -77,9 +77,12 @@ public class CompactRulesTests
         Assert.Null(CompactRules.Line(CompactReason.Event, [track], null));
         // A digest is the line's even when it holds the track change.
         Assert.Equal("2 events: Daybreak, Dark mode on", CompactRules.Line(CompactReason.Event, [track, dark], null));
-        // The push pill counts a running timer down beside its ring, and says nothing without one.
-        Assert.Equal("01:24", CompactRules.Line(CompactReason.Summary, [], left));
+        // The push pill counts a running timer down beside its ring; without one it says the time of day unless
+        // the now-playing row is up (no clock passed).
+        Assert.Equal("01:24", CompactRules.Line(CompactReason.Summary, [], left, now));
         Assert.Null(CompactRules.Line(CompactReason.Summary, [], null));
+        Assert.Equal(CompactRules.TimeOfDay(now), CompactRules.Line(CompactReason.Summary, [], null, now));
+        Assert.Null(CompactRules.Line(CompactReason.Peek, [], null, now));
         // Peek, the rambler and no pill have no words of their own, timer or not.
         Assert.Null(CompactRules.Line(CompactReason.Peek, [], left));
         Assert.Null(CompactRules.Line(CompactReason.Rambler, [], left));

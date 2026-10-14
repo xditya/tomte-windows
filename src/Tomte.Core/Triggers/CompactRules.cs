@@ -37,18 +37,23 @@ public static class CompactRules
 
     /// <summary>
     /// The words on the Compact pill: the hint, an event's line (beside the ring on the timer's done pill), or
-    /// the time a running timer has left beside its ring on the push pill. Null where the pill shows no words
-    /// of its own: peek, the rambler, a push pill without a timer, and the track-change event, whose pill shows
-    /// the now-playing row with the title. <paramref name="timerLeft"/> is the shown timer's time left, if any.
+    /// the time a running timer has left beside its ring on the push pill, or the time of day on a push pill with no
+    /// timer and nothing playing (<paramref name="clock"/>, null while the now-playing row shows). Null where the pill
+    /// shows no words of its own: peek, the rambler, and the track-change event, whose pill shows the now-playing row
+    /// with the title. <paramref name="timerLeft"/> is the shown timer's time left, if any.
     /// </summary>
-    public static string? Line(CompactReason reason, IReadOnlyList<IslandEvent> shown, TimeSpan? timerLeft) => reason switch
+    public static string? Line(CompactReason reason, IReadOnlyList<IslandEvent> shown, TimeSpan? timerLeft, DateTimeOffset? clock = null) => reason switch
     {
         CompactReason.Hint => Hint,
         CompactReason.Event when Owner(shown) == IslandEventSource.TrackChange => null,
         CompactReason.Event => EventLine(shown),
         CompactReason.Summary when timerLeft is { } left => Countdown(left),
+        CompactReason.Summary when clock is { } at => TimeOfDay(at),
         _ => null,
     };
+
+    /// <summary>The time of day as the user's culture writes a short time: "18:41" or "6:41 PM".</summary>
+    public static string TimeOfDay(DateTimeOffset at) => at.ToLocalTime().ToString("t", System.Globalization.CultureInfo.CurrentCulture);
 
     /// <summary>One event says its own text; a digest says how many waited and what they were.</summary>
     public static string EventLine(IReadOnlyList<IslandEvent> shown) => shown switch

@@ -36,6 +36,12 @@ internal sealed class NowPlayingRow
     private View? view, leaving;
     private bool watching, ready;
 
+    /// <summary>Whether the row is on the pill; the line keeps the pill's time of day off it meanwhile.</summary>
+    public bool Showing => view is not null;
+
+    /// <summary>Raised when <see cref="Showing"/> changes.</summary>
+    public event Action? ShowingChanged;
+
     public NowPlayingRow(IslandWindow island, TriggerController triggers, MediaTracker tracker, TextRenderer text, Action<string>? log)
     {
         this.island = island;
@@ -104,6 +110,7 @@ internal sealed class NowPlayingRow
                 (leaving, view) = (view, null);
                 leaving.Root.StartAnimation("Opacity", fadeOut);
                 release.Start();
+                ShowingChanged?.Invoke();
             }
 
             return;
@@ -117,6 +124,7 @@ internal sealed class NowPlayingRow
             view.Root.Opacity = 0;
             island.Dips.Children.InsertAtTop(view.Root);
             view.Root.StartAnimation("Opacity", fadeIn);
+            ShowingChanged?.Invoke();
         }
 
         view.Art.Show(playing.Thumbnail, log);
