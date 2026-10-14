@@ -57,6 +57,20 @@ public sealed class DropZoneLayout
     /// <summary>The status line's slot, under the row, as wide as the target and the zones together.</summary>
     public RectangleF Line => new(Target.X, LineTop, Zones[^1].Rect.Right - Target.X, LineHeight);
 
+    /// <summary>A provider is set up in settings with a model: the zones show, and a drop on one may send.</summary>
+    public static bool HasProvider(TomteSettings settings) => settings.Provider is { DefaultModel.Length: > 0 };
+
+    /// <summary>
+    /// The skill the custom slot carries: the one picked in Settings, while it is on. An "on" key is the skill's name,
+    /// then # and its hash. Null for none, and the slot is drawn empty.
+    /// </summary>
+    public static string? SlotSkill(TomteSettings settings) =>
+        settings.DropZoneSkill is { } name && settings.EnabledSkills.Any(key => key.Split('#')[0] == name) ? name : null;
+
+    /// <summary>The zones the settings ask for, for a surface this wide and deep: null without a provider that has a model.</summary>
+    public static DropZoneLayout? For(TomteSettings settings, double width, double depth) =>
+        HasProvider(settings) ? For(settings.Provider!.Id, SlotSkill(settings), width, depth) : null;
+
     /// <summary>
     /// The zones for a surface this wide and deep, or null without a provider: then nothing of the AI layer is drawn.
     /// <paramref name="skill"/> is the skill the user picked for the custom slot, null for none.
