@@ -88,7 +88,11 @@ internal sealed class InteractionHost
     private TargetRef? focus, told, tipFor;
     private TipPhase tip;
     private string tipText = "";
-    private bool ring, tracking, dragging, tipBlocked;
+    private bool ring, tracking, dragging, tipBlocked, holding;
+
+    // The view a text box with the keys belongs to (the palette's prompt), and how the box takes them back.
+    private IInteractive? boxOwner;
+    private Action? backToBox;
 
     public InteractionHost(IslandWindow island)
     {
@@ -107,6 +111,9 @@ internal sealed class InteractionHost
 
     /// <summary>Ctrl+Tab (+1) and Ctrl+Shift+Tab (-1) switch panel tabs through this.</summary>
     public Action<int>? SwitchTab { get; set; }
+
+    /// <summary>True while a press on a target holds the mouse or a view's drag runs, then false: the island must not retract under it.</summary>
+    public Action<bool>? Pressing { get; set; }
 
     /// <summary>A key was used since the last press, so the focus ring shows.</summary>
     public bool KeyUsed => ring;
@@ -137,6 +144,11 @@ internal sealed class InteractionHost
         if (told is { } t && ReferenceEquals(t.View, view))
         {
             told = null;
+        }
+
+        if (ReferenceEquals(boxOwner, view))
+        {
+            (boxOwner, backToBox) = (null, null);
         }
 
         if (views.Count == 0)
@@ -175,7 +187,7 @@ internal sealed class InteractionHost
             return false;
         }
 
-        if (focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, virtualKey))
+        if (focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, virtualKey, repeat))
         {
             ring = true;
             Update();
@@ -217,6 +229,27 @@ internal sealed class InteractionHost
                 break;
         }
 
+        Update();
+        return true;
+    }
+
+    /// <summary>
+    /// Tab (+1) or Shift+Tab (-1) out of a text box that belongs to <paramref name="owner"/> (the palette's prompt): focus
+    /// goes to the owner's first or last stop, and Tab past its last or Shift+Tab before its first runs
+    /// <paramref name="back"/>, which gives the box the keys again. False when the owner has nothing to focus; the box
+    /// keeps the key then.
+    /// </summary>
+    public bool FromBox(IInteractive owner, int direction, Action back)
+    {
+        int v = views.FindIndex(x => ReferenceEquals(x.Interactive, owner));
+        var list = v >= 0 ? owner.Targets : [];
+        if (v < 0 || Target.Stop([list], null, direction, (_, g) => lastInGroup.GetValueOrDefault((owner, g))) is not { } to)
+        {
+            return false;
+        }
+
+        (boxOwner, backToBox, ring) = (owner, back, true);
+        FocusOn(views[v], list[to.Index]);
         Update();
         return true;
     }
@@ -492,7 +525,22 @@ internal sealed class InteractionHost
     private void Step(int direction)
     {
         var lists = views.Select(v => v.Interactive.Targets).ToList();
-        (int, int)? from = focus is { } f ? IndexOf(f, lists) : null;
+        (int View, int Index)? from = focus is { } f ? IndexOf(f, lists) : null;
+        if (from is { } at && ReferenceEquals(views[at.View].Interactive, boxOwner))
+        {
+            // Inside the prompt's own view: past its last stop, or before its first, the prompt takes the keys back.
+            var list = lists[at.View];
+            var next = Target.Stop([list], (0, at.Index), direction, (_, g) => lastInGroup.GetValueOrDefault((boxOwner!, g)));
+            if (next is not { } n || (direction > 0 ? n.Index <= at.Index : n.Index >= at.Index))
+            {
+                backToBox?.Invoke();
+                return;
+            }
+
+            FocusOn(views[at.View], list[n.Index]);
+            return;
+        }
+
         if (Target.Stop(lists, from, direction, (v, g) => lastInGroup.GetValueOrDefault((views[v].Interactive, g))) is { } to)
         {
             FocusOn(views[to.View], lists[to.View][to.Index]);
@@ -615,13 +663,21 @@ internal sealed class InteractionHost
         return true;
     }
 
-    // The state layer on the pressed or hovered target and the ring on the focused one, from where they are now.
+    // The state layer on the pressed or hovered target and the ring on the focused one, from where they are now; and the
+    // hold that keeps the island open while a press lasts.
     private void Update()
     {
+        if ((pointer.Pressed is not null) != holding)
+        {
+            holding = !holding;
+            Pressing?.Invoke(holding);
+        }
+
         RectangleF? layer = null, focused = null;
         float layerCorner = 0, focusCorner = 0;
         uint fill = 0;
-        if (pointer.Layer(r => Find(r, out _, out var t) && t.Enabled) is { } l && Find(l.Target, out var lv, out var lt))
+        // A slider draws its own hover and press on its knob.
+        if (pointer.Layer(r => Find(r, out _, out var t) && t.Enabled) is { } l && Find(l.Target, out var lv, out var lt) && lt.Kind != TargetKind.Slider)
         {
             (layer, layerCorner, fill) = (IslandRect(lv, lt.Bounds), lt.Corner, l.Fill);
         }
@@ -652,7 +708,13 @@ internal sealed class InteractionHost
         }
 
         pointer.Reset();
-        (focus, told, ring, tracking, tipBlocked) = (null, null, false, false, false);
+        (focus, told, ring, tracking, tipBlocked, boxOwner, backToBox) = (null, null, false, false, false, null, null);
+        if (holding)
+        {
+            holding = false;
+            Pressing?.Invoke(false);
+        }
+
         lastInGroup.Clear();
         HideTip();
         overlay?.Release();

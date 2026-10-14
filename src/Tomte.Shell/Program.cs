@@ -306,6 +306,7 @@ internal static partial class Program
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var text = new TextRenderer(island, log);
         island.Interaction.Text = text;
+        island.Interaction.Pressing = triggers.Pressing;
         var typing = StartTyping(island, triggers, store, text, log);
         var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels, Ask = triggers.AskClicked };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its

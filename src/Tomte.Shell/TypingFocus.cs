@@ -27,6 +27,7 @@ internal sealed class TypingFocus
     private readonly TextRenderer text;
     private readonly Action<string>? log;
     private readonly List<EditorView> editors = [];
+    private readonly Dictionary<EditorView, IInteractive> owners = [];
     private EditorView? focused, dragging;
     private HWND previous;
     private bool keys, handBackQueued;
@@ -69,8 +70,12 @@ internal sealed class TypingFocus
 
     public EditorView? Focused => focused;
 
-    /// <summary>A text box in <paramref name="host"/>, drawn on the text device. Dispose it with its view.</summary>
-    public EditorView Create(ContainerVisual host, bool multiline, float fontDips)
+    /// <summary>
+    /// A text box in <paramref name="host"/>, drawn on the text device. Dispose it with its view. A box with an
+    /// <paramref name="owner"/> (the palette's prompt) gives Tab and Shift+Tab to that view's targets, and takes the keys
+    /// back when Tab comes round to it again.
+    /// </summary>
+    public EditorView Create(ContainerVisual host, bool multiline, float fontDips, IInteractive? owner = null)
     {
         var editor = new EditorView(island.Compositor, island.Queue, host, island.Dips, island.Hwnd, multiline, fontDips)
         {
@@ -89,6 +94,7 @@ internal sealed class TypingFocus
             text.DeviceReady -= Ready;
             text.Let();
             editors.Remove(editor);
+            owners.Remove(editor);
             if (dragging == editor)
             {
                 dragging = null;
@@ -108,6 +114,11 @@ internal sealed class TypingFocus
             }
         };
         editors.Add(editor);
+        if (owner is not null)
+        {
+            owners[editor] = owner;
+        }
+
         return editor;
     }
 
@@ -281,17 +292,21 @@ internal sealed class TypingFocus
         bool shift = Down(VIRTUAL_KEY.VK_SHIFT), repeat = (lParam & PromptKeys.WasDown) != 0;
         if (focused is { } editor)
         {
-            // Tab out of the prompt moves to the targets, when there are any, and the box lets go; Ctrl+Tab switches
-            // the panel tab, and the note goes with it.
-            if (down && NavKeys.LeavesBox(key, ctrl, editor.TabLeaves) && island.Interaction.Key(key, shift, ctrl, repeat))
+            // Tab out of the prompt moves to its view's targets, when there are any, and the box lets go; Ctrl+Tab
+            // switches the panel tab, and the note goes with it.
+            var owner = owners.GetValueOrDefault(editor);
+            if (down && NavKeys.LeavesBox(key, ctrl, owner is not null))
             {
-                if (!ctrl)
+                if (ctrl ? island.Interaction.Key(key, shift, ctrl, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor)))
                 {
-                    focused = null;
-                    editor.Blur();
-                }
+                    if (!ctrl)
+                    {
+                        focused = null;
+                        editor.Blur();
+                    }
 
-                return new LRESULT(0);
+                    return new LRESULT(0);
+                }
             }
 
             if (editor.BeforeKey?.Invoke(message, wParam, lParam) == true)

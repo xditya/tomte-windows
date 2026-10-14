@@ -1076,9 +1076,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
-    internal void Typing(bool on)
+    internal void Typing(bool on) => Hold(IslandActivity.Typing, on);
+
+    /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: it holds the island as any drag does.</summary>
+    internal void Pressing(bool on) => Hold(IslandActivity.DragInProgress, on);
+
+    private void Hold(IslandActivity what, bool on)
     {
-        activity = on ? activity | IslandActivity.Typing : activity & ~IslandActivity.Typing;
+        activity = on ? activity | what : activity & ~what;
         if (!on && armed && !pointerInside && machine.State != IslandState.Hidden)
         {
             PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
