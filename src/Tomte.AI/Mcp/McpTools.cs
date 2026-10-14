@@ -597,8 +597,12 @@ public sealed class McpTools : IAsyncDisposable
         await Task.WhenAll(running.Select(StopAsync));
     }
 
-    /// <summary>Never throws. The client goes first: for an HTTP server that ends the session, for a process it lets go of the streams.</summary>
-    private static async Task StopAsync(Connection connection)
+    /// <summary>
+    /// Never throws. Runs on the pool: ending a process tree takes tens of milliseconds, and the caller is
+    /// the island's thread in the middle of the retract morph. The client goes first: for an HTTP server
+    /// that ends the session, for a process it lets go of the streams.
+    /// </summary>
+    private static Task StopAsync(Connection connection) => Task.Run(async () =>
     {
         foreach (var part in new IAsyncDisposable?[] { connection.Client, connection.Owner })
         {
@@ -612,7 +616,7 @@ public sealed class McpTools : IAsyncDisposable
                 // It already exited, or it failed while stopping; either way there is nothing left to do for it.
             }
         }
-    }
+    });
 
     private sealed record Entry(McpServerSettings Server, Tool Tool, string Key);
 
