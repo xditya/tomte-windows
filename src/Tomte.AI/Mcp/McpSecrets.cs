@@ -76,11 +76,12 @@ public static partial class McpSecrets
 
     /// <summary>
     /// Whether an arguments line looks like it holds a token, for a warning in Settings that never blocks
-    /// a save. Three signs: a value after an option named like --token, --api-key, --secret or --password;
-    /// a word that starts the way known tokens do (sk-, ghp_, github_pat_, xoxb-, glpat-, AIza and
-    /// others below, or Bearer and a value); or a run of 24 or more letters, digits and _+=- with both
-    /// letters and digits that is as varied as a random key (4 bits of entropy per character or more),
-    /// or is 32 or more hex digits, which have only 16 symbols and score lower.
+    /// a save. Three signs: a value after an option named like --token, --api-key, --key, --secret,
+    /// --password, --auth or --pat; a word that starts the way known tokens do (sk-, ghp_, github_pat_,
+    /// xoxb-, glpat-, AIza and others below, or bearer in any case and a value); or a run of 24 or more
+    /// letters, digits and _+=- with both letters and digits that is as varied as a random key (4 bits
+    /// of entropy per character or more), or is 32 or more hex digits, which have only 16 symbols and
+    /// score lower.
     /// </summary>
     public static bool LooksLikeToken(string arguments) =>
         SecretOption().IsMatch(arguments) || KnownPrefix().IsMatch(arguments) || Run().Matches(arguments).Any(m => Random(m.Value));
@@ -97,10 +98,10 @@ public static partial class McpSecrets
 
     // a fixed list of option words and prefixes; a token that matches none of them and is not
     // a long random run gets no warning.
-    [GeneratedRegex(@"--(?:[A-Za-z0-9]+[-_])*(?:token|api[-_]?key|secret(?:[-_]?key)?|password|access[-_]?key)(?:=|\s+)(?!-)\S", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"--(?:[A-Za-z0-9]+[-_])*(?:token|api[-_]?key|key|secret(?:[-_]?key)?|password|access[-_]?key|auth|pat)(?:=|\s+)(?!-)\S", RegexOptions.IgnoreCase)]
     private static partial Regex SecretOption();
 
-    [GeneratedRegex(@"(?<![A-Za-z0-9])(?:(?:sk-|sk_live_|ghp_|gho_|ghu_|ghs_|github_pat_|xox[abpr]-|glpat-|AIza)[A-Za-z0-9_-]{8,}|Bearer\s+\S{8,})")]
+    [GeneratedRegex(@"(?<![A-Za-z0-9])(?:(?:sk-|sk_live_|ghp_|gho_|ghu_|ghs_|github_pat_|xox[abpr]-|glpat-|AIza)[A-Za-z0-9_-]{8,}|(?i:bearer)\s+\S{8,})")]
     private static partial Regex KnownPrefix();
 
     [GeneratedRegex(@"[A-Za-z0-9_+=-]{24,}")]
