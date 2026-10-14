@@ -32,7 +32,8 @@ public static class CompactRules
     /// <summary>
     /// One rule for the pill's one line. The push pill shows the timer ring while a timer runs (or has ended
     /// and waits for its done pill), else what plays. The peek pill shows what plays and never the ring. An
-    /// event pill shows only its own event's content. The first-run hint and the rambler show neither.
+    /// event pill shows only its own event's content. A digest of several events, the first-run hint and the
+    /// rambler show neither.
     /// </summary>
     public static CompactContent Content(CompactReason reason, IslandEventSource shown, bool timerRuns, bool playing) => reason switch
     {
@@ -44,11 +45,9 @@ public static class CompactRules
     };
 
     /// <summary>
-    /// Whose content an event pill shows: the timer's when one of its events is the timer's done event, else
-    /// the media's when one is a track change, else nobody's. A digest of several follows the same order.
+    /// Whose content an event pill shows: the feature that raised its one event. A digest of several shows
+    /// only its own content, neither the timer ring nor what plays, whichever events it holds.
     /// </summary>
     public static IslandEventSource Owner(IReadOnlyList<IslandEvent> shown) =>
-        shown.Any(e => e.Source == IslandEventSource.Timer) ? IslandEventSource.Timer
-        : shown.Any(e => e.Source == IslandEventSource.TrackChange) ? IslandEventSource.TrackChange
-        : IslandEventSource.Other;
+        shown is [var only] ? only.Source : IslandEventSource.Other;
 }

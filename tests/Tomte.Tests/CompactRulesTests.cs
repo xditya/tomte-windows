@@ -34,7 +34,7 @@ public class CompactRulesTests
     }
 
     [Fact]
-    public void AnEventPillBelongsToTheFeatureThatRaisedOneOfItsEvents()
+    public void AnEventPillBelongsToTheFeatureThatRaisedItsOneEvent()
     {
         var now = DateTimeOffset.Now;
         var done = new IslandEvent("Timer done", now) { Source = Timer };
@@ -45,9 +45,10 @@ public class CompactRulesTests
         Assert.Equal(Track, CompactRules.Owner([track]));
         Assert.Equal(Other, CompactRules.Owner([job]));
         Assert.Equal(Other, CompactRules.Owner([]));
-        // A digest: the timer's done event wins the one line, then a track change.
-        Assert.Equal(Timer, CompactRules.Owner([job, track, done]));
-        Assert.Equal(Track, CompactRules.Owner([job, track]));
+        // A digest shows only its own content: no ring and no row, whichever events it holds.
+        Assert.Equal(Other, CompactRules.Owner([job, track, done]));
+        Assert.Equal(Other, CompactRules.Owner([job, track]));
+        Assert.Equal(Other, CompactRules.Owner([done, track]));
         // The text alone does not make an event the timer's.
         Assert.Equal(Other, CompactRules.Owner([new IslandEvent("Timer done", now)]));
     }
