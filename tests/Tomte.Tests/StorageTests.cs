@@ -286,8 +286,19 @@ public sealed class StorageTests : IDisposable
 
         var factory = Provider.GetType(FactoryName)!;
         var timer = (Timer)factory.GetField("_pruneTimer", AnyField)!.GetValue(factory.GetField("Instance", AnyField)!.GetValue(null))!;
-        // A live timer accepts a change and answers true; a disposed one answers false (it does not throw on .NET 10).
-        Assert.False(timer.Change(Timeout.Infinite, Timeout.Infinite), $"{ProviderVersion}: the timer is still alive after an open. {Remedy}");
+        // A live timer accepts a change and answers true. A disposed one answers false on .NET 10; the documentation says
+        // it throws, so that counts as stopped too.
+        bool alive;
+        try
+        {
+            alive = timer.Change(Timeout.Infinite, Timeout.Infinite);
+        }
+        catch (ObjectDisposedException)
+        {
+            alive = false;
+        }
+
+        Assert.False(alive, $"{ProviderVersion}: the timer is still alive after an open. {Remedy}");
     }
 
     [Fact]
