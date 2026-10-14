@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Tomte.AI;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
@@ -137,6 +138,10 @@ internal static class Program
         if (rambler)
         {
             triggers.Rambler = CreateRambler(args, island, triggers, store, timer, log!);
+            if (triggers.Rambler is { } hold && int.TryParse(Arg(args, "--debug-hold"), out int holdMs))
+            {
+                DebugHold(island, hold, holdMs, Arg(args, "--debug-answer"), args.Contains("--dry"), log!);
+            }
         }
 
         if (palettePrompt is not null)
@@ -509,9 +514,10 @@ internal static class Program
     /// --rambler: the hold-to-talk session Win+Alt+V drives. The provider comes from the command line until
     /// settings carry it (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential
     /// Manager under the id). Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or
-    /// the provider's /audio/transcriptions with --stt-provider and --stt-model. Without a provider the note is the
-    /// raw transcript; with one the transcript is a voice command the model reads with the voice tools, and --dry
-    /// keeps device tools from changing anything. Kept out of Main so Tomte.AI loads only for this switch.
+    /// the provider's /audio/transcriptions with --stt-provider and --stt-model; --debug-transcript "text" or
+    /// --debug-wav file.wav stands in for what the microphone heard. Without a provider the note is the raw
+    /// transcript; with one the transcript is a voice command the model reads with the voice tools, and --dry keeps
+    /// device tools from changing anything. Kept out of Main so Tomte.AI loads only for this switch.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, TextWriter log)
@@ -531,6 +537,15 @@ internal static class Program
         else if (WhisperTranscriber.IsInstalled(WhisperTranscriber.DefaultDirectory))
         {
             speech = new WhisperTranscriber(WhisperTranscriber.DefaultDirectory);
+        }
+
+        if (Arg(args, "--debug-transcript") is { } said)
+        {
+            speech = new DebugSpeech(null, said, null);
+        }
+        else if (Arg(args, "--debug-wav") is { } wav && speech is not null)
+        {
+            speech = new DebugSpeech(speech, null, ReadWav(wav));
         }
 
         if (speech is null)
@@ -577,11 +592,92 @@ internal static class Program
 
     // Beside the settings file, so a run with its own settings file keeps its send log to itself too.
     private static string SendLogPath => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsFile))!, "send-log.jsonl");
+    // What a driven run may say yes to with nobody at the keyboard: settings it puts back at the end, and the app's own
+    // data. A page, an app, a radio or the power stays shut unless --dry makes the device actions dry runs; open_url
+    // has no dry run, so it is always refused.
+    private static readonly HashSet<string> UndoneInDebugRuns =
+    [
+        BuiltInTools.SetDarkMode, BuiltInTools.SetVolume, BuiltInTools.SetMute, BuiltInTools.SetBrightness, BuiltInTools.ListOutputDevices,
+        BuiltInTools.SetTimer, BuiltInTools.SaveNote, BuiltInTools.CreateShelfFile, BuiltInTools.ReadShelfItem,
+    ];
+
+    /// <summary>
+    /// --debug-hold ms [--debug-answer yes|no]: one hold of the rambler chord, posted to the island the way the input
+    /// thread posts it, so a run needs neither the global hotkey nor injected keys. Each question the palette asks is
+    /// answered after 1.5 s, yes only for what the run undoes or keeps to itself (see above); without --debug-answer it
+    /// waits for Win+Alt+Enter or Esc. After the hold the run waits out the event pill, undoes the device actions that
+    /// ran so the PC is left as it was, and quits.
+    /// </summary>
+    private static void DebugHold(IslandWindow island, Rambler rambler, int holdMs, string? answer, bool dry, TextWriter log)
+    {
+        var undos = new List<Func<ActionResult>>();
+        rambler.Asking += async request =>
+        {
+            bool yes = answer == "yes" && (UndoneInDebugRuns.Contains(request.Tool) || (dry && BuiltInTools.IsDeviceTool(request.Tool)));
+            if (answer is null)
+            {
+                return;
+            }
+
+            await Task.Delay(1500);
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: answers {(yes ? "yes" : "no")}");
+            rambler.Answer(yes);
+        };
+        // Device settings are put back; a note, a shelf file or a timer stays in the run's own data folder to be looked at.
+        rambler.CommandDone += command => undos.AddRange(command.Answer.OfType<ToolStepSegment>().Where(step => BuiltInTools.IsDeviceTool(step.Tool)).Select(step => step.Undo).OfType<Func<ActionResult>>());
+        rambler.Retracted += async () =>
+        {
+            await Task.Delay(4500);
+            foreach (var undo in undos)
+            {
+                log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: undo: {undo().Message}");
+            }
+
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: memory hidden again: {Memory()}");
+            PInvoke.PostQuitMessage(0);
+        };
+        _ = Hold();
+
+        async Task Hold()
+        {
+            await Task.Delay(1000);
+            PInvoke.PostMessage(island.Hwnd, InputThread.MsgHotkey, (nuint)HotkeyAction.Rambler + 1, 0);
+            await Task.Delay(holdMs);
+            PInvoke.PostMessage(island.Hwnd, InputThread.MsgHotkeyReleased, 1, 0);
+        }
+    }
+
+    /// <summary>16 kHz mono 16-bit PCM, as the speech to text takes it: the samples of the "data" chunk.</summary>
+    private static float[] ReadWav(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        int at = 12;
+        while (at + 8 <= bytes.Length && System.Text.Encoding.ASCII.GetString(bytes, at, 4) != "data")
+        {
+            at += 8 + BitConverter.ToInt32(bytes, at + 4);
+        }
+
+        var pcm = MemoryMarshal.Cast<byte, short>(bytes.AsSpan(at + 8));
+        var samples = new float[pcm.Length];
+        for (int i = 0; i < pcm.Length; i++)
+        {
+            samples[i] = pcm[i] / 32768f;
+        }
+
+        return samples;
+    }
 
     private static string? Arg(string[] args, string name)
     {
         int i = Array.IndexOf(args, name);
         return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+    }
+
+    /// <summary>A known text, or a recorded file through the real speech to text, in place of what the microphone heard.</summary>
+    private sealed class DebugSpeech(ISpeechToText? inner, string? text, float[]? samples) : ISpeechToText
+    {
+        public Task<string> TranscribeAsync(float[] recorded, CancellationToken ct = default) =>
+            text is not null ? Task.FromResult(text) : inner!.TranscribeAsync(samples ?? recorded, ct);
     }
 
     /// <summary>Routes await continuations back to the UI thread's dispatcher queue.</summary>
