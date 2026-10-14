@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Tomte.AI.Automation;
 using Tomte.AI.Mcp;
 using Tomte.AI.Skills;
 using Tomte.Core;
@@ -157,6 +158,9 @@ public sealed class PaletteSession : IPaletteSession
     /// <summary>The skills the user turned on, found when the palette opened. Their text reaches the provider only with a send.</summary>
     public SkillSet? Skills { get; init; }
 
+    /// <summary>The UI Automation tools, when this run turned them on; never offered to a transcript. The owner disposes them.</summary>
+    public AutomationTools? Automation { get; init; }
+
     public IReadOnlyList<SkillCommand> Commands => Skills?.Commands ?? [];
 
     /// <summary>
@@ -237,6 +241,8 @@ public sealed class PaletteSession : IPaletteSession
             // A transcript reaches the device tools and the shell's own actions only: no skill and no MCP server.
             IReadOnlyList<ToolDefinition> tools = Voice ? _tools.VoiceDefinitions
                 : Skills?.Tool is { } read ? [.. BuiltInTools.Definitions, read] : BuiltInTools.Definitions;
+            if (Automation is not null && !Voice)
+                tools = [.. tools, .. AutomationTools.Definitions];
             if (Mcp is not null && !Voice)
             {
                 // Starting or connecting a server sends it data (an HTTP server gets its header), so the user sees which ones.
@@ -325,7 +331,7 @@ public sealed class PaletteSession : IPaletteSession
     private async Task<(List<ContentPart> Assistant, List<ToolCallPart> Calls, TurnDone Usage)> StreamTurnAsync(List<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken ct)
     {
         // A copy: the list keeps growing, and a request must not change after it was sent.
-        var request = new ChatRequest(_model, [.. messages], Voice ? VoicePrompt : SystemPrompt + Skills?.Prompt, tools,
+        var request = new ChatRequest(_model, [.. messages], Voice ? VoicePrompt : SystemPrompt + Skills?.Prompt + (Automation is null ? null : AutomationTools.Prompt), tools,
             Voice ? Math.Min(_options.MaxTokens, VoiceMaxTokens) : _options.MaxTokens);
         var assistant = new List<ContentPart>();
         var calls = new List<ToolCallPart>();
@@ -385,6 +391,17 @@ public sealed class PaletteSession : IPaletteSession
         // A model can name a tool it was not given; the transcript's limits hold only if that never runs.
         if (!_offered.Contains(call.Name))
             return Step(call, call.Name, $"There is no tool named {call.Name}.", isError: true);
+
+        // Another app's window: every list and every action asks the user, whatever any grant says.
+        if (Automation is not null && AutomationTools.Owns(call.Name))
+        {
+            var step = await Automation.RunAsync(call, ConfirmTool, ct);
+            if (step.Sent is not null)
+                _skillFiles.Add(step.Sent); // the send log's list of what was read and sent besides the chips
+            if (step.Done is not null)
+                DeviceActionExecuted?.Invoke(new DeviceEvent(step.Done, null));
+            return Step(call, step.Summary, step.Result, step.IsError);
+        }
 
         // A skill's own files are a read and run without asking. Nothing a skill says reaches a tier or a grant.
         if (Skills is not null && call.Name == SkillSet.ReadTool)
