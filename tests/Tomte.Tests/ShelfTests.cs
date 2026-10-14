@@ -283,12 +283,24 @@ public sealed class ShelfTests : IDisposable
         var shelf = Store();
         await shelf.Add([new ShelfEntry(ShelfKind.Content, "note.txt", Content: "note"u8.ToArray())]);
         var first = shelf.Items.Single();
-        // Shown in Explorer and Ctrl-dropped back: the copy keeps the shelf path, so two items name one folder.
-        await shelf.Accept(new DroppedItems([first.Path], [], null, KeepCopy: true));
-        var second = shelf.Items.Single(i => i.Id != first.Id);
-        Assert.Equal(first.Path, second.Path);
+        // Shown in Explorer and Ctrl-dropped back: that path is the item already, so nothing is added.
+        Assert.Equal(first.Id, Assert.Single(await shelf.Accept(new DroppedItems([first.Path], [], null, KeepCopy: true))).Id);
+        Assert.Single(shelf.Items);
 
-        await shelf.Remove([first]);
+        // A shelf from before duplicates were refused can have two items naming one folder.
+        using (var db = new TomteDb(Path.Combine(dir, "tomte.db")).Open("shelf", ["CREATE TABLE shelf_items(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, kind INTEGER NOT NULL, added INTEGER NOT NULL, removed INTEGER NOT NULL DEFAULT 0)"]))
+        using (var insert = db.CreateCommand())
+        {
+            insert.CommandText = "INSERT INTO shelf_items(name, path, kind, added) VALUES ('note (2).txt', $path, 1, 1)";
+            insert.Parameters.AddWithValue("$path", first.Path);
+            insert.ExecuteNonQuery();
+        }
+
+        var reopened = Store();
+        await reopened.Load();
+        var second = reopened.Items.Single(i => i.Id != first.Id);
+        Assert.Equal(first.Path, second.Path);
+        await reopened.Remove([reopened.Items.Single(i => i.Id == first.Id)]);
         var next = Store();
         await next.Load();
         Assert.Equal("note", File.ReadAllText(second.Path));
@@ -297,6 +309,84 @@ public sealed class ShelfTests : IDisposable
         await next.Remove(next.Items);
         await Store().Load();
         Assert.False(Directory.Exists(Path.GetDirectoryName(second.Path)));
+    }
+
+    // The same file twice
+
+    [Fact]
+    public async Task TheSameFileDroppedAgainBringsItsTileToTheFront()
+    {
+        string report = Write(user, "report.pdf", "pdf");
+        string other = Write(user, "other.txt", "other");
+        var shelf = Store();
+        var first = Assert.Single(await shelf.Accept(new DroppedItems([report], [], null, KeepCopy: false)));
+        await shelf.Accept(new DroppedItems([other], [], null, KeepCopy: false));
+
+        // The same path in other letters, and twice in one drop: one item, now first, and the drop hands it back.
+        string shouted = Path.Combine(user.ToUpperInvariant(), "REPORT.PDF");
+        var again = await shelf.Accept(new DroppedItems([shouted, report + Path.DirectorySeparatorChar], [], null, KeepCopy: false));
+        Assert.Equal(first.Id, Assert.Single(again).Id);
+        Assert.Equal(["report.pdf", "other.txt"], shelf.ItemNames);
+
+        var restarted = Store();
+        await restarted.Load();
+        Assert.Equal(["report.pdf", "other.txt"], restarted.ItemNames);
+
+        // Another file of the same name is another item.
+        string elsewhere = Write(Directory.CreateDirectory(Path.Combine(user, "old")).FullName, "report.pdf", "pdf");
+        await restarted.Accept(new DroppedItems([elsewhere], [], null, KeepCopy: false));
+        Assert.Equal(["report (2).pdf", "report.pdf", "other.txt"], restarted.ItemNames);
+    }
+
+    [Fact]
+    public async Task ContentWithTheSameNameSizeAndBytesIsTheSameItem()
+    {
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([], [Received(shelf, "img.png", [1, 2, 3])], "a note\nmore", KeepCopy: false));
+        await shelf.Accept(new DroppedItems([], [Received(shelf, "img.png", [1, 2, 3])], "a note\nmore", KeepCopy: false));
+        Assert.Equal(2, shelf.Items.Count);
+        // The second virtual file's own folder is gone; nothing names it.
+        Assert.Equal(2, Directory.GetDirectories(ShelfFolder).Length);
+
+        // The same name with other bytes is another item, and that one again is that one.
+        await shelf.Accept(new DroppedItems([], [Received(shelf, "img.png", [9, 9, 9])], null, KeepCopy: false));
+        await shelf.Accept(new DroppedItems([], [Received(shelf, "img.png", [1, 2, 3])], null, KeepCopy: false));
+        Assert.Equal(["img.png", "img (2).png", "a note.txt"], shelf.ItemNames);
+        await shelf.Accept(new DroppedItems([], [Received(shelf, "img.png", [9, 9, 9])], null, KeepCopy: false));
+        Assert.Equal(["img (2).png", "img.png", "a note.txt"], shelf.ItemNames);
+        Assert.Equal(3, Directory.GetDirectories(ShelfFolder).Length);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ATemporaryFileTakenInTwiceIsOneItem(bool link)
+    {
+        string attachment = Write(temp, "attachment.docx", "body");
+        var shelf = Store(link: link);
+        var first = Assert.Single(await shelf.Accept(new DroppedItems([attachment], [], null, KeepCopy: false)));
+        // A mail app extracts the attachment afresh for every drag.
+        File.Delete(attachment);
+        Write(temp, "attachment.docx", "body");
+        Assert.Equal(first.Id, Assert.Single(await shelf.Accept(new DroppedItems([attachment], [], null, KeepCopy: false))).Id);
+        Assert.Single(shelf.Items);
+        Assert.Single(Directory.GetDirectories(ShelfFolder));
+    }
+
+    [Fact]
+    public async Task CtrlCopiesAReferencedFileOnceAndARenamedCopyIsMadeOnce()
+    {
+        string mine = Write(user, "mine.txt", "mine");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([mine], [], null, KeepCopy: false));
+        await shelf.Accept(new DroppedItems([mine], [], null, KeepCopy: true));
+        await shelf.Accept(new DroppedItems([mine], [], null, KeepCopy: true));
+        Assert.Equal([ShelfKind.Copy, ShelfKind.Reference], shelf.Items.Select(i => i.Kind));
+
+        var copy = await shelf.AddCopy(mine, "Notes on mine.txt");
+        var again = await shelf.AddCopy(mine, "Notes on mine.txt");
+        Assert.Equal(copy!.Id, again!.Id);
+        Assert.Equal(["Notes on mine.txt", "mine (2).txt", "mine.txt"], shelf.ItemNames);
     }
 
     [Fact]
