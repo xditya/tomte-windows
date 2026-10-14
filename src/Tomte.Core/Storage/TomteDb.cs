@@ -36,6 +36,13 @@ public sealed class TomteDb(string? path = null)
     /// <exception cref="IOException">A damaged file could not be renamed because something else kept it open.</exception>
     public SqliteConnection Open(string feature, IReadOnlyList<string> steps)
     {
+        // SQLite compares object names without case, so "Shelf" and "shelf" would be two version rows for one set of
+        // tables; and an underscore would let one feature's prefix cover another's.
+        if (feature.Length == 0 || feature.Any(c => c is not ((>= 'a' and <= 'z') or (>= '0' and <= '9'))))
+        {
+            throw new ArgumentException("A feature name is lowercase letters and digits.", nameof(feature));
+        }
+
         if (TryConnect(feature, steps) is { } db)
         {
             return db;
@@ -155,13 +162,34 @@ public sealed class TomteDb(string? path = null)
             return;
         }
 
+        var before = Names(db);
         for (; applied < steps.Count; applied++)
         {
             Run(db, steps[applied]);
         }
 
+        // Features share one set of names; the prefix is what keeps two of them from choosing the same one.
+        if (Names(db).FirstOrDefault(name => !before.Contains(name) && !name.StartsWith(feature + "_", StringComparison.OrdinalIgnoreCase)) is { } stray)
+        {
+            throw new InvalidOperationException($"A step of '{feature}' made '{stray}'. Name every table, index, view and trigger {feature}_...");
+        }
+
         Run(db, "INSERT OR REPLACE INTO schema_versions(feature, version) VALUES ($feature, $version)", ("$feature", feature), ("$version", applied));
         transaction.Commit();
+    }
+
+    // Everything in the schema except what SQLite names itself (its automatic indexes, sqlite_sequence).
+    private static HashSet<string> Names(SqliteConnection db)
+    {
+        using var command = Command(db, "SELECT name FROM sqlite_schema WHERE substr(name, 1, 7) <> 'sqlite_'");
+        using var reader = command.ExecuteReader();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (reader.Read())
+        {
+            names.Add(reader.GetString(0));
+        }
+
+        return names;
     }
 
     private static int Applied(SqliteConnection db, string feature)

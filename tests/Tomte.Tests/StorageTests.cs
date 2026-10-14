@@ -28,9 +28,10 @@ public sealed class StorageTests : IDisposable
     private static readonly string ProviderVersion =
         "Microsoft.Data.Sqlite " + Provider.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 
+    // AUTOINCREMENT and UNIQUE make SQLite add objects under its own names (sqlite_sequence, an automatic index).
     private static readonly string[] Shelf =
     [
-        "CREATE TABLE shelf_items(id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        "CREATE TABLE shelf_items(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)",
         "INSERT INTO shelf_items(name) VALUES ('seed')",
     ];
 
@@ -146,6 +147,35 @@ public sealed class StorageTests : IDisposable
         using var connection = db.Open("shortcuts", Shortcuts);
         Assert.Equal("shortcuts=1", Versions(connection));
         Assert.Equal("0", Scalar(connection, "SELECT count(*) FROM sqlite_schema WHERE name LIKE 'shelf%'"));
+    }
+
+    [Theory]
+    [InlineData("CREATE TABLE items(id INTEGER PRIMARY KEY)")]
+    [InlineData("CREATE TABLE shelf_items(id INTEGER PRIMARY KEY); CREATE INDEX items_by_id ON shelf_items(id)")]
+    [InlineData("CREATE TABLE shelf_items(id INTEGER PRIMARY KEY); ALTER TABLE shelf_items RENAME TO items")]
+    [InlineData("CREATE TABLE shortcuts_extra(id INTEGER PRIMARY KEY)")]
+    public void AStepMayOnlyMakeObjectsWithItsFeaturesPrefix(string step)
+    {
+        var db = new TomteDb(DbPath);
+        db.Open("shortcuts", Shortcuts).Dispose();
+
+        var error = Assert.Throws<InvalidOperationException>(() => db.Open("shelf", [step]));
+        Assert.Contains("shelf_...", error.Message);
+
+        using var connection = db.Open("shortcuts", Shortcuts);
+        Assert.Equal("shortcuts=1", Versions(connection));
+        Assert.Equal("schema_versions,shortcuts_tiles", Scalar(connection, "SELECT group_concat(name) FROM (SELECT name FROM sqlite_schema ORDER BY name)"));
+    }
+
+    [Theory]
+    [InlineData("Shelf")]
+    [InlineData("shelf_tags")]
+    [InlineData("shelf items")]
+    [InlineData("")]
+    public void AFeatureNameIsLowercaseLettersAndDigits(string feature)
+    {
+        Assert.Throws<ArgumentException>(() => new TomteDb(DbPath).Open(feature, Shelf));
+        Assert.False(Directory.Exists(dir));
     }
 
     [Fact]
