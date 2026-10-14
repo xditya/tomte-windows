@@ -85,8 +85,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0);
         watch.Changed += OnSuppressionChanged;
         watch.WindowsChanged += OnWindowsChanged;
-        dropTarget = new DropTarget(island.Hwnd);
+        dropTarget = new DropTarget(island.Hwnd, log);
         dropTarget.Entered += OnDragEnter;
+        dropTarget.Over += x => island.Mascot.Lean(x - island.MascotScreenX);
+        dropTarget.Dropped += _ => OnDropped();
 
         InputThread.Start(island.Hwnd, store);
         // Changed arrives on a pool thread; the input thread re-reads the store where it runs.
@@ -112,6 +114,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     public IReadOnlyList<string> Conflicts { get; private set; } = [];
 
     public IslandState State => machine.State;
+
+    /// <summary>The island's drop target; the shelf takes what is dropped on it.</summary>
+    internal DropTarget Drops => dropTarget;
 
     /// <summary>The one state machine; the palette host and the rambler drive their states on it.</summary>
     internal IslandStateMachine Machine => machine;
@@ -182,6 +187,19 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 log?.Invoke($"events: \"{e.Text}\" waits, {events.Count} queued (island {machine.State})");
             }
         });
+    }
+
+    /// <summary>A drag out of the island holds it open like any drag, and its end arms the retract like any drag's.</summary>
+    public void DraggingOut(bool on)
+    {
+        if (on)
+        {
+            activity |= IslandActivity.DragInProgress;
+        }
+        else
+        {
+            EndDrag();
+        }
     }
 
     /// <summary>The tray's "Open island": opens Panels, or retracts. It ignores the pause, not the suppression.</summary>
@@ -272,6 +290,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 OnDragCandidate(InputThread.Unpack(lParam));
                 return true;
             case InputThread.MsgDragInZone:
+                log?.Invoke("drag: zone reached");
                 if (Reveal(RevealTrigger.Drag, IslandState.ShelfDrop))
                 {
                     activity |= IslandActivity.DragInProgress;
@@ -281,14 +300,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
                 return true;
             case InputThread.MsgDragEnd:
-                activity &= ~IslandActivity.DragInProgress;
-                armed = true;
-                // A lasso is a drag too. Its release must not arm a retract that fires into the palette it opens.
-                if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !pointerInside)
-                {
-                    PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
-                }
-
+                EndDrag();
                 return true;
             case InputThread.MsgHotkey:
                 OnHotkey((int)wParam);
@@ -415,7 +427,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
         var child = PInvoke.WindowFromPoint(new System.Drawing.Point(at.X, at.Y));
-        if (child == HWND.Null)
+        // A drag that starts on the island is the shelf's own drag out; it must not turn the island into its drop surface.
+        if (child == HWND.Null || child == island.Hwnd)
         {
             return;
         }
@@ -438,10 +451,33 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (hit == PInvoke.HTCLIENT)
         {
             InputThread.ArmDrag();
+            log?.Invoke("drag: candidate, client area");
         }
         else
         {
             log?.Invoke($"drag: non-client hit {hit}, ignored");
+        }
+    }
+
+    private void EndDrag()
+    {
+        activity &= ~IslandActivity.DragInProgress;
+        armed = true;
+        // A lasso is a drag too. Its release must not arm a retract that fires into the palette it opens.
+        if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !pointerInside)
+        {
+            PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
+        }
+    }
+
+    /// <summary>A drop morphs the drop surface (or an open island) to Panels on the Shelf tab; the mascot nods on the way.</summary>
+    private void OnDropped()
+    {
+        if (machine.State is IslandState.ShelfDrop or IslandState.Compact or IslandState.Panels)
+        {
+            // Open, this is a tab switch; until the Shelf panel registers, Panels opens on the last-used tab.
+            Panels?.Select(PanelId.Shelf);
+            Go(IslandState.Panels);
         }
     }
 
