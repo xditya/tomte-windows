@@ -432,7 +432,7 @@ public sealed class StorageTests : IDisposable
     }
 
     [Fact]
-    public void OnlyTheThreeNewestSetAsideCopiesAreKeptAndNothingElseIsTouched()
+    public void TheOldestAndTheTwoNewestSetAsideCopiesAreKeptAndNothingElseIsTouched()
     {
         Directory.CreateDirectory(dir);
         foreach (string stamp in new[] { "20200101-000000-000", "20200201-000000-000", "20200301-000000-000" })
@@ -441,6 +441,7 @@ public sealed class StorageTests : IDisposable
         }
 
         File.WriteAllText($"{DbPath}.bad-20200101-000000-000-wal", "the oldest copy's log");
+        File.WriteAllText($"{DbPath}.bad-20200201-000000-000-wal", "the middle copy's log");
         // These look like copies but are not ones Tomte made: the user's own name, another database, more after the
         // stamp, and a folder below the data folder.
         string below = Path.Combine(dir, "below");
@@ -461,10 +462,14 @@ public sealed class StorageTests : IDisposable
 
         new TomteDb(DbPath).Open("shelf", Shelf).Dispose();
 
+        // The oldest holds what the user had before the first damage; it stays with its log, and the newest two with it.
         string[] kept = Directory.GetFiles(dir, "tomte.db.bad-*").Except(others).ToArray();
-        Assert.Equal(3, kept.Length);
+        Assert.Equal(4, kept.Length);
+        Assert.Contains($"{DbPath}.bad-20200101-000000-000", kept);
+        Assert.Contains($"{DbPath}.bad-20200101-000000-000-wal", kept);
         Assert.Contains($"{DbPath}.bad-20200301-000000-000", kept);
-        Assert.Contains($"{DbPath}.bad-20200201-000000-000", kept);
+        Assert.False(File.Exists($"{DbPath}.bad-20200201-000000-000"));
+        Assert.False(File.Exists($"{DbPath}.bad-20200201-000000-000-wal"));
         Assert.Equal(Garbage, File.ReadAllText(Assert.Single(kept, file => !file.Contains(".bad-2020", StringComparison.Ordinal))));
         Assert.All(others, file => Assert.Equal("keep", File.ReadAllText(file)));
     }
@@ -472,10 +477,11 @@ public sealed class StorageTests : IDisposable
     [Fact]
     public void TheCopyJustSetAsideStaysWhenOlderCopiesCarryALaterStamp()
     {
-        // A clock that was set back, or a move to a time zone further west.
+        // A clock that was set back, or a move to a time zone further west, left every older copy stamped after today,
+        // so the copy just made has the lowest stamp of all.
         Directory.CreateDirectory(dir);
-        string[] later = ["20990101-000000-000", "20990201-000000-000", "20990301-000000-000"];
-        foreach (string stamp in later)
+        string[] stamps = ["20990101-000000-000", "20990201-000000-000", "20990301-000000-000"];
+        foreach (string stamp in stamps)
         {
             File.WriteAllText($"{DbPath}.bad-{stamp}", stamp);
         }
@@ -484,10 +490,12 @@ public sealed class StorageTests : IDisposable
 
         new TomteDb(DbPath).Open("shelf", Shelf).Dispose();
 
+        // Kept: the copy just made, the oldest of the others (the first damage) and the newest of the rest.
         string[] kept = Directory.GetFiles(dir, "tomte.db.bad-*");
         Assert.Equal(3, kept.Length);
         Assert.Equal(Garbage, File.ReadAllText(Assert.Single(kept, file => !file.Contains(".bad-2099", StringComparison.Ordinal))));
-        Assert.False(File.Exists($"{DbPath}.bad-{later[0]}"));
+        Assert.Contains($"{DbPath}.bad-20990101-000000-000", kept);
+        Assert.Contains($"{DbPath}.bad-20990301-000000-000", kept);
     }
 
     [Fact]

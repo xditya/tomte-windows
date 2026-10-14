@@ -20,7 +20,8 @@ public sealed class TomteDb(string? path = null)
     // A set-aside copy is the file's name, ".bad-" and this stamp, and "-wal" after it for its log.
     private const string StampFormat = "yyyyMMdd-HHmmss-fff";
 
-    // Set-aside copies can hold text the user later cleared, so only the newest few are kept.
+    // Set-aside copies can hold text the user later cleared, so only a few are kept: the oldest, which holds what the
+    // user had before the first damage, and the two newest.
     private const int KeptCopies = 3;
 
     /// <summary>
@@ -48,8 +49,8 @@ public sealed class TomteDb(string? path = null)
     /// seen), seconds behind a stuck lock. Call it only from a worker thread, never from the island's
     /// thread, the hook thread, or inside a drop or clipboard callback.
     /// A file that is not a database, or whose schema is damaged, is renamed to tomte.db.bad-(time)
-    /// and an empty one takes its place, so everything stored so far is gone from the app. The three
-    /// newest such copies are kept and older ones deleted, and a notice is left for the user.
+    /// and an empty one takes its place, so everything stored so far is gone from the app. The oldest
+    /// such copy and the two newest are kept, the others deleted, and a notice is left for the user.
     /// </summary>
     /// <exception cref="SqliteException">Locked for longer than the wait, disk full, access denied, or a step that is not valid SQL.</exception>
     /// <exception cref="IOException">The folder could not be made, or a damaged file could not be renamed because something else kept it open.</exception>
@@ -332,18 +333,24 @@ public sealed class TomteDb(string? path = null)
 
     // Only copies this class made: in the database's own folder, named after the database, ".bad-" and a stamp in
     // StampFormat, with "-wal" for a log. A file and its log share a stamp and go together. Anything else is left alone.
-    // The copy just made always stays, even when older copies carry a later stamp (a clock set back, a move west).
+    // Kept: the copy just made, even when older copies carry a later stamp (a clock set back, a move west); the oldest,
+    // which holds what the user had before the first damage; and the newest of the rest.
     private void DeleteOldCopies(string kept)
     {
         string prefix = Path.GetFileName(FilePath) + ".bad-";
         string keptStamp = kept[prefix.Length..];
-        var old = Directory.EnumerateFiles(Path.GetDirectoryName(FilePath)!, prefix + "*")
+        var copies = Directory.EnumerateFiles(Path.GetDirectoryName(FilePath)!, prefix + "*")
             // The pattern also matches short 8.3 names; the long name is what counts.
             .Where(path => Path.GetFileName(path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             .Select(path => (Path: path, Stamp: Stamp(Path.GetFileName(path)[prefix.Length..])))
             .Where(copy => copy.Stamp is not null)
             .GroupBy(copy => copy.Stamp, StringComparer.Ordinal)
+            .ToList();
+        // Among the others: a clock set back can give the copy just made the lowest stamp.
+        string? oldest = copies.Select(group => group.Key).Where(stamp => stamp != keptStamp).Min(StringComparer.Ordinal);
+        var old = copies
             .OrderByDescending(group => group.Key == keptStamp)
+            .ThenByDescending(group => group.Key == oldest)
             .ThenByDescending(group => group.Key, StringComparer.Ordinal) // fixed width, so newest first
             .Skip(KeptCopies)
             .SelectMany(group => group);
