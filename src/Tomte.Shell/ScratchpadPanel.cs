@@ -6,41 +6,42 @@ using Color = Windows.UI.Color;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Scratchpad tab: a heading, the card the note is typed into and a footer, as composition visuals
-/// in DIPs laid out by <see cref="ScratchpadPanelLayout"/>. The note cannot be typed into on the island
-/// yet: the editing surface is an open decision. An editor binds to the note's Text, Caret, Edit and
-/// Changed and sits in <see cref="ScratchpadPanelLayout.Note"/>; until then the note's start shows there as
-/// text, wrapped and cut to the card. The note loads on a worker, so <see cref="Shown"/> returns at once.
-/// Leaving the tab saves what is unsaved.
+/// The Scratchpad tab: a heading, the card the note is typed into and a footer, as composition visuals in DIPs laid
+/// out by <see cref="ScratchpadPanelLayout"/>. The card holds a text box bound to the note (<see cref="NoteEditor"/>);
+/// a click into it, or the scratchpad hotkey, gives it the keys. The note loads on a worker, so <see cref="Shown"/>
+/// returns at once and keys typed before the first load go in once it lands. Leaving the tab saves what is unsaved
+/// and releases the text box.
 /// </summary>
-internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, TextRenderer text, Action<string>? log) : IPanel
+internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, TextRenderer text, TypingFocus focus, Action<string>? log) : IPanel
 {
     private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
 
     private readonly List<TextVisual> texts = [];
     private ShapeVisual? frame;
-    private TextVisual? lines;
-    private ScratchpadPanelLayout? layout;
+    private EditorView? editor;
+    private NoteEditor? bound;
     private int generation;
 
     public PanelId Id => PanelId.Scratchpad;
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
-        layout = new ScratchpadPanelLayout(size);
+        var layout = new ScratchpadPanelLayout(size);
         frame = island.Compositor.CreateShapeVisual();
         frame.Size = size;
         body.Children.InsertAtTop(frame);
-        DrawFrame(body);
-        lines = Text(body);
-        note.Changed += OnChanged;
+        DrawFrame(body, layout);
+        editor = focus.Create(body, multiline: true, ScratchpadPanelLayout.NoteSize);
+        editor.Place(layout.Editor, island.Scale);
+        bound = new NoteEditor(editor, note, island.Queue);
         Load();
     }
 
     public void Hidden()
     {
-        note.Changed -= OnChanged;
         generation++;
+        bound?.Dispose();
+        editor?.Dispose();
         foreach (var visual in texts)
         {
             visual.Dispose();
@@ -48,21 +49,33 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
 
         texts.Clear();
         frame?.Dispose();
-        (frame, lines, layout) = (null, null, null);
+        (frame, editor, bound) = (null, null, null);
         Observe(note.FlushAsync(), "save the note");
     }
 
-    /// <summary>Where the editor will take the caret and the window will activate for typing. Nothing to do until it exists.</summary>
+    /// <summary>The scratchpad hotkey: the note takes the keys with the caret where it was left.</summary>
+    public void TakeKeys()
+    {
+        if (editor is not null)
+        {
+            focus.Take(editor);
+        }
+    }
+
+    // A click into the card goes to the text box through the typing focus, which takes the keys.
     public void Press(Vector2 point)
     {
     }
 
     public void Wheel(Vector2 point, int delta)
     {
+        if (editor is not null && editor.Box.Contains(point.X, point.Y))
+        {
+            editor.Wheel(delta);
+        }
     }
 
-    private void OnChanged() => island.Queue.TryEnqueue(DrawLines);
-
+    // Every show reads the note again, so a change another process saved shows; the first one also opens the box.
     private async void Load()
     {
         int shownAs = generation;
@@ -78,27 +91,21 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
 
         if (shownAs == generation)
         {
-            DrawLines();
+            bound?.Open();
         }
     }
 
-    private TextVisual Text(ContainerVisual host)
-    {
-        var visual = text.Create(host);
-        texts.Add(visual);
-        return visual;
-    }
-
-    private void DrawFrame(ContainerVisual body)
+    private void DrawFrame(ContainerVisual body, ScratchpadPanelLayout layout)
     {
         var c = island.Compositor;
-        var l = layout!;
-        foreach (var line in l.FrameText())
+        foreach (var line in layout.FrameText())
         {
-            Text(body).Show(line);
+            var label = text.Create(body);
+            texts.Add(label);
+            label.Show(line);
         }
 
-        var card = l.Note;
+        var card = layout.Note;
         var geometry = c.CreateRoundedRectangleGeometry();
         geometry.Offset = new Vector2(card.X, card.Y);
         geometry.Size = new Vector2(card.Width, card.Height);
@@ -106,18 +113,6 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
         var shape = c.CreateSpriteShape(geometry);
         shape.FillBrush = c.CreateColorBrush(Card);
         frame!.Shapes.Add(shape);
-    }
-
-    // The note's start, wrapped to the card and cut with an ellipsis where the card ends.
-    private void DrawLines()
-    {
-        if (lines is null || layout is null || !note.IsLoaded)
-        {
-            return;
-        }
-
-        var (run, at) = layout.NoteRun(note.Text);
-        lines.Show(run, at);
     }
 
     private async void Observe(Task work, string what)

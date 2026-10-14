@@ -137,7 +137,7 @@ public sealed class ClipboardPanelLayout(Vector2 body)
 public sealed class ScratchpadPanelLayout(Vector2 body)
 {
     public const float Pad = 14, Top = 12, HeadHeight = 18, FootHeight = 14, Gap = 10, Corner = 8;
-    public const float TextInset = 12, LineHeight = 19.5f;
+    public const float TextInset = 12;
 
     public Vector2 Body { get; } = body;
 
@@ -148,19 +148,11 @@ public sealed class ScratchpadPanelLayout(Vector2 body)
 
     public RectangleF Foot => new(Pad, Body.Y - Top - FootHeight, Body.X - 2 * Pad, FootHeight);
 
-    public int VisibleLines => Math.Max(0, (int)((Note.Height - 2 * 10) / LineHeight));
-
-    /// <summary>The note's text: 13 DIP white, 19.5 DIP a line.</summary>
-    public static readonly TextStyle NoteStyle = new(13, LineHeight: LineHeight);
-
     /// <summary>The note's text size in DIPs.</summary>
     public const float NoteSize = 13;
 
     /// <summary>The text box the note is typed in: the card less its insets. Its text scrolls inside it.</summary>
     public RectangleF Editor => RectangleF.FromLTRB(Note.X + TextInset, Note.Y + 10, Note.Right - TextInset, Note.Bottom - 10);
-
-    /// <summary>Where the note's text starts and how wide it wraps, inside the card.</summary>
-    public RectangleF NoteText => new(Note.X + TextInset, Note.Y + 10, Note.Width - 2 * TextInset, VisibleLines * LineHeight);
 
     /// <summary>The heading, what goes beside it, and the footer's two ends.</summary>
     public IReadOnlyList<TextSlot> FrameText()
@@ -175,27 +167,4 @@ public sealed class ScratchpadPanelLayout(Vector2 body)
             new("Esc closes, Ctrl+P pins", TextStyle.Small with { Align = TextAlign.Trailing }, new(Foot.Right - 160, Foot.Y, 160, FootHeight)),
         ];
     }
-
-    /// <summary>The note's start as one run, wrapped to the card and cut where the card ends, and where it starts.</summary>
-    public (TextRun Run, Vector2 At) NoteRun(string note)
-    {
-        int lines = Math.Max(1, VisibleLines);
-        var area = NoteText;
-        return (new TextRun(Opening(note, lines), NoteStyle, area.Width, lines), new Vector2(area.X, area.Y));
-    }
-
-    /// <summary>
-    /// As much of the note's start as the card could show: at most <paramref name="lines"/> lines and
-    /// <see cref="MaxCharsPerLine"/> characters for each, so a long note never goes whole to the layout. The
-    /// layout wraps it and cuts it to the card.
-    /// </summary>
-    public static string Opening(string text, int lines)
-    {
-        int cap = Math.Max(0, lines) * MaxCharsPerLine;
-        var start = text.Length > cap ? text[..cap] : text;
-        return string.Join('\n', start.Split('\n').Take(Math.Max(0, lines)).Select(line => line.TrimEnd('\r')));
-    }
-
-    // More than a line of the card ever holds: a 500 DIP line of 13 DIP type takes about 90 characters.
-    private const int MaxCharsPerLine = 200;
 }
