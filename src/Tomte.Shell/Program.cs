@@ -168,6 +168,7 @@ internal static class Program
         tray.OpenSettings += OpenSettings;
         tray.Paused += triggers.Hide;
         tray.Quit += () => PInvoke.PostQuitMessage(0);
+        TellAboutDamagedDatabase(island, triggers, store);
 
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
@@ -373,6 +374,34 @@ internal static class Program
         catch (IOException)
         {
             return new StreamWriter(Path.Combine(dir, $"island-debug-{Environment.ProcessId}.log"), append: true) { AutoFlush = true };
+        }
+    }
+
+    /// <summary>
+    /// A damaged tomte.db is set aside and replaced by an empty one, by whichever Tomte process opens it first. The user
+    /// is told once, by one event pill the next time the island can show it: at start for a set-aside left from before,
+    /// at once for one in this process. One made by the settings window while the shell runs waits for the next start.
+    /// Touches no SQLite type, so a start with nothing to tell loads none.
+    /// </summary>
+    private static void TellAboutDamagedDatabase(IslandWindow island, TriggerController triggers, SettingsStore store)
+    {
+        var db = new TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db"));
+        // Raised on the worker thread that opened the file.
+        TomteDb.FileSetAside += path =>
+        {
+            if (string.Equals(path, db.FilePath, StringComparison.OrdinalIgnoreCase))
+            {
+                island.Queue.TryEnqueue(Tell);
+            }
+        };
+        Tell();
+
+        void Tell()
+        {
+            if (db.TakeSetAsideNotice())
+            {
+                triggers.Raise(new IslandEvent("Tomte found a damaged database and started a new one. The old file is kept.", DateTimeOffset.Now));
+            }
         }
     }
 

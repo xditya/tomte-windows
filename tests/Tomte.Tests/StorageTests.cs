@@ -431,6 +431,110 @@ public sealed class StorageTests : IDisposable
         Assert.Equal([DbPath], Directory.GetFileSystemEntries(dir));
     }
 
+    [Fact]
+    public void OnlyTheThreeNewestSetAsideCopiesAreKeptAndNothingElseIsTouched()
+    {
+        Directory.CreateDirectory(dir);
+        foreach (string stamp in new[] { "20200101-000000-000", "20200201-000000-000", "20200301-000000-000" })
+        {
+            File.WriteAllText($"{DbPath}.bad-{stamp}", stamp);
+        }
+
+        File.WriteAllText($"{DbPath}.bad-20200101-000000-000-wal", "the oldest copy's log");
+        // These look like copies but are not ones Tomte made: the user's own name, another database, more after the
+        // stamp, and a folder below the data folder.
+        string below = Path.Combine(dir, "below");
+        Directory.CreateDirectory(below);
+        string[] others =
+        [
+            $"{DbPath}.bad-mine",
+            Path.Combine(dir, "other.db.bad-20190101-000000-000"),
+            $"{DbPath}.bad-20190101-000000-000.txt",
+            Path.Combine(below, "tomte.db.bad-20190101-000000-000"),
+        ];
+        foreach (string file in others)
+        {
+            File.WriteAllText(file, "keep");
+        }
+
+        File.WriteAllText(DbPath, Garbage);
+
+        new TomteDb(DbPath).Open("shelf", Shelf).Dispose();
+
+        string[] kept = Directory.GetFiles(dir, "tomte.db.bad-*").Except(others).ToArray();
+        Assert.Equal(3, kept.Length);
+        Assert.Contains($"{DbPath}.bad-20200301-000000-000", kept);
+        Assert.Contains($"{DbPath}.bad-20200201-000000-000", kept);
+        Assert.Equal(Garbage, File.ReadAllText(Assert.Single(kept, file => !file.Contains(".bad-2020", StringComparison.Ordinal))));
+        Assert.All(others, file => Assert.Equal("keep", File.ReadAllText(file)));
+    }
+
+    [Fact]
+    public void TheCopyJustSetAsideStaysWhenOlderCopiesCarryALaterStamp()
+    {
+        // A clock that was set back, or a move to a time zone further west.
+        Directory.CreateDirectory(dir);
+        string[] later = ["20990101-000000-000", "20990201-000000-000", "20990301-000000-000"];
+        foreach (string stamp in later)
+        {
+            File.WriteAllText($"{DbPath}.bad-{stamp}", stamp);
+        }
+
+        File.WriteAllText(DbPath, Garbage);
+
+        new TomteDb(DbPath).Open("shelf", Shelf).Dispose();
+
+        string[] kept = Directory.GetFiles(dir, "tomte.db.bad-*");
+        Assert.Equal(3, kept.Length);
+        Assert.Equal(Garbage, File.ReadAllText(Assert.Single(kept, file => !file.Contains(".bad-2099", StringComparison.Ordinal))));
+        Assert.False(File.Exists($"{DbPath}.bad-{later[0]}"));
+    }
+
+    [Fact]
+    public async Task ASetAsideIsToldOnceToWhicheverProcessAsksFirst()
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(DbPath, Garbage);
+        var db = new TomteDb(DbPath);
+        var raised = new List<string>();
+        Action<string> onSetAside = path =>
+        {
+            lock (raised)
+            {
+                raised.Add(path);
+            }
+        };
+        TomteDb.FileSetAside += onSetAside;
+        try
+        {
+            Assert.False(db.TakeSetAsideNotice());
+            db.Open("shelf", Shelf).Dispose();
+            // The file is healthy now: nothing more is set aside or told.
+            db.Open("shelf", Shelf).Dispose();
+
+            // The settings window and the shell each have their own object for the same file, and two asking at
+            // the same moment still make one claim.
+            int told = 0;
+            await AtOnce(8, () =>
+            {
+                if (new TomteDb(DbPath).TakeSetAsideNotice())
+                {
+                    Interlocked.Increment(ref told);
+                }
+            });
+            Assert.Equal(1, told);
+            Assert.False(db.TakeSetAsideNotice());
+            lock (raised)
+            {
+                Assert.Equal([db.FilePath], raised.Where(path => path == db.FilePath));
+            }
+        }
+        finally
+        {
+            TomteDb.FileSetAside -= onSetAside;
+        }
+    }
+
     private static Task AtOnce(int count, Action work)
     {
         var start = new Barrier(count);
