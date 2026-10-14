@@ -9,4 +9,8 @@
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="System.Management" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The dark mode tests replace the registry and the broadcast with a recorder. -->
+    <InternalsVisibleTo Include="Tomte.Tests" />
+  </ItemGroup>
 </Project>

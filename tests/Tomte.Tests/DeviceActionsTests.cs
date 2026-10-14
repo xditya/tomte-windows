@@ -5,7 +5,8 @@ using Xunit;
 namespace Tomte.Tests;
 
 // Pure parts only. Every real action call here passes dryRun: true, which returns before any
-// registry, WMI, WinRT, Core Audio or power call.
+// registry, WMI, WinRT, Core Audio or power call. Dark mode is also run for real against a
+// recorder that stands in for the registry and the broadcast.
 public class DeviceActionsTests
 {
     private static readonly Type[] Groups = [typeof(Display), typeof(Radios), typeof(Audio), typeof(Apps), typeof(Power)];
@@ -137,4 +138,91 @@ public class DeviceActionsTests
         Assert.Equal(expectedId, device?.Id);
         Assert.Equal(expectedId is null, error is not null);
     }
+
+    [Fact]
+    public void DarkModeAndItsUndoWriteBothValuesThenSendOneBroadcastBeforeReturning()
+    {
+        var calls = new List<string>();
+        var threads = new HashSet<int>();
+        // Apps dark, the taskbar and Start light: the undo must put back exactly this.
+        var values = new Dictionary<string, int> { ["AppsUseLightTheme"] = 0, ["SystemUsesLightTheme"] = 1 };
+        var recorder = Recorder(calls, threads, values);
+
+        var result = Display.SetDarkMode(on: false, dryRun: false, recorder);
+
+        // Recorded before SetDarkMode returned, on this thread: the change is not reported done while windows
+        // are still being told, and nothing is left running for a quitting process to cut short.
+        const string broadcast = "send ffff 1A 0 ImmersiveColorSet SMTO_ABORTIFHUNG 5000";
+        Assert.Equal(["write AppsUseLightTheme=1", "write SystemUsesLightTheme=1", broadcast], calls);
+        Assert.Equal("Dark mode off.", result.Message);
+
+        calls.Clear();
+        Assert.Equal("Restored the previous theme.", result.Undo().Message);
+
+        Assert.Equal(["write AppsUseLightTheme=0", "write SystemUsesLightTheme=1", broadcast], calls);
+        Assert.Equal([Environment.CurrentManagedThreadId], threads);
+    }
+
+    [Fact]
+    public async Task ASecondThemeChangeWaitsUntilTheFirstBroadcastHasFinished()
+    {
+        var calls = new List<string>();
+        using var broadcasting = new ManualResetEventSlim();
+        using var finish = new ManualResetEventSlim();
+        int sends = 0;
+        var recorder = new Display.ThemeCalls
+        {
+            Read = _ => 1,
+            Write = (name, _) =>
+            {
+                lock (calls)
+                {
+                    calls.Add("write");
+                }
+            },
+            Send = (_, _, _, _, _, _) =>
+            {
+                lock (calls)
+                {
+                    calls.Add("send");
+                }
+
+                if (Interlocked.Increment(ref sends) == 1)
+                {
+                    broadcasting.Set();
+                    finish.Wait(TimeSpan.FromSeconds(10));
+                }
+            },
+        };
+
+        var first = Task.Run(() => Display.SetDarkMode(on: true, dryRun: false, recorder));
+        Assert.True(broadcasting.Wait(TimeSpan.FromSeconds(10)));
+        var second = Task.Run(() => Display.SetDarkMode(on: false, dryRun: false, recorder));
+        // Without the gate the second change's writes land here, while windows are still taking the first broadcast.
+        await Task.Delay(200);
+        lock (calls)
+        {
+            Assert.Equal(["write", "write", "send"], calls);
+        }
+
+        finish.Set();
+        await Task.WhenAll(first, second);
+        Assert.Equal(["write", "write", "send", "write", "write", "send"], calls);
+    }
+
+    private static Display.ThemeCalls Recorder(List<string> calls, HashSet<int> threads, Dictionary<string, int> values) => new()
+    {
+        Read = name => values.TryGetValue(name, out int value) ? value : null,
+        Write = (name, value) =>
+        {
+            values[name] = value;
+            calls.Add($"write {name}={value}");
+            threads.Add(Environment.CurrentManagedThreadId);
+        },
+        Send = (window, message, wParam, text, flags, timeoutMs) =>
+        {
+            calls.Add($"send {window:x} {message:X} {wParam} {text} {flags} {timeoutMs}");
+            threads.Add(Environment.CurrentManagedThreadId);
+        },
+    };
 }

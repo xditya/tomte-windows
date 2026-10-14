@@ -9,20 +9,31 @@ namespace Tomte.Core.Device;
 public static class Display
 {
     private const string PersonalizeKey = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
+    private const nint HwndBroadcast = 0xffff;
+
+    // How long the broadcast waits for each window. A sent message that a window's thread has not picked up when
+    // the wait runs out is cancelled, not left queued, so that window never re-reads the theme and keeps its old
+    // colours. A thread still repainting other windows for the change (Explorer has many) can take longer than a
+    // short wait. 5 s is what Microsoft's PowerToys Light Switch waits for the same broadcast; SMTO_ABORTIFHUNG
+    // still skips a hung window at once.
+    private const uint BroadcastTimeoutMs = 5000;
+
+    // One theme change at a time, writes and broadcast together: see WriteTheme.
+    private static readonly Lock ThemeGate = new();
 
     // Dark mode is two per-user values (0 = dark) plus a broadcast so running apps and the shell repaint.
-    public static ActionResult SetDarkMode(bool on, bool dryRun = false)
+    // Blocks until every running window has been told, a few seconds: call it off the UI thread. So does its undo.
+    public static ActionResult SetDarkMode(bool on, bool dryRun = false) => SetDarkMode(on, dryRun, ThemeCalls.Windows);
+
+    internal static ActionResult SetDarkMode(bool on, bool dryRun, ThemeCalls calls)
     {
         if (dryRun) return ActionResult.DryRun($"turn dark mode {OnOff(on)}.");
 
-        using var key = Registry.CurrentUser.CreateSubKey(PersonalizeKey);
-        var apps = key.GetValue("AppsUseLightTheme") as int? ?? 1;
-        var system = key.GetValue("SystemUsesLightTheme") as int? ?? 1;
         var light = on ? 0 : 1;
-        WriteTheme(light, light);
+        var (apps, system) = WriteTheme(calls, light, light);
         return ActionResult.Done($"Dark mode {OnOff(on)}.", () =>
         {
-            WriteTheme(apps, system);
+            WriteTheme(calls, apps, system);
             return ActionResult.Done("Restored the previous theme.");
         });
     }
@@ -61,32 +72,54 @@ public static class Display
         }
     }
 
-    private static void WriteTheme(int apps, int system)
+    // The action and its undo both come here. Both values first, then one broadcast, on the caller's thread, so the
+    // change is reported done only once every window has been told, a process that exits right after cannot cut the
+    // broadcast short, and an undo's broadcast never runs alongside the action's: windows still busy with the first
+    // would let the second time out, keep the colours of the first, and Windows would end up half light, half dark.
+    // Returns the values it replaced, read under the same lock, so an undo never restores another call's half-write.
+    private static (int Apps, int System) WriteTheme(ThemeCalls calls, int apps, int system)
     {
-        using (var key = Registry.CurrentUser.CreateSubKey(PersonalizeKey))
+        lock (ThemeGate)
         {
-            key.SetValue("AppsUseLightTheme", apps, RegistryValueKind.DWord);
-            key.SetValue("SystemUsesLightTheme", system, RegistryValueKind.DWord);
+            var before = (calls.Read("AppsUseLightTheme") ?? 1, calls.Read("SystemUsesLightTheme") ?? 1);
+            calls.Write("AppsUseLightTheme", apps);
+            calls.Write("SystemUsesLightTheme", system);
+            calls.Send(HwndBroadcast, PInvoke.WM_SETTINGCHANGE, 0, "ImmersiveColorSet", SEND_MESSAGE_TIMEOUT_FLAGS.SMTO_ABORTIFHUNG, BroadcastTimeoutMs);
+            return before;
         }
-        // Every top-level window repaints before the broadcast returns (about 3 s measured), so it
-        // runs off the caller's thread. The registry is already written; the repaint follows.
-        // The calling process must stay alive a few seconds after the call, or the broadcast is cut short.
-        _ = Task.Run(() => Broadcast("ImmersiveColorSet"));
     }
 
-    private static unsafe void Broadcast(string setting)
+    private static unsafe void SendTimeout(nint window, uint message, nuint wParam, string text, SEND_MESSAGE_TIMEOUT_FLAGS flags, uint timeoutMs)
     {
-        fixed (char* name = setting)
+        fixed (char* p = text)
         {
-            PInvoke.SendMessageTimeout(
-                new HWND(0xffff), // HWND_BROADCAST
-                PInvoke.WM_SETTINGCHANGE,
-                default,
-                (nint)name,
-                SEND_MESSAGE_TIMEOUT_FLAGS.SMTO_ABORTIFHUNG,
-                200,
-                null);
+            PInvoke.SendMessageTimeout(new HWND(window), message, wParam, (nint)p, flags, timeoutMs, null);
         }
+    }
+
+    /// <summary>
+    /// What a theme change touches: the two per-user values and the broadcast. Tests pass a recorder, so no test
+    /// changes the real theme.
+    /// </summary>
+    internal sealed class ThemeCalls
+    {
+        public static readonly ThemeCalls Windows = new()
+        {
+            Read = name => Registry.GetValue(@"HKEY_CURRENT_USER\" + PersonalizeKey, name, null) as int?,
+            Write = (name, value) =>
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(PersonalizeKey);
+                key.SetValue(name, value, RegistryValueKind.DWord);
+            },
+            Send = SendTimeout,
+        };
+
+        public required Func<string, int?> Read { get; init; }
+
+        public required Action<string, int> Write { get; init; }
+
+        /// <summary>SendMessageTimeout with a string lParam: window, message, wParam, the string, flags, wait per window.</summary>
+        public required Action<nint, uint, nuint, string, SEND_MESSAGE_TIMEOUT_FLAGS, uint> Send { get; init; }
     }
 
     // Reads the first built-in panel only, while WriteBrightness sets every panel. On a device with

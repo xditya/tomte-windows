@@ -146,8 +146,6 @@ if (undoAll)
         await Task.Delay(1000);
         Console.WriteLine($"[{clock.ElapsedMilliseconds,6} ms] undo \"{e.Line}\" -> {e.Undo!().Message}");
     }
-
-    await Task.Delay(3000); // let a dark mode broadcast finish before the process exits
 }
 
 Console.WriteLine($"scratchpad now: {scratchpad.Text.ReplaceLineEndings(" | ")}");
