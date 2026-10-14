@@ -33,6 +33,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private readonly IslandTimer timer;
     private readonly TimerRing ring;
     private TimerRun? finished;
+    private IReadOnlyList<IslandEvent> showing = [];
     private Rambler? rambler;
     private CaptureOverlay? overlay;
     private bool capturing;
@@ -132,7 +133,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             bool held = TriggerQueue.IslandBusy(machine.State, activity) || !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules);
             if (events.Offer(e, held))
             {
-                ShowEvent();
+                ShowEvent([e]);
             }
             else
             {
@@ -473,7 +474,21 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
         {
+            // An event pill taken down by the lock screen was never seen: after a sleep the lock can land a moment
+            // after the pill. Its events go back in the queue for the unlock, and a finished timer keeps its ring.
+            var unseen = eventShowing && s.Secure ? showing : [];
+            var ringKept = finished;
             Hide();
+            foreach (var e in unseen)
+            {
+                events.Offer(e, suppressed: true);
+            }
+
+            if (unseen.Count > 0)
+            {
+                finished = ringKept;
+                log?.Invoke($"events: {unseen.Count} hidden by the lock before the hold ran out, queued again");
+            }
         }
 
         ReleaseEvents();
@@ -494,10 +509,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         var waited = events.Release();
         log?.Invoke($"events: showing digest of {waited.Count}");
-        ShowEvent();
+        ShowEvent(waited);
     }
 
-    private void ShowEvent()
+    private void ShowEvent(IReadOnlyList<IslandEvent> shown)
     {
         // Callers queue while the island is busy; this is only the last guard against morphing over a panel.
         if (TriggerQueue.IslandBusy(machine.State, activity))
@@ -508,6 +523,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (Reveal(RevealTrigger.Event, IslandState.Compact))
         {
             eventShowing = true;
+            showing = shown;
             armed = true;
             PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
             island.Mascot.Set(MascotState.Result);
@@ -704,6 +720,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
 
         armed = eventShowing = firstRunShowing = dragEntered = false;
+        showing = [];
         InputThread.StopTrackingPointer();
         InputThread.SetEscape(false);
         if (machine.State != IslandState.Hidden)
