@@ -47,11 +47,11 @@ public sealed class McpTools : IAsyncDisposable
 
     private readonly McpServerSettings[] _servers;
     private readonly string? _invalid;
-    private readonly Func<McpServerSettings, CancellationToken, Task<McpClient>> _connect;
+    private readonly Func<McpServerSettings, CancellationToken, Task<Connection>> _connect;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     // Written under the gate; the idle timer's thread and Running read it without.
-    private readonly ConcurrentDictionary<string, McpClient> _clients = new();
+    private readonly ConcurrentDictionary<string, Connection> _clients = new();
 
     // By the name the model sees, in a fixed order: the model gets the same tool list on every send.
     private readonly SortedDictionary<string, Entry> _tools = new(StringComparer.Ordinal);
@@ -74,7 +74,7 @@ public sealed class McpTools : IAsyncDisposable
         }
 
         _servers = [.. usable];
-        _connect = connect ?? ConnectAsync;
+        _connect = connect is null ? ConnectAsync : async (server, ct) => new Connection(await connect(server, ct), null);
         IdleTimeout = idleTimeout ?? TimeSpan.FromMinutes(5);
         _idle = new Timer(_ => _ = StopIfIdleAsync());
     }
@@ -133,13 +133,13 @@ public sealed class McpTools : IAsyncDisposable
         Interlocked.Increment(ref _busy);
         try
         {
-            McpClient client;
+            Connection connection;
             await _gate.WaitAsync(ct);
             try
             {
                 // The idle timeout may have stopped the server since the listing; this starts it again.
                 await StartMissingAsync([server], ct);
-                client = _clients[server.Name];
+                connection = _clients[server.Name];
             }
             finally
             {
@@ -151,6 +151,7 @@ public sealed class McpTools : IAsyncDisposable
                 return new ToolResultPart(call.Id, call.Name, $"{Clean(server.Name, MaxName)} changed this tool when it restarted, so the call was not made. Call it again to use it as it is now.", IsError: true);
 
             var args = Arguments(tool, call.Input);
+            var client = connection.Client;
             try
             {
                 var result = await UnlessGoneAsync(c => client.CallToolAsync(tool.Name, args, cancellationToken: c).AsTask(), client.Completion, ct);
@@ -167,8 +168,8 @@ public sealed class McpTools : IAsyncDisposable
                 await _gate.WaitAsync(CancellationToken.None);
                 try
                 {
-                    if (_clients.TryRemove(new KeyValuePair<string, McpClient>(server.Name, client)))
-                        await StopAsync(client);
+                    if (_clients.TryRemove(new KeyValuePair<string, Connection>(server.Name, connection)))
+                        await StopAsync(connection);
                 }
                 finally
                 {
@@ -349,20 +350,47 @@ public sealed class McpTools : IAsyncDisposable
         }
     }
 
-    private static Task<McpClient> ConnectAsync(McpServerSettings server, CancellationToken ct)
+    private static async Task<Connection> ConnectAsync(McpServerSettings server, CancellationToken ct)
     {
-        IClientTransport transport = server.Transport == McpTransport.Stdio
-            ? new StdioClientTransport(new StdioClientTransportOptions { Name = server.Name, Command = server.Command, Arguments = [.. server.Arguments] })
-            : new HttpClientTransport(new HttpClientTransportOptions
+        if (server.Transport == McpTransport.Stdio)
+        {
+            // Tomte starts the process and hands the SDK its streams. The SDK's own stdio transport wraps
+            // every command in cmd.exe, which changes arguments, and leaves the process alive when Tomte dies.
+            var process = McpProcess.Start(server);
+            try
             {
-                Name = server.Name,
-                Endpoint = new Uri(server.Url),
-                TransportMode = HttpTransportMode.StreamableHttp,
-                AdditionalHeaders = server.HeaderName.Length > 0 && CredentialStore.Read(server.CredentialId) is { } value
-                    ? new Dictionary<string, string> { [server.HeaderName] = value }
-                    : null,
-            });
-        return McpClient.CreateAsync(transport, cancellationToken: ct);
+                return new Connection(await McpClient.CreateAsync(new StreamClientTransport(process.Input, process.Output), cancellationToken: ct), process);
+            }
+            catch (Exception e)
+            {
+                string said = e is OperationCanceledException ? "" : await process.ErrorTailAsync();
+                process.Kill();
+                if (said.Length == 0)
+                    throw;
+                throw new IOException($"{e.Message} It wrote: {said}");
+            }
+        }
+
+        var transport = new HttpClientTransport(new HttpClientTransportOptions
+        {
+            Name = server.Name,
+            Endpoint = new Uri(server.Url),
+            TransportMode = HttpTransportMode.StreamableHttp,
+            // The long-lived GET stream is for messages a server starts on its own; a client that only calls tools has no use for it.
+            EnableStandaloneGetStream = false,
+            AdditionalHeaders = server.HeaderName.Length > 0 && CredentialStore.Read(server.CredentialId) is { } value
+                ? new Dictionary<string, string> { [server.HeaderName] = value }
+                : null,
+        });
+        try
+        {
+            return new Connection(await McpClient.CreateAsync(transport, cancellationToken: ct), transport);
+        }
+        catch
+        {
+            await transport.DisposeAsync();
+            throw;
+        }
     }
 
     // The exception itself is not kept as the inner one: it and the errors inside it can hold the header
@@ -406,9 +434,9 @@ public sealed class McpTools : IAsyncDisposable
         // On the pool: starting a process blocks for a while before the first await, and the caller is the island's thread.
         var started = await Task.WhenAll(servers.Where(s => !_clients.ContainsKey(s.Name)).Select(s => Task.Run(() => StartAsync(s, ct))));
         Exception? failure = null;
-        foreach (var (server, client, tools, error) in started)
+        foreach (var (server, connection, tools, error) in started)
         {
-            if (client is null)
+            if (connection is null)
             {
                 failure ??= error;
                 continue;
@@ -416,12 +444,12 @@ public sealed class McpTools : IAsyncDisposable
 
             if (Register(server, tools) is { } problem)
             {
-                await StopAsync(client);
+                await StopAsync(connection);
                 failure ??= new InvalidOperationException($"MCP server \"{Clean(server.Name, MaxName)}\" cannot be used: {problem}. Turn it off in Settings to send without it.");
                 continue;
             }
 
-            _clients[server.Name] = client;
+            _clients[server.Name] = connection;
         }
 
         ct.ThrowIfCancellationRequested();
@@ -459,21 +487,21 @@ public sealed class McpTools : IAsyncDisposable
     }
 
     /// <summary>Never throws: a server that did not start comes back without a client, with the error unless the start was cancelled.</summary>
-    private async Task<(McpServerSettings Server, McpClient? Client, IList<Tool> Tools, Exception? Error)> StartAsync(McpServerSettings server, CancellationToken ct)
+    private async Task<(McpServerSettings Server, Connection? Connection, IList<Tool> Tools, Exception? Error)> StartAsync(McpServerSettings server, CancellationToken ct)
     {
-        McpClient? client = null;
+        Connection? connection = null;
         try
         {
-            client = await _connect(server, ct);
-            var listing = client;
-            var tools = await UnlessGoneAsync(c => listing.ListToolsAsync(cancellationToken: c).AsTask(), client.Completion, ct);
-            return (server, client, [.. tools.Select(t => t.ProtocolTool)], null);
+            connection = await _connect(server, ct);
+            var client = connection.Client;
+            var tools = await UnlessGoneAsync(c => client.ListToolsAsync(cancellationToken: c).AsTask(), client.Completion, ct);
+            return (server, connection, [.. tools.Select(t => t.ProtocolTool)], null);
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
-            // Connected but not listed (a cancel, a timeout, a bad answer): nobody else knows this client.
-            if (client is not null)
-                await StopAsync(client);
+            // Connected but not listed (a cancel, a timeout, a bad answer): nobody else knows this server.
+            if (connection is not null)
+                await StopAsync(connection);
             return (server, null, [], e is OperationCanceledException && ct.IsCancellationRequested ? null : Failure(server, "did not start", e));
         }
     }
@@ -540,17 +568,25 @@ public sealed class McpTools : IAsyncDisposable
         await Task.WhenAll(running.Select(StopAsync));
     }
 
-    private static async Task StopAsync(McpClient client)
+    /// <summary>Never throws. The client goes first: for an HTTP server that ends the session, for a process it lets go of the streams.</summary>
+    private static async Task StopAsync(Connection connection)
     {
-        try
+        foreach (var part in new IAsyncDisposable?[] { connection.Client, connection.Owner })
         {
-            await client.DisposeAsync();
-        }
-        catch (Exception e) when (e is not OutOfMemoryException)
-        {
-            // It already exited, or it failed while stopping; either way there is nothing left to do for it.
+            try
+            {
+                if (part is not null)
+                    await part.DisposeAsync();
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                // It already exited, or it failed while stopping; either way there is nothing left to do for it.
+            }
         }
     }
 
     private sealed record Entry(McpServerSettings Server, Tool Tool, string Key);
+
+    /// <summary>A started server: the SDK's client, and what Tomte has to stop itself (the process, or the HTTP transport with its connections).</summary>
+    private sealed record Connection(McpClient Client, IAsyncDisposable? Owner);
 }
