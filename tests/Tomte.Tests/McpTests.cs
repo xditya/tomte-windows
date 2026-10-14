@@ -13,21 +13,42 @@ using Xunit;
 
 namespace Tomte.Tests;
 
-/// <summary>An MCP server in this process, joined to the client by two pipes. Counts starts, stops and calls.</summary>
+/// <summary>MCP servers in this process, each joined to its client by two pipes. Counts starts, stops and calls.</summary>
 internal sealed class FakeMcpServers
 {
+    private readonly Dictionary<string, Pipe> _toClient = [];
+
     public int Starts;
     public int Stops;
     public List<string> Calls { get; } = [];
+
+    /// <summary>Servers whose start throws <see cref="FailingMessage"/>.</summary>
     public HashSet<string> Failing { get; } = [];
+
+    public string FailingMessage { get; set; } = "the command was not found";
+
+    /// <summary>Servers whose start never finishes, like a process that does not answer.</summary>
+    public HashSet<string> Hanging { get; } = [];
+
+    /// <summary>When set, a server answers tools/list this late (and with no tools).</summary>
+    public TimeSpan? ListDelay { get; set; }
+
+    public string EchoDescription { get; set; } = "Repeat the text.";
+
+    /// <summary>Tools a server has besides echo and broken.</summary>
+    public List<McpServerTool> MoreTools { get; } = [];
 
     public async Task<McpClient> ConnectAsync(McpServerSettings settings, CancellationToken ct)
     {
         if (Failing.Contains(settings.Name))
-            throw new IOException("the command was not found");
+            throw new IOException(FailingMessage);
+        if (Hanging.Contains(settings.Name))
+            await Task.Delay(Timeout.Infinite, ct);
         Interlocked.Increment(ref Starts);
         var toServer = new Pipe();
         var toClient = new Pipe();
+        lock (_toClient)
+            _toClient[settings.Name] = toClient;
         var options = new McpServerOptions
         {
             ServerInfo = new Implementation { Name = settings.Name, Version = "1" },
@@ -38,16 +59,33 @@ internal sealed class FakeMcpServers
                     lock (Calls)
                         Calls.Add($"{settings.Name}:{text}");
                     return "echo: " + text;
-                }, new McpServerToolCreateOptions { Name = "echo", Description = "Repeat the text." }),
+                }, new McpServerToolCreateOptions { Name = "echo", Description = EchoDescription }),
                 McpServerTool.Create(string () => throw new McpException("disk full"), new McpServerToolCreateOptions { Name = "broken" }),
+                .. MoreTools,
             ],
         };
+        if (ListDelay is { } delay)
+        {
+            options.Handlers.ListToolsHandler = async (_, cancel) =>
+            {
+                await Task.Delay(delay, cancel);
+                return new ListToolsResult { Tools = [] };
+            };
+        }
+
         var server = McpServer.Create(new StreamServerTransport(toServer.Reader.AsStream(), toClient.Writer.AsStream()), options);
         _ = server.RunAsync(CancellationToken.None);
         var client = await McpClient.CreateAsync(new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream()), cancellationToken: ct);
         // Completion ends when the client session is disposed; for a stdio server that also ends the process.
         _ = client.Completion.ContinueWith(_ => Interlocked.Increment(ref Stops), TaskScheduler.Default);
         return client;
+    }
+
+    /// <summary>The server goes away, as when its process exits.</summary>
+    public void Kill(string name)
+    {
+        lock (_toClient)
+            _toClient[name].Writer.Complete();
     }
 
     public async Task WaitForStopsAsync(int count)
@@ -174,6 +212,81 @@ public class McpToolsTests
         var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(default));
         Assert.Contains("\"Web Search\" did not start: the command was not found", e.Message);
         Assert.Equal(1, tools.Running);
+    }
+
+    [Fact]
+    public async Task ACancelledStartLeavesNoServerRunningWithoutAnOwner()
+    {
+        _fake.Hanging.Add("Web Search");
+        var tools = Tools();
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => tools.ListAsync(cancel.Token));
+
+        // Files started before the cancel: it is registered, so the dispose stops it.
+        Assert.Equal(1, _fake.Starts);
+        Assert.Equal(1, tools.Running);
+        await tools.DisposeAsync();
+        await _fake.WaitForStopsAsync(1);
+        Assert.Equal(1, _fake.Stops);
+    }
+
+    [Fact]
+    public async Task ACancelWhileListingStopsTheConnectedServer()
+    {
+        _fake.ListDelay = TimeSpan.FromSeconds(30);
+        await using var tools = Tools(null, Files);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => tools.ListAsync(cancel.Token));
+
+        await _fake.WaitForStopsAsync(1);
+        Assert.Equal(1, _fake.Stops);
+        Assert.Equal(0, tools.Running);
+    }
+
+    [Fact]
+    public async Task NothingStartsAfterDispose()
+    {
+        var tools = Tools(TimeSpan.FromMilliseconds(50), Files);
+        await tools.ListAsync(default);
+        await tools.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => tools.CallAsync(Call("files__echo", """{"text":"late"}"""), default));
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => tools.ListAsync(default));
+        Assert.Equal(1, _fake.Starts);
+        Assert.Equal(0, tools.Running);
+    }
+
+    [Fact]
+    public async Task ServersTheSettingsWindowWouldRefuseAreNotStarted()
+    {
+        // Only a hand-edited settings file gets two servers with one name; the second used to replace the first, which then never stopped.
+        await using (var twins = Tools(null, Files, Files with { Command = "other" }))
+        {
+            var e = await Assert.ThrowsAsync<InvalidOperationException>(() => twins.ListAsync(default));
+            Assert.Contains("\"Files\" cannot be used", e.Message);
+        }
+
+        await using (var nameless = Tools(null, new McpServerSettings { Name = "##", Command = "x" }))
+            await Assert.ThrowsAsync<InvalidOperationException>(() => nameless.ListAsync(default));
+        Assert.Equal(0, _fake.Starts);
+    }
+
+    [Fact]
+    public async Task AServerThatDiesIsNamedForgottenAndStartedAgainOnTheNextCall()
+    {
+        await using var tools = Tools();
+        await tools.ListAsync(default);
+        _fake.Kill("Files");
+
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.CallAsync(Call("files__echo", """{"text":"a"}"""), cancel.Token));
+        Assert.Contains("MCP server \"Files\" stopped", e.Message);
+        Assert.Equal(1, tools.Running);
+
+        var again = await tools.CallAsync(Call("files__echo", """{"text":"b"}"""), cancel.Token);
+        Assert.Equal("echo: b", again.Content);
+        Assert.Equal(3, _fake.Starts);
+        Assert.Equal(2, tools.Running);
     }
 
     [Fact]

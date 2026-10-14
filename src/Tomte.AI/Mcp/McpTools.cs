@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -19,18 +20,33 @@ public sealed class McpTools : IAsyncDisposable
     public const string Separator = "__";
 
     private readonly McpServerSettings[] _servers;
+    private readonly string? _invalid;
     private readonly Func<McpServerSettings, CancellationToken, Task<McpClient>> _connect;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly Dictionary<string, McpClient> _clients = [];
+
+    // Written under the gate; the idle timer's thread and Running read it without.
+    private readonly ConcurrentDictionary<string, McpClient> _clients = new();
     private readonly Dictionary<string, (McpServerSettings Server, Tool Tool)> _tools = new(StringComparer.Ordinal);
     private readonly List<ToolDefinition> _definitions = [];
     private readonly Timer _idle;
     private int _busy;
+    private bool _disposed;
 
     /// <param name="connect">Starts or connects one server; tests pass an in-process one.</param>
     public McpTools(IEnumerable<McpServerSettings> servers, TimeSpan? idleTimeout = null, Func<McpServerSettings, CancellationToken, Task<McpClient>>? connect = null)
     {
-        _servers = [.. servers.Where(s => s.Enabled)];
+        // Settings checks a server when it is saved; a hand-edited file skips that, and two servers with
+        // one name would share a slot here, so the second would never be stopped.
+        var usable = new List<McpServerSettings>();
+        foreach (var server in servers.Where(s => s.Enabled))
+        {
+            if (McpServerSettings.Validate(usable, server) is { } problem)
+                _invalid ??= $"MCP server \"{server.Name}\" cannot be used: {problem} Fix or remove it in Settings.";
+            else
+                usable.Add(server);
+        }
+
+        _servers = [.. usable];
         _connect = connect ?? ConnectAsync;
         IdleTimeout = idleTimeout ?? TimeSpan.FromMinutes(5);
         _idle = new Timer(_ => _ = StopIfIdleAsync());
@@ -56,33 +72,12 @@ public sealed class McpTools : IAsyncDisposable
     /// <summary>Starts the servers that are not running and returns every tool, prefixed. A server that fails throws, naming it.</summary>
     public async Task<IReadOnlyList<ToolDefinition>> ListAsync(CancellationToken ct)
     {
-        if (_servers.Length == 0)
+        if (_servers.Length == 0 && _invalid is null)
             return [];
         await _gate.WaitAsync(ct);
         try
         {
-            var missing = _servers.Where(s => !_clients.ContainsKey(s.Name)).ToArray();
-            var started = await Task.WhenAll(missing.Select(s => StartAsync(s, ct)));
-            Exception? failure = null;
-            foreach (var (server, client, tools, error) in started)
-            {
-                if (client is null)
-                {
-                    failure ??= error;
-                    continue;
-                }
-
-                _clients[server.Name] = client;
-                foreach (var tool in tools)
-                {
-                    string name = ModelName(server, tool.Name);
-                    if (_tools.TryAdd(name, (server, tool)))
-                        _definitions.Add(new ToolDefinition(name, $"[{server.Name}] {tool.Description}".TrimEnd(), tool.InputSchema));
-                }
-            }
-
-            if (failure is not null)
-                throw failure;
+            await StartMissingAsync(_servers, ct);
             return [.. _definitions];
         }
         finally
@@ -102,34 +97,49 @@ public sealed class McpTools : IAsyncDisposable
         Interlocked.Increment(ref _busy);
         try
         {
-            McpClient? client;
+            McpClient client;
             await _gate.WaitAsync(ct);
             try
             {
-                _clients.TryGetValue(server.Name, out client);
+                // The idle timeout may have stopped the server since the listing; this starts it again.
+                await StartMissingAsync([server], ct);
+                client = _clients[server.Name];
             }
             finally
             {
                 _gate.Release();
             }
 
-            if (client is null)
-            {
-                // The idle timeout stopped it between the listing and this call.
-                await ListAsync(ct);
-                client = _clients[server.Name];
-            }
-
             // Small models send null for optional arguments they do not use; servers read that as a wrong type.
             var args = call.Input.ValueKind == JsonValueKind.Object
                 ? call.Input.EnumerateObject().Where(p => p.Value.ValueKind != JsonValueKind.Null).ToDictionary(p => p.Name, p => (object?)p.Value.Clone())
                 : [];
-            var result = await client.CallToolAsync(tool.Name, args, cancellationToken: ct);
-            return new ToolResultPart(call.Id, call.Name, ResultText(result), result.IsError == true);
-        }
-        catch (McpException e)
-        {
-            return new ToolResultPart(call.Id, call.Name, $"{server.Name}: {tool.Name} failed: {e.Message}", IsError: true);
+            try
+            {
+                var result = await UnlessGoneAsync(c => client.CallToolAsync(tool.Name, args, cancellationToken: c).AsTask(), client.Completion, ct);
+                return new ToolResultPart(call.Id, call.Name, ResultText(result), result.IsError == true);
+            }
+            catch (McpException e)
+            {
+                return new ToolResultPart(call.Id, call.Name, $"{server.Name}: {tool.Name} failed: {e.Message}", IsError: true);
+            }
+            catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                // The process exited or the connection dropped. Forget the server, so the next call starts
+                // it again instead of failing the same way for the rest of the session.
+                await _gate.WaitAsync(CancellationToken.None);
+                try
+                {
+                    if (_clients.TryRemove(new KeyValuePair<string, McpClient>(server.Name, client)))
+                        await StopAsync(client);
+                }
+                finally
+                {
+                    _gate.Release();
+                }
+
+                throw Failure(server, "stopped", e);
+            }
         }
         finally
         {
@@ -176,6 +186,8 @@ public sealed class McpTools : IAsyncDisposable
         await _gate.WaitAsync();
         try
         {
+            // From here on nothing starts: a call that arrives late must not leave a server nobody stops.
+            _disposed = true;
             await StopAllAsync();
         }
         finally
@@ -200,22 +212,84 @@ public sealed class McpTools : IAsyncDisposable
         return McpClient.CreateAsync(transport, cancellationToken: ct);
     }
 
+    private static InvalidOperationException Failure(McpServerSettings server, string what, Exception e) =>
+        new($"MCP server \"{server.Name}\" {what}: {e.Message} Turn it off in Settings to send without it.", e);
+
+    /// <summary>
+    /// Starts those of <paramref name="servers"/> that are not running. The caller holds the gate. Every
+    /// server that started is registered before this throws, so a cancel or a failure of one server never
+    /// leaves another one running without an owner.
+    /// </summary>
+    private async Task StartMissingAsync(IEnumerable<McpServerSettings> servers, CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_invalid is not null)
+            throw new InvalidOperationException(_invalid);
+
+        // On the pool: starting a process blocks for a while before the first await, and the caller is the island's thread.
+        var started = await Task.WhenAll(servers.Where(s => !_clients.ContainsKey(s.Name)).Select(s => Task.Run(() => StartAsync(s, ct))));
+        Exception? failure = null;
+        foreach (var (server, client, tools, error) in started)
+        {
+            if (client is null)
+            {
+                failure ??= error;
+                continue;
+            }
+
+            _clients[server.Name] = client;
+            foreach (var tool in tools)
+            {
+                string name = ModelName(server, tool.Name);
+                if (_tools.TryAdd(name, (server, tool)))
+                    _definitions.Add(new ToolDefinition(name, $"[{server.Name}] {tool.Description}".TrimEnd(), tool.InputSchema));
+            }
+        }
+
+        ct.ThrowIfCancellationRequested();
+        if (failure is not null)
+            throw failure;
+    }
+
+    /// <summary>Never throws: a server that did not start comes back without a client, with the error unless the start was cancelled.</summary>
     private async Task<(McpServerSettings Server, McpClient? Client, IList<Tool> Tools, Exception? Error)> StartAsync(McpServerSettings server, CancellationToken ct)
     {
         McpClient? client = null;
         try
         {
             client = await _connect(server, ct);
-            var tools = await client.ListToolsAsync(cancellationToken: ct);
+            var listing = client;
+            var tools = await UnlessGoneAsync(c => listing.ListToolsAsync(cancellationToken: c).AsTask(), client.Completion, ct);
             return (server, client, [.. tools.Select(t => t.ProtocolTool)], null);
         }
-        catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (Exception e) when (e is not OutOfMemoryException)
         {
+            // Connected but not listed (a cancel, a timeout, a bad answer): nobody else knows this client.
             if (client is not null)
-                await client.DisposeAsync();
-            return (server, null, [], new InvalidOperationException(
-                $"MCP server \"{server.Name}\" did not start: {e.Message} Turn it off in Settings to send without it.", e));
+                await StopAsync(client);
+            return (server, null, [], e is OperationCanceledException && ct.IsCancellationRequested ? null : Failure(server, "did not start", e));
         }
+    }
+
+    /// <summary>
+    /// Awaits <paramref name="request"/>, but gives up when <paramref name="gone"/> completes first. A
+    /// stream transport does not fail a request whose answer can no longer come (the server closed its
+    /// output, or exited between two calls), so without this the request waits for the session timeout.
+    /// </summary>
+    private static async Task<T> UnlessGoneAsync<T>(Func<CancellationToken, Task<T>> request, Task gone, CancellationToken ct)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var task = request(linked.Token);
+        if (await Task.WhenAny(task, gone) != task && !task.IsCompletedSuccessfully)
+        {
+            linked.Cancel();
+            // Looked at, so the abandoned request's failure never reaches the unobserved-exception event.
+            _ = task.ContinueWith(t => t.Exception, TaskScheduler.Default);
+            ct.ThrowIfCancellationRequested();
+            throw new IOException("The server closed the connection.");
+        }
+
+        return await task;
     }
 
     private void Touch()
@@ -251,21 +325,23 @@ public sealed class McpTools : IAsyncDisposable
         }
     }
 
+    // The tool table stays: the model may still call a tool it was shown, and that call starts the server again.
     private async Task StopAllAsync()
     {
-        foreach (var client in _clients.Values)
-        {
-            try
-            {
-                await client.DisposeAsync();
-            }
-            catch (Exception e) when (e is IOException or InvalidOperationException or McpException)
-            {
-                // A server that already exited; nothing is left to stop.
-            }
-        }
-
-        // The tool table stays: the model may still call a tool it was shown, and that call starts the server again.
+        var running = _clients.Values.ToArray();
         _clients.Clear();
+        await Task.WhenAll(running.Select(StopAsync));
+    }
+
+    private static async Task StopAsync(McpClient client)
+    {
+        try
+        {
+            await client.DisposeAsync();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // It already exited, or it failed while stopping; either way there is nothing left to do for it.
+        }
     }
 }
