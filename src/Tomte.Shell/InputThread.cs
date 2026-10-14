@@ -26,7 +26,7 @@ internal static unsafe class InputThread
 {
     // Messages posted to the island window. wParam and lParam carry what the name says.
     public const uint MsgEdgeReveal = PInvoke.WM_APP + 1;       // wParam 1 = dwell, 0 = push
-    public const uint MsgPointer = PInvoke.WM_APP + 2;          // wParam 1 = inside the island bounds, 0 = outside; lParam = packed x, y
+    public const uint MsgPointer = PInvoke.WM_APP + 2;          // wParam bit 0 = inside the island bounds plus the margin, bit 1 = on the island itself; lParam = packed x, y
     public const uint MsgDragCandidate = PInvoke.WM_APP + 3;    // lParam = packed x, y of the button-down point
     public const uint MsgDragInZone = PInvoke.WM_APP + 4;       // lParam = packed x, y
     public const uint MsgDragEnd = PInvoke.WM_APP + 5;
@@ -70,7 +70,7 @@ internal static unsafe class InputThread
 
     // Input thread only.
     private static int seenBoundsVersion = -1;
-    private static bool pointerInside, rawMouseOn;
+    private static bool pointerInside, pointerOn, rawMouseOn;
     private static int dragX, dragY, downX, downY;
     private static bool buttonDown, candidate;
 
@@ -431,11 +431,12 @@ internal static unsafe class InputThread
 
         int version = Volatile.Read(ref boundsVersion);
         bool inside = RetractionRules.Inside(cursor.X, cursor.Y, boundsLeft, boundsTop, boundsRight, boundsBottom, boundsMargin);
-        if (version != seenBoundsVersion || inside != pointerInside)
+        bool on = inside && RetractionRules.Inside(cursor.X, cursor.Y, boundsLeft, boundsTop, boundsRight, boundsBottom, 0);
+        if (version != seenBoundsVersion || inside != pointerInside || on != pointerOn)
         {
             seenBoundsVersion = version;
-            pointerInside = inside;
-            PInvoke.PostMessage(island, MsgPointer, (nuint)(inside ? 1 : 0), Pack(cursor.X, cursor.Y));
+            (pointerInside, pointerOn) = (inside, on);
+            PInvoke.PostMessage(island, MsgPointer, (nuint)((inside ? 1 : 0) | (on ? 2 : 0)), Pack(cursor.X, cursor.Y));
         }
     }
 

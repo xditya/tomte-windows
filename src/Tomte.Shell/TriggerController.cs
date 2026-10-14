@@ -18,9 +18,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
 
-    // Timings that are fixed rather than exposed: Compact opens Panels after a hover dwell, an event shows for
-    // four seconds, window changes are debounced before peek re-checks, the first-run hint stays ten seconds.
-    private const uint HoverDwellMs = 350, EventHoldMs = 4000, PeekDebounceMs = 500, FirstRunHintMs = 10000;
+    // Timings that are fixed rather than exposed: an event shows for four seconds, window changes are debounced
+    // before peek re-checks, the first-run hint stays ten seconds. The hover dwell to Panels is a setting.
+    private const uint EventHoldMs = 4000, PeekDebounceMs = 500, FirstRunHintMs = 10000;
 
     private readonly IslandWindow island;
     private readonly SettingsStore store;
@@ -40,7 +40,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private double zoneHeight;
     private TomteSettings settings;
     private IslandActivity activity;
-    private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
+    private bool armed, pointerInside, pointerOn, peekWanted, eventShowing, dragEntered, firstRunShowing;
     private Task saving = Task.CompletedTask;
 
     public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
@@ -344,7 +344,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
                 return true;
             case InputThread.MsgPointer:
-                OnPointer(wParam == 1);
+                OnPointer((wParam & 1) != 0, (wParam & 2) != 0);
                 return true;
             case InputThread.MsgDragCandidate:
                 OnDragCandidate(InputThread.Unpack(lParam));
@@ -493,6 +493,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var b = island.TargetBounds;
         int margin = (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale);
         pointerInside = PInvoke.GetCursorPos(out var cursor) && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, margin);
+        pointerOn = pointerInside && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, 0);
         PushZone();
         EndDrag();
         // A window may be under the island's new place.
@@ -507,7 +508,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case RetractTimer when !pointerInside && RetractionRules.ShouldRetract(machine.State, activity):
                 Hide();
                 break;
-            case HoverTimer when pointerInside && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
+            case HoverTimer when pointerOn && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
                 break;
             case EventTimer or FirstRunTimer when (id == EventTimer ? eventShowing : firstRunShowing) && machine.State == IslandState.Compact:
@@ -554,27 +555,32 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    private void OnPointer(bool inside)
+    /// <summary>
+    /// The pointer is inside the island's bounds plus the retract margin, or not, and on the island itself, or not. The
+    /// margin holds the island open; only resting on the pill counts toward the dwell that opens Panels.
+    /// </summary>
+    private void OnPointer(bool inside, bool on)
     {
-        bool entered = inside && !pointerInside;
-        pointerInside = inside;
+        var hover = RetractionRules.Hover(pointerOn, on);
+        (pointerInside, pointerOn) = (inside, on);
         if (inside)
         {
             PInvoke.KillTimer(island.Hwnd, RetractTimer);
             armed = true;
-            // Only a pointer coming onto the pill dwells; one that was on it already has just dragged it there.
-            if (entered && RetractionRules.OpensPanels(machine.State, activity))
-            {
-                PInvoke.SetTimer(island.Hwnd, HoverTimer, HoverDwellMs, null);
-            }
         }
-        else
+        else if (armed && machine.State != IslandState.Hidden)
+        {
+            PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
+        }
+
+        // Only a pointer coming onto the pill dwells; one that was on it already has just dragged it there.
+        if (hover == HoverStep.Start && RetractionRules.OpensPanels(machine.State, activity))
+        {
+            PInvoke.SetTimer(island.Hwnd, HoverTimer, (uint)settings.Reveal.ExpandDwellHeldMs, null);
+        }
+        else if (hover == HoverStep.Cancel)
         {
             PInvoke.KillTimer(island.Hwnd, HoverTimer);
-            if (armed && machine.State != IslandState.Hidden)
-            {
-                PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
-            }
         }
 
         if (activity.HasFlag(IslandActivity.Result))
@@ -724,7 +730,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                     activity = (activity & ~IslandActivity.Peek) | IslandActivity.Rambling;
                     // The rambler's pill has no room for the ring, and it changes state without Go.
                     UpdateRing();
-                    pointerInside = false;
+                    pointerInside = pointerOn = false;
                     InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
                 }
 
@@ -1023,7 +1029,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
-        pointerInside = false;
+        pointerInside = pointerOn = false;
         InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
         // Esc as a global hotkey only for the states the user opened on purpose. Compact comes from a push, an event,
         // peek or the first-run hint, where swallowing the user's Esc in their own app would be a surprise. Once the

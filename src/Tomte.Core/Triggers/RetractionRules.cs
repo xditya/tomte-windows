@@ -18,6 +18,14 @@ public enum IslandActivity
     Result = 64,
 }
 
+/// <summary>What a pointer report does to the hover dwell: nothing, start it, or cancel it.</summary>
+public enum HoverStep
+{
+    None,
+    Start,
+    Cancel,
+}
+
 public static class RetractionRules
 {
     /// <summary>
@@ -30,6 +38,15 @@ public static class RetractionRules
     /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler holds the pill or a drag is moving it.</summary>
     public static bool OpensPanels(IslandState state, IslandActivity activity) =>
         state == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling) && !activity.HasFlag(IslandActivity.DragInProgress);
+
+    /// <summary>
+    /// What one pointer report does to the hover dwell that opens Panels from Compact: coming onto the pill starts it,
+    /// leaving the pill cancels it, and a report that keeps the pointer on the pill (a move, or the same place reported
+    /// again for new bounds) lets it run, so moving about the pill never starts it over. The margin around the pill
+    /// that holds it open is not on it.
+    /// </summary>
+    public static HoverStep Hover(bool wasOnPill, bool onPill) =>
+        onPill == wasOnPill ? HoverStep.None : onPill ? HoverStep.Start : HoverStep.Cancel;
 
     /// <summary>
     /// An event pill or the first-run hint stays past its time while the pointer is on it or a drag is moving it, and
