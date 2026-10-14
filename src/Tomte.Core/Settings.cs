@@ -150,8 +150,13 @@ public sealed class SettingsStore : IDisposable
         watcher.EnableRaisingEvents = true;
     }
 
+    /// <summary>
+    /// In %LOCALAPPDATA%\Tomte, or in the folder TOMTE_DATA_DIR names: a test run's own settings and database,
+    /// which the settings window it opens inherits with the environment. tomte.db lives next to this file.
+    /// </summary>
     public static string DefaultPath { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "settings.json");
+        Environment.GetEnvironmentVariable("TOMTE_DATA_DIR") is { Length: > 0 } dir ? dir : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte"),
+        "settings.json");
 
     public string FilePath { get; }
 
