@@ -660,7 +660,7 @@ internal static unsafe partial class Program
         var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: typed);
         var card = layout.Prompt;
         c.RoundRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
-        c.Outline(Offset(card, origin), PaletteLayout.PromptCorner, typed ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine);
+        c.Stroke(Offset(card, origin), PaletteLayout.PromptCorner, typed ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine, 1);
         var box = layout.Editor;
         if (prompt is null)
         {
@@ -698,9 +698,10 @@ internal static unsafe partial class Program
         for (int i = 0; i < layout.Chips.Count; i++)
         {
             var chip = layout.Chips[i];
-            var pill = Offset(chip.Box, origin);
-            c.RoundRect(pill, PaletteLayout.ChipCorner, chip.On ? StateLook.CheckedFill : PaletteLayout.ChipFill);
-            c.Outline(pill, PaletteLayout.ChipCorner, chip.On ? StateLook.CheckedFill : PaletteLayout.ChipOutline);
+            // The view fills and strokes one path, a pixel-wide stroke inside the pill's edges on whole pixels.
+            var (path, corner, stroke) = PaletteLayout.ChipStroke(chip.Box, origin, c.Scale);
+            c.RoundRect(Offset(path, origin), corner, chip.On ? StateLook.CheckedFill : PaletteLayout.ChipFill);
+            c.Stroke(Offset(path, origin), corner, chip.On ? StateLook.CheckedFill : PaletteLayout.ChipOutline, stroke);
             uint ink = chip.On ? StateLook.CheckedText : PaletteLayout.ChipInk;
             var icon = Offset(chip.Icon, origin);
             var mark = Offset(chip.Mark, origin);
@@ -731,7 +732,7 @@ internal static unsafe partial class Program
         if (layout.Ask(height) is { } ask)
         {
             c.RoundRect(Offset(ask.Card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
-            c.Outline(Offset(ask.Card, origin), PaletteLayout.PromptCorner, PaletteLayout.AskOutline);
+            c.Stroke(Offset(ask.Card, origin), PaletteLayout.PromptCorner, PaletteLayout.AskOutline, 1);
             c.Text(ask.Summary, ask.SummaryAt, origin);
             c.Text(ask.Line, origin);
             foreach (var (button, at, label) in ask.Buttons)
@@ -746,7 +747,7 @@ internal static unsafe partial class Program
                 else
                 {
                     c.RoundRect(rect, PaletteLayout.ButtonCorner, PaletteLayout.ButtonFill);
-                    c.Outline(rect, PaletteLayout.ButtonCorner, PaletteLayout.ButtonOutline);
+                    c.Stroke(rect, PaletteLayout.ButtonCorner, PaletteLayout.ButtonOutline, 1);
                 }
 
                 c.EndLayer();
@@ -1065,15 +1066,6 @@ internal static unsafe partial class Program
 
         /// <summary>A filled figure in DIPs, its origin at <paramref name="at"/>.</summary>
         public void Shape(ReadOnlySpan<OutlineSegment> segments, Vector2 at, uint argb) => Fill(segments, at, 1, argb);
-
-        /// <summary>A rounded outline one DIP wide centred on the rectangle's edge, as a composition shape strokes it.</summary>
-        public void Outline(RectangleF r, float radius, uint argb)
-        {
-            var brush = Brush(argb);
-            var round = new D2D1_ROUNDED_RECT { rect = Rect(r), radiusX = radius, radiusY = radius };
-            dc->DrawRoundedRectangle(&round, (ID2D1Brush*)brush, 1, null);
-            brush->Release();
-        }
 
         /// <summary>A palette glyph's figures from their box's top-left corner: filled, or stroked along their outlines.</summary>
         public void Figures(GlyphFigure[] figures, Vector2 at, uint argb)

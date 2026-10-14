@@ -112,10 +112,23 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const string Include = "Include", SendTip = "Send (Enter)";
 
     /// <summary>
-    /// An off chip: a faint fill, an outline at about 3.8:1 against the palette, and grey ink for its picture and "+".
+    /// An off chip: a faint fill, an outline at about 4.5:1 against the palette, and grey ink for its picture and "+".
     /// An on chip takes the accent fill with black ink. Glyph ink is opaque, so a glyph fades as one.
     /// </summary>
-    public const uint ChipFill = 0x0FFFFFFF, ChipOutline = 0x66FFFFFF, ChipInk = 0xFFA3A3A5;
+    public const uint ChipFill = 0x0FFFFFFF, ChipOutline = 0x73FFFFFF, ChipInk = 0xFFA3A3A5;
+
+    /// <summary>
+    /// The path a chip's outline follows and the stroke's width in DIPs: one pixel wide, half a pixel inside the pill's
+    /// edges put on whole pixels, so it lights whole pixels at any scale; two half-lit ones would fall under 3:1.
+    /// <paramref name="parent"/> is where the pill's space starts, in DIPs from a whole pixel.
+    /// </summary>
+    public static (RectangleF Path, float Corner, float Stroke) ChipStroke(RectangleF pill, Vector2 parent, double scale)
+    {
+        float half = (float)(0.5 / scale);
+        float left = PixelGrid.Snap(parent.X, pill.Left, scale), top = PixelGrid.Snap(parent.Y, pill.Top, scale);
+        float right = PixelGrid.Snap(parent.X, pill.Right, scale), bottom = PixelGrid.Snap(parent.Y, pill.Bottom, scale);
+        return (RectangleF.FromLTRB(left + half, top + half, right - half, bottom - half), ChipCorner - half, 2 * half);
+    }
 
     /// <summary>The prompt card's outline, which takes the accent while the box has the keys.</summary>
     public const uint PromptLine = 0x1AFFFFFF, PromptFocusLine = 0x996FA8FF;

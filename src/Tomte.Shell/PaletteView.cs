@@ -410,9 +410,11 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
     // One drawn chip: its pill with a fill and an outline, its picture and mark in one ink, its name, and which picture
     // and mark are drawn now. A slot past the chips shown is drawn empty.
-    private sealed class ChipSlot(CompositionRoundedRectangleGeometry pill, CompositionColorBrush fill, CompositionColorBrush outline, CompositionColorBrush ink, CompositionContainerShape icon, CompositionContainerShape mark, TextVisual label)
+    private sealed class ChipSlot(CompositionRoundedRectangleGeometry pill, CompositionSpriteShape stroke, CompositionColorBrush fill, CompositionColorBrush outline, CompositionColorBrush ink, CompositionContainerShape icon, CompositionContainerShape mark, TextVisual label)
     {
         public CompositionRoundedRectangleGeometry Pill { get; } = pill;
+
+        public CompositionSpriteShape Stroke { get; } = stroke;
 
         public CompositionColorBrush Fill { get; } = fill;
 
@@ -435,10 +437,9 @@ internal sealed class PaletteView : IDisposable, IInteractive
         var pill = c.CreateRoundedRectangleGeometry();
         pill.CornerRadius = new Vector2(PaletteLayout.ChipCorner);
         var shape = c.CreateSpriteShape(pill);
-        var slot = new ChipSlot(pill, c.CreateColorBrush(), c.CreateColorBrush(), c.CreateColorBrush(), c.CreateContainerShape(), c.CreateContainerShape(), text.Create(chipLayer));
+        var slot = new ChipSlot(pill, shape, c.CreateColorBrush(), c.CreateColorBrush(), c.CreateColorBrush(), c.CreateContainerShape(), c.CreateContainerShape(), text.Create(chipLayer));
         shape.FillBrush = slot.Fill;
         shape.StrokeBrush = slot.Outline;
-        shape.StrokeThickness = 1;
         chipShapes.Shapes.Add(shape);
         chipShapes.Shapes.Add(slot.Icon);
         chipShapes.Shapes.Add(slot.Mark);
@@ -471,8 +472,11 @@ internal sealed class PaletteView : IDisposable, IInteractive
             }
 
             var chip = row[i];
-            slot.Pill.Offset = new Vector2(chip.Box.X, chip.Box.Y);
-            slot.Pill.Size = new Vector2(chip.Box.Width, chip.Box.Height);
+            var (path, corner, stroke) = PaletteLayout.ChipStroke(chip.Box, new Vector2(root.Offset.X, root.Offset.Y), island.Scale);
+            slot.Pill.Offset = new Vector2(path.X, path.Y);
+            slot.Pill.Size = new Vector2(path.Width, path.Height);
+            slot.Pill.CornerRadius = new Vector2(corner);
+            slot.Stroke.StrokeThickness = stroke;
             slot.Fill.Color = Argb(chip.On ? StateLook.CheckedFill : PaletteLayout.ChipFill);
             slot.Outline.Color = Argb(chip.On ? StateLook.CheckedFill : PaletteLayout.ChipOutline);
             slot.Ink.Color = Argb(chip.On ? StateLook.CheckedText : PaletteLayout.ChipInk);
