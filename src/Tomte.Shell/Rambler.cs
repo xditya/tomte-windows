@@ -63,6 +63,9 @@ internal sealed class Rambler(
     /// <summary>A voice command's session has finished, before the island retracts.</summary>
     public event Action<PaletteSession>? CommandDone;
 
+    /// <summary>A line for the user once the pill has gone, such as a hold in which nothing was heard.</summary>
+    public event Action<string>? Notice;
+
     /// <summary>
     /// The answer to the palette's question (Win+Alt+Enter is yes, Esc no); with <paramref name="to"/>, only while that
     /// is still the question. Without it a yes goes to the question the card shows, never to one that opened after the
@@ -151,6 +154,7 @@ internal sealed class Rambler(
             if (transcript.Length == 0 || (transcript.StartsWith('[') && transcript.EndsWith(']')))
             {
                 log($"{DateTime.Now:HH:mm:ss.fff} rambler: nothing heard ({transcript})");
+                Notice?.Invoke("Nothing heard. Hold the voice key while you speak.");
                 return;
             }
 

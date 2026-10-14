@@ -665,6 +665,8 @@ internal static partial class Program
         var session = new Rambler(island, triggers.Machine, speech, speechSend, Voice, scratchpad, sendLog, options, text!, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
+        // Raised while the pill is up: it waits in the triggers' queue and shows once the pill has gone.
+        session.Notice += line => triggers.Raise(new IslandEvent(line, DateTimeOffset.Now));
         session.CommandDone += command =>
         {
             if (VoiceCommand.ReplyToSpeak(command, store.Current.SpokenReplies) is { } reply)
