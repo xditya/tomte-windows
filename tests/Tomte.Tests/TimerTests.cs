@@ -93,6 +93,37 @@ public sealed class TimerTests : IDisposable
     }
 
     [Fact]
+    public void AFileThatCannotBeWrittenOrDeletedDoesNotStopTheTimer()
+    {
+        // The folder name is taken by a file, so the timer file cannot be created.
+        Directory.CreateDirectory(dir);
+        string blocker = Path.Combine(dir, "blocker");
+        System.IO.File.WriteAllText(blocker, "");
+        var unwritable = new IslandTimer(Path.Combine(blocker, "timer.json"));
+        int changes = 0;
+        unwritable.Changed += () => changes++;
+        unwritable.Run = TimerRun.Starting(T0, TimeSpan.FromMinutes(1));
+        Assert.NotNull(unwritable.Run);
+        Assert.Equal(1, changes);
+
+        // A read-only file cannot be deleted: the completion still happens, once, and is still announced.
+        var timer = new IslandTimer(File) { Run = TimerRun.Starting(T0, TimeSpan.FromMinutes(1)) };
+        timer.Changed += () => changes++;
+        System.IO.File.SetAttributes(File, FileAttributes.ReadOnly);
+        try
+        {
+            Assert.True(timer.TryComplete(T0.AddMinutes(2)));
+            Assert.False(timer.TryComplete(T0.AddMinutes(2)));
+            Assert.Null(timer.Run);
+            Assert.Equal(2, changes);
+        }
+        finally
+        {
+            System.IO.File.SetAttributes(File, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
     public void NoFileOrADamagedFileMeansNoTimer()
     {
         Assert.Null(new IslandTimer(File).Run);

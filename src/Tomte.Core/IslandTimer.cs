@@ -43,9 +43,12 @@ public sealed record TimerRun(DateTimeOffset StartedAt, DateTimeOffset EndsAt)
 }
 
 /// <summary>
-/// The single running timer, persisted to timer.json beside settings.json. Changed fires on the caller's
-/// thread after every start, cancel or completion. Completion is taken once: the first TryComplete at or
-/// after the end time clears the run and returns true, every later call returns false.
+/// The single running timer, persisted to timer.json beside settings.json. Not thread-safe: one thread owns
+/// it, and Changed fires on that thread after every start, cancel or completion. Completion is taken at most
+/// once: the first TryComplete at or after the end time clears the run and its file and returns true, every
+/// later call returns false, and whatever the caller does with the completion does not survive a restart.
+/// A file that cannot be written or deleted never stops the timer in memory; only the resume is lost, or a
+/// finished timer is announced once more at the next start.
 /// </summary>
 public sealed class IslandTimer(string path)
 {
@@ -61,7 +64,15 @@ public sealed class IslandTimer(string path)
         set
         {
             run = value;
-            Save(path, value);
+            try
+            {
+                Save(path, value);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // The disk said no. The timer still runs, or still ends, for this process; listeners still hear it.
+            }
+
             Changed?.Invoke();
         }
     }
