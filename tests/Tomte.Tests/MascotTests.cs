@@ -293,6 +293,10 @@ public class MascotTests
 
         Assert.Equal(IslandGeometry.Compact, MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.Compact));
         Assert.Equal(IslandGeometry.Peek, MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.Peek));
+        // The rambler's pill is wider than Compact but a pill all the same: the tomte drops in there too.
+        var rambler = IslandGeometry.Compact with { Width = 262 };
+        Assert.Equal(rambler, MascotArt.Anchor(IslandGeometry.Hidden, rambler));
+        Assert.Null(MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.ShelfDrop));
         Assert.Equal(palette, MascotArt.Anchor(palette, IslandGeometry.Hidden));
         Assert.Null(MascotArt.Anchor(IslandGeometry.Compact, palette));
     }
