@@ -264,9 +264,12 @@ public sealed partial class PaletteSession : IPaletteSession
             tools = OfferShelf(tools);
             _offered = [.. tools.Select(t => t.Name)];
 
-            // Attached files are read, checked against the model and sized before anything is sent.
+            // Attached files are read, checked against the model and sized before anything is sent. Each read has its
+            // own limit and the user may take their time over the size question, so the request's time starts after.
+            timeout.CancelAfter(Timeout.InfiniteTimeSpan);
             if (await PrepareFilesAsync(parts, attached, tools, ct) is not { } first)
                 return;
+            timeout.CancelAfter(_options.Timeout);
 
             var messages = new List<ChatMessage> { new(ChatRole.User, first) };
             while (true)
