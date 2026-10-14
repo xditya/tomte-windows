@@ -47,7 +47,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         this.pause = pause;
         this.timer = timer;
         this.log = log;
-        ring = new TimerRing(island.Compositor, island.Content);
+        ring = new TimerRing(island.Compositor);
         island.Content.Children.InsertAtTop(ring.Visual);
         // The timer has no lock and is only touched on this thread. Changed is queued, not run in place, so the
         // caller (the debug switch, a completion inside OnTimer) finishes before the one-shot and the ring re-sync.
