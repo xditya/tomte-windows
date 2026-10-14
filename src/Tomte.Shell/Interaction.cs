@@ -20,7 +20,7 @@ namespace Tomte.Shell;
 /// </summary>
 internal interface IInteractive
 {
-    /// <summary>The targets in Tab order, each in the view's own DIP space.</summary>
+    /// <summary>The targets in Tab order, each in the view's own DIP space. Read on every pointer move: return a list kept from the last layout.</summary>
     IReadOnlyList<Target> Targets { get; }
 
     /// <summary>Raised when the list changes, or a target's bounds, <see cref="Target.Enabled"/> or <see cref="Target.Checked"/> do.</summary>
@@ -102,6 +102,8 @@ internal sealed class InteractionHost
         tipTimer.Tick += (_, _) => TipTick();
         island.Settled += Refresh;
         island.LayoutChanged += Refresh;
+        // Targets are placed from the shape as it is now, which a morph changes every frame: nothing shows until it rests.
+        island.Morphing += () => overlay?.HideAll();
     }
 
     private enum TipPhase { None, Waiting, Showing, Acknowledging }
@@ -114,9 +116,6 @@ internal sealed class InteractionHost
 
     /// <summary>True while a press on a target holds the mouse or a view's drag runs, then false: the island must not retract under it.</summary>
     public Action<bool>? Pressing { get; set; }
-
-    /// <summary>A key was used since the last press, so the focus ring shows.</summary>
-    public bool KeyUsed => ring;
 
     /// <summary>Starts running <paramref name="view"/>'s targets; registering it again replaces its functions.</summary>
     public void Register(IInteractive view, Func<Vector2, Vector2> toView, Func<Vector2, Vector2> fromView)
@@ -254,6 +253,21 @@ internal sealed class InteractionHost
         return true;
     }
 
+    /// <summary>The primary button (the right one after a left-handed swap) is down now, physically.</summary>
+    public static bool PrimaryDown() =>
+        (PInvoke.GetAsyncKeyState(PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_SWAPBUTTON) != 0 ? (int)VIRTUAL_KEY.VK_RBUTTON : (int)VIRTUAL_KEY.VK_LBUTTON) & 0x8000) != 0;
+
+    /// <summary>The button of the press the host holds came up where the island did not hear it: the press clicks nothing.</summary>
+    public void DropPress()
+    {
+        if (pointer.Pressed is not null && !dragging)
+        {
+            pointer.Cancel();
+            PInvoke.ReleaseCapture();
+            Update();
+        }
+    }
+
     /// <summary>A text box took the keys, or the island lost them: no target has focus and the ring goes.</summary>
     public void ClearFocus()
     {
@@ -354,6 +368,15 @@ internal sealed class InteractionHost
     private void Left()
     {
         bool held = pointer.Pressed is not null;
+        if (held && !PrimaryDown())
+        {
+            // Let go outside the island, where this window, not being the foreground one, does not hear the release.
+            pointer.Cancel();
+            PInvoke.ReleaseCapture();
+            Update();
+            return;
+        }
+
         if (!pointer.Leave())
         {
             return;
@@ -651,7 +674,7 @@ internal sealed class InteractionHost
     private bool ShowCard(View view, Target target, string text, bool tick)
     {
         var at = IslandRect(view, target.Bounds);
-        if (Text is not { } renderer || at.Height <= 0)
+        if (Text is not { } renderer || at.Height <= 0 || island.Moving)
         {
             return false;
         }
@@ -685,6 +708,12 @@ internal sealed class InteractionHost
         if (ring && focus is { } f && Find(f, out var fv, out var ft))
         {
             (focused, focusCorner) = (IslandRect(fv, ft.Bounds), ft.Corner);
+        }
+
+        if (island.Moving)
+        {
+            // Settled places them again.
+            (layer, focused) = (null, null);
         }
 
         if (overlay is null && layer is null && focused is null)
@@ -742,11 +771,12 @@ internal sealed class InteractionHost
         {
             if (ReferenceEquals(v.Interactive, at.View))
             {
-                foreach (var t in v.Interactive.Targets)
+                var targets = v.Interactive.Targets;
+                for (int i = 0; i < targets.Count; i++)
                 {
-                    if (t.Id == at.Id)
+                    if (targets[i].Id == at.Id)
                     {
-                        (view, target) = (v, t);
+                        (view, target) = (v, targets[i]);
                         return true;
                     }
                 }
@@ -780,9 +810,10 @@ internal sealed class InteractionHost
 
     private static Target? CheckedTab(View view)
     {
-        foreach (var t in view.Interactive.Targets)
+        var targets = view.Interactive.Targets;
+        for (int i = 0; i < targets.Count; i++)
         {
-            if (t.Kind == TargetKind.Tab && t.Checked)
+            if (targets[i] is { Kind: TargetKind.Tab, Checked: true } t)
             {
                 return t;
             }
@@ -887,6 +918,12 @@ internal sealed class InteractionHost
 
         public void HideCard() => card.IsVisible = false;
 
+        public void HideAll()
+        {
+            layer.StopAnimation("Opacity");
+            layer.IsVisible = ring.IsVisible = card.IsVisible = false;
+        }
+
         /// <summary>Above whatever views put on top of island space since.</summary>
         public void Raise(ContainerVisual dips)
         {
@@ -905,8 +942,7 @@ internal sealed class InteractionHost
 
         public void Release()
         {
-            layer.StopAnimation("Opacity");
-            layer.IsVisible = ring.IsVisible = card.IsVisible = false;
+            HideAll();
             label?.Dispose();
             label = null;
         }

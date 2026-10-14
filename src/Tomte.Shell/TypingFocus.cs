@@ -102,15 +102,7 @@ internal sealed class TypingFocus
 
             if (focused == editor)
             {
-                // A box that goes while keys move between targets (Ctrl+Tab away from the note) leaves the keys with them.
-                if (island.Interaction.KeyUsed)
-                {
-                    focused = null;
-                }
-                else
-                {
-                    Release();
-                }
+                Release();
             }
         };
         editors.Add(editor);
@@ -292,21 +284,15 @@ internal sealed class TypingFocus
         bool shift = Down(VIRTUAL_KEY.VK_SHIFT), repeat = (lParam & PromptKeys.WasDown) != 0;
         if (focused is { } editor)
         {
-            // Tab out of the prompt moves to its view's targets, when there are any, and the box lets go; Ctrl+Tab
-            // switches the panel tab, and the note goes with it.
+            // Tab out of the prompt moves to its view's targets, when there are any, and Ctrl+Tab switches the panel tab;
+            // either way the box lets go, and the island keeps the keys for the targets.
             var owner = owners.GetValueOrDefault(editor);
-            if (down && NavKeys.LeavesBox(key, ctrl, owner is not null))
+            if (down && NavKeys.LeavesBox(key, ctrl, owner is not null)
+                && (ctrl ? island.Interaction.Key(key, shift, ctrl, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor))))
             {
-                if (ctrl ? island.Interaction.Key(key, shift, ctrl, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor)))
-                {
-                    if (!ctrl)
-                    {
-                        focused = null;
-                        editor.Blur();
-                    }
-
-                    return new LRESULT(0);
-                }
+                focused = null;
+                editor.Blur();
+                return new LRESULT(0);
             }
 
             if (editor.BeforeKey?.Invoke(message, wParam, lParam) == true)

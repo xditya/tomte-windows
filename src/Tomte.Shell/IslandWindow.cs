@@ -276,6 +276,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>A morph to a visible shape came to rest: work held back while <see cref="Moving"/> can run now.</summary>
     public event Action? Settled;
 
+    /// <summary>A morph or a retarget starts, before the springs move: what is placed from the shape as it is now should go.</summary>
+    public event Action? Morphing;
+
     /// <summary>
     /// A left button press on the island, in island space. One that <see cref="Grabs"/> holds arrives when the button
     /// comes up; while the island is off the middle, only once the double-click time has passed without a second one.
@@ -399,6 +402,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public Task MorphTo(IslandGeometry to, SpringPreset preset)
     {
+        Morphing?.Invoke();
         Rescale(MonitorScale());
         if (attached)
         {

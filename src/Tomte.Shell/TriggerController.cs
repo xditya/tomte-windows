@@ -536,8 +536,17 @@ internal sealed unsafe partial class TriggerController : IDisposable
         PInvoke.KillTimer(island.Hwnd, id);
         switch (id)
         {
-            case RetractTimer when !pointerInside && RetractionRules.ShouldRetract(machine.State, activity):
-                Hide();
+            case RetractTimer when !pointerInside:
+                if (RetractionRules.Released(activity, InteractionHost.PrimaryDown()) != activity)
+                {
+                    island.Interaction.DropPress();
+                }
+
+                if (RetractionRules.ShouldRetract(machine.State, activity))
+                {
+                    Hide();
+                }
+
                 break;
             case HoverTimer when pointerOn && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
@@ -1078,8 +1087,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
     internal void Typing(bool on) => Hold(IslandActivity.Typing, on);
 
-    /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: it holds the island as any drag does.</summary>
-    internal void Pressing(bool on) => Hold(IslandActivity.DragInProgress, on);
+    /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: the island does not retract under it.</summary>
+    internal void Pressing(bool on) => Hold(IslandActivity.Pressing, on);
 
     private void Hold(IslandActivity what, bool on)
     {

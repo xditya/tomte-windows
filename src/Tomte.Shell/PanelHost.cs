@@ -327,8 +327,8 @@ internal sealed class PanelHost
         private readonly ExpressionAnimation askEdge;
         private readonly TextVisual ask;
         private readonly List<TextVisual> labels = [];
-        private Target[] fixedTargets = [];
-        private float askWidth;
+        private Target[] targets = [];
+        private float askWidth, askFor;
 
         public Strip(IslandWindow island, TextRenderer text, Action<PanelId> select, Action onAsk)
         {
@@ -384,11 +384,19 @@ internal sealed class PanelHost
         {
             get
             {
-                float right = (float)island.Current.Width - TabStrip.RightPad;
-                var card = new RectangleF(right - askWidth, (PanelSpace.TabStripHeight - TabStrip.Height) / 2, askWidth, TabStrip.Height);
-                return [.. fixedTargets, new Target(AskId, card, TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything")];
+                float width = (float)island.Current.Width;
+                if (targets.Length > 0 && width != askFor)
+                {
+                    askFor = width;
+                    targets[^1] = targets[^1] with { Bounds = AskCard(width) };
+                }
+
+                return targets;
             }
         }
+
+        private RectangleF AskCard(float width) =>
+            new(width - TabStrip.RightPad - askWidth, (PanelSpace.TabStripHeight - TabStrip.Height) / 2, askWidth, TabStrip.Height);
 
         public void Activate(string id)
         {
@@ -405,19 +413,18 @@ internal sealed class PanelHost
         public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot)
         {
             var lines = TabStrip.Labels(tabs, current, width, mascot);
-            var targets = new List<Target>();
+            var list = new List<Target>();
             if (mascot)
             {
                 var box = MascotArt.Box(IslandGeometry.Panel(width, PanelSpace.TabStripHeight));
-                targets.Add(new(Tomte, box with { X = box.X + (width / 2) }, box.Width / 2, TargetKind.Button, Tip: "Ask Tomte"));
+                list.Add(new(Tomte, box with { X = box.X + (width / 2) }, box.Width / 2, TargetKind.Button, Tip: "Ask Tomte"));
             }
 
             foreach (var (id, line) in tabs.Zip(lines))
             {
-                targets.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: id == current));
+                list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: id == current));
             }
 
-            fixedTargets = [.. targets];
             Visual.Size = new Vector2(width, PanelSpace.TabStripHeight);
             while (labels.Count < lines.Count)
             {
@@ -440,6 +447,9 @@ internal sealed class PanelHost
             // Laid out from the card's left edge, which the expression keeps on the live right end.
             var (card, glyph, word) = TabStrip.AskPill(width);
             askWidth = card.Width;
+            askFor = (float)island.Current.Width;
+            list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything"));
+            targets = [.. list];
             askVisual.Size = new Vector2(card.Width, PanelSpace.TabStripHeight);
             askEdge.SetScalarParameter("right", width - card.X);
             askVisual.StartAnimation("Offset", askEdge);
