@@ -34,11 +34,18 @@ internal static unsafe class Program
     private static readonly List<double> LayoutMs = [], DrawMs = [];
     private static int OffGrid;
 
+    // STA, as the island's thread is: the text services' input and drop support need it.
+    [STAThread]
     private static int Main(string[] args)
     {
         if (args is ["--devices", var how])
         {
             return Devices(how == "shared");
+        }
+
+        if (args is ["--typing", var where, ..])
+        {
+            return Typing.Run(where, measure: !args.Contains("--no-measure"));
         }
 
         string dir = args.Length > 0 ? args[0] : "captures";
@@ -226,6 +233,9 @@ internal static unsafe class Program
             new("shelf-drop", IslandGeometry.ShelfDrop, ShelfDrop),
             new("shortcuts", Panel(PanelSize.Shortcuts), Shortcuts),
             new("scratchpad", Panel(PanelSize.Scratchpad), c => Scratchpad(c, "Call Mom\nSubscribe to the newsletter about small tools, the one with the long name that wraps over two lines\nGym 6:00 PM")),
+            new("palette-prompt", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, "What does this error mean?", Chips(false), "Nothing sent", [], 0, 0.03m)),
+            new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, StreamingHeight()), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m)),
+            new("palette-ai-off", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0)),
             new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
             new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
             new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
@@ -447,7 +457,7 @@ internal static unsafe class Program
         }
     }
 
-    // The Scratchpad: heading, the note's card with the note's start wrapped in it, the footer.
+    // The Scratchpad: heading, the note's card with the note in its text box and the caret after it, the footer.
     private static void Scratchpad(Canvas c, string note)
     {
         var layout = new ScratchpadPanelLayout(Body(PanelSize.Scratchpad));
@@ -461,8 +471,81 @@ internal static unsafe class Program
         }
 
         c.RoundRect(Offset(layout.Note, body), ScratchpadPanelLayout.Corner, 0x0FFFFFFF);
-        var (run, at) = layout.NoteRun(note);
-        c.Text(run, at, body);
+        using var editor = Typing.Captured(note, ScratchpadPanelLayout.NoteSize, layout.Editor, c.Scale, note.Length);
+        c.Editor(editor, layout.Editor, body);
+    }
+
+    private static (string, bool)[] Chips(bool selection) =>
+    [
+        (selection ? "Selection · \"Tomte is a Windows 11 utility...\"" : "Selection · none", selection),
+        ("Window · notepad · tomte-notes.txt - Notepad", false),
+        ("Screenshot of window", false),
+        ("Shelf · Q3-report.pdf", false),
+        ("Scratchpad", false),
+    ];
+
+    private static readonly (string, TextStyle)[] Streaming =
+    [
+        ("Read the selection", PaletteLayout.StepText),
+        ("Tomte is a Windows utility that stays out of sight until you call it from the top edge of the screen. It holds a file shelf, shortcuts, media controls and a scratchpad, and an optional AI layer on your own key, and it", PaletteLayout.AnswerText),
+    ];
+
+    // The palette's height for the streaming scene, from the prompt's own height at 150% and the answer.
+    private static double StreamingHeight()
+    {
+        var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true);
+        using var probe = Typing.Captured("Summarize the selected text\nin two lines", PaletteLayout.PromptSize, first.Editor, 1.5, null);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, probe.ContentHeight / 1.5f, Chips(true));
+        return layout.Height(layout.Measure(Streaming));
+    }
+
+    // The palette: the prompt's card with its text box (or the AI-off line), the chips, the answer and the footer, as
+    // the palette view lays them out. A null prompt is a palette with no provider.
+    private static void Palette(Canvas c, string? prompt, (string Label, bool On)[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent)
+    {
+        var origin = new Vector2((float)(-PanelSize.PaletteWidth / 2), 0);
+        c.Pill();
+        c.Mascot();
+        float text = 0;
+        TextServices? editor = null;
+        if (prompt is not null)
+        {
+            editor = Typing.Captured(prompt, PaletteLayout.PromptSize, new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true).Editor, c.Scale, prompt.Length);
+            text = (float)(editor.ContentHeight / c.Scale);
+        }
+
+        // As the view does it: the prompt's height first, then the box grows to it and the rest follows.
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips);
+        var card = layout.Prompt;
+        c.RoundRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
+        c.StrokeRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x1AFFFFFF);
+        var box = layout.Editor;
+        if (editor is null)
+        {
+            c.Text(PaletteLayout.Off, PaletteLayout.Placeholder, new RectangleF(box.X, card.Y, box.Width, card.Height), origin);
+            c.Text(new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad, layout.ChipsTop + 4), origin);
+            return;
+        }
+
+        editor.Resize(PixelGrid.Cover(box.Width, c.Scale), PixelGrid.Cover(box.Height, c.Scale), EditorScale.Zoom(c.Scale, TextServices.SystemDpi));
+        c.Editor(editor, box, origin);
+        editor.Dispose();
+        foreach (var (pill, label) in layout.Chips)
+        {
+            c.RoundRect(Offset(pill, origin), PaletteLayout.ChipCorner, label.Style == PaletteLayout.ChipOn ? 0x336FA8FFu : 0x0FFFFFFFu);
+            c.Text(label, origin);
+        }
+
+        float height = layout.Height(layout.Measure(answer));
+        foreach (var (run, at) in layout.Answer(answer, height))
+        {
+            c.Text(run, at, origin);
+        }
+
+        foreach (var line in layout.Foot(provider, steps, spent, 2m, height))
+        {
+            c.Text(line, origin);
+        }
     }
 
     private static readonly (string Display, string Ago)[] Rows =
@@ -706,6 +789,45 @@ internal static unsafe class Program
         public void Text(TextRun run, Vector2 at, Vector2 host) => Text(run, new RectangleF(at.X, at.Y, run.MaxWidth, 0), host, centred: false, 1);
 
         public double Scale => scale;
+
+        /// <summary>
+        /// A text box as the island shows it: the services drawn into a transparent surface of the box's size in whole
+        /// pixels at the box's snapped corner, and the caret as a white sprite where the services put it, the user's
+        /// caret width times the scale.
+        /// </summary>
+        public void Editor(TextServices editor, RectangleF box, Vector2 host)
+        {
+            int w = PixelGrid.Cover(box.Width, scale), h = PixelGrid.Cover(box.Height, scale);
+            ID2D1Image* previous;
+            dc->GetTarget(&previous);
+            D2D_MATRIX_3X2_F transform;
+            dc->GetTransform(&transform);
+            dc->EndDraw(null, null);
+            var surface = Bitmap(dc, w, h, scale, D2D1_BITMAP_OPTIONS.D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS.D2D1_BITMAP_OPTIONS_CANNOT_DRAW);
+            dc->SetTarget((ID2D1Image*)surface);
+            dc->BeginDraw();
+            editor.Draw(dc, new Point(0, 0), null);
+            dc->EndDraw(null, null);
+            var pixels = Read(dc, surface, w, h, scale);
+            surface->Release();
+            dc->SetTarget(previous);
+            previous->Release();
+            dc->SetDpi((float)(96 * scale), (float)(96 * scale));
+            dc->BeginDraw();
+            dc->SetTransform(&transform);
+            var at = new Vector2(host.X + PixelGrid.Snap(host.X, box.X, scale), host.Y + PixelGrid.Snap(host.Y, box.Y, scale));
+            runs.Add((pixels, w, h, at, 1));
+            var (x, y, caretHeight, shown) = editor.Caret;
+            if (shown && caretHeight > 0)
+            {
+                uint width = 1;
+                PInvoke.SystemParametersInfo(Windows.Win32.UI.WindowsAndMessaging.SYSTEM_PARAMETERS_INFO_ACTION.SPI_GETCARETWIDTH, 0, &width, 0);
+                int cw = Math.Max(1, (int)Math.Round(width * scale));
+                var caret = new byte[cw * caretHeight * 4];
+                Array.Fill(caret, (byte)255);
+                runs.Add((caret, cw, caretHeight, at + new Vector2((float)(x / scale), (float)(y / scale)), 1));
+            }
+        }
 
         /// <summary>A rounded outline one pixel wide, inside the rectangle.</summary>
         public void StrokeRect(RectangleF r, float radius, uint argb)

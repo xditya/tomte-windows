@@ -4,6 +4,8 @@
     <TargetFramework>net10.0-windows10.0.22621.0</TargetFramework>
     <SupportedOSPlatformVersion>10.0.22621.0</SupportedOSPlatformVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- The text services' structures are laid out per architecture; the shell is x64. -->
+    <CsWin32PlatformTarget>x64</CsWin32PlatformTarget>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Windows.CsWin32" PrivateAssets="all" />
@@ -14,5 +16,10 @@
   <ItemGroup>
     <!-- The island's own text drawing and device, so a capture is what the island draws. -->
     <Compile Include="..\..\src\Tomte.Shell\TextDraw.cs" Link="TextDraw.cs" />
+    <!-- The island's text boxes, driven offscreen with a message-only window. -->
+    <Compile Include="..\..\src\Tomte.Shell\TextServices.cs" Link="TextServices.cs" />
+    <Compile Include="..\..\src\Tomte.Shell\EditorView.cs" Link="EditorView.cs" />
+    <Compile Include="..\..\src\Tomte.Shell\NoteEditor.cs" Link="NoteEditor.cs" />
+    <Compile Include="..\..\src\Tomte.Shell\PixelSurfaces.cs" Link="PixelSurfaces.cs" />
   </ItemGroup>
 </Project>

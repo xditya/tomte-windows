@@ -153,6 +153,12 @@ public sealed class ScratchpadPanelLayout(Vector2 body)
     /// <summary>The note's text: 13 DIP white, 19.5 DIP a line.</summary>
     public static readonly TextStyle NoteStyle = new(13, LineHeight: LineHeight);
 
+    /// <summary>The note's text size in DIPs.</summary>
+    public const float NoteSize = 13;
+
+    /// <summary>The text box the note is typed in: the card less its insets. Its text scrolls inside it.</summary>
+    public RectangleF Editor => RectangleF.FromLTRB(Note.X + TextInset, Note.Y + 10, Note.Right - TextInset, Note.Bottom - 10);
+
     /// <summary>Where the note's text starts and how wide it wraps, inside the card.</summary>
     public RectangleF NoteText => new(Note.X + TextInset, Note.Y + 10, Note.Width - 2 * TextInset, VisibleLines * LineHeight);
 
