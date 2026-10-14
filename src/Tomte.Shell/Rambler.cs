@@ -48,6 +48,7 @@ internal sealed class Rambler(
     private bool transcribing;
     private PaletteSession? command;
     private PaletteHost? palette;
+    private TaskCompletionSource? replyHold;
     private readonly ToolQuestion question = new();
 
     /// <summary>Microphone level 0..1, once per capture packet while recording, on the UI thread. The mascot bounces to it.</summary>
@@ -82,15 +83,25 @@ internal sealed class Rambler(
 
     public void Begin()
     {
-        if (transcribing || capture is not null)
+        // A new hold during a spoken reply's hold ends that hold: the reply gives way to the new recording.
+        var hold = replyHold;
+        if (capture is not null || (transcribing && hold is null))
             return;
         clock.Restart();
         // The capture thread posts each packet's level; the bars change when a packet arrives, with no timer.
         capture = MicCapture.Start(rms => island.Queue.TryEnqueue(() => Level(rms)));
         ShowView();
+        var from = machine.State;
+        if (hold is not null && from == IslandState.Palette)
+        {
+            // The table has no Palette to Compact edge; the state passes through Hidden while the shape morphs across.
+            machine.TransitionTo(IslandState.Hidden);
+            island.PanelLook = false;
+            InputThread.SetEscape(false);
+        }
+
         if (IslandStateMachine.CanTransition(machine.State, IslandState.Compact))
         {
-            var from = machine.State;
             machine.TransitionTo(IslandState.Compact);
             island.Mascot.Follow(from, IslandState.Compact);
             _ = island.MorphTo(IslandGeometry.Compact with { Width = PillWidth }, SpringPreset.Snappy);
@@ -98,6 +109,8 @@ internal sealed class Rambler(
 
         island.Mascot.Set(MascotState.Rambler);
         log($"{DateTime.Now:HH:mm:ss.fff} rambler: recording");
+        // Last, so the reply's End sees this recording and leaves the island to it.
+        hold?.TrySetResult();
     }
 
     public async void End(bool keep)
@@ -172,19 +185,19 @@ internal sealed class Rambler(
             {
                 log($"{DateTime.Now:HH:mm:ss.fff} voice: {session.Status}{(session.Error is null ? "" : ": " + session.Error)} steps={session.ToolSteps} reply=\"{session.AnswerText.ReplaceLineEndings(" | ")}\"");
                 CommandDone?.Invoke(session);
-                // A reply in words stays up long enough to read, at about 15 characters a second; Esc or anything else
-                // the user opens ends it sooner.
+                // A reply in words stays up long enough to read, at about 15 characters a second; Esc, anything else
+                // the user opens, or a new hold ends it sooner.
                 if (session.Status == PaletteStatus.Done && session.AnswerText.Trim() is { Length: > 0 } reply && machine.State == IslandState.Palette)
                 {
-                    var left = new TaskCompletionSource();
+                    var hold = replyHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     void OnState(IslandState from, IslandState to)
                     {
                         if (to != IslandState.Palette)
-                            left.TrySetResult();
+                            hold.TrySetResult();
                     }
 
                     machine.Changed += OnState;
-                    await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(Math.Clamp(reply.Length / 15.0, 4, 15))), left.Task);
+                    await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(Math.Clamp(reply.Length / 15.0, 4, 15))), hold.Task);
                     machine.Changed -= OnState;
                 }
             }
@@ -196,11 +209,15 @@ internal sealed class Rambler(
         finally
         {
             transcribing = false;
-            // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill.
+            replyHold = null;
+            // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill. A
+            // new hold that ended the reply's hold owns the island, so nothing here takes it away.
             bool handedOver = palette is not null;
             command = null;
             palette = null;
-            if (handedOver)
+            if (capture is not null)
+                log($"{DateTime.Now:HH:mm:ss.fff} rambler: the reply gave way to a new hold");
+            else if (handedOver)
                 Retracted?.Invoke();
             else
                 await Retract();
