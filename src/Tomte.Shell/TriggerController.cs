@@ -401,7 +401,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         var s = watch.State;
         log?.Invoke($"desktop: fullscreen={s.Fullscreen} exclusive={s.ExclusiveFullscreen} secure={s.Secure} quiet={s.Quiet} exe={s.ForegroundExe}");
-        if (machine.State != IslandState.Hidden && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
+        // The capture overlay is itself a monitor-sized topmost window, so the shell reports it as fullscreen; it
+        // cancels itself when a secure surface takes focus.
+        if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
         {
             Hide();
         }
