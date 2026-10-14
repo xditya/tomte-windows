@@ -16,6 +16,11 @@ public class ProviderTests
         "Get current weather for a city",
         JsonDocument.Parse("""{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}""").RootElement);
 
+    private static readonly ToolDefinition LockPc = new(
+        "lock_pc",
+        "Lock the PC",
+        JsonDocument.Parse("""{"type":"object","properties":{},"required":[]}""").RootElement);
+
     private static readonly ChatRequest Hello = new("m", [ChatMessage.User("Hi")], System: "Be brief.");
 
     internal static async Task<List<ChatEvent>> Collect(IAsyncEnumerable<ChatEvent> events)
@@ -192,12 +197,20 @@ public class ProviderTests
     [Fact]
     public void GeminiDeclaresANoArgumentToolWithoutParameters()
     {
-        var lockPc = new ToolDefinition("lock_pc", "Lock the PC", JsonDocument.Parse("""{"type":"object","properties":{},"required":[]}""").RootElement);
-        var body = GeminiProvider.BuildBody(Hello with { Tools = [Weather, lockPc] });
+        var body = GeminiProvider.BuildBody(Hello with { Tools = [Weather, LockPc] });
         var declarations = body["tools"]![0]!["functionDeclarations"]!;
         Assert.Equal("object", (string?)declarations[0]!["parameters"]!["type"]);
         Assert.Equal("lock_pc", (string?)declarations[1]!["name"]);
         Assert.Null(declarations[1]!["parameters"]);
+    }
+
+    // Dropping the schema is Gemini's quirk alone: the other two adapters send a no-argument tool's empty object schema as it is.
+    [Fact]
+    public void AnthropicAndOpenAIKeepTheSchemaOfANoArgumentTool()
+    {
+        var request = Hello with { Tools = [LockPc] };
+        Assert.Equal(LockPc.InputSchema.GetRawText(), AnthropicProvider.BuildBody(request)["tools"]![0]!["input_schema"]!.ToJsonString());
+        Assert.Equal(LockPc.InputSchema.GetRawText(), OpenAICompatibleProvider.BuildBody(request)["tools"]![0]!["function"]!["parameters"]!.ToJsonString());
     }
 
     [Fact]
