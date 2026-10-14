@@ -393,6 +393,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 break;
             case HotkeyAction.CircleToAsk when capturing:
                 break;
+            case HotkeyAction.CircleToAsk when watch.State.ExclusiveFullscreen:
+                // Unlike the island the overlay takes the foreground, which would drop a game out of exclusive
+                // mode, so an allow rule for the app does not apply here.
+                log?.Invoke("circle to ask: exclusive fullscreen, nothing shown");
+                break;
             case HotkeyAction.CircleToAsk:
                 if (Allowed(RevealTrigger.Hotkey))
                 {
