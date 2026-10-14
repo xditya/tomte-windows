@@ -125,7 +125,6 @@ public sealed class BuiltInTools(
     public IReadOnlyList<ToolDefinition> VoiceDefinitions =>
         [.. All.Where(d => !ChatOnly.Contains(d.Name) && (d.Name != OpenShortcut || launchShortcut is not null))];
 
-    // Kept with no caller yet: the scheduled-job runner will filter a job's tool list with it.
     /// <summary>A scheduled job may only carry tools that never need a prompt while unattended; destructive ones never run there.</summary>
     public static bool AllowedInScheduledJobs(string name) => Tiers.TryGetValue(name, out var tier) && tier != ActionTier.Destructive;
 

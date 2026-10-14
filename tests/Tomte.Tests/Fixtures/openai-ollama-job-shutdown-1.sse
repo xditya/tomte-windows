@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-779","object":"chat.completion.chunk","created":1791965837,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"call_v7xoj9fu","index":0,"type":"function","function":{"name":"schedule_job","arguments":"{\"date\":\"\",\"days\":\"[\\\"Wednesday\\\"]\",\"name\":\"shut-down-PC-at-23-00\",\"prompt\":\"Write prompt in full before shutdown: \",\"time\":\"23:00\",\"tools\":[\"shut_down_pc\"]}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-779","object":"chat.completion.chunk","created":1791965837,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-779","object":"chat.completion.chunk","created":1791965837,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":764,"completion_tokens":68,"total_tokens":832}}
+
+data: [DONE]
+

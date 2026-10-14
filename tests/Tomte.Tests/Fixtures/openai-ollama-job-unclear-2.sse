@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-456","object":"chat.completion.chunk","created":1791965812,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"Reminder: Please specify the time when you'd like the reminder about stretching, 24-hour format (e.g., \"10:00\" or \"23:59\"). What time would you like me to remind you to stretch?"},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-456","object":"chat.completion.chunk","created":1791965812,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":570,"completion_tokens":47,"total_tokens":617}}
+
+data: [DONE]
+

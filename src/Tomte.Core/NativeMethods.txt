@@ -53,3 +53,17 @@ IDWriteTypography
 DWRITE_TEXT_METRICS
 DWRITE_LINE_METRICS
 DWRITE_FONT_FEATURE_TAG
+TaskScheduler
+ITaskService
+ITaskFolder
+ITaskDefinition
+IRegisteredTask
+TASK_CREATION
+TASK_LOGON_TYPE
+FindWindowEx
+GetProp
+SetProp
+RemoveProp
+PostMessage
+WM_APP
+GetCurrentPackageFullName

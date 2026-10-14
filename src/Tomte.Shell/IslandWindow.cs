@@ -299,7 +299,8 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>
     /// Timers, WM_APP posts from the input thread, shell notifications, power broadcasts and clock changes land
     /// on this window. The handler returns true when it took the message, false to leave the answer to
-    /// DefWindowProc; exceptions are logged, never unwound into the caller.
+    /// DefWindowProc; exceptions are logged, never unwound into the caller. WM_DESTROY comes too, so a handler
+    /// can take off what it put on the window; its answer is ignored.
     /// </summary>
     public Func<uint, nuint, nint, bool>? Message { get; set; }
 
@@ -920,6 +921,7 @@ internal sealed unsafe class IslandWindow : IDisposable
                 PInvoke.DestroyWindow(window);
                 return new LRESULT(0);
             case PInvoke.WM_DESTROY:
+                Route(message, wParam.Value, lParam.Value);
                 PInvoke.PostQuitMessage(0);
                 return new LRESULT(0);
             case PInvoke.WM_TIMER:

@@ -50,6 +50,12 @@ internal static partial class Program
             return 0;
         }
 
+        // --run-job from Task Scheduler: handed to the Tomte running on the same folder, or run here with no island.
+        if (Jobs.RunJobStart(args) is int code)
+        {
+            return code;
+        }
+
         bool debugMascot = args.Contains("--debug-mascot");
         int paletteArg = Array.IndexOf(args, "--palette");
         string? palettePrompt = paletteArg >= 0 && paletteArg + 1 < args.Length ? args[paletteArg + 1] : null;
@@ -78,7 +84,7 @@ internal static partial class Program
         }
 
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
-        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null;
+        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null || args.Contains("--debug-job");
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
@@ -147,6 +153,7 @@ internal static partial class Program
         // One store of tiles for the Shortcuts panel and for voice; nothing opens the database until a tile is wanted.
         var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         StartPanels(island, triggers, store, db, shortcuts, clipboard, logLine);
+        _ = Jobs.StartAsync(new JobContext(island, triggers, store, db, timer, Scratchpad, SendLogPath, log, logLine), args);
 
         if (rambler)
         {
@@ -342,6 +349,7 @@ internal static partial class Program
     {
         string dir = Path.GetDirectoryName(store.FilePath)!;
         var shelf = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log);
+        Jobs.Shelf = shelf;
         // Virtual files are written into the shelf folder as the drop reads them; the drop then goes to the shelf.
         triggers.Drops.Receive = shelf.Receive;
         triggers.Dropped += drop => shelf.Accept(drop);
@@ -734,7 +742,7 @@ internal static partial class Program
     }
 
     /// <summary>Routes await continuations back to the UI thread's dispatcher queue.</summary>
-    private sealed class DispatcherQueueContext(Windows.System.DispatcherQueue queue) : SynchronizationContext
+    internal sealed class DispatcherQueueContext(Windows.System.DispatcherQueue queue) : SynchronizationContext
     {
         public override void Post(SendOrPostCallback d, object? state) => queue.TryEnqueue(() => d(state));
     }
