@@ -59,6 +59,28 @@ public sealed class TimerTests : IDisposable
     }
 
     [Fact]
+    public void TheWaitIsWorkedOutAgainFromTheAbsoluteEndAfterASleepOrAClockChange()
+    {
+        var timer = new IslandTimer(File) { Run = TimerRun.Starting(T0, TimeSpan.FromMinutes(10)) };
+        Assert.Equal(TimeSpan.FromMinutes(10), timer.DueIn(T0));
+
+        // Woke six minutes in: four left, whatever interval was set before the sleep.
+        Assert.Equal(TimeSpan.FromMinutes(4), timer.DueIn(T0.AddMinutes(6)));
+        Assert.False(timer.TryComplete(T0.AddMinutes(6)));
+
+        // The clock was set back five minutes: the end has not moved, the wait is longer, an early fire completes nothing.
+        Assert.Equal(TimeSpan.FromMinutes(15), timer.DueIn(T0.AddMinutes(-5)));
+        Assert.False(timer.TryComplete(T0.AddMinutes(-5)));
+        Assert.Equal(0, timer.Run!.Progress(T0.AddMinutes(-5)));
+
+        // Slept, or the clock was set, past the end: due now, done once.
+        Assert.Equal(TimeSpan.Zero, timer.DueIn(T0.AddHours(8)));
+        Assert.Equal(1, timer.Run.Progress(T0.AddHours(8)));
+        Assert.True(timer.TryComplete(T0.AddHours(8)));
+        Assert.False(timer.TryComplete(T0.AddHours(8)));
+    }
+
+    [Fact]
     public void ANewTimerReplacesTheOldOneAndCancellingRemovesTheFile()
     {
         var timer = new IslandTimer(File);

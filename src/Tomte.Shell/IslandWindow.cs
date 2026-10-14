@@ -248,8 +248,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     public Action? LayoutChanged { get; set; }
 
     /// <summary>
-    /// Timers, WM_APP posts from the input thread and shell notifications land on this window. The handler
-    /// returns true when it took the message; exceptions are logged, never unwound into the caller.
+    /// Timers, WM_APP posts from the input thread, shell notifications, power broadcasts and clock changes land
+    /// on this window. The handler returns true when it took the message, false to leave the answer to
+    /// DefWindowProc; exceptions are logged, never unwound into the caller.
     /// </summary>
     public Func<uint, nuint, nint, bool>? Message { get; set; }
 
@@ -704,6 +705,8 @@ internal sealed unsafe class IslandWindow : IDisposable
                 return new LRESULT(0);
             case PInvoke.WM_TIMER:
             case PInvoke.WM_WTSSESSION_CHANGE:
+            case PInvoke.WM_POWERBROADCAST:
+            case PInvoke.WM_TIMECHANGE:
             case >= PInvoke.WM_APP and < PInvoke.WM_APP + 0x100:
                 return Route(message, wParam.Value, lParam.Value) ? new LRESULT(0) : PInvoke.DefWindowProc(window, message, wParam, lParam);
             default:

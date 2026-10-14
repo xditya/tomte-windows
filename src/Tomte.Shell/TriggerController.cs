@@ -249,6 +249,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case PInvoke.WM_TIMER:
                 OnTimer(wParam);
                 return true;
+            case PInvoke.WM_TIMECHANGE:
+            case PInvoke.WM_POWERBROADCAST when wParam == PInvoke.PBT_APMRESUMEAUTOMATIC:
+                // The end time is absolute but the one-shot is an interval, and it neither follows a clock that was
+                // set nor counts on time across a sleep. Work the wait out again; an end that has passed fires at once.
+                log?.Invoke(message == PInvoke.WM_TIMECHANGE ? "clock changed" : "resumed from sleep");
+                ArmTimer();
+                return false; // every window gets these; DefWindowProc gives the reply
             default:
                 return false;
         }
@@ -482,9 +489,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// One SetTimer one-shot at the end time, or none. Called at start-up, so a timer whose end passed while the
-    /// app was down fires at once. Simplification: relies on the one-shot firing on time across sleep and wall-clock
-    /// changes (an early fire re-arms); listen for WM_TIMECHANGE and resume if a late fire shows.
+    /// One SetTimer one-shot for the time left to the absolute end, or none. Called at start-up, after a resume
+    /// from sleep and after a clock change, so an end that passed while the app was down or the PC slept fires
+    /// at once; an early fire comes back here for what is left. Also re-syncs the ring to the wall clock.
     /// </summary>
     private void ArmTimer()
     {
