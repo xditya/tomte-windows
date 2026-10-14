@@ -610,14 +610,30 @@ internal sealed partial class PaletteHost
         }
     }
 
-    // Once the last send has ended, nothing uses the session's servers or its automation thread any more.
+    // Once the last send has ended, nothing uses the session's servers or its automation thread any more. Each is
+    // stopped on its own, so one that fails does not keep the other running.
     private async Task ReleaseAsync(PaletteSession session, Task sending)
     {
-        await sending;
-        session.Automation?.Dispose();
-        if (session.Mcp is { } mcp)
+        try
         {
-            await mcp.DisposeAsync();
+            await sending;
+            session.Automation?.Dispose();
+        }
+        catch (Exception e)
+        {
+            log($"{DateTime.Now:HH:mm:ss.fff} palette: UI Automation not stopped: {e.Message}");
+        }
+
+        try
+        {
+            if (session.Mcp is { } mcp)
+            {
+                await mcp.DisposeAsync();
+            }
+        }
+        catch (Exception e)
+        {
+            log($"{DateTime.Now:HH:mm:ss.fff} palette: MCP servers not stopped: {e.Message}");
         }
     }
 
