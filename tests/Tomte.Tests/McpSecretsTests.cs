@@ -1,5 +1,6 @@
 using Tomte.AI.Mcp;
 using Tomte.Core;
+using Tomte.Core.Device;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -196,5 +197,20 @@ public class McpSecretsTests
         var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(default));
         Assert.Contains("login failed for token [hidden]", e.Message);
         Assert.DoesNotContain("tomte-secret", e.ToString());
+    }
+
+    [Fact]
+    public void ADestructiveMarkDoesNotSurviveRemovingTheServer()
+    {
+        var files = Files with { ToolTiers = new Dictionary<string, ActionTier> { ["files__wipe#1"] = ActionTier.Destructive } };
+        var removed = McpTools.WithServer(new TomteSettings { McpServers = [files] }, files, null);
+        Assert.Empty(removed.McpServers);
+
+        // Added again the way Settings adds a server: there is no earlier one to carry anything over from.
+        var again = (Files with { }).After(removed.McpServers.FirstOrDefault(s => s.Name == Files.Name));
+        var server = Assert.Single(McpTools.WithServer(removed, null, again).McpServers);
+        Assert.Empty(server.ToolTiers);
+        Assert.Equal(ActionTier.ExternalEffect, server.TierFor("files__wipe#1"));
+        Assert.Equal(ActionTier.ExternalEffect, server.TierFor("files__wipe#2"));
     }
 }
