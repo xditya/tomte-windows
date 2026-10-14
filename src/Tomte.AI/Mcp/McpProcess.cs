@@ -31,6 +31,7 @@ internal sealed class McpProcess : IAsyncDisposable
     private readonly SafeHandle _job;
     private readonly StringBuilder _stderr = new();
     private readonly Task _errors;
+    private bool _stderrCut;
 
     private McpProcess(Process process, SafeHandle job)
     {
@@ -112,12 +113,25 @@ internal sealed class McpProcess : IAsyncDisposable
         return owned;
     }
 
-    /// <summary>The end of what the server wrote to stderr, which is usually why it did not start. Waits a moment for the last of it.</summary>
+    /// <summary>
+    /// The end of what the server wrote to stderr, which is usually why it did not start. Waits a moment
+    /// for the last of it. When the front was cut off, the text starts after the first whitespace: the cut
+    /// can fall inside a token the server printed ("bad token ghp_..."), and a piece of a value is not
+    /// hidden later, only the whole value or its whole words.
+    /// </summary>
     public async Task<string> ErrorTailAsync()
     {
         await Task.WhenAny(_errors, Task.Delay(200));
         lock (_stderr)
-            return _stderr.Length > ErrorTail ? _stderr.ToString(_stderr.Length - ErrorTail, ErrorTail) : _stderr.ToString();
+        {
+            if (_stderr.Length <= ErrorTail && !_stderrCut)
+                return _stderr.ToString();
+            string tail = _stderr.ToString(Math.Max(0, _stderr.Length - ErrorTail), Math.Min(ErrorTail, _stderr.Length));
+            int start = 0;
+            while (start < tail.Length && !char.IsWhiteSpace(tail[start]))
+                start++;
+            return tail[Math.Min(start + 1, tail.Length)..];
+        }
     }
 
     /// <summary>Ends the server and everything it started, now.</summary>
@@ -265,7 +279,10 @@ internal sealed class McpProcess : IAsyncDisposable
                     // Only the end is kept: a server can write without limit, and nobody reads the rest.
                     _stderr.Append(buffer, 0, read);
                     if (_stderr.Length > 4 * ErrorTail)
+                    {
                         _stderr.Remove(0, _stderr.Length - ErrorTail);
+                        _stderrCut = true;
+                    }
                 }
             }
         }

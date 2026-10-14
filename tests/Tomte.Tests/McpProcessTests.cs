@@ -222,6 +222,22 @@ public sealed class McpProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task APieceOfAValueCutFromTheEndOfStderrIsNotShown()
+    {
+        // A server that prints the token it was given and exits. Only the last 200 characters of stderr
+        // are kept, and this cut falls 12 characters before the end of the value.
+        const string token = "tomte-straddle-0123456789abcdef";
+        string rest = (" refused" + string.Concat(Enumerable.Repeat(" word", 40)))[..186];
+        string script = InFolder("bad.cmd");
+        File.WriteAllText(script, $"@>&2 echo bad token %TOMTE_ECHO_X%{rest}\r\n@exit /b 1\r\n");
+        await using var tools = new McpTools([new McpServerSettings { Name = "Echo", Command = script, Environment = ["TOMTE_ECHO_X"] }], readSecret: _ => token);
+
+        var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(_limit.Token));
+        Assert.DoesNotContain(token[^12..], e.ToString());
+        Assert.Contains("It wrote: refused word", e.Message);
+    }
+
+    [Fact]
     public async Task SettingsListsAToolLeftOutForItsSchema()
     {
         // The path the settings window takes: start the server, list, stop.
