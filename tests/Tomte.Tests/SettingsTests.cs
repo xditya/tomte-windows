@@ -36,6 +36,7 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(24, s.Reveal.RetractMarginDip);
         Assert.Equal(400, s.Reveal.RetractDelayMs);
         Assert.True(s.DesktopPeek);
+        Assert.False(s.AttachToTopEdge);
         Assert.Empty(s.AppRules);
     }
 
@@ -48,6 +49,7 @@ public sealed class SettingsTests : IDisposable
             Reveal = new RevealSettings { PushCounts = 90, DwellMs = 0 },
             AppRules = [new AppRule("chrome.exe", AppRuleMode.Deny)],
             AllMonitors = false,
+            AttachToTopEdge = true,
         };
         using (var store = new SettingsStore(File))
         {
@@ -59,6 +61,7 @@ public sealed class SettingsTests : IDisposable
         string text = System.IO.File.ReadAllText(File);
         Assert.Contains("\"mode\": \"Deny\"", text);
         Assert.Contains("\"summon\": \"Win+Alt+Shift+I\"", text);
+        Assert.Contains("\"attachToTopEdge\": true", text);
     }
 
     [Fact]

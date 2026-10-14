@@ -14,7 +14,7 @@ internal sealed class MascotVisual
     /// <summary>Rendered size of the 64-unit viewBox and its inset from the island's top-left, in DIPs.</summary>
     public const float SizeDips = 26;
     public const float InsetX = 8;
-    // Low enough that the reveal start pose (PeekFromY) is fully above the screen edge on the first frame.
+    // Low enough that the reveal start pose (PeekFromY) is fully above the island's top edge on the first frame.
     public const float InsetY = 3.5f;
 
     private readonly ContainerVisual place;
@@ -45,6 +45,12 @@ internal sealed class MascotVisual
         root = Group(compositor, MascotArt.RootPivot, body);
         place = Group(compositor, Vector2.Zero, root);
         place.IsVisible = false;
+
+        // Nothing of the tomte shows above the island's top edge. The notch has the screen edge there; the floating
+        // pill has the gap, and the drop-in comes out of the line the pill grows from, not down across the gap.
+        place.Size = new Vector2(MascotArt.ViewBox);
+        float far = 4 * MascotArt.ViewBox;
+        place.Clip = compositor.CreateInsetClip(-far, -InsetY * MascotArt.ViewBox / SizeDips, -far, -far);
     }
 
     public Visual Visual => place;

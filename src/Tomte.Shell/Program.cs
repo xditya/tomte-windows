@@ -96,7 +96,8 @@ internal static class Program
             }
         }
 
-        using var store = new SettingsStore();
+        // --debug-settings <path>: a settings file of this run's own, so a test never edits the user's.
+        using var store = new SettingsStore(Arg(args, "--debug-settings"));
         var pause = new PauseState();
         var timer = new IslandTimer(IslandTimer.DefaultPath);
         var triggers = new TriggerController(island, store, pause, timer, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));

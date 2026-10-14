@@ -27,6 +27,12 @@ public sealed record TomteSettings
     /// <summary>The ten-second "push your cursor up here" pill has been shown; replaying the tour clears it.</summary>
     public bool FirstRunHintShown { get; init; }
 
+    /// <summary>
+    /// "Attach to the top edge": draw the island as the notch joined to the screen edge instead of the floating
+    /// pill. Read from the file only; the settings window does not show it yet.
+    /// </summary>
+    public bool AttachToTopEdge { get; init; }
+
     /// <summary>AI tools the user answered "always allow" for, by tool name; the AI layer reads and writes it, the settings window lists and removes.</summary>
     public IReadOnlyList<string> AlwaysAllowedTools { get; init; } = [];
 

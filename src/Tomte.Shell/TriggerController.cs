@@ -173,6 +173,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void PushZone()
     {
         var reveal = settings.Reveal;
+        // The silhouette is a setting too; the window takes it up with its next morph.
+        island.Attached = settings.AttachToTopEdge;
         InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), reveal.ZoneFraction, reveal.DragApproachDip, island.Scale));
         if (machine.State != IslandState.Hidden)
         {
@@ -613,10 +615,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void EvaluatePeek()
     {
-        double s = island.Scale;
-        int w = (int)Math.Ceiling(IslandGeometry.Compact.OuterWidth * s), h = (int)Math.Ceiling(IslandGeometry.Compact.Depth * s);
-        var pill = new System.Drawing.Rectangle(PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN) / 2 - w / 2, 0, w, h);
-        string? under = watch.WindowUnder(pill);
+        string? under = watch.WindowUnder(island.RestBounds(IslandGeometry.Compact));
         log?.Invoke(under is null ? "peek: nothing under the zone" : $"peek: {under} under the zone");
         peekWanted = under is null;
         if (peekWanted)
