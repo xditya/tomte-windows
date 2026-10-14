@@ -492,8 +492,11 @@ internal static class Program
             await using var mcp = McpTools.For(store.Current.McpServers);
             // --automation offers the UI Automation tools in this run; without it nothing of them is made.
             using var automation = AutomationTools.For(Environment.GetCommandLineArgs().Contains("--automation"), store.Current.UiAutomation, store.Current.AppRules, foreground, () => triggers.OnSecureSurface);
-            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
+            var provider = ProviderSetup.Create(config, http, null);
+            var session = new PaletteSession(provider, config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
             {
+                // Whether the model reads images and how much it takes, from a local Ollama; other servers keep the defaults.
+                Model = await ProviderSetup.DescribeAsync(provider, config),
                 Prompt = prompt,
                 Mcp = mcp,
                 Skills = skills,

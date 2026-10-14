@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -11,7 +12,7 @@ namespace Tomte.AI;
 /// <paramref name="baseUrl"/> ends before <c>/chat/completions</c>, for example
 /// <c>http://localhost:11434/v1</c>. Local servers need no key.
 /// </summary>
-public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, string? key) : IChatProvider
+public sealed partial class OpenAICompatibleProvider(HttpClient http, string baseUrl, string? key) : IChatProvider
 {
     private readonly string _baseUrl = baseUrl.TrimEnd('/');
 
@@ -161,6 +162,58 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
         }
         return body;
     }
+
+    // What a local Ollama said about each model, once per process: base URL and model id, then the answer or null.
+    private static readonly ConcurrentDictionary<string, ModelInfo?> Described = new();
+
+    /// <summary>
+    /// What a local Ollama says about a model: vision from its capabilities (Ollama 0.6 and later) and the context from
+    /// its model info, or the num_ctx its Modelfile sets, which is what it runs with. Asked only of a loopback endpoint,
+    /// with a 3 s limit, once per model; null for any other server, an unknown model, or an Ollama that does not answer.
+    /// </summary>
+    public async Task<ModelInfo?> DescribeAsync(string model, CancellationToken ct = default)
+    {
+        if (!Uri.TryCreate(_baseUrl, UriKind.Absolute, out var uri) || !uri.IsLoopback)
+            return null;
+        string cacheKey = _baseUrl + "\n" + model;
+        if (Described.TryGetValue(cacheKey, out var known))
+            return known;
+
+        string root = _baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase) ? _baseUrl[..^3] : _baseUrl;
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        limit.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            using var doc = await ProviderHttp.GetJsonAsync(http, ProviderHttp.Post($"{root}/api/show", new JsonObject { ["model"] = model }), key, limit.Token);
+            var show = doc.RootElement;
+            bool? vision = show.TryGetProperty("capabilities", out var caps) && caps.ValueKind == JsonValueKind.Array
+                ? caps.EnumerateArray().Any(c => c.GetString() == "vision") : null;
+            int? context = show.TryGetProperty("model_info", out var info) && info.ValueKind == JsonValueKind.Object
+                ? info.EnumerateObject().Where(p => p.Name.EndsWith(".context_length", StringComparison.Ordinal) && p.Value.ValueKind == JsonValueKind.Number)
+                    .Select(p => p.Value.TryGetInt32(out int n) ? n : (int?)null).FirstOrDefault()
+                : null;
+            if (show.TryGetProperty("parameters", out var parameters) && parameters.ValueKind == JsonValueKind.String
+                && NumCtx().Match(parameters.GetString()!) is { Success: true } set)
+                context = int.Parse(set.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            var described = vision is null && context is null ? null : new ModelInfo(model, context, vision);
+            Described[cacheKey] = described;
+            return described;
+        }
+        catch (ProviderException e) when (e.Status is not null)
+        {
+            // An answer that is not Ollama's (404 from another server) or no such model: remembered.
+            Described[cacheKey] = null;
+            return null;
+        }
+        catch (Exception e) when (e is ProviderException or OperationCanceledException && !ct.IsCancellationRequested)
+        {
+            // Not running, or too slow: asked again next time.
+            return null;
+        }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^num_ctx\s+(\d+)", System.Text.RegularExpressions.RegexOptions.Multiline)]
+    private static partial System.Text.RegularExpressions.Regex NumCtx();
 
     private static JsonNode UserPart(ContentPart part) => part switch
     {
