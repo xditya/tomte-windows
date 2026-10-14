@@ -77,6 +77,18 @@ public sealed partial class SettingsWindow
             defaultModel.Text = fastModel.Text = "";
             ShowProvider();
         };
+        foreach (var box in new[] { defaultModel, fastModel })
+        {
+            // A model picked from the list becomes the box's text, which is all Test and save reads.
+            box.SelectionChanged += (_, _) =>
+            {
+                if (box.SelectedItem is string id)
+                {
+                    box.Text = id;
+                }
+            };
+        }
+
         providerUrl.TextChanged += (_, _) => ShowProvider();
         dailyCap.ValueChanged += (_, e) => SaveCap(e.NewValue);
         providerSave.Click += async (_, _) => await TestAndSaveProviderAsync();
@@ -126,9 +138,9 @@ public sealed partial class SettingsWindow
         }
     }
 
-    // Typed or picked: the box's text, or the item picked before anything was typed.
-    private static string? ModelId(ComboBox box) =>
-        (string.IsNullOrWhiteSpace(box.Text) ? box.SelectedItem as string : box.Text)?.Trim() is { Length: > 0 } id ? id : null;
+    // The box's text alone: the picked item is only for display (a pick also writes the text, see ProviderSection), so
+    // a box the user cleared gives no model rather than the saved one back.
+    private static string? ModelId(ComboBox box) => box.Text?.Trim() is { Length: > 0 } id ? id : null;
 
     private async Task TestAndSaveProviderAsync()
     {
