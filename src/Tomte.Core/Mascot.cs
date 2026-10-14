@@ -89,6 +89,15 @@ public static class MascotArt
         return new(-(float)shape.Width / 2 + InsetX, row / 2 - MiddleY * SizeDips / ViewBox, SizeDips, SizeDips);
     }
 
+    /// <summary>
+    /// The shape the tomte keeps to through a morph, or null for the live outline. Revealing a pill no wider than
+    /// Compact, it drops in where the pill will be and the pill opens around it; retracting, it stays at the open
+    /// shape's edge as it goes. Revealing anything wider (the palette, the drop surface) it rides the outline's left
+    /// edge, as it does when a reveal turns into Panels, so it is never drawn beside a shape still growing toward it.
+    /// </summary>
+    public static IslandGeometry? Anchor(in IslandGeometry from, in IslandGeometry to) =>
+        from.Depth <= 0.5 ? (to.Width <= IslandGeometry.Compact.Width ? to : null) : to.Depth <= 0.5 ? from : null;
+
     /// <summary>The brim colour: the cap colour at 76% brightness, so a user-chosen cap keeps its shading.</summary>
     public static uint Shade(uint rgb)
     {

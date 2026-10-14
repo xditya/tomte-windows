@@ -400,10 +400,9 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         (fromWidth, fromDepth) = (from.Width, from.Depth);
         contentPending = to.Depth > 0.5;
-        // Revealing or retracting, the mascot stays at the open shape's left edge while the outline grows or shrinks.
         // a retarget mid-reveal drops the anchor and the mascot jumps to the live edge in one frame; give the
         // mascot its own x spring if that shows.
-        anchor = from.Depth <= 0.5 ? to : to.Depth <= 0.5 ? from : null;
+        anchor = MascotArt.Anchor(from, to);
         TargetBounds = PointerTarget();
         crossfadeGeneration++; // a crossfade still in flight must not settle this morph
         foreach (var spring in springs)
