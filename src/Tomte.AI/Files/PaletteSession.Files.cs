@@ -19,8 +19,11 @@ public sealed partial class PaletteSession
     private int _part;
     private bool _filesInPlay;
 
-    /// <summary>The model as the provider's list gave it: its context size and whether it reads images. Null uses the provider's defaults.</summary>
-    public ModelInfo? Model { get; init; }
+    /// <summary>
+    /// The model as the provider's list gave it: its context size and whether it reads images. Null uses the provider's
+    /// defaults. Read when a send starts and at each file read, so it may be set after the session is made.
+    /// </summary>
+    public ModelInfo? Model { get; set; }
 
     public FileLimits FileLimits { get; init; } = new();
 
