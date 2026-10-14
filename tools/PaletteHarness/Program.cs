@@ -48,7 +48,7 @@ shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at
 var scratchpad = new InMemoryScratchpad { Text = "Ideas:\n- a quieter alarm" };
 var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
     dry ? (name, input) => BuiltInTools.RunDevice(name, input, dryRun: true) : null);
-await using var mcp = new McpTools(SettingsStore.Load(SettingsStore.DefaultPath).McpServers);
+await using var mcp = McpTools.For(SettingsStore.Load(SettingsStore.DefaultPath).McpServers);
 var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
 
 nint foreground = WindowContext.Foreground();

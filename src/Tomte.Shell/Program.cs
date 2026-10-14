@@ -263,7 +263,7 @@ internal static class Program
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
             var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
             // Servers start on the send; disposing at the end of the run stops them, as closing the palette does.
-            await using var mcp = new McpTools(store.Current.McpServers);
+            await using var mcp = McpTools.For(store.Current.McpServers);
             var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
             {
                 Prompt = prompt,

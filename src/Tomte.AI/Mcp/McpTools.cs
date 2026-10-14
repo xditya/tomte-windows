@@ -79,6 +79,12 @@ public sealed class McpTools : IAsyncDisposable
         _idle = new Timer(_ => _ = StopIfIdleAsync());
     }
 
+    /// <summary>
+    /// The enabled servers' tools, or null when no server is on. A palette passes the null on, so a user
+    /// with no MCP server never loads the SDK.
+    /// </summary>
+    public static McpTools? For(IEnumerable<McpServerSettings> servers) => servers.Any(s => s.Enabled) ? new McpTools(servers) : null;
+
     public TimeSpan IdleTimeout { get; }
 
     /// <summary>How many servers are started or connected right now.</summary>
