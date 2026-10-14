@@ -53,6 +53,17 @@ public class RetractionRulesTests
         Assert.Equal(IslandActivity.DragInProgress, RetractionRules.Released(IslandActivity.DragInProgress, buttonDown: false));
     }
 
+    [Fact]
+    public void ADragOutOfTheIslandLetsItRetractOnceThePointerHasLeft()
+    {
+        // The press on the tile that started the drag holds nothing once the drag runs, with the button still down.
+        Assert.True(RetractionRules.ShouldRetract(IslandState.Panels, RetractionRules.DraggingOut(IslandActivity.Pressing)));
+        Assert.Equal(IslandActivity.Pressing, RetractionRules.Released(IslandActivity.Pressing, buttonDown: true));
+        // A paid drop zone result, or typing, still holds the island through a drag out of its tiles.
+        Assert.False(RetractionRules.ShouldRetract(IslandState.Palette, RetractionRules.DraggingOut(IslandActivity.Pressing | IslandActivity.Result)));
+        Assert.False(RetractionRules.ShouldRetract(IslandState.Panels, RetractionRules.DraggingOut(IslandActivity.Pressing | IslandActivity.Typing)));
+    }
+
     [Theory]
     [InlineData(IslandState.Compact, IslandActivity.None, true)]
     [InlineData(IslandState.Compact, IslandActivity.Peek, true)]

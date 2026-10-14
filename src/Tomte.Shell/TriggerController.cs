@@ -246,12 +246,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         });
     }
 
-    /// <summary>A drag out of the island holds it open like any drag, and its end arms the retract like any drag's.</summary>
+    /// <summary>A drag out of the island lets the island retract once it has left it (<see cref="RetractionRules.DraggingOut"/>), and its end arms the retract like any drag's.</summary>
     public void DraggingOut(bool on)
     {
         if (on)
         {
-            activity |= IslandActivity.DragInProgress;
+            activity = RetractionRules.DraggingOut(activity);
         }
         else
         {

@@ -414,6 +414,20 @@ internal sealed unsafe class IslandWindow : IDisposable
     public bool Moving => islandMoving;
 
     /// <summary>
+    /// The morph under way ends now, on its target, as it does when there is no compositor clock: for when this thread is
+    /// about to be held for a long while (another app taking a drop), which would leave the shape frozen part of the way,
+    /// its content already faded out.
+    /// </summary>
+    public void FinishMorph()
+    {
+        if (islandMoving)
+        {
+            ticking.Reset();
+            FinishWithoutClock();
+        }
+    }
+
+    /// <summary>
     /// Retarget the springs toward <paramref name="to"/>; safe mid-flight. The task completes when the
     /// shape comes to rest, whichever target it rests on; a retarget shares the task of the running morph.
     /// </summary>

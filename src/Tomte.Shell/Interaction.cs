@@ -726,7 +726,8 @@ internal sealed class InteractionHost
     // The island hid with every view: nothing is left over for the next show, and the tip's text lets the device go.
     private void Reset()
     {
-        if (pointer.Pressed is not null)
+        // A view's drag (a drag out of the shelf) may hide the island while it runs; the capture is the drag's then.
+        if (pointer.Pressed is not null && !dragging)
         {
             PInvoke.ReleaseCapture();
         }

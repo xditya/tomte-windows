@@ -42,7 +42,7 @@ internal static unsafe class ShelfDrag
         var data = previous = new ShelfDataObject(present, ShelfFormats.DragText(present, i => shelf.ReadText(i.Name)));
         bool image = SetImage(data.Inner, present[0].Path, (int)Math.Round(DragImageDips * island.Scale));
         var dataObject = OleObjects.Wrap<IDataObject>(data);
-        var source = OleObjects.Wrap<IDropSource>(new DropSource());
+        var source = OleObjects.Wrap<IDropSource>(new DropSource(island.FinishMorph));
         log?.Invoke($"drag out: {present.Count} items as {string.Join(", ", data.Formats)}, effects {effects}, image {image}, ready in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
 
         if (log is not null)
@@ -138,10 +138,25 @@ internal static unsafe class ShelfDrag
         return taken;
     }
 
-    private sealed class DropSource : IDropSource.Interface
+    private sealed class DropSource(Action dropping) : IDropSource.Interface
     {
-        public HRESULT QueryContinueDrag(BOOL escapePressed, MODIFIERKEYS_FLAGS keys) =>
-            escapePressed ? HRESULT.DRAGDROP_S_CANCEL : (keys & MODIFIERKEYS_FLAGS.MK_LBUTTON) == 0 ? HRESULT.DRAGDROP_S_DROP : HRESULT.S_OK;
+        public HRESULT QueryContinueDrag(BOOL escapePressed, MODIFIERKEYS_FLAGS keys)
+        {
+            if (escapePressed)
+            {
+                return HRESULT.DRAGDROP_S_CANCEL;
+            }
+
+            if ((keys & MODIFIERKEYS_FLAGS.MK_LBUTTON) != 0)
+            {
+                return HRESULT.S_OK;
+            }
+
+            // The target's drop runs next on this thread and can hold it for seconds: the island's retract, started
+            // when the drag left it, ends first rather than freezing half way.
+            dropping();
+            return HRESULT.DRAGDROP_S_DROP;
+        }
 
         public HRESULT GiveFeedback(DROPEFFECT effect) => HRESULT.DRAGDROP_S_USEDEFAULTCURSORS;
     }
