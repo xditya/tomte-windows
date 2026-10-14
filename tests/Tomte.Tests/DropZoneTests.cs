@@ -413,15 +413,60 @@ public sealed class DropZoneTests : IDisposable
         var layout = new DropResultLayout(result, 640, true);
         Assert.InRange(layout.Height, PanelSize.PaletteMaxHeight - DropResultLayout.BodyStyle.LineHeight, PanelSize.PaletteMaxHeight);
         Assert.True(layout.Tiles[0].Bottom <= PanelSize.PaletteMaxHeight - DropResultLayout.Pad + 0.5f);
-        using var body = TextLayout.Of(layout.Body!.Value.Run);
-        Assert.True(body.Trimmed);
-        Assert.True(layout.Body!.Value.At.Y + body.Height <= layout.Tiles[0].Y);
+        // All of it is laid out, nothing cut; the band ends above the tile and the rest scrolls.
+        using var body = TextLayout.Of(Assert.Single(layout.Body).Run);
+        Assert.False(body.Trimmed);
+        Assert.Equal(200, body.LineCount);
+        Assert.True(layout.Band.Bottom <= layout.Tiles[0].Y);
+        Assert.Equal(layout.BodyHeight - layout.Band.Height, layout.MaxScroll, 0.01f);
+        Assert.Equal(DropResultLayout.WheelStep, layout.Scrolled(0, -120));
+        Assert.Equal(layout.MaxScroll, layout.Scrolled(0, -120 * 1000));
+        Assert.Equal(0, layout.Scrolled(layout.MaxScroll, 120 * 1000));
 
         // A short screen caps the shape at half its height (1080 pixels at 150% is 360 DIP): the tile still fits.
         var capped = new DropResultLayout(result with { Choices = ["Truncate: send the start.", "Cancel: send nothing."] }, 640, true, maxHeight: 360);
         Assert.InRange(capped.Height, 360 - DropResultLayout.BodyStyle.LineHeight, 360);
         Assert.True(capped.Tiles[0].Bottom <= 360 - DropResultLayout.Pad + 0.5f);
         Assert.True(capped.Choices[^1].Bottom < capped.Tiles[0].Y);
+        Assert.True(capped.Band.Bottom <= capped.Choices[0].Y);
+    }
+
+    [Fact]
+    public void TheAnswerIsReadAsMarkdownAndWrapsInsideThePanel()
+    {
+        const float width = 640;
+        const string reason = "Costs held flat, and the long reason for that goes on and on, well past the end of one line of the panel, before it stops.";
+        string answer = $"# Q3 report\n\nRevenue went **up 12%** on the quarter.\n\n- **Costs**{reason[5..]}\n  - Hiring paused.\n"
+            + "9. nine\n10. ten\n\nhttps://intranet.example.com/a-very-long-address-without-a-single-space-in-it-that-is-wider-than-the-whole-panel-is";
+        var layout = new DropResultLayout(DropResult.Empty with { Title = "Summarize · a.pdf", Indicator = "Sent", Body = answer }, width, true);
+        var runs = layout.Body;
+        Assert.Equal(["Q3 report", "Revenue went up 12% on the quarter.", "•", reason, "•", "Hiring paused.", "9.", "nine", "10.", "ten"],
+            runs.Take(10).Select(r => r.Run.Text));
+        Assert.Equal(600, runs[0].Run.Style.Weight);
+        Assert.Equal([(13, 6)], runs[1].Run.Bold);
+
+        // A marker hangs left of its text, a level deeper sits one indent in, and a list's numbers share one column.
+        var (bullet, costs, inner, hiring) = (runs[2], runs[3], runs[4], runs[5]);
+        Assert.Equal(bullet.At.X + DropResultLayout.Indent, costs.At.X);
+        Assert.Equal(bullet.At.X + DropResultLayout.Indent, inner.At.X);
+        Assert.Equal(costs.At.X + DropResultLayout.Indent, hiring.At.X);
+        Assert.Equal(runs[7].At.X, runs[9].At.X);
+        Assert.Equal(bullet.At.Y, costs.At.Y);
+        using (var wrapped = TextLayout.Of(costs.Run))
+        {
+            Assert.Equal(2, wrapped.LineCount);
+            Assert.True(inner.At.Y >= costs.At.Y + wrapped.Height);
+        }
+
+        // Nothing runs past the panel's padding, the address without a space included.
+        foreach (var (run, at) in runs)
+        {
+            using var laid = TextLayout.Of(run);
+            Assert.False(laid.Trimmed);
+            Assert.True(at.X >= DropResultLayout.Pad && at.X + laid.Width <= width - DropResultLayout.Pad + 0.5f, $"{run.Text} runs to {at.X + laid.Width}");
+        }
+
+        Assert.True(layout.Band.Width == width && layout.Band.Height > 0);
     }
 
     // The custom slot

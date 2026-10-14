@@ -47,9 +47,19 @@ public sealed record TextStyle(float Size, int Weight = 400, uint Color = TextSt
 /// <summary>
 /// One run of text: the string, how it looks, the widest it may be, and how many lines it may take. One line
 /// ends in an ellipsis where it does not fit; more lines wrap at word breaks and the last one shown ends in an
-/// ellipsis when the rest does not fit.
+/// ellipsis when the rest does not fit. <see cref="Bold"/> parts of the text are semibold.
 /// </summary>
-public sealed record TextRun(string Text, TextStyle Style, float MaxWidth, int Lines = 1);
+public sealed record TextRun(string Text, TextStyle Style, float MaxWidth, int Lines = 1)
+{
+    /// <summary>Parts of the text drawn semibold, as start and length. A one-line run with a line break in it ignores them.</summary>
+    public IReadOnlyList<(int Start, int Length)> Bold { get; init; } = [];
+
+    // By value, parts included, so a view draws a run again only when something in it changed.
+    public bool Equals(TextRun? other) => other is not null && Text == other.Text && Style == other.Style && MaxWidth == other.MaxWidth
+        && Lines == other.Lines && Bold.SequenceEqual(other.Bold);
+
+    public override int GetHashCode() => HashCode.Combine(Text, Style, MaxWidth, Lines, Bold.Count);
+}
 
 /// <summary>One line of text in a slot of a view: as wide as the slot, centred in its height. Layouts hand these out.</summary>
 public readonly record struct TextSlot(string Text, TextStyle Style, System.Drawing.RectangleF Slot)
@@ -98,6 +108,14 @@ public sealed class TextLayout : IDisposable
             if (run.Style.Tabular)
             {
                 made.SetTypography(Typesetter.Tabular, new DWRITE_TEXT_RANGE { startPosition = 0, length = (uint)text.Length });
+            }
+
+            if (ReferenceEquals(text, run.Text))
+            {
+                foreach (var (start, length) in run.Bold)
+                {
+                    made.SetFontWeight(DWRITE_FONT_WEIGHT.DWRITE_FONT_WEIGHT_SEMI_BOLD, new DWRITE_TEXT_RANGE { startPosition = (uint)start, length = (uint)length });
+                }
             }
 
             made.SetWordWrapping(lines == 1 ? DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_NO_WRAP : DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_WRAP);
