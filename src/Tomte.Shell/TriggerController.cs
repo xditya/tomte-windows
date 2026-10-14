@@ -70,6 +70,21 @@ internal sealed unsafe partial class TriggerController : IDisposable
         ArmTimer();
         settings = store.Current;
         island.Message = HandleMessage;
+        // Hover or scroll on Compact opens Panels; on the next turn, so the notch that opens them is not
+        // also taken as a tab switch by the panel host.
+        island.Wheel += (_, _) =>
+        {
+            if (RetractionRules.OpensPanels(machine.State, activity))
+            {
+                island.Queue.TryEnqueue(() =>
+                {
+                    if (RetractionRules.OpensPanels(machine.State, activity))
+                    {
+                        Go(IslandState.Panels);
+                    }
+                });
+            }
+        };
         island.LayoutChanged = () =>
         {
             PushZone();
@@ -322,7 +337,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case RetractTimer when !pointerInside && RetractionRules.ShouldRetract(machine.State, activity):
                 Hide();
                 break;
-            case HoverTimer when machine.State == IslandState.Compact && pointerInside && !activity.HasFlag(IslandActivity.Rambling):
+            case HoverTimer when pointerInside && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
                 break;
             case EventTimer when eventShowing && machine.State == IslandState.Compact:
