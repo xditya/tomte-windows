@@ -1,6 +1,6 @@
 namespace Tomte.Core;
 
-/// <summary>A rectangle in physical pixels, relative to the monitor the overlay covers.</summary>
+/// <summary>A rectangle in physical pixels. A lasso box or crop is monitor-relative; a monitor's bounds are virtual-screen.</summary>
 public readonly record struct PixelRect(int X, int Y, int Width, int Height);
 
 /// <summary>
