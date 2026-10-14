@@ -92,6 +92,19 @@ public class McpSecretsTests
     }
 
     [Fact]
+    public void AValueUnderEightCharactersIsRefusedAndNothingIsSaved()
+    {
+        Assert.Equal(
+            "The header value needs at least 8 characters. Tomte hides it in what the server sends back, and a shorter value cannot be told apart from ordinary text.",
+            Save(null, Web, new() { [Web.CredentialId] = "1234567" }));
+        Assert.StartsWith("The value of GITHUB_TOKEN needs at least 8 characters.", Save(null, Files, new() { [Files.EnvCredentialId("GITHUB_TOKEN")] = "short" }));
+        Assert.Empty(_vault);
+
+        Assert.Null(Save(null, Web, new() { [Web.CredentialId] = "12345678" }));
+        Assert.Equal("12345678", _vault[Web.CredentialId]);
+    }
+
+    [Fact]
     public void TheHeaderValueKeepsItsRules()
     {
         Assert.Equal("Enter the header value.", Save(null, Web));

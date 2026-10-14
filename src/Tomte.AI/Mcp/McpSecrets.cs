@@ -11,8 +11,8 @@ namespace Tomte.AI.Mcp;
 public static class McpSecrets
 {
     /// <summary>
-    /// The shortest value that is cut out of what a server sends back. Cutting out a shorter one would
-    /// mangle ordinary text, so a text that holds it is withheld whole.
+    /// The shortest value Settings saves. A shorter one cannot be cut out of what a server sends back
+    /// without mangling ordinary text, so every text that holds it would be withheld.
     /// </summary>
     public const int MinLength = 8;
 
@@ -25,24 +25,32 @@ public static class McpSecrets
     public static string? Collect(McpServerSettings? before, McpServerSettings now, IReadOnlyDictionary<string, string> typed, Func<string, string?> read, out Dictionary<string, string> values)
     {
         values = [];
-        var wanted = new List<(string Id, string? Saved, string Missing)>();
+        var wanted = new List<(string Id, string? Saved, string Subject, string Missing)>();
         if (now.HeaderName.Length > 0)
-            wanted.Add((now.CredentialId, before is { HeaderName.Length: > 0 } ? before.CredentialId : null, "Enter the header value."));
+            wanted.Add((now.CredentialId, before is { HeaderName.Length: > 0 } ? before.CredentialId : null, "The header value", "Enter the header value."));
         foreach (string variable in now.Environment)
         {
             bool had = before?.Environment.Contains(variable, StringComparer.OrdinalIgnoreCase) == true;
-            wanted.Add((now.EnvCredentialId(variable), had ? before!.EnvCredentialId(variable) : null, $"Enter a value for {variable}."));
+            wanted.Add((now.EnvCredentialId(variable), had ? before!.EnvCredentialId(variable) : null, $"The value of {variable}", $"Enter a value for {variable}."));
         }
 
         bool keep = before is not null && before.Target == now.Target;
-        foreach (var (id, saved, missing) in wanted)
+        foreach (var (id, saved, subject, missing) in wanted)
         {
             if (typed.TryGetValue(id, out var value))
+            {
+                if (value.Length < MinLength)
+                    return $"{subject} needs at least {MinLength} characters. Tomte hides it in what the server sends back, and a shorter value cannot be told apart from ordinary text.";
                 values[id] = value;
+            }
             else if (keep && saved is not null && read(saved) is { } kept)
+            {
                 values[id] = kept;
+            }
             else
+            {
                 return missing;
+            }
         }
 
         return null;

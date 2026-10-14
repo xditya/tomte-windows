@@ -38,14 +38,14 @@ public sealed partial class SettingsWindow
     {
         mcpArgumentsRow = Row("Arguments", Note("Separated by spaces. Put an argument with spaces in double quotes. Arguments are stored as plain text in the settings file and shown in this window. Put a token under Environment variable instead."), mcpArguments);
         mcpHeaderNameRow = Row("Header name", Note("Optional. Sent with every request, for example Authorization. Needs an https URL."), mcpHeaderName);
-        mcpHeaderValueRow = Row("Header value", Note("Kept in Windows Credential Manager, not in the settings file. Leave empty to keep the saved value. Enter it again after changing the URL."), mcpHeaderValue);
+        mcpHeaderValueRow = Row("Header value", Note("Kept in Windows Credential Manager, not in the settings file. At least 8 characters. Leave empty to keep the saved value. Enter it again after changing the URL."), mcpHeaderValue);
         mcpEnvSection = new StackPanel
         {
             Spacing = 12,
             Children =
             {
                 mcpEnvList,
-                Row("Environment variable", Note("Optional. Set only in this server's process, for a token the server reads from its environment. The value is kept in Windows Credential Manager, not in the settings file."), new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { mcpEnvName, mcpEnvAdd } }),
+                Row("Environment variable", Note("Optional. Set only in this server's process, for a token the server reads from its environment. The value needs at least 8 characters and is kept in Windows Credential Manager, not in the settings file."), new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { mcpEnvName, mcpEnvAdd } }),
             },
         };
         mcpEnvAdd.Click += (_, _) => AddTypedMcpVariable();
