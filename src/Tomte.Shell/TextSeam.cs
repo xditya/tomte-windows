@@ -33,7 +33,8 @@ internal static class TextSeam
             return 0;
         }
 
-        float height = MathF.Round(lineHeight * 0.5f);
+        // About the height of the type's lowercase letters, centred in the line.
+        float height = look switch { TextLook.Title => 9, TextLook.Primary => 8, TextLook.Secondary => 7, _ => 6 };
         var bar = compositor.CreateRoundedRectangleGeometry();
         bar.Size = new Vector2(width, height);
         bar.CornerRadius = new Vector2(height / 2);
