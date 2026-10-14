@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Tomte.AI;
@@ -26,6 +27,7 @@ internal static class Program
     private static readonly MascotState[] MascotCycle = [MascotState.Rambler, MascotState.Thinking, MascotState.Result, MascotState.Error, MascotState.Compact];
 
     private static Process? settingsProcess;
+    private static bool startingSettings;
 
     [STAThread]
     private static unsafe int Main(string[] args)
@@ -172,17 +174,50 @@ internal static class Program
     private static void RunSettings() => Tomte.Panels.SettingsWindow.Run();
 
     // The settings window runs in its own process and exits when closed, so none of its memory stays in the shell.
-    private static void OpenSettings()
+    // Called on the island's thread after the user's own click (the tray menu, a tile), which is when Windows lets
+    // Tomte hand the foreground on.
+    private static async void OpenSettings()
     {
         if (settingsProcess is { HasExited: false })
         {
+            // The never-activated island may set the foreground only while that click is the last input; when
+            // Windows refuses, the open settings window flashes in the taskbar instead of coming to the front.
             settingsProcess.Refresh();
             PInvoke.SetForegroundWindow(new HWND(settingsProcess.MainWindowHandle));
             return;
         }
 
-        settingsProcess?.Dispose();
-        settingsProcess = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
+        if (startingSettings)
+        {
+            return;
+        }
+
+        startingSettings = true;
+        try
+        {
+            settingsProcess?.Dispose();
+            // Starting a process takes tens of milliseconds, too long for the island's thread. The new process
+            // gets the foreground right this one has from the click, so its window opens in front.
+            settingsProcess = await Task.Run(() =>
+            {
+                var started = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
+                if (started is not null)
+                {
+                    PInvoke.AllowSetForegroundWindow((uint)started.Id);
+                }
+
+                return started;
+            });
+        }
+        catch (Win32Exception)
+        {
+            // The exe could not be started again (moved, blocked): nothing opens.
+            settingsProcess = null;
+        }
+        finally
+        {
+            startingSettings = false;
+        }
     }
 
     /// <summary>

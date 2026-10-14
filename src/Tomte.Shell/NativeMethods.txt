@@ -23,6 +23,7 @@ CreateDispatcherQueueController
 DCompositionWaitForCompositorClock
 ICompositorDesktopInterop
 GetDoubleClickTime
+AllowSetForegroundWindow
 WM_CLOSE
 WM_DESTROY
 WM_DPICHANGED
