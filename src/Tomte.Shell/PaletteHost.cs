@@ -41,6 +41,8 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
             _targetHeight = PanelSize.PaletteMinHeight;
             await island.MorphTo(Geometry(_targetHeight), Spring.PresetFor(from, IslandState.Palette));
             log($"{DateTime.Now:HH:mm:ss.fff} palette open {island.Current.Width}x{island.Current.Depth}");
+            // The command list the prompt box will offer; until text renders on the island, the placeholder stands for it.
+            log($"{DateTime.Now:HH:mm:ss.fff} palette commands: [{string.Join(", ", session.Commands.Select(c => $"/{c.Skill} \"{c.Name}\""))}]");
 
             Task growth = Task.CompletedTask;
             session.Changed += () =>
