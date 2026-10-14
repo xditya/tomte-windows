@@ -10,6 +10,9 @@ ShowWindow
 SetWindowPos
 SetWindowRgn
 CreatePolygonRgn
+CreateRectRgn
+CombineRgn
+DeleteObject
 GetDpiForWindow
 GetSystemMetrics
 MonitorFromWindow

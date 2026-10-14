@@ -227,6 +227,24 @@ public static class IslandOutline
     }
 
     /// <summary>
+    /// The strip between the screen edge and a resting Shelf-drop surface, over the surface's width, in window
+    /// pixels. A drag pushed up to the top row is released there, and OLE finds its drop target through the
+    /// region, so the strip belongs to the surface. Empty for every other state, where the gap passes clicks
+    /// through, and for the notch, which has no gap.
+    /// </summary>
+    // keyed by the Shelf-drop geometry, which no other state has; pass the state in if one ever does.
+    public static System.Drawing.Rectangle DropStrip(in IslandGeometry g, double scale, bool attached)
+    {
+        if (attached || g != IslandGeometry.ShelfDrop)
+        {
+            return System.Drawing.Rectangle.Empty;
+        }
+
+        var (side, top, _) = Insets(scale, attached);
+        return new System.Drawing.Rectangle(side, 0, (int)Math.Ceiling(g.Width * scale), top);
+    }
+
+    /// <summary>
     /// Window-pixel points of the region for a settled geometry. The region clips pixels as well as clicks.
     /// Attached: the outline itself. Floating: the shadow's footprint, which is the pill moved down by the shadow's
     /// offset and grown by its blur, cut off one pixel above the pill's top edge so the gap passes clicks through.

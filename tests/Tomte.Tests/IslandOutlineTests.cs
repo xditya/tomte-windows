@@ -257,6 +257,27 @@ public class IslandOutlineTests
         }
     }
 
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(1.25)]
+    [InlineData(1.5)]
+    public void OnlyTheShelfDropSurfaceTakesTheGapAboveIt(double scale)
+    {
+        var (side, top, _) = IslandOutline.Insets(scale, attached: false);
+        var strip = IslandOutline.DropStrip(IslandGeometry.ShelfDrop, scale, attached: false);
+
+        // From the screen's top row to the region's first row, over the surface's width.
+        Assert.Equal(new System.Drawing.Rectangle(side, 0, (int)Math.Ceiling(420 * scale), top), strip);
+        Assert.Equal(top - 1, Region(IslandGeometry.ShelfDrop, scale, attached: false).Min(p => p.Y));
+        Assert.True(strip.Bottom > top - 1);
+
+        // Everywhere else the gap still passes clicks, and the notch has no gap.
+        Assert.True(IslandOutline.DropStrip(IslandGeometry.Compact, scale, attached: false).IsEmpty);
+        Assert.True(IslandOutline.DropStrip(IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H), scale, attached: false).IsEmpty);
+        Assert.True(IslandOutline.DropStrip(IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), scale, attached: false).IsEmpty);
+        Assert.True(IslandOutline.DropStrip(IslandGeometry.ShelfDrop.Attached(), scale, attached: true).IsEmpty);
+    }
+
     [Fact]
     public void AttachedPutsTheNotchsCornerAndRampsBack()
     {

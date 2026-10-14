@@ -593,6 +593,15 @@ internal sealed unsafe class IslandWindow : IDisposable
     {
         IslandOutline.Region(g, scale, attached, segments, flattened, regionPoints);
         var region = PInvoke.CreatePolygonRgn(CollectionsMarshal.AsSpan(regionPoints), CREATE_POLYGON_RGN_MODE.WINDING);
+        var strip = IslandOutline.DropStrip(g, scale, attached);
+        if (!strip.IsEmpty)
+        {
+            var gap = PInvoke.CreateRectRgn(strip.Left, strip.Top, strip.Right, strip.Bottom);
+            var into = new HRGN(region.DangerousGetHandle());
+            PInvoke.CombineRgn(into, into, gap, RGN_COMBINE_MODE.RGN_OR);
+            PInvoke.DeleteObject(gap);
+        }
+
         if (PInvoke.SetWindowRgn(Hwnd, region, true) != 0)
         {
             // The system owns the region now; DeleteObject must not run on it.
