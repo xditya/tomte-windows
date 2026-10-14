@@ -119,9 +119,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>The one state machine; the palette host and the rambler drive their states on it.</summary>
     internal IslandStateMachine Machine => machine;
 
+    /// <summary>Makes <see cref="Rambler"/> on the first hold; it returns null while there is no speech to text.</summary>
+    public Func<Rambler?>? MakeRambler { get; set; }
+
     /// <summary>
     /// The hold-to-talk session Win+Alt+V drives: Begin on the hold's start, End on its release. Null until the
-    /// speech-to-text is configured; then the chord only logs.
+    /// first hold makes it, or with no speech to text; then the chord only logs.
     /// </summary>
     public Rambler? Rambler
     {
@@ -586,11 +589,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 }
 
                 break;
-            case HotkeyAction.Rambler when rambler is null:
-                log?.Invoke("rambler: no session configured (start with --rambler)");
-                break;
             case HotkeyAction.Rambler:
-                if (Allowed(RevealTrigger.Hotkey))
+                // Made on the first hold, so nothing of it loads while the island idles; tried again on a later hold
+                // while there is no speech to text yet.
+                Rambler ??= MakeRambler?.Invoke();
+                if (rambler is null)
+                {
+                    log?.Invoke("rambler: no speech to text; install whisper with tools/whisper/Get-Whisper.ps1");
+                }
+                else if (Allowed(RevealTrigger.Hotkey))
                 {
                     // Begin opens the 262 wide pill and sets the mascot itself.
                     rambler.Begin();

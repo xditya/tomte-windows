@@ -35,9 +35,20 @@ internal static partial class Program
     /// always allowed run.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log)
+    private static async void OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log)
     {
         hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text, focus, triggers.Hide);
+        if (Jobs.Shelf is { } shelf)
+        {
+            // The Shelf chip names what is on the shelf, which is read on its first use: a few milliseconds, once. The
+            // load reports its own failures, so the continuation only waits.
+            await shelf.Load().ContinueWith(_ => { }, TaskScheduler.Default);
+            if (triggers.Machine.State != IslandState.Palette)
+            {
+                return;
+            }
+        }
+
         hotkeyPalette.Type(Environment.GetCommandLineArgs().Contains("--debug-palette") ? DebugSession(triggers, store) : ConfiguredSession(triggers, store, log));
     }
 
@@ -95,7 +106,8 @@ internal static partial class Program
         // Read now, while the island is still not the foreground window.
         nint foreground = WindowContext.Foreground();
         var (app, title) = WindowContext.Describe(foreground);
-        var shelf = new InMemoryShelf();
+        // The real shelf, so the Shelf chip offers what is on it and a file the AI makes stays there.
+        IShelf shelf = (IShelf?)Jobs.Shelf ?? new InMemoryShelf();
         // The note's chip reads it at send; the rambler and the panel share this one instance.
         _ = Scratchpad.LoadAsync();
         // One per store for the process: each holds a handler on the store.

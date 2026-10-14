@@ -163,6 +163,10 @@ internal static partial class Program
                 DebugHold(island, hold, holdMs, Arg(args, "--debug-answer"), args.Contains("--dry"), log!);
             }
         }
+        else
+        {
+            triggers.MakeRambler = () => CreateRambler(args, island, triggers, store, timer, shortcuts, log ?? TextWriter.Null);
+        }
 
         if (palettePrompt is not null)
         {
@@ -174,7 +178,7 @@ internal static partial class Program
             triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
         }
 
-        using var tray = new TrayIcon(pause);
+        using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
         tray.OpenSettings += OpenSettings;
         tray.Paused += triggers.Hide;
@@ -579,14 +583,15 @@ internal static partial class Program
     }
 
     /// <summary>
-    /// --rambler: the hold-to-talk session Win+Alt+V drives. The provider comes from the command line
+    /// The hold-to-talk session the rambler hotkey drives, made on the first hold (at start with --rambler, which adds
+    /// the debug log and --debug-hold). The provider comes from the command line
     /// (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential Manager under the id),
     /// else from settings as the palette gets it, read once at start. Speech to text is local whisper.cpp when
     /// tools/whisper/Get-Whisper.ps1 has run, or the provider's /audio/transcriptions with --stt-provider and
     /// --stt-model; --debug-transcript "text" or --debug-wav file.wav stands in for what the microphone heard. Without
-    /// a provider the note is the raw transcript; with one the transcript is a voice command the model reads with the
-    /// voice tools, and --dry keeps device tools from changing anything. Kept out of Main so Tomte.AI loads only for
-    /// this switch.
+    /// a provider, or without --rambler, the note is the raw transcript; with both the transcript is a voice command the
+    /// model reads with the voice tools, and --dry keeps device tools from changing anything. Voice commands wait for
+    /// --rambler because the voice palette cannot show what a tool asks yet. Null when there is no speech to text.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, ShortcutStore shortcuts, TextWriter log)
@@ -595,7 +600,7 @@ internal static partial class Program
             ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
             : null;
         // Only a provider needs HTTP; local whisper with raw notes never opens a connection.
-        var configured = config is null ? Configured(store, log.WriteLine) : null;
+        var configured = config is null && args.Contains("--rambler") ? Configured(store, log.WriteLine) : null;
         config ??= configured?.Config;
         var http = config is null ? null : paletteHttp ??= ProviderSetup.NewHttp();
         var options = configured?.Options ?? new PaletteOptions();
@@ -635,8 +640,9 @@ internal static partial class Program
             var provider = configured?.Provider ?? ProviderSetup.Load(config, http!);
             // One per store, kept as long as the store. A voice command asks every time, so the grants change nothing for it.
             var grants = new PermissionGrants(store);
-            // An in-memory shelf until the shelf store lands. The tiles open by name; that way never runs a script tile.
-            var tools = new BuiltInTools(new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
+            // The real shelf, so a file made by voice is still there after a restart. The tiles open by name; that way
+            // never runs a script tile.
+            var tools = new BuiltInTools((IShelf?)Jobs.Shelf ?? new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
                 args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
             voice = async () =>
             {

@@ -26,19 +26,26 @@ internal sealed unsafe class TrayIcon : IDisposable
     private const int PauseHourItem = 3;
     private const int PauseRestartItem = 4;
     private const int QuitItem = 5;
+    private const int TimerStopItem = 6;
+
+    // The timer menu's lengths in minutes; item ids start at TimerFirstItem in this order.
+    private const int TimerFirstItem = 10;
+    private static readonly int[] TimerMinutes = [5, 10, 15, 25, 60];
 
     private static TrayIcon? instance;
     private static uint taskbarCreated;
 
     private readonly HWND hwnd;
     private readonly PauseState pause;
+    private readonly IslandTimer timer;
     private HICON icon;
     private bool menuOpen;
 
-    public TrayIcon(PauseState pause)
+    public TrayIcon(PauseState pause, IslandTimer timer)
     {
         instance = this;
         this.pause = pause;
+        this.timer = timer;
         taskbarCreated = PInvoke.RegisterWindowMessage("TaskbarCreated");
         var hInstance = new HINSTANCE(Marshal.GetHINSTANCE(typeof(TrayIcon).Module));
         fixed (char* className = "TomteTray")
@@ -160,6 +167,26 @@ internal sealed unsafe class TrayIcon : IDisposable
         Append(menu, MENU_ITEM_FLAGS.MF_STRING, OpenItem, "Open island");
         Append(menu, MENU_ITEM_FLAGS.MF_STRING, SettingsItem, "Settings");
         Append(menu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
+        // A timer with no AI: the same countdown the palette's set_timer starts, with its ring and its done event.
+        var timers = PInvoke.CreatePopupMenu();
+        foreach (var (minutes, i) in TimerMinutes.Select((m, i) => (m, i)))
+        {
+            Append(timers, MENU_ITEM_FLAGS.MF_STRING, TimerFirstItem + i, minutes < 60 ? $"{minutes} minutes" : "1 hour");
+        }
+
+        if (timer.DueIn(now) is { } left)
+        {
+            Append(timers, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
+            Append(timers, MENU_ITEM_FLAGS.MF_STRING, TimerStopItem, $"Stop timer ({Math.Ceiling(left.TotalMinutes)} min left)");
+        }
+
+        fixed (char* label = "Timer")
+        {
+            // The submenu is destroyed with the menu.
+            PInvoke.AppendMenu(menu, MENU_ITEM_FLAGS.MF_POPUP, (nuint)timers.Value, label);
+        }
+
+        Append(menu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
         Append(menu, MENU_ITEM_FLAGS.MF_STRING | (timed ? MENU_ITEM_FLAGS.MF_CHECKED : 0), PauseHourItem, timed ? $"Paused until {pause.Until!.Value.ToLocalTime():HH:mm}" : "Pause for 1 hour");
         Append(menu, MENU_ITEM_FLAGS.MF_STRING | (pause.UntilRestart ? MENU_ITEM_FLAGS.MF_CHECKED : 0), PauseRestartItem, "Pause until restart");
         Append(menu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
@@ -214,6 +241,12 @@ internal sealed unsafe class TrayIcon : IDisposable
                 break;
             case QuitItem:
                 Quit?.Invoke();
+                break;
+            case TimerStopItem:
+                timer.Run = null;
+                break;
+            case >= TimerFirstItem when item - TimerFirstItem < TimerMinutes.Length:
+                timer.Run = TimerRun.Starting(now, TimeSpan.FromMinutes(TimerMinutes[item - TimerFirstItem]));
                 break;
         }
     }
