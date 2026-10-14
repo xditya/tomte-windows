@@ -236,9 +236,30 @@ internal sealed class PanelHost
         }
     }
 
+    /// <summary>
+    /// A press on a tab label switches to that tab. One on the body is the panel's once the body shows, so a quick
+    /// click after opening or switching cannot hit a button that is not drawn yet.
+    /// </summary>
     private void OnPressed(Vector2 point)
     {
-        if (shown is not null && InBody(point, out var at))
+        if (shown is null)
+        {
+            return;
+        }
+
+        if (point.Y < PanelSpace.TabStripHeight)
+        {
+            // The labels are laid out from the outline's live outer left edge (ramps included when attached to the
+            // top), so a press mid-morph still finds its label.
+            if (TabStrip.At(point.X + (float)island.Current.OuterWidth / 2, tabs.Order, tabs.Current, bodySize.X, island.Mascot.Enabled) is { } id)
+            {
+                Select(id);
+            }
+
+            return;
+        }
+
+        if (!fadeInPending && InBody(point, out var at))
         {
             shown.Press(at);
         }
