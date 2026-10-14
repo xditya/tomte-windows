@@ -64,7 +64,7 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("Shelf"));
         page.Children.Add(Card(Row(
             "Remove from the shelf after dragging out",
-            Note("Once an app takes something you dragged out, it leaves the shelf. Your files stay where they are on your PC. A copy the shelf keeps stays on the shelf unless the app made its own copy of it."),
+            Note("When an app takes something you dragged out: a link to one of your files leaves the shelf, and the file stays where it is on your PC. A copy the shelf keeps itself (an image, a note, an attachment) stays on the shelf, unless it went out as content rather than as a file, as notes and images dragged out on their own do."),
             Toggle(s => s.RemoveAfterDragOut, (s, v) => s with { RemoveAfterDragOut = v }))));
 
         page.Children.Add(Header("Shortcuts"));
