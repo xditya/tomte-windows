@@ -18,6 +18,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
 
+    // The timer's done event; the finished ring belongs to it and to no other event's pill.
+    private const string TimerDoneText = "Timer done";
+
     // Timings that are fixed rather than exposed: Compact opens Panels after a hover dwell, an event shows for
     // four seconds, window changes are debounced before peek re-checks, the first-run hint stays ten seconds.
     private const uint HoverDwellMs = 350, EventHoldMs = 4000, PeekDebounceMs = 500, FirstRunHintMs = 10000;
@@ -315,7 +318,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     finished = run;
                     log?.Invoke($"timer: done, ended {run!.EndsAt:O}");
-                    Raise(new IslandEvent("Timer done", DateTimeOffset.Now));
+                    Raise(new IslandEvent(TimerDoneText, DateTimeOffset.Now));
                 }
                 else
                 {
@@ -539,8 +542,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
         else
         {
-            // Paused: the event is dropped, as every event is while the island is paused, and the ring with it.
-            finished = null;
+            // Paused: the events are dropped, as every event is while the island is paused, and the ring with the
+            // timer's own.
+            if (shown.Any(IsTimerDone))
+            {
+                finished = null;
+            }
+
             UpdateRing();
         }
     }
@@ -579,6 +587,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             ring.Hide();
         }
     }
+
+    private static bool IsTimerDone(IslandEvent e) => e.Text == TimerDoneText;
 
     private void OnWindowsChanged()
     {
@@ -720,10 +730,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         bool wasPeek = activity.HasFlag(IslandActivity.Peek);
         activity = IslandActivity.None;
-        if (eventShowing)
+        if (eventShowing && showing.Any(IsTimerDone))
         {
             // The finished timer keeps its full ring until its done pill has been shown. A hide of anything else,
-            // while that event still waits behind Focus, fullscreen or the lock screen, must not take it.
+            // another event's pill included, while that event still waits, must not take it.
             finished = null;
         }
 
