@@ -503,6 +503,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         int margin = (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale);
         pointerInside = PInvoke.GetCursorPos(out var cursor) && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, margin);
         pointerOn = pointerInside && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, 0);
+        if (!pointerOn)
+        {
+            // A double click sent the island back to the middle, away from the pointer.
+            island.Swell(false);
+        }
+
         PushZone();
         EndDrag();
         // A window may be under the island's new place.
