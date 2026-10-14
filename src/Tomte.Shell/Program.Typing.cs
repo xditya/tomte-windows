@@ -12,8 +12,9 @@ namespace Tomte.Shell;
 /// <summary>The text boxes' focus and the palette hotkey's content.</summary>
 internal static partial class Program
 {
-    // How long the palette waits for the UI Automation read of the selection before the prompt takes the keys, and with
-    // them the focus that read asks about. Measured: 2 to 6 ms warm and up to 90 ms for the first call into an app.
+    // How long the palette waits for the UI Automation read of the selection and for the skills before the prompt takes
+    // the keys, and with them the focus that read asks about. Measured: 2 to 6 ms warm and up to 90 ms for the
+    // first call into an app.
     private static readonly TimeSpan SelectionWait = TimeSpan.FromMilliseconds(150);
 
     private static TextRenderer? text;
@@ -117,7 +118,9 @@ internal static partial class Program
         // The Shelf chip names what is on the shelf, which is read on its first use: a few milliseconds, once. The load
         // reports its own failures, so the continuation only waits.
         var shelf = Jobs.Shelf?.Load().ContinueWith(_ => { }, TaskScheduler.Default) ?? Task.CompletedTask;
-        await Task.WhenAll(shelf, skills.ContinueWith(_ => { }, TaskScheduler.Default), Task.WhenAny(selection, Task.Delay(SelectionWait)));
+        // Keys typed before the prompt takes them go to the app in front, so the selection and the skills get the same
+        // short wait; what is not read by then is left out of this open.
+        await Task.WhenAll(shelf, Task.WhenAny(Task.WhenAll(selection, skills), Task.Delay(SelectionWait)));
         if (triggers.Machine.State != IslandState.Palette)
         {
             return;
@@ -125,7 +128,7 @@ internal static partial class Program
 
         if (!skills.IsCompletedSuccessfully)
         {
-            log?.Invoke($"palette: skills not read: {skills.Exception?.InnerException?.Message}");
+            log?.Invoke($"palette: skills left out: {(skills.IsFaulted ? skills.Exception!.InnerException?.Message : $"not read within {SelectionWait.TotalMilliseconds:0} ms")}");
         }
 
         var session = Session(triggers, store, configured, dry: debug, foreground, selection.IsCompletedSuccessfully ? selection.Result : null,
