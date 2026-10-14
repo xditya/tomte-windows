@@ -11,6 +11,10 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
 
     // Corner 19, half the depth, so Compact is a capsule. The notch's Compact corner is 16.
     public static readonly IslandGeometry Compact = new(220, 38, 19);
+
+    /// <summary>Desktop peek: Compact's depth and corner around the tomte alone, its inset on both sides (37 wide).</summary>
+    public static readonly IslandGeometry Peek = new(2 * MascotArt.InsetX + MascotArt.SizeDips, 38, 19);
+
     public static readonly IslandGeometry ShelfDrop = new(420, 96, 20);
 
     /// <summary>Panels and the palette share one corner; only the size differs.</summary>

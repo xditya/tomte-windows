@@ -14,10 +14,9 @@ public class CompactRulesTests
     [InlineData(CompactReason.Summary, Other, true, false, Ring)]
     [InlineData(CompactReason.Summary, Other, false, true, Row)]
     [InlineData(CompactReason.Summary, Other, false, false, None)]
-    // Peek: what plays, never the ring.
-    [InlineData(CompactReason.Peek, Other, true, true, Row)]
-    [InlineData(CompactReason.Peek, Other, true, false, None)]
-    [InlineData(CompactReason.Peek, Other, false, true, Row)]
+    // Peek: the tomte alone, neither what plays nor the ring.
+    [InlineData(CompactReason.Peek, Other, true, true, None)]
+    [InlineData(CompactReason.Peek, Other, false, true, None)]
     // An event pill shows only its own event's content.
     [InlineData(CompactReason.Event, Timer, true, true, Ring)]
     [InlineData(CompactReason.Event, Timer, false, false, Ring)]
@@ -31,6 +30,14 @@ public class CompactRulesTests
     public void OneLineShowsOneThing(CompactReason reason, IslandEventSource shown, bool timerRuns, bool playing, CompactContent expected)
     {
         Assert.Equal(expected, CompactRules.Content(reason, shown, timerRuns, playing));
+    }
+
+    [Fact]
+    public void WithTheTomteOffPeekIsTheFullPillWithWhatPlaysAndNeverTheRing()
+    {
+        Assert.Equal(Row, CompactRules.Content(CompactReason.Peek, Other, timerRuns: true, playing: true, tomte: false));
+        Assert.Equal(None, CompactRules.Content(CompactReason.Peek, Other, timerRuns: true, playing: false, tomte: false));
+        Assert.Equal(Ring, CompactRules.Content(CompactReason.Summary, Other, timerRuns: true, playing: true, tomte: false));
     }
 
     [Fact]

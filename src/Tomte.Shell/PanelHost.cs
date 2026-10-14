@@ -249,9 +249,7 @@ internal sealed class PanelHost
 
         if (point.Y < PanelSpace.TabStripHeight)
         {
-            // The labels are laid out from the outline's live outer left edge (ramps included when attached to the
-            // top), so a press mid-morph still finds its label.
-            if (TabStrip.At(point.X + (float)island.Current.OuterWidth / 2, tabs.Order, tabs.Current, bodySize.X, island.Mascot.Enabled) is { } id)
+            if (LabelAt(point) is { } id)
             {
                 Select(id);
             }
@@ -290,6 +288,14 @@ internal sealed class PanelHost
             shown.Wheel(at, delta);
         }
     }
+
+    /// <summary>Whether an island point is on a tab label, which a press picks rather than holding it to move the island.</summary>
+    public bool OnLabel(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && LabelAt(point) is not null;
+
+    // The labels are laid out from the outline's live outer left edge (ramps included when attached to the top), so a
+    // press mid-morph still finds its label.
+    private PanelId? LabelAt(Vector2 point) =>
+        TabStrip.At(point.X + (float)island.Current.OuterWidth / 2, tabs.Order, tabs.Current, bodySize.X, island.Mascot.Enabled);
 
     private bool InBody(Vector2 island, out Vector2 at)
     {

@@ -37,6 +37,7 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(400, s.Reveal.RetractDelayMs);
         Assert.True(s.DesktopPeek);
         Assert.False(s.AttachToTopEdge);
+        Assert.Equal(0, s.IslandOffset);
         Assert.Empty(s.AppRules);
     }
 
@@ -50,6 +51,7 @@ public sealed class SettingsTests : IDisposable
             AppRules = [new AppRule("chrome.exe", AppRuleMode.Deny)],
             AllMonitors = false,
             AttachToTopEdge = true,
+            IslandOffset = -312.5,
         };
         using (var store = new SettingsStore(File))
         {

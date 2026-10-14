@@ -22,9 +22,9 @@ using Windows.Win32.UI.WindowsAndMessaging;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The island surface: a WS_EX_NOREDIRECTIONBITMAP popup at the top of the primary monitor with a
-/// Windows.UI.Composition tree. Five springs drive the outline; a worker thread waits on the
-/// compositor clock and the UI thread rebuilds the path once per frame. The window is sized once
+/// The island surface: a WS_EX_NOREDIRECTIONBITMAP popup at the top of the primary monitor, where along the edge a
+/// drag on the pill left it, with a Windows.UI.Composition tree. Five springs drive the outline; a worker thread
+/// waits on the compositor clock and the UI thread rebuilds the path once per frame. The window is sized once
 /// per morph to the union of start and target bounds, then shrunk to the shape and given a region
 /// from the same outline when the springs settle. Hidden means SW_HIDE and a parked worker. The same tick
 /// steps the mascot; a resting mascot parks the worker too and wakes it with a one-shot timer for its next beat.
@@ -57,6 +57,10 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly Spring rampW = new();
     private readonly Spring rampH = new();
     private readonly Spring[] springs;
+
+    // The centre's place along the top edge, in DIPs from the middle (IslandPlace). Not one of the shape's springs: it
+    // moves the window rather than the outline, and a drag sets it straight from the pointer.
+    private readonly Spring place = new();
     private readonly List<OutlineSegment> segments = new(24);
     private readonly List<Vector2> flattened = new(128);
     private readonly List<System.Drawing.Point> regionPoints = new(128);
@@ -68,7 +72,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly MascotVisual mascotVisual;
     private readonly DispatcherQueueTimer wakeTimer;
     private double scale;
-    private int screenCenterX;
+    private int screenWidth;
     private int windowX;
     private int windowWidth;
     private int windowHeight;
@@ -87,6 +91,13 @@ internal sealed unsafe class IslandWindow : IDisposable
     private float mascotX;
     private double fromWidth, fromDepth;
     private bool contentPending;
+
+    // A press on the pill's own surface, held until it is a click or a drag; and the last such click, for a double click.
+    private bool grabbing, grabMoved, grabPill;
+    private System.Drawing.Point grabFrom, lastClickAt;
+    private Vector2 grabAt;
+    private double grabOffset;
+    private long lastClick;
 
     public IslandWindow()
     {
@@ -137,6 +148,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         BOOL disableTransitions = true;
         PInvoke.DwmSetWindowAttribute(Hwnd, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &disableTransitions, (uint)sizeof(BOOL));
         scale = PInvoke.GetDpiForWindow(Hwnd) / 96.0;
+        screenWidth = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN);
 
         // Windows.UI.Composition needs the OS dispatcher queue on this thread.
         PInvoke.CreateDispatcherQueueController(
@@ -167,7 +179,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         Content.Clip = compositor.CreateGeometricClip(pill.Geometry);
         // Island space hangs off Content alone: the compositor keeps its origin on Content's centre line
         // (Content is the outline plus the margin on each side) through every frame of a morph. Rounded down to a
-        // whole pixel, which for a window centred on the screen is the screen's centre column in every frame, so
+        // whole pixel, which for a window centred on its place is the place's centre column in every frame, so
         // text drawn in DIPs can be put on the pixel grid once and stay there.
         Dips = compositor.CreateContainerVisual();
         Dips.Scale = new Vector3((float)scale, (float)scale, 1);
@@ -236,14 +248,36 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public event Action? ContentReady;
 
-    /// <summary>A left button press on the island, in island space.</summary>
+    /// <summary>A left button press on the island, in island space. One that <see cref="Grabs"/> holds arrives when the button comes up.</summary>
     public event Action<Vector2>? Pressed;
+
+    /// <summary>
+    /// Whether a press at this island point may move the island: the pill's own surface rather than a control on it.
+    /// Such a press takes the mouse (the window still does not activate) until the button comes up: past the system's
+    /// drag distance the island follows the pointer along the top edge, and short of it the press is a click.
+    /// </summary>
+    public Func<Vector2, bool>? Grabs { get; set; }
+
+    /// <summary>A press that <see cref="Grabs"/> took is down: it is not a hover, and not yet a click or a drag.</summary>
+    public bool Holding => grabbing;
+
+    /// <summary>A held press became a drag; from now until <see cref="Moved"/> the island follows the pointer.</summary>
+    public event Action? MoveStarted;
+
+    /// <summary>The drag let go, or a double click on the pill sent the island back to the middle: its new place, to keep.</summary>
+    public event Action<double>? Moved;
+
+    /// <summary>The pixel column the Compact pill's centre rests on, which the reveal zone is centred under.</summary>
+    public int CenterX => IslandPlace.Center(place.Target, attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact, scale, screenWidth, attached);
 
     /// <summary>The wheel turned over the island, at a point in island space: the raw delta, 120 a notch, positive away from the user.</summary>
     public event Action<Vector2, int>? Wheel;
 
     /// <summary>The tomte at the island's left edge. Settings set Enabled and CapColor; features set its reactions.</summary>
     public Mascot Mascot { get; }
+
+    /// <summary>Whether an island point is on the tomte's box at the shape's left edge, while the tomte is on.</summary>
+    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(anchor ?? Current).Contains(at.X, at.Y);
 
     /// <summary>The mascot's centre in screen pixels, for the Shelf-drop lean.</summary>
     public double MascotScreenX => windowX + root.Offset.X + mascotX + MascotVisual.SizeDips / 2 * scale;
@@ -293,7 +327,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public System.Drawing.Rectangle TargetBounds { get; private set; }
 
-    /// <summary>The scale or the screen centre changed; anything measured in pixels needs recomputing.</summary>
+    /// <summary>The scale, the screen's width or the island's place changed; anything measured in pixels needs recomputing.</summary>
     public event Action? LayoutChanged;
 
     /// <summary>
@@ -392,6 +426,30 @@ internal sealed unsafe class IslandWindow : IDisposable
         return settled.Task;
     }
 
+    /// <summary>
+    /// Send the island to a place along the top edge: on the gentle spring while it shows, at once while it is hidden
+    /// or Windows animation effects are off. A drag in progress keeps it where the pointer has it.
+    /// </summary>
+    public void MoveTo(double offset)
+    {
+        if (grabMoved || offset == place.Target)
+        {
+            return;
+        }
+
+        place.Use(SpringPreset.Gentle);
+        place.Target = offset;
+        if (!visible || ForceReduceMotion || !uiSettings.AnimationsEnabled)
+        {
+            place.Jump(offset);
+            Follow();
+            LayoutChanged?.Invoke();
+            return;
+        }
+
+        Wake();
+    }
+
     public void Dispose()
     {
         ticking.Reset();
@@ -401,17 +459,64 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>
-    /// The window rectangle a state's geometry rests in, in physical pixels: the pill, the gap above it and the
-    /// room its shadow takes. Desktop peek asks whether anything is under it.
+    /// The window rectangle a state's geometry rests in at the island's place, in physical pixels: the pill, the gap
+    /// above it and the room its shadow takes. Desktop peek asks whether anything is under it.
     /// </summary>
     public System.Drawing.Rectangle RestBounds(IslandGeometry g)
     {
         Rescale(MonitorScale());
-        return Bounds(attached ? g.Attached() : g);
+        var shape = attached ? g.Attached() : g;
+        return IslandOutline.WindowBounds(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth, attached), attached);
     }
 
-    /// <summary>Window rectangle for a geometry in physical pixels, centred on the primary monitor's top edge.</summary>
-    private System.Drawing.Rectangle Bounds(in IslandGeometry g) => IslandOutline.WindowBounds(g, scale, screenCenterX, attached);
+    /// <summary>Window rectangle for a geometry in physical pixels, at its place along the primary monitor's top edge.</summary>
+    private System.Drawing.Rectangle Bounds(in IslandGeometry g) =>
+        IslandOutline.WindowBounds(g, scale, IslandPlace.Center(place.Value, g, scale, screenWidth, attached), attached);
+
+    /// <summary>The place moved: the window and the bounds the pointer is tracked against follow it.</summary>
+    private void Follow()
+    {
+        TargetBounds = IslandOutline.PointerBounds(Bounds(targetGeometry), scale, attached);
+        if (!visible)
+        {
+            return;
+        }
+
+        if (islandMoving)
+        {
+            SizeWindow(System.Drawing.Rectangle.Union(Bounds(Current), Bounds(targetGeometry)));
+            Apply(Current);
+        }
+        else
+        {
+            // At rest only the window moves; the drawn shape and its region are in window pixels and come along.
+            SizeWindow(Bounds(Current));
+        }
+    }
+
+    /// <summary>One step of the place's spring; true while it still moves.</summary>
+    private bool Place(double dt)
+    {
+        if (place.Value == place.Target && place.Velocity == 0)
+        {
+            return false;
+        }
+
+        place.Step(dt);
+        bool done = place.Settled;
+        if (done)
+        {
+            place.Jump(place.Target);
+        }
+
+        Follow();
+        if (done)
+        {
+            LayoutChanged?.Invoke();
+        }
+
+        return !done;
+    }
 
     /// <summary>Where the outline's origin sits in a window that is exactly its geometry's bounds.</summary>
     private Vector3 Origin()
@@ -435,7 +540,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         (windowX, windowWidth, windowHeight) = (r.X, r.Width, r.Height);
-        PInvoke.SetWindowPos(Hwnd, HWND.HWND_TOPMOST, r.X, 0, r.Width, r.Height, SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+        // Size and place only: a drag and the slide back call this per move and per frame, and the show re-asserts topmost.
+        PInvoke.SetWindowPos(Hwnd, HWND.HWND_TOPMOST, r.X, 0, r.Width, r.Height, SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
     }
 
     private void CompositorClockLoop()
@@ -493,6 +599,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             }
         }
 
+        bool placing = Place(dt);
         bool mascotActive = Mascot.Step(dt);
         if (islandMoving)
         {
@@ -509,7 +616,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             PlaceMascot(Current);
         }
 
-        if (visible && mascotActive)
+        if (visible && (mascotActive || placing))
         {
             return;
         }
@@ -541,6 +648,13 @@ internal sealed unsafe class IslandWindow : IDisposable
     private void FinishWithoutClock()
     {
         islandMoving = false;
+        if (place.Value != place.Target)
+        {
+            place.Jump(place.Target);
+            Follow();
+            LayoutChanged?.Invoke();
+        }
+
         if (settled is not null)
         {
             Settle();
@@ -581,10 +695,11 @@ internal sealed unsafe class IslandWindow : IDisposable
         anchor = null;
         if (g.Depth <= 0.5)
         {
-            // Hidden costs nothing: no beat may wake the tick, and the next show starts from a clean tomte.
+            // Hidden costs nothing: no beat may wake the tick, and the next show starts from a clean tomte at its place.
             visible = false;
             wakeTimer.Stop();
             Mascot.Park();
+            place.Jump(place.Target);
         }
 
         Apply(g);
@@ -657,10 +772,10 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>Put the tomte at the left edge of the shape, or of the anchor shape during a reveal or retract.</summary>
     private void PlaceMascot(in IslandGeometry g)
     {
-        var a = anchor ?? g;
+        var box = MascotArt.Box(anchor ?? g);
         float s = (float)scale;
-        mascotX = (float)(g.OuterWidth / 2 - a.Width / 2 + MascotVisual.InsetX) * s;
-        mascotVisual.Apply(Mascot, new Vector2(mascotX, MascotVisual.InsetY * s), s);
+        mascotX = (float)(g.OuterWidth / 2 + box.X) * s;
+        mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s);
     }
 
     private void ClearRegion()
@@ -741,19 +856,19 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>
-    /// Re-lay the current outline out at a new scale or screen centre. WM_DPICHANGED can arrive at once,
+    /// Re-lay the current outline out at a new scale or screen width. WM_DPICHANGED can arrive at once,
     /// during the next SetWindowPos, or not until then, so this is idempotent and never completes a morph.
-    /// A resolution change at the same DPI only moves the centre, so that is checked too.
+    /// A resolution change at the same DPI only moves the place, so that is checked too.
     /// </summary>
     private void Rescale(double newScale)
     {
-        int centerX = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN) / 2;
-        if (newScale == scale && centerX == screenCenterX)
+        int width = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN);
+        if (newScale == scale && width == screenWidth)
         {
             return;
         }
 
-        (scale, screenCenterX) = (newScale, centerX);
+        (scale, screenWidth) = (newScale, width);
         ShadowLook();
         TargetBounds = IslandOutline.PointerBounds(Bounds(targetGeometry), scale, attached);
         Dips.Scale = new Vector3((float)scale, (float)scale, 1);
@@ -852,10 +967,80 @@ internal sealed unsafe class IslandWindow : IDisposable
         if (wheel)
         {
             Wheel?.Invoke(at, (short)((wParam >> 16) & 0xFFFF));
+            return;
         }
-        else
+
+        var screen = new System.Drawing.Point(x, y);
+        PInvoke.ClientToScreen(Hwnd, &screen);
+        bool grabs = Grabs?.Invoke(at) == true;
+        bool pill = grabs && !OnMascot(at);
+        if (IslandPlace.IsDoubleClick(pill, screen.X - lastClickAt.X, screen.Y - lastClickAt.Y, Environment.TickCount64 - lastClick,
+            PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXDOUBLECLK), PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYDOUBLECLK), PInvoke.GetDoubleClickTime()))
         {
-            Pressed?.Invoke(at);
+            // The second click of a double click on the pill: back to the middle, and the press is used up.
+            lastClick = 0;
+            MoveTo(0);
+            Moved?.Invoke(0);
+            return;
+        }
+
+        if (grabs)
+        {
+            // From where the shape it rests in may be, so an inward drag moves it at once after an earlier one pushed a
+            // narrower shape further out.
+            double from = IslandPlace.Clamp(place.Value, targetGeometry, scale, screenWidth, attached);
+            (grabbing, grabMoved, grabPill, grabFrom, grabAt, grabOffset) = (true, false, pill, screen, at, from);
+            PInvoke.SetCapture(Hwnd);
+            return;
+        }
+
+        Pressed?.Invoke(at);
+    }
+
+    /// <summary>
+    /// The held press: once the pointer has gone the drag distance the island follows it along the top edge, straight
+    /// from the pointer with no spring, its top kept on the edge. Let go short of that, it is a click. Losing the mouse
+    /// to another window ends it as a release that clicks nothing.
+    /// </summary>
+    private void Grab(uint message)
+    {
+        PInvoke.GetCursorPos(out var cursor);
+        if (message == PInvoke.WM_MOUSEMOVE)
+        {
+            int dx = cursor.X - grabFrom.X, dy = cursor.Y - grabFrom.Y;
+            if (!grabMoved)
+            {
+                if (!IslandPlace.IsDrag(dx, dy, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXDRAG), PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYDRAG)))
+                {
+                    return;
+                }
+
+                grabMoved = true;
+                MoveStarted?.Invoke();
+            }
+
+            place.Jump(IslandPlace.Clamp(grabOffset + dx / scale, targetGeometry, scale, screenWidth, attached));
+            Follow();
+            return;
+        }
+
+        // Before the release: it sends WM_CAPTURECHANGED here at once.
+        grabbing = false;
+        if (message == PInvoke.WM_LBUTTONUP)
+        {
+            PInvoke.ReleaseCapture();
+        }
+
+        if (grabMoved)
+        {
+            grabMoved = false;
+            LayoutChanged?.Invoke();
+            Moved?.Invoke(place.Target);
+        }
+        else if (message == PInvoke.WM_LBUTTONUP)
+        {
+            (lastClick, lastClickAt) = (grabPill ? Environment.TickCount64 : 0, grabFrom);
+            Pressed?.Invoke(grabAt);
         }
     }
 
@@ -906,6 +1091,8 @@ internal sealed unsafe class IslandWindow : IDisposable
             case PInvoke.WM_MOUSEWHEEL:
                 // The window never activates, but the mouse still reaches it.
                 return Guarded(i => i.Pointer(message, wParam.Value, lParam.Value));
+            case PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP or PInvoke.WM_CAPTURECHANGED when instance is { grabbing: true }:
+                return Guarded(i => i.Grab(message));
             case PInvoke.WM_DPICHANGED:
                 return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
             case PInvoke.WM_DISPLAYCHANGE:

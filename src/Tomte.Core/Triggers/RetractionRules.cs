@@ -27,9 +27,16 @@ public static class RetractionRules
     public static bool ShouldRetract(IslandState state, IslandActivity activity) =>
         state is not (IslandState.Hidden or IslandState.Capture) && activity == IslandActivity.None;
 
-    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler holds the pill.</summary>
+    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler holds the pill or a drag is moving it.</summary>
     public static bool OpensPanels(IslandState state, IslandActivity activity) =>
-        state == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling);
+        state == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling) && !activity.HasFlag(IslandActivity.DragInProgress);
+
+    /// <summary>
+    /// An event pill or the first-run hint stays past its time while the pointer is on it or a drag is moving it, and
+    /// is looked at again a little later.
+    /// </summary>
+    public static bool HoldsPastItsTime(bool pointerInside, IslandActivity activity) =>
+        pointerInside || activity.HasFlag(IslandActivity.DragInProgress);
 
     /// <summary>
     /// What is left when a state the user asked for takes the island over: the peek pill's "retract when a window
@@ -56,16 +63,18 @@ public static class RetractionRules
 }
 
 /// <summary>
-/// The reveal zone of one monitor in physical pixels: the middle fraction of its top edge, plus the drag band
-/// below it. Each monitor measures it in its own DPI.
+/// The reveal zone of one monitor in physical pixels: a fraction of its top edge centred under the island, moved in
+/// to stay on the monitor when the island is near a side, plus the drag band below it. Each monitor measures it in
+/// its own DPI.
 /// </summary>
 public readonly record struct RevealZone(int Left, int Right, int Top, int DragBandBottom)
 {
-    public static RevealZone For(int monitorLeft, int monitorTop, int monitorRight, double fraction, double dragBandDip, double scale)
+    public static RevealZone For(int monitorLeft, int monitorTop, int monitorRight, int centerX, double fraction, double dragBandDip, double scale)
     {
         int width = monitorRight - monitorLeft;
-        int inset = (int)Math.Round(width * (1 - fraction) / 2);
-        return new RevealZone(monitorLeft + inset, monitorRight - inset, monitorTop, monitorTop + (int)Math.Round(dragBandDip * scale));
+        int zone = Math.Min(width, width - 2 * (int)Math.Round(width * (1 - fraction) / 2));
+        int left = Math.Clamp(centerX - zone / 2, monitorLeft, monitorRight - zone);
+        return new RevealZone(left, left + zone, monitorTop, monitorTop + (int)Math.Round(dragBandDip * scale));
     }
 
     public bool ContainsX(int x) => x >= Left && x <= Right;

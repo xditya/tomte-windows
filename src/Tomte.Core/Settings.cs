@@ -39,6 +39,12 @@ public sealed record TomteSettings
     /// </summary>
     public bool AttachToTopEdge { get; init; }
 
+    /// <summary>
+    /// Where the user dragged the island along the top edge: DIPs from the middle of the edge to its centre, negative to
+    /// the left. 0 is the middle, where "Reset position" and a double click on the pill put it back.
+    /// </summary>
+    public double IslandOffset { get; init; }
+
     /// <summary>AI tools the user answered "always allow" for, by tool name; the AI layer reads and writes it, the settings window lists and removes.</summary>
     public IReadOnlyList<string> AlwaysAllowedTools { get; init; } = [];
 

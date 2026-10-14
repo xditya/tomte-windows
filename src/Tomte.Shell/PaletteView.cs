@@ -112,7 +112,7 @@ internal sealed class PaletteView : IDisposable
     /// <summary>The height changed with the prompt's lines or the answer; the palette morphs to it, gently.</summary>
     public event Action? HeightChanged;
 
-    /// <summary>The prompt takes the keys, after the palette hotkey. False when there is no prompt or Windows refused.</summary>
+    /// <summary>The prompt takes the keys, after the palette hotkey or a click on the tomte. False when there is no prompt or Windows refused.</summary>
     public bool TakeKeys() => prompt is not null && focus!.Take(prompt);
 
     /// <summary>The palette goes when it loses the keys while nothing is being sent.</summary>
@@ -381,8 +381,8 @@ internal sealed class PaletteView : IDisposable
 internal sealed partial class PaletteHost
 {
     /// <summary>
-    /// The palette hotkey, once the triggers have opened the Palette state: the prompt box takes the keys at once, while
-    /// the hotkey is the last input, and Enter sends. Esc and focus loss while nothing is being sent hide the island.
+    /// The palette hotkey or a click on the tomte, once the triggers have opened the Palette state: the prompt box takes
+    /// the keys at once, while that press is the last input, and Enter sends. Esc and focus loss while nothing is being sent hide the island.
     /// With no session, because no provider is set up, the palette says the AI layer is off and takes no keys.
     /// </summary>
     public void Type(PaletteSession? session)

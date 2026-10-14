@@ -245,5 +245,113 @@ public class MascotTests
         Assert.False(off.Step(FrameDt));
     }
 
+    // At rest in every shape it shows in: all of the art inside the outline and clear of its corners, centred down the
+    // top row, and in the tab strip with as much room on its left as above it.
+    [Fact]
+    public void TheTomteSitsInsideEveryShapeWithRoomAroundIt()
+    {
+        IslandGeometry[] shapes =
+        [
+            IslandGeometry.Compact, IslandGeometry.Peek, IslandGeometry.Compact with { Width = 262 }, IslandGeometry.ShelfDrop,
+            IslandGeometry.Panel(380, 140), IslandGeometry.Panel(560, 360), IslandGeometry.Panel(640, 150),
+        ];
+        foreach (var shape in shapes)
+        {
+            var art = Art(shape);
+            var segments = new List<OutlineSegment>();
+            var outline = new List<Vector2>();
+            IslandOutline.Build(shape, attached: false, segments);
+            IslandOutline.Flatten(segments, outline);
+            Assert.All(art, p => Assert.True(Inside(p, outline), $"{shape}: {p} is outside the outline"));
+            float room = art.Min(p => Distance(p, outline));
+            Assert.True(room >= 6, $"{shape}: the art comes within {room:F2} DIP of the outline");
+            float row = (float)Math.Min(shape.Depth, PanelSpace.TabStripHeight);
+            Assert.Equal(row - art.Max(p => p.Y), art.Min(p => p.Y), 0.1);
+        }
+
+        var strip = Art(IslandGeometry.Panel(560, 260));
+        Assert.Equal(strip.Min(p => p.Y), strip.Min(p => p.X), 0.1);
+
+        // The peek pill holds the tomte alone, centred across it as well.
+        var peek = Art(IslandGeometry.Peek);
+        Assert.Equal(IslandGeometry.Peek.Width - peek.Max(p => p.X), peek.Min(p => p.X), 0.1);
+    }
+
+    // A click on the tomte opens the palette, so its box must be where it is drawn and apart from what else takes clicks.
+    [Fact]
+    public void TheTomtesBoxIsApartFromTheLabelsAndTheLine()
+    {
+        // Island space: x from the shape's centre line. Compact's box ends before its line of words starts.
+        var compact = MascotArt.Box(IslandGeometry.Compact);
+        Assert.Equal(-110 + MascotArt.InsetX, compact.X);
+        Assert.True(compact.Right <= CompactLayout.Line(mascot: true, ring: false).X);
+
+        // The peek pill is little more than the box, centred on its centre line.
+        var peek = MascotArt.Box(IslandGeometry.Peek);
+        Assert.Equal(0, peek.X + peek.Width / 2, 0.01);
+
+        // In the strip the box ends before the first label, so a press on it is never a tab's.
+        PanelId[] tabs = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media];
+        var box = MascotArt.Box(IslandGeometry.Panel(380, 140));
+        float left = box.X + 380 / 2f;
+        Assert.True(left + box.Width <= TabStrip.Labels(tabs, PanelId.Media, 380, mascot: true)[0].Slot.X);
+        Assert.Null(TabStrip.At(left + box.Width / 2, tabs, PanelId.Media, 380, mascot: true));
+        Assert.InRange(box.Y + box.Height / 2, 0, PanelSpace.TabStripHeight);
+    }
+
+    // The art's flattened outline and the edge of its two circles, in DIPs from the shape's top-left corner.
+    private static List<Vector2> Art(in IslandGeometry shape)
+    {
+        var box = MascotArt.Box(shape);
+        var at = new Vector2(box.X + (float)shape.Width / 2, box.Y);
+        float k = MascotArt.SizeDips / MascotArt.ViewBox;
+        var points = new List<Vector2>();
+        var flat = new List<Vector2>();
+        foreach (var path in new[] { MascotArt.Beard, MascotArt.BeardShade, MascotArt.CapCone, MascotArt.TipCurl, MascotArt.Brim })
+        {
+            IslandOutline.Flatten([.. path], flat);
+            points.AddRange(flat.Select(p => at + p * k));
+        }
+
+        foreach (var (centre, radius) in new[] { MascotArt.Nose, MascotArt.TipBulb })
+        {
+            for (int i = 0; i < 32; i++)
+            {
+                float a = i * MathF.Tau / 32;
+                points.Add(at + (centre + radius * new Vector2(MathF.Cos(a), MathF.Sin(a))) * k);
+            }
+        }
+
+        return points;
+    }
+
+    private static bool Inside(Vector2 p, List<Vector2> polygon)
+    {
+        bool inside = false;
+        for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
+        {
+            var (a, b) = (polygon[i], polygon[j]);
+            if ((a.Y > p.Y) != (b.Y > p.Y) && p.X < a.X + (p.Y - a.Y) / (b.Y - a.Y) * (b.X - a.X))
+            {
+                inside = !inside;
+            }
+        }
+
+        return inside;
+    }
+
+    private static float Distance(Vector2 p, List<Vector2> polygon)
+    {
+        float best = float.MaxValue;
+        for (int i = 0, j = polygon.Count - 1; i < polygon.Count; j = i++)
+        {
+            var (a, b) = (polygon[j], polygon[i]);
+            float t = Math.Clamp(Vector2.Dot(p - a, b - a) / Math.Max(1e-6f, (b - a).LengthSquared()), 0, 1);
+            best = Math.Min(best, Vector2.Distance(p, a + t * (b - a)));
+        }
+
+        return best;
+    }
+
     private static bool InViewBox(Vector2 p) => p.X is >= 0 and <= MascotArt.ViewBox && p.Y is >= 0 and <= MascotArt.ViewBox;
 }

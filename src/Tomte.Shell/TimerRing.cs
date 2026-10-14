@@ -51,7 +51,7 @@ internal sealed class TimerRing
 
     /// <summary>
     /// Show the ring for a run: full when it has ended, otherwise filling until its end time. It sits right of
-    /// the mascot, or at the mascot's own inset when the mascot is off, so it never stands beside a gap.
+    /// the mascot, or at the pill's left padding when the mascot is off, so it never stands beside a gap.
     /// </summary>
     public void Show(TimerRun run, DateTimeOffset now, double scale, bool mascotOn)
     {

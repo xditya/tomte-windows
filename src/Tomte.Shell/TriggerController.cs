@@ -41,6 +41,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
+    private Task saving = Task.CompletedTask;
 
     public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
     {
@@ -56,11 +57,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
         timer.Changed += () => island.Queue.TryEnqueue(ArmTimer);
         ArmTimer();
         settings = store.Current;
+        island.MoveTo(settings.IslandOffset);
         island.Message = HandleMessage;
-        // Hover, a press or a scroll on Compact opens Panels; on the next turn, so the press or notch that opens
-        // them is not also taken by the panel host as a tab switch or a press on the new body.
+        // Hover, a press or a scroll on Compact opens Panels, and a click on the tomte the palette; on the next turn, so
+        // the press or notch that opens them is not also taken by the panel host as a tab switch or a press on the new body.
         island.Wheel += (_, _) => OpenPanelsNextTurn();
-        island.Pressed += _ => OpenPanelsNextTurn();
+        island.Pressed += OnPressed;
+        // A drag on the pill's own surface moves the island along the top edge, and holds it open like any drag.
+        island.Grabs = Grabs;
+        island.MoveStarted += () =>
+        {
+            activity |= IslandActivity.DragInProgress;
+            PInvoke.KillTimer(island.Hwnd, HoverTimer);
+        };
+        island.Moved += OnMoved;
         island.LayoutChanged += () =>
         {
             PushZone();
@@ -146,7 +156,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
 
-    /// <summary>After the palette hotkey opened the Palette state: its content and its prompt box, which takes the keys.</summary>
+    /// <summary>After the palette hotkey or a click on the tomte opened the Palette state: its content and its prompt box, which takes the keys.</summary>
     public Action? PaletteOpened { get; set; }
 
     /// <summary>After the scratchpad hotkey opened its tab: the note takes the keys.</summary>
@@ -172,7 +182,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// now-playing row both ask here. <paramref name="playing"/> says whether something plays.
     /// </summary>
     public CompactContent CompactShows(bool playing) =>
-        CompactRules.Content(Compact, eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other, (timer.Run ?? finished) is not null, playing);
+        CompactRules.Content(Compact, eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other, (timer.Run ?? finished) is not null, playing, island.Mascot.Enabled);
 
     /// <summary>
     /// The words the Compact pill shows now, by <see cref="CompactRules.Line"/>, and the time left when they are
@@ -264,7 +274,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var reveal = settings.Reveal;
         // The silhouette is a setting too; the window takes it up with its next morph.
         island.Attached = settings.AttachToTopEdge;
-        InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), reveal.ZoneFraction, reveal.DragApproachDip, island.Scale));
+        // Centred under the island, wherever along the edge it has been moved.
+        InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), island.CenterX, reveal.ZoneFraction, reveal.DragApproachDip, island.Scale));
         if (machine.State != IslandState.Hidden)
         {
             InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(reveal.RetractMarginDip * island.Scale));
@@ -284,6 +295,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             PushZone();
         }
+
+        // "Reset position" in the settings window; the island's own drags are already in the settings here.
+        island.MoveTo(next.IslandOffset);
 
         watch.Refresh();
         if (!settings.DesktopPeek && activity.HasFlag(IslandActivity.Peek))
@@ -395,6 +409,77 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
+    /// <summary>
+    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact, peek or Panels; with no provider set up
+    /// the palette says the AI layer is off. A press anywhere else on Compact opens Panels.
+    /// </summary>
+    private void OnPressed(System.Numerics.Vector2 at)
+    {
+        if (island.OnMascot(at) && OpensPalette())
+        {
+            island.Queue.TryEnqueue(() =>
+            {
+                if (OpensPalette())
+                {
+                    // The island is up and was clicked: the pause and the suppression had their say when it showed.
+                    Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+                    PaletteOpened?.Invoke();
+                }
+            });
+            return;
+        }
+
+        OpenPanelsNextTurn();
+    }
+
+    private bool OpensPalette() => machine.State is IslandState.Compact or IslandState.Panels && !activity.HasFlag(IslandActivity.Rambling);
+
+    /// <summary>
+    /// The pill's own surface, which a drag moves along the top edge: all of Compact, the tab strip's row outside its
+    /// labels, and the tomte wherever it sits. Labels, panel bodies and the palette's controls keep their presses, and
+    /// shelf and result tiles their drag out.
+    /// </summary>
+    private bool Grabs(System.Numerics.Vector2 at) => machine.State switch
+    {
+        IslandState.Compact => true,
+        IslandState.Panels => at.Y < PanelSpace.TabStripHeight && Panels?.OnLabel(at) != true,
+        IslandState.Palette => island.OnMascot(at),
+        _ => false,
+    };
+
+    /// <summary>
+    /// A drag on the pill let go, or a double click sent the island back to the middle: the place is kept for the next
+    /// start, and the pointer counts from where it is now, since the island moved under it.
+    /// </summary>
+    private void OnMoved(double offset)
+    {
+        // Off this thread, on the store's latest settings so a newer save from the settings window is kept, and one
+        // after the other so the last place moved to is the one in the file.
+        saving = saving.ContinueWith(
+            _ =>
+            {
+                try
+                {
+                    if (store.Current.IslandOffset != offset)
+                    {
+                        store.Save(store.Current with { IslandOffset = offset });
+                    }
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    log?.Invoke($"settings: the island's place was not saved: {e.Message}");
+                }
+            },
+            TaskScheduler.Default);
+
+        var b = island.TargetBounds;
+        int margin = (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale);
+        pointerInside = PInvoke.GetCursorPos(out var cursor) && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, margin);
+        EndDrag();
+        // A window may be under the island's new place.
+        SchedulePeek();
+    }
+
     private void OnTimer(nuint id)
     {
         PInvoke.KillTimer(island.Hwnd, id);
@@ -403,22 +488,21 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case RetractTimer when !pointerInside && RetractionRules.ShouldRetract(machine.State, activity):
                 Hide();
                 break;
-            case HoverTimer when pointerInside && RetractionRules.OpensPanels(machine.State, activity):
+            case HoverTimer when pointerInside && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
                 break;
-            case EventTimer when eventShowing && machine.State == IslandState.Compact:
-                if (pointerInside)
+            case EventTimer or FirstRunTimer when (id == EventTimer ? eventShowing : firstRunShowing) && machine.State == IslandState.Compact:
+                // The pointer on the pill, or a drag moving it (the pointer tracking still has the bounds from before
+                // the drag), holds it for another while.
+                if (RetractionRules.HoldsPastItsTime(pointerInside, activity))
                 {
-                    PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
+                    PInvoke.SetTimer(island.Hwnd, id, EventHoldMs, null);
                 }
                 else
                 {
                     Hide();
                 }
 
-                break;
-            case FirstRunTimer when firstRunShowing && machine.State == IslandState.Compact:
-                Hide();
                 break;
             case DragTimer when machine.State == IslandState.ShelfDrop && !dragEntered:
                 // A window move, a tab drag or a text selection: nothing OLE ever arrived.
@@ -453,12 +537,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void OnPointer(bool inside)
     {
+        bool entered = inside && !pointerInside;
         pointerInside = inside;
         if (inside)
         {
             PInvoke.KillTimer(island.Hwnd, RetractTimer);
             armed = true;
-            if (machine.State == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling))
+            // Only a pointer coming onto the pill dwells; one that was on it already has just dragged it there.
+            if (entered && RetractionRules.OpensPanels(machine.State, activity))
             {
                 PInvoke.SetTimer(island.Hwnd, HoverTimer, HoverDwellMs, null);
             }
@@ -805,12 +891,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void EvaluatePeek()
     {
-        string? under = watch.WindowUnder(island.RestBounds(IslandGeometry.Compact));
+        // With the tomte off there is nothing for the small pill to hold: peek is the full pill with what plays.
+        bool tomte = island.Mascot.Enabled;
+        string? under = watch.WindowUnder(island.RestBounds(tomte ? IslandGeometry.Peek : IslandGeometry.Compact));
         log?.Invoke(under is null ? "peek: nothing under the zone" : $"peek: {under} under the zone");
         peekWanted = under is null;
         if (peekWanted)
         {
-            if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact))
+            if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact, peek: tomte))
             {
                 activity |= IslandActivity.Peek;
                 // Peek is settled only now, after Go; the peek pill carries no ring.
@@ -824,14 +912,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>The pause, then the suppression check, then the morph. False when nothing was shown.</summary>
-    private bool Reveal(RevealTrigger trigger, IslandState state, (double W, double H) size = default, bool ignorePause = false)
+    private bool Reveal(RevealTrigger trigger, IslandState state, (double W, double H) size = default, bool ignorePause = false, bool peek = false)
     {
         if (!Allowed(trigger, ignorePause))
         {
             return false;
         }
 
-        Go(state, size);
+        Go(state, size, peek);
         return true;
     }
 
@@ -863,9 +951,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>
     /// One continuous morph to the state. A hop through Hidden keeps the state table honest for paths the
     /// interaction map adds (Compact to Shelf-drop, Panels to Palette); the shape still retargets directly and
-    /// the mascot follows the real transition.
+    /// the mascot follows the real transition. Desktop peek is Compact in the small pill that holds the tomte alone.
     /// </summary>
-    private void Go(IslandState state, (double W, double H) size = default)
+    private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
     {
         var from = machine.State;
         if (from == IslandState.Capture)
@@ -901,7 +989,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         island.Mascot.Follow(from, state);
         island.PanelLook = state is IslandState.Panels or IslandState.Palette;
         var (width, height) = PanelSize.Fit(size, island.MonitorSize);
-        var geometry = IslandGeometry.For(state, width, height);
+        var geometry = peek ? IslandGeometry.Peek : IslandGeometry.For(state, width, height);
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.

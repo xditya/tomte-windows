@@ -46,9 +46,10 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("General"));
         page.Children.Add(Card(
             Row("Start with Windows", startupNote, startup),
-            Row("Desktop peek", Note("Show the clock and what is playing at the top of the screen when no window is there."), Toggle(s => s.DesktopPeek, (s, v) => s with { DesktopPeek = v })),
+            Row("Desktop peek", Note("Show the tomte at the top of the screen when no window is there. Point at it to open the island."), Toggle(s => s.DesktopPeek, (s, v) => s with { DesktopPeek = v })),
             Row("Track changes", Note("Show the pill for a few seconds when another track starts playing."), Toggle(s => s.MediaTrackChangeEvent, (s, v) => s with { MediaTrackChangeEvent = v })),
-            Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors())));
+            Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors()),
+            Row("Island position", Note("Drag the island along the top edge to move it. Double-click it, or reset here, to bring it back to the middle."), ResetPosition())));
 
         page.Children.Add(Header("Hotkeys"));
         page.Children.Add(Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), CopilotNote()]));
@@ -59,7 +60,7 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("Reveal zone and thresholds"));
         page.Children.Add(Card(
             Row("Edge push", Note("Push the cursor up against the top edge to reveal."), RevealToggle(r => r.EdgePush, (r, v) => r with { EdgePush = v })),
-            Row("Reveal zone", Note("Width of the zone in the middle of the top edge, in percent."), Number(10, 100, r => r.ZoneFraction * 100, (r, v) => r with { ZoneFraction = v / 100 })),
+            Row("Reveal zone", Note("Width of the zone under the island along the top edge, in percent."), Number(10, 100, r => r.ZoneFraction * 100, (r, v) => r with { ZoneFraction = v / 100 })),
             Row("Push strength, mouse", Note("Upward mouse movement needed, in raw counts. Raise it if the island opens by accident."), Number(10, 1000, r => r.PushCounts, (r, v) => r with { PushCounts = (int)v })),
             Row("Push strength, touchpad", Note("The same for a precision touchpad."), Number(10, 1000, r => r.TouchpadPushCounts, (r, v) => r with { TouchpadPushCounts = (int)v })),
             Row("Push time", Note("The push has to happen within this many milliseconds."), Number(100, 2000, r => r.PushWindowMs, (r, v) => r with { PushWindowMs = (int)v })),
@@ -144,6 +145,13 @@ public sealed partial class SettingsWindow : Window
         var box = new ComboBox { ItemsSource = new[] { "Every monitor", "Primary monitor only" }, SelectedIndex = store.Current.AllMonitors ? 0 : 1, MinWidth = 200 };
         box.SelectionChanged += (_, _) => Save(s => s with { AllMonitors = box.SelectedIndex == 0 });
         return box;
+    }
+
+    private Button ResetPosition()
+    {
+        var reset = new Button { Content = "Reset position" };
+        reset.Click += (_, _) => Save(s => s with { IslandOffset = 0 });
+        return reset;
     }
 
     private NumberBox Number(double min, double max, Func<RevealSettings, double> get, Func<RevealSettings, double, RevealSettings> set)

@@ -10,8 +10,8 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// Who has the keys. The island never activates on its own (WS_EX_NOACTIVATE and MA_NOACTIVATE stay): only a typing
-/// hotkey or a click into a text box makes it the foreground window, which Windows allows because that input was
-/// the last one and went to this process. The window that was in front is remembered, and a hide or Esc hands the
+/// hotkey, a click into a text box or a click on the tomte (which opens the palette) makes it the foreground window,
+/// which Windows allows because that input was the last one and went to this process. The window that was in front is remembered, and a hide or Esc hands the
 /// foreground back to it. When the user moves the foreground elsewhere themselves, nothing is handed back.
 /// The boxes are made here, so each one draws on the text device and is known for clicks and the cursor.
 /// Island thread only.
@@ -100,7 +100,7 @@ internal sealed class TypingFocus
         return editor;
     }
 
-    /// <summary>A typing hotkey or a click into the box: the island takes the foreground and the box the keys. False when Windows refused.</summary>
+    /// <summary>A typing hotkey or a click into the box or on the tomte: the island takes the foreground and the box the keys. False when Windows refused.</summary>
     public bool Take(EditorView editor)
     {
         handBackQueued = false;

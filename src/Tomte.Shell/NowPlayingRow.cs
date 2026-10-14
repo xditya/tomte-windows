@@ -12,8 +12,8 @@ namespace Tomte.Shell;
 /// <summary>
 /// The Compact pill's now-playing row: the art, the title and four bars that move while something
 /// plays. It shows where <see cref="TriggerController.CompactShows"/> puts it: the push pill when no
-/// timer runs, the peek pill, and the track-change event's own pill. The media tracker is watched
-/// while such a pill is up; the visuals exist only while the row shows.
+/// timer runs, the peek pill with the tomte off, and the track-change event's own pill. The media
+/// tracker is watched while such a pill is up; the visuals exist only while the row shows.
 /// </summary>
 internal sealed class NowPlayingRow
 {
