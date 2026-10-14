@@ -4,6 +4,7 @@ using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
+using Tomte.Core.Shortcuts;
 using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Tomte.Shell;
@@ -35,6 +36,11 @@ internal static unsafe class Program
 
     private static int Main(string[] args)
     {
+        if (args is ["--devices", var how])
+        {
+            return Devices(how == "shared");
+        }
+
         string dir = args.Length > 0 ? args[0] : "captures";
         Directory.CreateDirectory(dir);
         var report = new List<string> { $"machine {Environment.MachineName}, {Environment.OSVersion}" };
@@ -92,6 +98,77 @@ internal static unsafe class Program
         return 0;
     }
 
+    /// <summary>
+    /// The Media panel's devices with art showing, in a fresh process: the text's Direct2D device on a software
+    /// Direct3D device, the four runs drawn, and the art's 132 px texture either on a second software device (as the
+    /// island has it) or on the text's one. Prints the private working set before and after.
+    /// </summary>
+    private static int Devices(bool shared)
+    {
+        // The text stack's first layout comes first in both, as in the island, so only the devices differ.
+        TextLayout.Of(new TextRun("Nightfall", MediaPanelLayout.TitleStyle, MediaPanelLayout.Title.Width)).Dispose();
+        GC.Collect();
+        string before = Memory("before the devices");
+        var d2d = TextDraw.CreateDevice(out ID3D11Device* d3d);
+        ID2D1DeviceContext* dc;
+        d2d->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS.D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dc);
+        foreach (var (text, style, slot) in new[]
+        {
+            ("Nightfall", MediaPanelLayout.TitleStyle, MediaPanelLayout.Title),
+            ("Lo-fi radio · lofi beats to study", MediaPanelLayout.ArtistStyle, MediaPanelLayout.Artist),
+            ("00:48", MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed),
+            ("03:15", MediaPanelLayout.TotalStyle, MediaPanelLayout.Total),
+        })
+        {
+            using var block = new TextBlock();
+            block.Set(new TextRun(text, style, slot.Width), 1.5);
+            var (w, h) = block.Pixels;
+            Canvas.Render(dc, w, h, 1.5, block.Layout!, Vector2.Zero);
+        }
+
+        ID3D11Device* art = d3d;
+        if (shared)
+        {
+            d3d->AddRef();
+        }
+        else
+        {
+            ID3D11Device* own;
+            PInvoke.D3D11CreateDevice(null, Windows.Win32.Graphics.Direct3D.D3D_DRIVER_TYPE.D3D_DRIVER_TYPE_WARP, default, D3D11_CREATE_DEVICE_FLAG.D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, 0, PInvoke.D3D11_SDK_VERSION, &own, null, null).ThrowOnFailure();
+            art = own;
+        }
+
+        var pixels = new byte[132 * 132 * 4];
+        Array.Fill(pixels, (byte)0x80);
+        var desc = new D3D11_TEXTURE2D_DESC
+        {
+            Width = 132,
+            Height = 132,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = DXGI_FORMAT.DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc = new DXGI_SAMPLE_DESC { Count = 1 },
+            Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
+            BindFlags = D3D11_BIND_FLAG.D3D11_BIND_SHADER_RESOURCE,
+        };
+        ID3D11Texture2D* texture;
+        fixed (byte* bits = pixels)
+        {
+            var data = new D3D11_SUBRESOURCE_DATA { pSysMem = bits, SysMemPitch = 132 * 4 };
+            art->CreateTexture2D(&desc, &data, &texture);
+        }
+
+        GC.Collect();
+        Console.WriteLine(before);
+        Console.WriteLine(Memory(shared ? "with art and text on one device" : "with art and text on two devices"));
+        texture->Release();
+        art->Release();
+        dc->Release();
+        d2d->Release();
+        d3d->Release();
+        return 0;
+    }
+
     private static string Stats(List<double> ms) => ms.Count == 0 ? "none" : $"avg {ms.Average():F3} ms, max {ms.Max():F3} ms";
 
     private static string Memory(string moment)
@@ -144,6 +221,11 @@ internal static unsafe class Program
             new("compact-device-event", IslandGeometry.Compact, c => CompactLine(c, "Volume 40%.", ring: null)),
             new("compact-digest", IslandGeometry.Compact, c => CompactLine(c, CompactRules.EventLine([new IslandEvent(CompactRules.TimerDone(TimeSpan.FromMinutes(25)), default), new IslandEvent("Opened Spotify.", default)]), ring: null)),
             new("compact-first-run-hint", IslandGeometry.Compact, c => CompactLine(c, CompactRules.Hint, ring: null)),
+            new("shortcuts", Panel(PanelSize.Shortcuts), Shortcuts),
+            new("scratchpad", Panel(PanelSize.Scratchpad), c => Scratchpad(c, "Call Mom\nSubscribe to the newsletter about small tools, the one with the long name that wraps over two lines\nGym 6:00 PM")),
+            new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
+            new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
+            new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
         ];
     }
 
@@ -225,6 +307,127 @@ internal static unsafe class Program
         }
 
         c.Text(line, tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle, CompactLayout.Line(true, ring is not null), Vector2.Zero);
+    }
+
+    private static IslandGeometry Panel((double W, double H) size) => IslandGeometry.Panel(size.W, size.H);
+
+    private static Vector2 Body((double W, double H) size) => new((float)size.W, (float)size.H - PanelSpace.TabStripHeight);
+
+    private static Vector2 BodyOrigin((double W, double H) size) => new((float)(-size.W / 2), PanelSpace.TabStripHeight);
+
+    // The Shortcuts grid with a script tile that may not run, a long name and the add tile; grey squares for icons.
+    private static void Shortcuts(Canvas c)
+    {
+        var size = Body(PanelSize.Shortcuts);
+        var body = BodyOrigin(PanelSize.Shortcuts);
+        c.Pill();
+        c.Mascot();
+        foreach (var line in ShortcutGrid.HeadText(size))
+        {
+            c.Text(line, body);
+        }
+
+        (string Name, ShortcutOutcome? Why)[] tiles =
+            [("VS Code", null), ("Terminal", null), ("Downloads", null), ("Figma file", null), ("build.ps1", ShortcutOutcome.ScriptsOff), ("Quarterly report draft (final, really)", null), ("old-notes.txt", ShortcutOutcome.Missing)];
+        for (int i = 0; i <= tiles.Length && i < ShortcutGrid.Visible(0, tiles.Length, size).Count; i++)
+        {
+            var cell = ShortcutGrid.Cell(i, size);
+            var holder = body + new Vector2(cell.X, cell.Y);
+            var icon = ShortcutGrid.Icon(cell, c.Scale, PanelSpace.TabStripHeight);
+            if (i == tiles.Length)
+            {
+                c.StrokeRect(Offset(cell, body), ShortcutGrid.Corner, 0x40FFFFFF);
+                c.StrokeRect(Offset(icon, body), 8, 0x40FFFFFF);
+                c.Text(ShortcutGrid.AddText(cell), holder);
+                break;
+            }
+
+            c.RoundRect(Offset(cell, body), ShortcutGrid.Corner, 0x0FFFFFFF);
+            c.RoundRect(Offset(icon, body), 8, 0x1CFFFFFF);
+            foreach (var line in ShortcutGrid.TileText(cell, tiles[i].Name, tiles[i].Why))
+            {
+                c.Text(line, holder);
+            }
+        }
+    }
+
+    // The Scratchpad: heading, the note's card with the note's start wrapped in it, the footer.
+    private static void Scratchpad(Canvas c, string note)
+    {
+        var layout = new ScratchpadPanelLayout(Body(PanelSize.Scratchpad));
+        var body = BodyOrigin(PanelSize.Scratchpad);
+        c.Pill();
+        c.Mascot();
+        foreach (var line in layout.FrameText())
+        {
+            c.Text(line, body);
+        }
+
+        c.RoundRect(Offset(layout.Note, body), ScratchpadPanelLayout.Corner, 0x0FFFFFFF);
+        var (run, at) = layout.NoteRun(note);
+        c.Text(run, at, body);
+    }
+
+    private static readonly (string Display, string Ago)[] Rows =
+    [
+        ("Pull up last quarter's numbers, compare them with this one", "2 min"),
+        ("learn.microsoft.com/windows/win32/api/dwmapi", "9 min"),
+        ("WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW", "31 min"),
+        ("Meet at 10, not 9", "1 h"),
+        ("Screenshot of the shelf, 1280 x 720", "3 d"),
+    ];
+
+    // The Clipboard history: on with rows, on and empty, or off.
+    private static void Clipboard(Canvas c, bool on, (string Display, string Ago)[] rows)
+    {
+        var layout = new ClipboardPanelLayout(Body(PanelSize.Clipboard));
+        var body = BodyOrigin(PanelSize.Clipboard);
+        c.Pill();
+        c.Mascot();
+        foreach (var line in layout.HeadText(on, 50))
+        {
+            c.Text(line, body);
+        }
+
+        var track = Offset(layout.Switch, body);
+        c.RoundRect(track, track.Height / 2, on ? 0xFF6FA8FFu : 0x33FFFFFFu);
+        c.Circle(new Vector2(on ? track.Right - 9 : track.X + 9, track.Y + track.Height / 2), 7, 0xFFFFFFFF);
+        if (!on || rows.Length == 0)
+        {
+            c.StrokeRect(Offset(layout.List, body), ClipboardPanelLayout.Corner, 0x2EFFFFFF);
+            foreach (var line in layout.BoxText(on, 50))
+            {
+                c.Text(line, body);
+            }
+
+            return;
+        }
+
+        foreach (var line in layout.FootText())
+        {
+            c.Text(line, body);
+        }
+
+        var list = layout.List;
+        for (int i = 0; i < rows.Length; i++)
+        {
+            var row = ClipboardPanelLayout.Row(i, list.Width);
+            if (row.Bottom > list.Height)
+            {
+                break;
+            }
+
+            var origin = body + new Vector2(list.X + row.X, list.Y + row.Y);
+            c.RoundRect(Offset(new RectangleF(0, 0, row.Width, row.Height), origin), ClipboardPanelLayout.Corner, 0x0FFFFFFF);
+            float iconY = (row.Height - ClipboardPanelLayout.Icon) / 2;
+            c.RoundRect(Offset(new RectangleF(ClipboardPanelLayout.Gap, iconY, ClipboardPanelLayout.Icon, ClipboardPanelLayout.Icon), origin), 6, 0x1CFFFFFF);
+            var remove = Offset(ClipboardPanelLayout.RemoveIn(row.Width), origin);
+            c.Circle(new Vector2(remove.X + remove.Width / 2, remove.Y + remove.Height / 2), remove.Width / 2, 0x0FFFFFFF);
+            foreach (var line in ClipboardPanelLayout.RowText(rows[i].Display, rows[i].Ago, row.Width))
+            {
+                c.Text(line, origin);
+            }
+        }
     }
 
     private static RectangleF Offset(RectangleF r, Vector2 by) => new(r.X + by.X, r.Y + by.Y, r.Width, r.Height);
@@ -396,18 +599,38 @@ internal static unsafe class Program
         /// One line in a slot of a host, as the island's text visual places it: as wide as the slot, centred in its
         /// height, snapped to the pixel grid, on a surface the text's size plus the pad.
         /// </summary>
-        public void Text(string text, TextStyle style, RectangleF slot, Vector2 host)
+        public void Text(string text, TextStyle style, RectangleF slot, Vector2 host) => Text(new TextRun(text, style, slot.Width), slot, host, centred: true);
+
+        public void Text(TextSlot line, Vector2 host) => Text(line.Text, line.Style, line.Slot, host);
+
+        /// <summary>A run of any number of lines with its box's top-left corner at a point of the host.</summary>
+        public void Text(TextRun run, Vector2 at, Vector2 host) => Text(run, new RectangleF(at.X, at.Y, run.MaxWidth, 0), host, centred: false);
+
+        public double Scale => scale;
+
+        /// <summary>A rounded outline one pixel wide, inside the rectangle.</summary>
+        public void StrokeRect(RectangleF r, float radius, uint argb)
+        {
+            var brush = Brush(argb);
+            float half = (float)(0.5 / scale);
+            var round = new D2D1_ROUNDED_RECT { rect = Rect(new RectangleF(r.X + half, r.Y + half, r.Width - 2 * half, r.Height - 2 * half)), radiusX = radius, radiusY = radius };
+            dc->DrawRoundedRectangle(&round, (ID2D1Brush*)brush, (float)(1 / scale), null);
+            brush->Release();
+        }
+
+        private void Text(TextRun run, RectangleF slot, Vector2 host, bool centred)
         {
             var watch = Stopwatch.StartNew();
             using var block = new TextBlock();
-            block.Set(new TextRun(text, style, slot.Width), scale);
+            block.Set(run, scale);
             LayoutMs.Add(watch.Elapsed.TotalMilliseconds);
             if (block.Layout is not { } layout)
             {
                 return;
             }
 
-            float x = PixelGrid.Snap(host.X, slot.X, scale), y = PixelGrid.Snap(host.Y, slot.Y + (slot.Height - layout.Height) / 2, scale);
+            float top = centred ? slot.Y + (slot.Height - layout.Height) / 2 : slot.Y;
+            float x = PixelGrid.Snap(host.X, slot.X, scale), y = PixelGrid.Snap(host.Y, top, scale);
             float pad = (float)(TextBlock.Pad / scale);
             var (w, h) = block.Pixels;
             watch.Restart();
