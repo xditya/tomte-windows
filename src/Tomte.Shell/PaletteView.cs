@@ -57,6 +57,7 @@ internal sealed class PaletteView : IDisposable
     private bool fadeInPending = true, disposed;
     private ToolRequest? laidAsk;
     private Confirmation? confirm;
+    private (string Text, float Height) said = ("", 0);
     private CompositionRoundedRectangleGeometry? askCard;
     private TextVisual? askSummary, askLine;
     private readonly List<(CompositionRoundedRectangleGeometry Geometry, CompositionColorBrush Brush, TextVisual Label)> buttons = [];
@@ -174,7 +175,7 @@ internal sealed class PaletteView : IDisposable
         }
 
         // The chips are measured again only when the prompt's height, a chip or the question changed, not for every streamed word.
-        float promptText = prompt?.ContentHeight ?? 0;
+        float promptText = prompt?.ContentHeight ?? Said();
         List<(string, bool)> chips = session is null ? [] : [.. session.Chips.Select(chip => (chip.Label, chip.On && chip.Available))];
         var asked = question?.Asked;
         if (promptText != laidText || !chips.SequenceEqual(laidChips) || !ReferenceEquals(asked, laidAsk))
@@ -300,8 +301,28 @@ internal sealed class PaletteView : IDisposable
 
         var box = layout.Prompt;
         var editorBox = layout.Editor;
+        if (prompt is null && session is not null)
+        {
+            placeholder.Show(new TextRun(session.Prompt, PaletteLayout.PromptText, editorBox.Width, PaletteLayout.PromptLines), new Vector2(editorBox.X, editorBox.Y));
+            return;
+        }
+
         bool empty = prompt is null || prompt.Services.Text.Length == 0;
         placeholder.Show(empty ? (session is null ? PaletteLayout.Off : PaletteLayout.Hint) : "", PaletteLayout.Placeholder, new RectangleF(editorBox.X, box.Y, editorBox.Width, box.Height));
+    }
+
+    // A palette with no text box (the voice palette) shows what was said in the box's place, up to four lines; its
+    // height is measured once per prompt, not for every streamed word.
+    private float Said()
+    {
+        if (session is null || session.Prompt == said.Text)
+        {
+            return said.Height;
+        }
+
+        using var laid = TextLayout.Of(new TextRun(session.Prompt, PaletteLayout.PromptText, layout.Editor.Width, PaletteLayout.PromptLines));
+        said = (session.Prompt, session.Prompt.Length == 0 ? 0 : laid.Height);
+        return said.Height;
     }
 
     // The open question's card, summary, line and buttons, made on the first question; with none they are emptied.

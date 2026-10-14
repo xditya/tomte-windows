@@ -167,6 +167,21 @@ internal sealed class Rambler(
             {
                 log($"{DateTime.Now:HH:mm:ss.fff} voice: {session.Status}{(session.Error is null ? "" : ": " + session.Error)} steps={session.ToolSteps} reply=\"{session.AnswerText.ReplaceLineEndings(" | ")}\"");
                 CommandDone?.Invoke(session);
+                // A reply in words stays up long enough to read, at about 15 characters a second; Esc or anything else
+                // the user opens ends it sooner.
+                if (session.Status == PaletteStatus.Done && session.AnswerText.Trim() is { Length: > 0 } reply && machine.State == IslandState.Palette)
+                {
+                    var left = new TaskCompletionSource();
+                    void OnState(IslandState from, IslandState to)
+                    {
+                        if (to != IslandState.Palette)
+                            left.TrySetResult();
+                    }
+
+                    machine.Changed += OnState;
+                    await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(Math.Clamp(reply.Length / 15.0, 4, 15))), left.Task);
+                    machine.Changed -= OnState;
+                }
             }
         }
         catch (Exception e)
