@@ -102,42 +102,48 @@ internal sealed unsafe class CaptureOverlay : IDisposable
             }
         }
 
-        BOOL disableTransitions = true;
-        PInvoke.DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &disableTransitions, (uint)sizeof(BOOL));
-        if (!PInvoke.SetWindowDisplayAffinity(hwnd, WINDOW_DISPLAY_AFFINITY.WDA_EXCLUDEFROMCAPTURE))
+        // The window exists from here on: anything that throws must not leave it, or current, behind.
+        try
         {
-            // Without the exclusion the dim lands in the crop; no overlay beats a wrong image.
-            var error = new Win32Exception();
-            current = null;
-            PInvoke.DestroyWindow(hwnd);
-            throw error;
+            BOOL disableTransitions = true;
+            PInvoke.DwmSetWindowAttribute(hwnd, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &disableTransitions, (uint)sizeof(BOOL));
+            if (!PInvoke.SetWindowDisplayAffinity(hwnd, WINDOW_DISPLAY_AFFINITY.WDA_EXCLUDEFROMCAPTURE))
+            {
+                // Without the exclusion the dim lands in the crop; no overlay beats a wrong image.
+                throw new Win32Exception();
+            }
+
+            target = IslandWindow.CreateDesktopWindowTarget(compositor, hwnd);
+            visual = compositor.CreateShapeVisual();
+            visual.Size = new Vector2(width, height);
+            dimGeometry = compositor.CreatePathGeometry();
+            var dim = compositor.CreateSpriteShape(dimGeometry);
+            dim.FillBrush = compositor.CreateColorBrush(Dim);
+            strokeGeometry = compositor.CreatePathGeometry();
+            var stroke = compositor.CreateSpriteShape(strokeGeometry);
+            stroke.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(255, 255, 255, 255));
+            stroke.StrokeThickness = (float)(2 * scale);
+            stroke.StrokeLineJoin = CompositionStrokeLineJoin.Round;
+            boxGeometry = compositor.CreateRectangleGeometry();
+            box = compositor.CreateSpriteShape(boxGeometry);
+            box.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(128, 255, 255, 255));
+            box.StrokeThickness = (float)scale;
+            box.StrokeDashArray.Add(4);
+            box.StrokeDashArray.Add(4);
+            visual.Shapes.Add(dim);
+            visual.Shapes.Add(box);
+            visual.Shapes.Add(stroke);
+            target.Root = visual;
+            Redraw();
+
+            PInvoke.ShowWindow(hwnd, SHOW_WINDOW_CMD.SW_SHOW);
+            Activated = PInvoke.SetForegroundWindow(hwnd);
         }
-
-        target = IslandWindow.CreateDesktopWindowTarget(compositor, hwnd);
-        visual = compositor.CreateShapeVisual();
-        visual.Size = new Vector2(width, height);
-        dimGeometry = compositor.CreatePathGeometry();
-        var dim = compositor.CreateSpriteShape(dimGeometry);
-        dim.FillBrush = compositor.CreateColorBrush(Dim);
-        strokeGeometry = compositor.CreatePathGeometry();
-        var stroke = compositor.CreateSpriteShape(strokeGeometry);
-        stroke.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(255, 255, 255, 255));
-        stroke.StrokeThickness = (float)(2 * scale);
-        stroke.StrokeLineJoin = CompositionStrokeLineJoin.Round;
-        boxGeometry = compositor.CreateRectangleGeometry();
-        box = compositor.CreateSpriteShape(boxGeometry);
-        box.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(128, 255, 255, 255));
-        box.StrokeThickness = (float)scale;
-        box.StrokeDashArray.Add(4);
-        box.StrokeDashArray.Add(4);
-        visual.Shapes.Add(dim);
-        visual.Shapes.Add(box);
-        visual.Shapes.Add(stroke);
-        target.Root = visual;
-        Redraw();
-
-        PInvoke.ShowWindow(hwnd, SHOW_WINDOW_CMD.SW_SHOW);
-        Activated = PInvoke.SetForegroundWindow(hwnd);
+        catch
+        {
+            Dispose();
+            throw;
+        }
     }
 
     public HMONITOR Monitor { get; }
@@ -166,8 +172,9 @@ internal sealed unsafe class CaptureOverlay : IDisposable
         if (window != HWND.Null)
         {
             PInvoke.DestroyWindow(window);
-            target.Dispose();
-            visual.Dispose();
+            // Null when the constructor failed before building them.
+            target?.Dispose();
+            visual?.Dispose();
         }
     }
 
@@ -260,8 +267,10 @@ internal sealed unsafe class CaptureOverlay : IDisposable
                 break;
             case PInvoke.WM_KEYDOWN when wParam.Value == (nuint)VIRTUAL_KEY.VK_ESCAPE:
             case PInvoke.WM_RBUTTONUP:
+            case PInvoke.WM_CLOSE:
             case PInvoke.WM_DISPLAYCHANGE:
-                // Resolution or scale changed under the overlay: its pixel mapping is stale.
+                // A close from outside must complete the result like any cancel. A resolution or scale change
+                // under the overlay leaves its pixel mapping stale.
                 Finish(null);
                 break;
             case PInvoke.WM_ACTIVATE when (wParam.Value & 0xFFFF) == PInvoke.WA_INACTIVE:
