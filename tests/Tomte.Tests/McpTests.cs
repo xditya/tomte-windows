@@ -17,6 +17,7 @@ namespace Tomte.Tests;
 internal sealed class FakeMcpServers
 {
     private readonly Dictionary<string, Pipe> _toClient = [];
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, TaskCompletionSource> _reached = new();
 
     public int Starts;
     public int Stops;
@@ -43,7 +44,11 @@ internal sealed class FakeMcpServers
         if (Failing.Contains(settings.Name))
             throw new IOException(FailingMessage);
         if (Hanging.Contains(settings.Name))
+        {
+            Reach("hanging " + settings.Name);
             await Task.Delay(Timeout.Infinite, ct);
+        }
+
         Interlocked.Increment(ref Starts);
         var toServer = new Pipe();
         var toClient = new Pipe();
@@ -68,6 +73,7 @@ internal sealed class FakeMcpServers
         {
             options.Handlers.ListToolsHandler = async (_, cancel) =>
             {
+                Reach("listing " + settings.Name);
                 await Task.Delay(delay, cancel);
                 return new ListToolsResult { Tools = [] };
             };
@@ -78,8 +84,19 @@ internal sealed class FakeMcpServers
         var client = await McpClient.CreateAsync(new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream()), cancellationToken: ct);
         // Completion ends when the client session is disposed; for a stdio server that also ends the process.
         _ = client.Completion.ContinueWith(_ => Interlocked.Increment(ref Stops), TaskScheduler.Default);
+        Reach("connected " + settings.Name);
         return client;
     }
+
+    /// <summary>
+    /// Completes when a server gets to a point: "connected Files", "hanging Files" (its start is stuck) or
+    /// "listing Files" (it has a delayed tools/list in hand). Tests wait for the point, not for a time.
+    /// </summary>
+    public Task Reached(string point) => Point(point).Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+    private void Reach(string point) => Point(point).TrySetResult();
+
+    private TaskCompletionSource Point(string point) => _reached.GetOrAdd(point, _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
 
     /// <summary>The server goes away, as when its process exits.</summary>
     public void Kill(string name)
@@ -361,15 +378,22 @@ public class McpToolsTests
     {
         _fake.Hanging.Add("Web Search");
         var tools = Tools();
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => tools.ListAsync(cancel.Token));
+        using var cancel = new CancellationTokenSource();
+        var listing = tools.ListAsync(cancel.Token);
+        // Files is connected and Web Search is stuck. Cancel now: Files may or may not have listed yet.
+        await Task.WhenAll(_fake.Reached("connected Files"), _fake.Reached("hanging Web Search"));
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing);
 
-        // Files started before the cancel: it is registered, so the dispose stops it.
+        // Either way no server is left without an owner: Files is registered (the dispose will stop it),
+        // or its start was cancelled too and it was stopped at once.
         Assert.Equal(1, _fake.Starts);
-        Assert.Equal(1, tools.Running);
+        await _fake.WaitForStopsAsync(1 - tools.Running);
+        Assert.Equal(1 - _fake.Stops, tools.Running);
         await tools.DisposeAsync();
         await _fake.WaitForStopsAsync(1);
         Assert.Equal(1, _fake.Stops);
+        Assert.Equal(0, tools.Running);
     }
 
     [Fact]
@@ -377,8 +401,12 @@ public class McpToolsTests
     {
         _fake.ListDelay = TimeSpan.FromSeconds(30);
         await using var tools = Tools(null, Files);
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => tools.ListAsync(cancel.Token));
+        using var cancel = new CancellationTokenSource();
+        var listing = tools.ListAsync(cancel.Token);
+        // The server has the request in hand and sits on it: the client is connected and not yet listed.
+        await _fake.Reached("listing Files");
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing);
 
         await _fake.WaitForStopsAsync(1);
         Assert.Equal(1, _fake.Stops);
