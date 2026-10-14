@@ -119,15 +119,24 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
 
-    /// <summary>An internal event: shows Compact for the hold time, or waits while Focus, DND or fullscreen is on.</summary>
+    /// <summary>
+    /// An internal event: shows Compact for the hold time. It waits while Focus, DND or fullscreen is on, and while
+    /// the island is showing something else; then it shows once that ends. Nothing raised here is dropped for
+    /// arriving at a busy moment.
+    /// </summary>
     public void Raise(IslandEvent e)
     {
         // Focus and quiet hours change with no event to hear, so the notification state is read for each event.
         watch.ReadNotificationState(() =>
         {
-            if (events.Offer(e, !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules)))
+            bool held = TriggerQueue.IslandBusy(machine.State, activity) || !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules);
+            if (events.Offer(e, held))
             {
                 ShowEvent();
+            }
+            else
+            {
+                log?.Invoke($"events: \"{e.Text}\" waits, {events.Count} queued (island {machine.State})");
             }
         });
     }
@@ -462,18 +471,31 @@ internal sealed unsafe partial class TriggerController : IDisposable
             Hide();
         }
 
-        if (events.Count > 0 && Suppression.Allows(RevealTrigger.Event, s, settings.AppRules))
+        ReleaseEvents();
+    }
+
+    /// <summary>
+    /// One digest for everything that waited, once nothing holds events back; its content is the panel work's.
+    /// Called when the suppression changes and when the island hides, the two ways a wait can end.
+    /// </summary>
+    private void ReleaseEvents()
+    {
+        if (events.Count == 0
+            || TriggerQueue.IslandBusy(machine.State, activity)
+            || !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules))
         {
-            // One digest for everything that waited; its content is the panel work's.
-            var waited = events.Release();
-            log?.Invoke($"events: showing digest of {waited.Count}");
-            ShowEvent();
+            return;
         }
+
+        var waited = events.Release();
+        log?.Invoke($"events: showing digest of {waited.Count}");
+        ShowEvent();
     }
 
     private void ShowEvent()
     {
-        if (machine.State != IslandState.Hidden && !activity.HasFlag(IslandActivity.Peek))
+        // Callers queue while the island is busy; this is only the last guard against morphing over a panel.
+        if (TriggerQueue.IslandBusy(machine.State, activity))
         {
             return;
         }
@@ -661,6 +683,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             SchedulePeek();
         }
+
+        // Events that arrived while the island was showing something waited for this.
+        ReleaseEvents();
     }
 }
 
