@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-504","object":"chat.completion.chunk","created":1791965813,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"call_qfxlobm3","index":0,"type":"function","function":{"name":"schedule_job","arguments":"{\"date\":\"\",\"days\":[\"\"],\"name\":\"shutdown_pc\",\"prompt\":\"It is now time to go to sleep.  Please shut down your desktop and all peripherals.\",\"time\":\"23:00\",\"tools\":[]}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-504","object":"chat.completion.chunk","created":1791965813,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-504","object":"chat.completion.chunk","created":1791965813,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":757,"completion_tokens":59,"total_tokens":816}}
+
+data: [DONE]
+

@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-252","object":"chat.completion.chunk","created":1791965676,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"The request to recall the notes.txt file was for a one-time summary, and will not be repeated."},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-252","object":"chat.completion.chunk","created":1791965676,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":663,"completion_tokens":22,"total_tokens":685}}
+
+data: [DONE]
+

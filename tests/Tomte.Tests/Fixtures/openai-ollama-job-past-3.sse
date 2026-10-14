@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-176","object":"chat.completion.chunk","created":1791965857,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"I made a mistake by inventing a new tool name. Let me try again.\n\nprompt was my previous instruction, and I still need to ask how much time after the original prompt date?"},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-176","object":"chat.completion.chunk","created":1791965857,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":648,"completion_tokens":39,"total_tokens":687}}
+
+data: [DONE]
+

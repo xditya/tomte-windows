@@ -5,7 +5,10 @@ namespace Tomte.AI.Palette;
 /// <summary>Price per million tokens, as the user's editable table stores it.</summary>
 public sealed record ModelPrice(decimal InputPerMillion, decimal OutputPerMillion);
 
-/// <summary>One send: time, provider, model, tokens, cost and the attached item names. Content only when the user turned that on.</summary>
+/// <summary>
+/// One send: time, provider, model, tokens, cost and the attached item names. Content only when the user turned that on.
+/// Job is the scheduled job's name when a job sent it, null when the user did.
+/// </summary>
 public sealed record SendLogEntry(
     DateTimeOffset Time,
     string Provider,
@@ -14,7 +17,8 @@ public sealed record SendLogEntry(
     int OutputTokens,
     decimal CostUsd,
     IReadOnlyList<string> Attached,
-    string? Content);
+    string? Content,
+    string? Job = null);
 
 /// <summary>
 /// The local send log, one JSON line per send under the app's data folder. Read only when the

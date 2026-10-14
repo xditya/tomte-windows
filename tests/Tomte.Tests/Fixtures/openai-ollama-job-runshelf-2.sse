@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-81","object":"chat.completion.chunk","created":1791965868,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"Your dentist appointment is scheduled for Monday at 10:00 AM."},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-81","object":"chat.completion.chunk","created":1791965868,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":206,"completion_tokens":15,"total_tokens":221}}
+
+data: [DONE]
+

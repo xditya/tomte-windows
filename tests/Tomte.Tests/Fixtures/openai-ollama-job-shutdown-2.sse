@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-104","object":"chat.completion.chunk","created":1791965837,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"\"Shut down PC isn't schedule-able since it's destructive tool.\""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-104","object":"chat.completion.chunk","created":1791965837,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":610,"completion_tokens":17,"total_tokens":627}}
+
+data: [DONE]
+

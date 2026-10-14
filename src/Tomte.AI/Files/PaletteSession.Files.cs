@@ -36,11 +36,19 @@ public sealed partial class PaletteSession
 
     internal ModelFacts Facts => ModelFacts.For(_config, _provider.Capabilities, Model);
 
-    private string SystemText => (Voice ? VoicePrompt : SystemPrompt + Skills?.Prompt + (Automation is null ? null : AutomationTools.Prompt)) + (_filesInPlay || _fileReads.Count > 0 ? FileAttachments.Prompt : "");
+    // Making a job has its own prompt. A job run has the unattended rule instead of skills and automation, and gets the
+    // file paragraph, like any session, once a file is in the send: for a job only through read_shelf_item, which it is
+    // offered only when the user approved it for that job.
+    private string SystemText => Scheduling?.Prompt
+        ?? (Voice ? VoicePrompt : Job is not null ? SystemPrompt + JobPrompt : SystemPrompt + Skills?.Prompt + (Automation is null ? null : AutomationTools.Prompt))
+            + (_filesInPlay || _fileReads.Count > 0 ? FileAttachments.Prompt : "");
 
-    /// <summary>read_shelf_item only once the user attached the shelf; a voice session keeps it and asks before every read.</summary>
+    /// <summary>
+    /// read_shelf_item only once the user attached the shelf; a voice session keeps it and asks before every read, and a
+    /// job keeps it when the user approved it for that job, which is the job's tool list by then.
+    /// </summary>
     private IReadOnlyList<ToolDefinition> OfferShelf(IReadOnlyList<ToolDefinition> tools) =>
-        Voice || Chips.Any(c => c.On && c.Available && c.Kind == ContextKind.ShelfItem) ? tools : [.. tools.Where(t => t.Name != BuiltInTools.ReadShelfItem)];
+        Voice || Job is not null || Chips.Any(c => c.On && c.Available && c.Kind == ContextKind.ShelfItem) ? tools : [.. tools.Where(t => t.Name != BuiltInTools.ReadShelfItem)];
 
     /// <summary>
     /// Reads the attached files, refuses an image for a model that does not read images, and sizes the send. Returns
