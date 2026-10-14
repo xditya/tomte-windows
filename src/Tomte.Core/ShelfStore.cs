@@ -169,32 +169,27 @@ public sealed class ShelfStore : IShelf
     /// </summary>
     public string? Receive(string name, ReadChunk read)
     {
-        string slot = Slot();
-        string path = Path.Combine(slot, SafeName(Path.GetFileName(name)));
         try
         {
-            bool whole;
-            using (var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16))
+            string? received = IntoSlot(SafeName(Path.GetFileName(name)), path =>
             {
+                using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1 << 16);
                 // the island's thread waits for the whole read inside the drop, up to the cap.
                 // IDataObjectAsyncCapability would let the source be read after the drop returns.
-                whole = ShelfFormats.CopyCapped(read, file, MaxReceivedBytes);
-            }
-
-            if (whole)
+                return ShelfFormats.CopyCapped(read, file, MaxReceivedBytes);
+            });
+            if (received is null)
             {
-                return path;
+                log?.Invoke($"shelf: refused {name}: a read failed or it is larger than {MaxReceivedBytes >> 20} MB");
             }
 
-            log?.Invoke($"shelf: refused {name}: a read failed or it is larger than {MaxReceivedBytes >> 20} MB");
+            return received;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             log?.Invoke($"shelf: could not receive {name}: {e.Message}");
+            return null;
         }
-
-        TryDelete(slot);
-        return null;
     }
 
     /// <summary>
@@ -718,12 +713,36 @@ public sealed class ShelfStore : IShelf
         return slot;
     }
 
-    private string Store(string name, byte[] content)
+    /// <summary>
+    /// A new folder of the shelf with <paramref name="name"/> in it, written by <paramref name="write"/>. The folder goes
+    /// again when the write throws or returns false, so a failure leaves nothing behind; null when it returned false.
+    /// </summary>
+    private string? IntoSlot(string name, Func<string, bool> write)
     {
-        string path = Path.Combine(Slot(), name);
-        File.WriteAllBytes(path, content);
-        return path;
+        string slot = Slot();
+        string path = Path.Combine(slot, name);
+        try
+        {
+            if (write(path))
+            {
+                return path;
+            }
+        }
+        catch
+        {
+            TryDelete(slot);
+            throw;
+        }
+
+        TryDelete(slot);
+        return null;
     }
+
+    private string Store(string name, byte[] content) => IntoSlot(name, path =>
+    {
+        File.WriteAllBytes(path, content);
+        return true;
+    })!;
 
     /// <summary>A received file takes its shelf name inside its own folder, so a drag out gives it the name the tile shows.</summary>
     private static string Rename(string path, string name)
@@ -741,56 +760,52 @@ public sealed class ShelfStore : IShelf
     /// A temporary file or folder taken in inside the drop, or null when it is too large to copy here. A file on the
     /// shelf's volume becomes a hard link, which is instant and keeps the data when the source deletes its name; a
     /// folder on that volume becomes a tree of hard links. What cannot be linked is copied, up to
-    /// <see cref="InDropCopyBytes"/> in all.
+    /// <see cref="InDropCopyBytes"/> in all. Nothing is left behind when it fails or is too large.
     /// </summary>
     private ShelfEntry? TakeTemporary(string path, string name)
     {
-        string target = Path.Combine(Slot(), SafeName(name));
         bool sameVolume = string.Equals(Path.GetPathRoot(path), Path.GetPathRoot(Folder), StringComparison.OrdinalIgnoreCase);
-        if (File.Exists(path))
+        string? taken = IntoSlot(SafeName(name), target =>
         {
-            if (LinkTemporaryFiles && HardLink(target, path))
+            if (File.Exists(path))
             {
-                return new ShelfEntry(ShelfKind.Copy, name, target);
+                if (LinkTemporaryFiles && HardLink(target, path))
+                {
+                    return true;
+                }
+
+                if (new FileInfo(path).Length > InDropCopyBytes)
+                {
+                    return false;
+                }
+
+                // up to InDropCopyBytes is copied here, holding the island and the source for the copy's
+                // length; IDataObjectAsyncCapability would let the source wait while the copy runs elsewhere.
+                File.Copy(path, target);
+                return true;
             }
 
-            if (new FileInfo(path).Length > InDropCopyBytes)
+            if (!Directory.Exists(path))
             {
-                TryDelete(Path.GetDirectoryName(target)!);
-                return null;
+                throw new FileNotFoundException("Nothing to take in.", path);
             }
 
-            // up to InDropCopyBytes is copied here, holding the island and the source for the copy's length;
-            // IDataObjectAsyncCapability would let the source wait while the copy runs elsewhere.
-            File.Copy(path, target);
-            return new ShelfEntry(ShelfKind.Copy, name, target);
-        }
-
-        if (!Directory.Exists(path))
-        {
-            throw new FileNotFoundException("Nothing to take in.", path);
-        }
-
-        // sizing a folder walks the whole tree inside the drop.
-        bool link = LinkTemporaryFiles && sameVolume;
-        if ((link || TreeSize(path) <= InDropCopyBytes) && CopyTree(path, target, link, InDropCopyBytes) >= 0)
-        {
-            return new ShelfEntry(ShelfKind.Copy, name, target);
-        }
-
-        TryDelete(Path.GetDirectoryName(target)!);
-        return null;
+            // sizing a folder walks the whole tree inside the drop.
+            bool link = LinkTemporaryFiles && sameVolume;
+            return (link || TreeSize(path) <= InDropCopyBytes) && CopyTree(path, target, link, InDropCopyBytes) >= 0;
+        });
+        return taken is null ? null : new ShelfEntry(ShelfKind.Copy, name, taken);
     }
 
     /// <summary>
     /// A large temporary file or folder, copied off the island's thread and then put on the shelf. A file is opened here,
     /// inside the drop, with delete sharing: its source can still delete it, but the data stays readable until the copy
-    /// is done.
+    /// is done. It is opened before the shelf folder is made, so a file that cannot be read leaves no folder behind.
     /// </summary>
     private Task TakeLargeTemporary(string path, string name)
     {
-        string target = Path.Combine(Slot(), SafeName(name));
         FileStream? source = File.Exists(path) ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16) : null;
+        string target = Path.Combine(Slot(), SafeName(name));
         return Task.Run(() =>
         {
             try
@@ -821,9 +836,8 @@ public sealed class ShelfStore : IShelf
         });
     }
 
-    private string CopyIn(string source)
+    private string CopyIn(string source) => IntoSlot(SafeName(NameOf(source)), target =>
     {
-        string target = Path.Combine(Slot(), SafeName(NameOf(source)));
         if (File.Exists(source))
         {
             File.Copy(source, target);
@@ -837,6 +851,6 @@ public sealed class ShelfStore : IShelf
             throw new FileNotFoundException("Nothing to copy.", source);
         }
 
-        return target;
-    }
+        return true;
+    })!;
 }

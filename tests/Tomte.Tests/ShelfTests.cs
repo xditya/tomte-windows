@@ -319,6 +319,32 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    public async Task ATakeInThatFailsLeavesNoFolderBehind()
+    {
+        // Each folder has a file that can be listed but neither read nor linked to, so its copy fails partway.
+        string project = Directory.CreateDirectory(Path.Combine(user, "project")).FullName;
+        Write(project, "a.txt", "a");
+        Deny(Write(project, "b.txt", "b"), FileSystemRights.ReadData | FileSystemRights.WriteAttributes);
+        string pack = Directory.CreateDirectory(Path.Combine(temp, "pack")).FullName;
+        Write(pack, "a.txt", "a");
+        Deny(Write(pack, "b.txt", "b"), FileSystemRights.ReadData | FileSystemRights.WriteAttributes);
+        string large = Write(temp, "large.bin", new string('l', 3000));
+        Deny(large, FileSystemRights.ReadData);
+
+        await Store().Accept(new DroppedItems([project], [], null, KeepCopy: true));
+        await Store().Accept(new DroppedItems([pack], [], null, KeepCopy: false));
+        await Store(link: false, inDrop: 1000).Accept(new DroppedItems([large], [], null, KeepCopy: false));
+        await Store().Add([new ShelfEntry(ShelfKind.Copy, "gone.txt", Path.Combine(user, "gone.txt"))]);
+
+        Assert.Empty(Directory.GetDirectories(ShelfFolder));
+        // The temporary ones stay on the shelf as references.
+        var fresh = Store();
+        await fresh.Load();
+        Assert.Equal(["large.bin", "pack"], fresh.ItemNames);
+        Assert.All(fresh.Items, i => Assert.Equal(ShelfKind.Reference, i.Kind));
+    }
+
+    [Fact]
     public async Task AFolderWhoseFilesCannotBeLinkedIsCopiedInTheDropOnlyUpToTheCap()
     {
         string pack = Directory.CreateDirectory(Path.Combine(temp, "pack")).FullName;
