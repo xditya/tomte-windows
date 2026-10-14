@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Tomte.AI;
+using Tomte.AI.Palette;
 using Tomte.Core;
 using Xunit;
 
@@ -318,12 +319,13 @@ public class ProviderTests
     [Fact]
     public async Task HtmlInsteadOfJsonIsAProviderError()
     {
-        var config = new ProviderConfig($"test-{Guid.NewGuid():N}", ProviderKind.OpenAICompatible, "http://192.168.1.1/v1");
+        var config = Compatible("http://192.168.1.1/v1", model: null);
         using var http = RecordedHandler.Client(out _, "html-page.html");
+        var vault = new FakeVault();
 
-        var e = await Assert.ThrowsAsync<ProviderException>(() => ProviderSetup.TestAndSaveAsync(config, Key, http));
+        var e = await Assert.ThrowsAsync<ProviderException>(() => ProviderSetup.TestAndSaveAsync(null, config, Key, http, vault.Save, vault.Delete));
         Assert.StartsWith("The endpoint did not answer with JSON: <!doctype html>", e.Message);
-        Assert.Null(CredentialStore.Read(config.Id));
+        Assert.Empty(vault.Log);
     }
 
     [Fact]
@@ -375,30 +377,229 @@ public class ProviderTests
         Assert.Null(CredentialStore.Read(id));
     }
 
-    [Fact]
-    public async Task FailedTestCallDoesNotStoreTheKey()
-    {
-        var config = new ProviderConfig($"test-{Guid.NewGuid():N}", ProviderKind.Anthropic, DefaultModel: "claude-opus-5-5");
-        using var http = RecordedHandler.Client(out _, "anthropic-401.json", HttpStatusCode.Unauthorized);
+    // The settings page's provider section: ids, the form check, test then save, remove, errors, and what the palette gets.
+    // Credential Manager is a dictionary here; only CredentialRoundTrip above touches the real one.
 
-        await Assert.ThrowsAsync<ProviderException>(() => ProviderSetup.TestAndSaveAsync(config, Key, http));
-        Assert.Null(CredentialStore.Read(config.Id));
+    private static readonly ProviderConfig Anthropic = new(ProviderSetup.IdFor(ProviderKind.Anthropic, null), ProviderKind.Anthropic, DefaultModel: "claude-opus-5-5");
+
+    private static ProviderConfig Compatible(string url, string? model = "m") =>
+        new(ProviderSetup.IdFor(ProviderKind.OpenAICompatible, url), ProviderKind.OpenAICompatible, url, model);
+
+    [Fact]
+    public void ProviderIdsAreTheHostTheKeyGoesTo()
+    {
+        Assert.Equal("api.anthropic.com", ProviderSetup.IdFor(ProviderKind.Anthropic, "http://localhost:11434/v1"));
+        Assert.Equal("generativelanguage.googleapis.com", ProviderSetup.IdFor(ProviderKind.Gemini, null));
+        Assert.Equal("openrouter.ai", ProviderSetup.IdFor(ProviderKind.OpenAICompatible, "https://OpenRouter.ai/api/v1"));
+        Assert.Equal("localhost:11434", ProviderSetup.IdFor(ProviderKind.OpenAICompatible, "http://localhost:11434/v1"));
     }
 
     [Fact]
-    public async Task PassingTestCallStoresTheKey()
+    public void CheckSaysWhatTheFormLacks()
     {
-        var config = new ProviderConfig($"test-{Guid.NewGuid():N}", ProviderKind.Anthropic, DefaultModel: "claude-opus-5-5");
+        var vault = new FakeVault();
+        Assert.Equal("Enter the key.", ProviderSetup.Check(null, Anthropic, "  ", vault.Read, out _));
+        Assert.StartsWith("Enter the server's address", ProviderSetup.Check(null, Compatible("localhost:11434/v1"), "", vault.Read, out _));
+        Assert.StartsWith("Enter the server's address", ProviderSetup.Check(null, Compatible("ftp://example.com/v1"), "", vault.Read, out _));
+        Assert.StartsWith("Tomte sends a key only over https", ProviderSetup.Check(null, Compatible("http://192.168.1.20:1234/v1"), Key, vault.Read, out _));
+        Assert.StartsWith("The key has a space", ProviderSetup.Check(null, Anthropic, "sk-ant one", vault.Read, out _));
+        Assert.StartsWith("The key has a space", ProviderSetup.Check(null, Anthropic, "sk-ant-é", vault.Read, out _));
+
+        // A local server with or without a key, a server on the network without one, and a pasted key's line break trimmed.
+        Assert.Null(ProviderSetup.Check(null, Compatible("http://localhost:11434/v1"), "", vault.Read, out var none));
+        Assert.Null(none);
+        Assert.Null(ProviderSetup.Check(null, Compatible("http://127.0.0.1:1234/v1"), Key, vault.Read, out _));
+        Assert.Null(ProviderSetup.Check(null, Compatible("http://192.168.1.20:1234/v1"), "", vault.Read, out _));
+        Assert.Null(ProviderSetup.Check(null, Anthropic, Key + "\r\n", vault.Read, out var typed));
+        Assert.Equal(Key, typed);
+    }
+
+    [Fact]
+    public void AnEmptyKeyBoxKeepsTheSavedKeyOnlyForTheSameHost()
+    {
+        var vault = new FakeVault();
+        var openRouter = Compatible("https://openrouter.ai/api/v1");
+        vault.Keys[openRouter.Id] = Key;
+
+        Assert.Null(ProviderSetup.Check(openRouter, openRouter with { DefaultModel = "other" }, "", vault.Read, out var kept));
+        Assert.Equal(Key, kept);
+        // Another host never gets it: a local server is tested with no key, a cloud API asks for its own.
+        Assert.Null(ProviderSetup.Check(openRouter, Compatible("http://localhost:11434/v1"), "", vault.Read, out var none));
+        Assert.Null(none);
+        Assert.Equal("Enter the key.", ProviderSetup.Check(openRouter, Anthropic, "", vault.Read, out _));
+        // The same host over plain http would carry the saved key in the clear.
+        Assert.StartsWith("Tomte sends a key only over https", ProviderSetup.Check(openRouter, Compatible("http://openrouter.ai/api/v1"), "", vault.Read, out _));
+    }
+
+    [Fact]
+    public async Task FailedTestCallSavesAndDeletesNothing()
+    {
+        var vault = new FakeVault();
+        var before = Compatible("https://openrouter.ai/api/v1");
+        vault.Keys[before.Id] = "sk-or-old-key";
+        using var http = RecordedHandler.Client(out _, "anthropic-401.json", HttpStatusCode.Unauthorized);
+
+        var e = await Assert.ThrowsAsync<ProviderException>(() => ProviderSetup.TestAndSaveAsync(before, Anthropic, Key, http, vault.Save, vault.Delete));
+        Assert.Empty(vault.Log);
+        Assert.Equal("sk-or-old-key", vault.Read(before.Id));
+        Assert.Equal("The provider did not accept the key. HTTP 401: invalid x-api-key: [key]", ProviderSetup.Explain(e, Key));
+    }
+
+    [Fact]
+    public async Task PassingTestCallSavesTheKeyThenDropsTheOneItReplaces()
+    {
+        var vault = new FakeVault();
+        var before = Compatible("https://openrouter.ai/api/v1");
+        vault.Keys[before.Id] = "sk-or-old-key";
         using var http = RecordedHandler.Client(out var handler, "anthropic-text.sse");
+
+        // The save asserts the test request went out first.
+        var saved = await ProviderSetup.TestAndSaveAsync(before, Anthropic, Key, http, (id, key) =>
+        {
+            Assert.NotNull(handler.Body);
+            vault.Save(id, key);
+        }, vault.Delete);
+
+        Assert.Equal(Anthropic, saved);
+        Assert.Equal(["save api.anthropic.com", "delete openrouter.ai"], vault.Log);
+        Assert.Equal(Key, vault.Read(Anthropic.Id));
+        Assert.Equal(Key, handler.Request!.Headers.GetValues("x-api-key").Single());
+        Assert.Equal(64, (int)JsonNode.Parse(handler.Body!)!["max_tokens"]!);
+        Assert.DoesNotContain(Key, SettingsStore.Serialize(new TomteSettings { Provider = saved }));
+    }
+
+    [Fact]
+    public async Task SavingTheSameProviderAgainKeepsItsKey()
+    {
+        var vault = new FakeVault();
+        vault.Keys[Anthropic.Id] = Key;
+        using var http = RecordedHandler.Client(out var handler, "anthropic-text.sse");
+
+        Assert.Null(ProviderSetup.Check(Anthropic, Anthropic, "", vault.Read, out var key));
+        await ProviderSetup.TestAndSaveAsync(Anthropic, Anthropic with { FastModel = "claude-haiku-5" }, key, http, vault.Save, vault.Delete);
+        Assert.Equal(["save api.anthropic.com"], vault.Log);
+        Assert.Equal(Key, handler.Request!.Headers.GetValues("x-api-key").Single());
+    }
+
+    [Fact]
+    public async Task WithNoDefaultModelTheFirstListedOneIsTestedAndKept()
+    {
+        var vault = new FakeVault();
+        var handler = new RecordedHandler("openai-ollama-models.json", then: ["openai-ollama-text.sse"]);
+        using var http = new HttpClient(handler);
+
+        var saved = await ProviderSetup.TestAndSaveAsync(null, Compatible("http://localhost:11434/v1", model: null), null, http, vault.Save, vault.Delete);
+        Assert.Equal("llama3.2:3b", saved.DefaultModel);
+        Assert.Equal("llama3.2:3b", (string?)JsonNode.Parse(handler.Body!)!["model"]);
+        Assert.Empty(vault.Log);
+    }
+
+    [Fact]
+    public void RemoveDeletesTheKeyOrNamesTheEntryWindowsKept()
+    {
+        var vault = new FakeVault();
+        vault.Keys[Anthropic.Id] = Key;
+        Assert.Null(ProviderSetup.Remove(Anthropic, vault.Delete));
+        Assert.Null(vault.Read(Anthropic.Id));
+
+        var left = ProviderSetup.Remove(Anthropic, _ => throw new InvalidOperationException("CredDelete failed: Access is denied."));
+        Assert.Contains("could not delete Tomte/ai/api.anthropic.com", left);
+    }
+
+    [Fact]
+    public void ErrorsAreExplainedInPlainWordsWithTheKeyHidden()
+    {
+        Assert.Equal("The provider did not answer within 60 seconds.", ProviderSetup.Explain(new TaskCanceledException(), Key));
+        Assert.StartsWith("Nothing was found at that address", ProviderSetup.Explain(new ProviderException("HTTP 404: model: x", 404), Key));
+        Assert.StartsWith("The provider is limiting requests", ProviderSetup.Explain(new ProviderException("HTTP 429: slow down", 429), Key));
+        Assert.StartsWith("The server's answer is not in the shape", ProviderSetup.Explain(new KeyNotFoundException(), Key));
+        Assert.Equal("echoed [key] back", ProviderSetup.Explain(new InvalidOperationException($"echoed {Key} back"), Key));
+    }
+
+    [Theory]
+    [InlineData(ProviderKind.Anthropic, typeof(AnthropicProvider))]
+    [InlineData(ProviderKind.Gemini, typeof(GeminiProvider))]
+    [InlineData(ProviderKind.OpenAICompatible, typeof(OpenAICompatibleProvider))]
+    public void ThePaletteGetsTheConfiguredProviderWithItsKeyAndCap(ProviderKind kind, Type adapter)
+    {
+        var config = new ProviderConfig(ProviderSetup.IdFor(kind, "http://localhost:1234/v1"), kind, "http://localhost:1234/v1", "m", DailyCapUsd: 0.5m);
+        var asked = new List<string>();
+        using var http = new HttpClient();
+
+        var (provider, used, options) = ProviderSetup.ForPalette(new TomteSettings { Provider = config }, http, id =>
+        {
+            asked.Add(id);
+            return Key;
+        })!.Value;
+        Assert.IsType(adapter, provider);
+        Assert.Equal(config, used);
+        Assert.Equal(0.5m, options.DailyCapUsd);
+        Assert.Equal([config.Id], asked);
+    }
+
+    [Fact]
+    public void WithNoProviderThePaletteGetsNoneAndReadsNoKey()
+    {
+        using var http = new HttpClient();
+        Func<string, string?> read = _ => throw new InvalidOperationException("no key should be read");
+        Assert.Null(ProviderSetup.ForPalette(new TomteSettings(), http, read));
+        Assert.Null(ProviderSetup.ForPalette(new TomteSettings { Provider = Anthropic with { DefaultModel = null } }, http, read));
+    }
+
+    [Fact]
+    public async Task TheCapInSettingsStopsTheSendBeforeAnythingLeaves()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), $"tomte-cap-{Guid.NewGuid():N}");
         try
         {
-            Assert.Equal("claude-opus-5-5", await ProviderSetup.TestAndSaveAsync(config, Key, http));
-            Assert.Equal(Key, CredentialStore.Read(config.Id));
-            Assert.Equal(64, (int)JsonNode.Parse(handler.Body!)!["max_tokens"]!);
+            var log = new SendLog(Path.Combine(dir, "send-log.jsonl"));
+            log.Append(new SendLogEntry(DateTimeOffset.Now, Anthropic.Id, "claude-opus-5-5", 1, 1, 0.5m, [], null));
+            using var http = RecordedHandler.Client(out var handler, "anthropic-text.sse");
+            var tools = new BuiltInTools(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { });
+            PaletteSession Open(decimal? cap)
+            {
+                var (provider, config, options) = ProviderSetup.ForPalette(new TomteSettings { Provider = Anthropic with { DailyCapUsd = cap } }, http, _ => Key)!.Value;
+                return new PaletteSession(provider, config, options, log, tools, new PermissionGrants(), []) { Prompt = "hi" };
+            }
+
+            var capped = Open(0.5m);
+            await capped.SendAsync();
+            Assert.Equal(PaletteStatus.Failed, capped.Status);
+            Assert.Contains("Daily cap of $0.50", capped.Error);
+            Assert.Null(handler.Request);
+
+            // No cap: the same spend sends.
+            var open = Open(null);
+            await open.SendAsync();
+            Assert.Equal(PaletteStatus.Done, open.Status);
+            Assert.Equal(Key, handler.Request!.Headers.GetValues("x-api-key").Single());
         }
         finally
         {
-            CredentialStore.Delete(config.Id);
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>Credential Manager as a dictionary, with what was saved and deleted in order. Names ignore case, as the vault's do.</summary>
+    private sealed class FakeVault
+    {
+        public Dictionary<string, string> Keys { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        public List<string> Log { get; } = [];
+
+        public string? Read(string id) => Keys.GetValueOrDefault(id);
+
+        public void Save(string id, string key)
+        {
+            Log.Add($"save {id}");
+            Keys[id] = key;
+        }
+
+        public void Delete(string id)
+        {
+            Log.Add($"delete {id}");
+            Keys.Remove(id);
         }
     }
 }

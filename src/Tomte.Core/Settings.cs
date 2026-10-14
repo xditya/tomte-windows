@@ -59,6 +59,9 @@ public sealed record TomteSettings
 
     /// <summary>The apps the AI's UI Automation tools may use; the tools themselves are off unless a run turns them on.</summary>
     public UiAutomationSettings UiAutomation { get; init; } = new();
+
+    /// <summary>The AI provider the palette uses. Null keeps the AI layer off. Its key is in Credential Manager, never here.</summary>
+    public ProviderConfig? Provider { get; init; }
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>
