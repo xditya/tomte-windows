@@ -130,8 +130,9 @@ internal sealed class Rambler(
                 }
             }
 
-            await scratchpad.AppendAsync(note, DateTime.Now);
-            log($"{DateTime.Now:HH:mm:ss.fff} rambler: note appended ({note.Length} chars)");
+            // A locked database does not lose the note: it waits in memory and is saved as soon as it can be.
+            bool saved = await scratchpad.AppendAsync(note, DateTime.Now);
+            log($"{DateTime.Now:HH:mm:ss.fff} rambler: note {(saved ? "appended" : "kept until the database is free")} ({note.Length} chars)");
         }
         catch (Exception e)
         {

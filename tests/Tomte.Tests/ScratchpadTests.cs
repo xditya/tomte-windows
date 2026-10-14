@@ -12,7 +12,9 @@ public sealed class ScratchpadTests : IDisposable
 
     private string OldFile => Path.Combine(dir, "scratchpad.md");
 
-    private TomteDb Db => new(Path.Combine(dir, "tomte.db"));
+    private string DbPath => Path.Combine(dir, "tomte.db");
+
+    private TomteDb Db => new(DbPath);
 
     public void Dispose()
     {
@@ -132,6 +134,34 @@ public sealed class ScratchpadTests : IDisposable
     }
 
     [Fact]
+    public async Task RamblerNotesWaitOutAHeldDatabaseAndAreSavedInOrder()
+    {
+        var time = new FakeTime();
+        var note = new ScratchpadNote(Db, OldFile, time);
+        await note.LoadAsync();
+        note.Edit("typed", 5);
+        await note.FlushAsync();
+
+        using (new FileStream(DbPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            // Neither can be read or written while the file is held; both wait, and one retry is scheduled for them.
+            Assert.False(await note.AppendAsync("first", At));
+            Assert.False(await note.AppendAsync("second", At.AddMinutes(1)));
+            var retry = Assert.Single(time.Timers, t => !t.Disposed);
+            Assert.Equal(ScratchpadNote.RetryDelay, retry.Due);
+
+            // A retry while the file is still held fails too, and the next one waits twice as long.
+            retry.Fire();
+            await WaitFor(() => Task.FromResult(time.Timers.Any(t => !t.Disposed && t.Due == 2 * ScratchpadNote.RetryDelay)));
+        }
+
+        time.Timers.Single(t => !t.Disposed && t.Due == 2 * ScratchpadNote.RetryDelay).Fire();
+        const string both = "typed\n\n## 2026-10-14 09:05\n\nfirst\n\n## 2026-10-14 09:06\n\nsecond\n\n";
+        await WaitFor(async () => await Stored() == both);
+        Assert.Equal(both, note.Text);
+    }
+
+    [Fact]
     public async Task WhatAnotherProcessAddedIsKeptAfterUnsavedEdits()
     {
         var shell = await Loaded();
@@ -226,12 +256,28 @@ public sealed class ScratchpadTests : IDisposable
     /// <summary>Timers that fire only when the test says so.</summary>
     private sealed class FakeTime : TimeProvider
     {
-        public List<FakeTimer> Timers { get; } = [];
+        private readonly List<FakeTimer> timers = [];
+
+        // A copy: the retry makes its timers on a worker thread while the test looks.
+        public List<FakeTimer> Timers
+        {
+            get
+            {
+                lock (timers)
+                {
+                    return [.. timers];
+                }
+            }
+        }
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
             var timer = new FakeTimer(() => callback(state)) { Due = dueTime };
-            Timers.Add(timer);
+            lock (timers)
+            {
+                timers.Add(timer);
+            }
+
             return timer;
         }
     }

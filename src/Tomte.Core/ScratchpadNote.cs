@@ -17,6 +17,11 @@ public sealed class ScratchpadNote : IScratchpad
     /// <summary>Typing is saved this long after the last change.</summary>
     public static readonly TimeSpan SaveDelay = TimeSpan.FromSeconds(1);
 
+    /// <summary>A rambler note that could not be saved is tried again after this, then twice as long each time, up to 30 s.</summary>
+    public static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(1);
+
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromSeconds(30);
+
     // The whole history, oldest first. Never edit or reorder a step that has merged; add at the end.
     private static readonly string[] Schema = ["CREATE TABLE scratchpad_note(id INTEGER PRIMARY KEY CHECK (id = 1), text TEXT NOT NULL)"];
 
@@ -25,10 +30,11 @@ public sealed class ScratchpadNote : IScratchpad
     private readonly TimeProvider time;
     private readonly Lock gate = new();
     private readonly SemaphoreSlim writing = new(1, 1);
+    private readonly List<(string Note, DateTime At)> waiting = [];
     private string text = "";
     private string saved = "";
     private int caret;
-    private bool loaded, dirty;
+    private bool loaded, dirty, retrying;
     private ITimer? timer;
 
     /// <param name="carryOver">The file an earlier build kept the note in. Its text becomes the note the first time this database has none, then it is renamed to .imported.</param>
@@ -150,23 +156,32 @@ public sealed class ScratchpadNote : IScratchpad
         }
     }
 
-    /// <summary>A rambler note at the end of the note under a time heading, saved at once. The editor's caret stays where it is.</summary>
-    public async Task AppendAsync(string note, DateTime at)
+    /// <summary>
+    /// A rambler note at the end of the note under a time heading, saved at once; the editor's caret stays where it
+    /// is. When the database cannot be reached the note waits in memory, in order with any that follow, and a worker
+    /// retries until it is written: a note is never dropped. True when it was saved now.
+    /// </summary>
+    public async Task<bool> AppendAsync(string note, DateTime at)
     {
-        await LoadAsync().ConfigureAwait(false);
         lock (gate)
         {
-            text = RamblerNotes.Append(text, note, at);
-            MarkDirty();
+            waiting.Add((note, at));
         }
 
-        Changed?.Invoke();
-        await FlushAsync().ConfigureAwait(false);
+        if (await TrySaveAsync().ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        StartRetry();
+        return false;
     }
 
-    /// <summary>Saves now if anything is unsaved: when the island hides and when Tomte quits.</summary>
+    /// <summary>Saves now if anything is unsaved, waiting rambler notes first: when the island hides and when Tomte quits.</summary>
     public async Task FlushAsync()
     {
+        // Throws while the note cannot be read; the waiting notes stay waiting.
+        await TakeWaitingAsync().ConfigureAwait(false);
         await writing.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -217,6 +232,87 @@ public sealed class ScratchpadNote : IScratchpad
         finally
         {
             writing.Release();
+        }
+    }
+
+    // Reads the stored note first, so the waiting notes go onto what is saved, then adds them in the order they came.
+    private async Task TakeWaitingAsync()
+    {
+        lock (gate)
+        {
+            if (waiting.Count == 0)
+            {
+                return;
+            }
+        }
+
+        await LoadAsync().ConfigureAwait(false);
+        lock (gate)
+        {
+            if (waiting.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var (note, at) in waiting)
+            {
+                text = RamblerNotes.Append(text, note, at);
+            }
+
+            waiting.Clear();
+            MarkDirty();
+        }
+
+        Changed?.Invoke();
+    }
+
+    private async Task<bool> TrySaveAsync()
+    {
+        try
+        {
+            await FlushAsync().ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception e) when (e is SqliteException or IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    // One retry loop at a time, on the worker, backing off to a try every 30 s. It ends only when nothing waits and
+    // nothing is unsaved.
+    private void StartRetry()
+    {
+        lock (gate)
+        {
+            if (retrying)
+            {
+                return;
+            }
+
+            retrying = true;
+        }
+
+        _ = RetryAsync();
+    }
+
+    private async Task RetryAsync()
+    {
+        for (var wait = RetryDelay; ; wait = TimeSpan.FromTicks(Math.Min(wait.Ticks * 2, MaxRetryDelay.Ticks)))
+        {
+            await Task.Delay(wait, time).ConfigureAwait(false);
+            if (await TrySaveAsync().ConfigureAwait(false))
+            {
+                lock (gate)
+                {
+                    // A note that came during this try and could not be saved by its own call is still this loop's.
+                    if (waiting.Count == 0)
+                    {
+                        retrying = false;
+                        return;
+                    }
+                }
+            }
         }
     }
 
