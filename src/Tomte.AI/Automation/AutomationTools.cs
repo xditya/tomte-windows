@@ -54,6 +54,7 @@ public sealed class AutomationTools : IDisposable
     ];
 
     private readonly UiAutomationSettings _settings;
+    private readonly IReadOnlyList<AppRule> _appRules;
     private readonly nint _foreground;
     private readonly Func<bool> _onSecureSurface;
     private readonly Func<IUiAutomation> _create;
@@ -67,9 +68,10 @@ public sealed class AutomationTools : IDisposable
     private Snapshot? _snapshot;
     private int _lists;
 
-    internal AutomationTools(UiAutomationSettings settings, nint foreground, Func<bool> onSecureSurface, Func<IUiAutomation> create, TimeSpan? limit = null)
+    internal AutomationTools(UiAutomationSettings settings, IReadOnlyList<AppRule> appRules, nint foreground, Func<bool> onSecureSurface, Func<IUiAutomation> create, TimeSpan? limit = null)
     {
         _settings = settings;
+        _appRules = appRules;
         _foreground = foreground;
         _onSecureSurface = onSecureSurface;
         _create = create;
@@ -78,11 +80,12 @@ public sealed class AutomationTools : IDisposable
 
     /// <summary>
     /// The tools for one palette, or null when they are off: then nothing of UI Automation is made, no thread starts
-    /// and no tool is offered. <paramref name="foreground"/> is the window that was in front when the palette opened;
+    /// and no tool is offered. <paramref name="appRules"/> are the reveal rules: an app they deny is refused here too.
+    /// <paramref name="foreground"/> is the window that was in front when the palette opened;
     /// <paramref name="onSecureSurface"/> says whether the lock screen or a secure desktop is up.
     /// </summary>
-    public static AutomationTools? For(bool on, UiAutomationSettings settings, nint foreground, Func<bool> onSecureSurface) =>
-        on ? new(settings, foreground, onSecureSurface, () => new UiaClient()) : null;
+    public static AutomationTools? For(bool on, UiAutomationSettings settings, IReadOnlyList<AppRule> appRules, nint foreground, Func<bool> onSecureSurface) =>
+        on ? new(settings, appRules, foreground, onSecureSurface, () => new UiaClient()) : null;
 
     public static bool Owns(string name) => name is ListControls or ClickControl or TypeInControl or SelectControl;
 
@@ -99,22 +102,25 @@ public sealed class AutomationTools : IDisposable
         {
             return call.Name == ListControls ? await ListAsync(call.Input, confirm, ct) : await ActAsync(call, confirm, ct);
         }
-        catch (TimeoutException e)
-        {
-            return new(Describe(call), e.Message, IsError: true);
-        }
         catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
         {
-            // A UI Automation error (the element went away, the app refused) ends this call only; the model is told.
-            return new(Describe(call), $"UI Automation failed: {McpTools.Clean(e.Message, McpTools.MaxError)}", IsError: true);
+            // Only a list reaches UI Automation here (an action's own call handles its errors), and a list changes
+            // nothing in the app.
+            string why = e is TimeoutException or NotRunException ? e.Message : $"UI Automation failed: {McpTools.Clean(e.Message, McpTools.MaxError)}";
+            return new(Describe(call), $"{why} Nothing was listed or sent.", IsError: true);
         }
     }
+
+    /// <summary>A new send: its model never saw the earlier list, so that list's ids stop working.</summary>
+    public void ForgetList() => _snapshot = null;
 
     /// <summary>Lets the automation thread end; the UI Automation object is released there.</summary>
     public void Dispose() => _worker?.Dispose();
 
     private async Task<AutomationStep> ListAsync(JsonElement input, Func<ToolRequest, CancellationToken, Task<PermissionAnswer>> confirm, CancellationToken ct)
     {
+        // Whatever this list comes to, the ids of the one before stop working.
+        _snapshot = null;
         string named = Arg(input, "window").Trim();
         string summary = named.Length == 0 ? "List the controls of the window in front" : $"List the controls of \"{Screen(named, 60)}\"";
         if (_onSecureSurface())
@@ -122,6 +128,8 @@ public sealed class AutomationTools : IDisposable
 
         // Read here, sent only after the user's yes: the prompt can then say which app it is and how much goes out.
         var listing = await Call(c => Read(c, named), ct);
+        if (_onSecureSurface())
+            return Refused(summary, SecureSurface);
         if (listing.Problem is not null)
             return Refused(summary, listing.Problem);
         if (listing.Elements.Count == 0)
@@ -143,7 +151,9 @@ public sealed class AutomationTools : IDisposable
         if (listing.Total > snapshot.Elements.Count)
             text.Append($"(The first {snapshot.Elements.Count} of {listing.Total} controls.)\n");
         text.Append("</screen_content>");
-        return new(summary, text.ToString(), IsError: false, Sent: $"screen:{AppRules.Normalize(listing.App)}");
+        // The send log names what went out: the app and each control's name, cleaned as the model got them.
+        string names = string.Join(", ", snapshot.Elements.Where(e => e.Name.Length > 0).Select(e => Screen(e.Name, 40)));
+        return new(summary, text.ToString(), IsError: false, Sent: $"screen:{AppRules.Normalize(listing.App)}: {names}");
     }
 
     private async Task<AutomationStep> ActAsync(ToolCallPart call, Func<ToolRequest, CancellationToken, Task<PermissionAnswer>> confirm, CancellationToken ct)
@@ -177,15 +187,30 @@ public sealed class AutomationTools : IDisposable
         if (_onSecureSurface())
             return Refused(summary, SecureSurface);
 
-        // Asked every time, whatever "always allow" says anywhere: an answer of always is taken as once.
-        summary = $"{ask} in {snapshot.App}";
+        // Asked every time, whatever "always allow" says anywhere: an answer of always is taken as once. The window is
+        // named because the app may have several, and the action goes to the one that was listed.
+        summary = $"{ask} in {snapshot.App} (\"{Screen(snapshot.Window.Title, 60)}\")";
         if (await confirm(new ToolRequest(call.Name, summary, ActionTier.ExternalEffect, OfferAlwaysAllow: false), ct) == PermissionAnswer.Deny)
             return new(summary, PaletteSession.NotAllowed, IsError: true);
         if (_onSecureSurface())
             return Refused(summary, SecureSurface);
 
-        var why = await Call(c => c.Act(snapshot.Window.Handle, element, uiaCall, text,
-            now => Same(element, now, uiaCall) ?? Refusal(now.ProcessId, c.Process(now.ProcessId))), ct);
+        string? why;
+        try
+        {
+            why = await Call(c => c.Act(snapshot.Window.Handle, element, uiaCall, text,
+                now => Same(element, now, uiaCall) ?? Refusal(now.ProcessId, c.Process(now.ProcessId))), ct);
+        }
+        catch (NotRunException e)
+        {
+            return Refused(summary, $"Nothing was done: {e.Message}");
+        }
+        catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
+        {
+            // A timeout or an error once the call went out says nothing about whether the app acted on it.
+            return Refused(summary, "UI Automation did not confirm it; the action may have happened. Look at the window before trying again.");
+        }
+
         if (why is not null)
             return Refused(summary, $"Nothing was done: {why}");
         string line = $"{done} in {snapshot.App}.";
@@ -270,8 +295,9 @@ public sealed class AutomationTools : IDisposable
             return "Tomte does not act on itself.";
         if (process.Exe is null)
             return "Windows would not say which app this is, so Tomte does not touch it.";
-        if (UiAutomationRules.Refusal(_settings, process.Exe) is { } refused)
-            return refused;
+        // A refusal names the app by its file only, never by what its window shows.
+        if (UiAutomationRules.Refusal(_settings, _appRules, process.Exe) is { } refused)
+            return Screen(refused, McpTools.MaxError);
         return process.Elevated switch
         {
             true => $"{AppName(process.Exe)} runs as administrator. Windows does not let a normal app act on it, and Tomte does not try.",
@@ -282,7 +308,8 @@ public sealed class AutomationTools : IDisposable
 
     /// <summary>
     /// The window and its controls, read on the automation thread. Refused when the window's process, or the process
-    /// of any control in it (a Store app inside its frame), may not be touched.
+    /// of any control in it (a Store app inside its frame), may not be touched; and when a Store app's frame holds
+    /// nothing of the app (minimized or suspended), because the frame alone would get past the lists.
     /// </summary>
     private Listing Read(IUiAutomation c, string named)
     {
@@ -294,17 +321,19 @@ public sealed class AutomationTools : IDisposable
             return Listing.No(refused);
 
         var (elements, total) = c.Elements(window.Handle, MaxElements);
-        string app = AppName(process.Exe!);
+        string? hosted = null;
         foreach (int pid in elements.Select(e => e.ProcessId).Where(p => p != window.ProcessId).Distinct())
         {
             var other = c.Process(pid);
             if (Refusal(pid, other) is { } inside)
                 return Listing.No($"The window shows another app's controls. {inside}");
-            if (AppRules.Normalize(process.Exe!) == UiAutomationRules.FrameHost && app == AppName(process.Exe!))
-                app = AppName(other.Exe!);
+            hosted ??= AppName(other.Exe!);
         }
 
-        return new(null, window, app, elements, total);
+        bool frame = AppRules.Normalize(process.Exe!) == UiAutomationRules.FrameHost;
+        if (frame && hosted is null)
+            return Listing.No("This is a Store app's frame with nothing of the app in it; the app may be minimized or suspended. Restore it and list again.");
+        return new(null, window, frame ? hosted! : AppName(process.Exe!), elements, total);
     }
 
     /// <summary>The window the user named: an app's file name first, then a window title that contains the words, in z-order.</summary>
@@ -371,13 +400,37 @@ public sealed class AutomationTools : IDisposable
     internal static string Role(UIA_CONTROLTYPE_ID type) =>
         Enum.IsDefined(type) ? type.ToString()["UIA_".Length..^"ControlTypeId".Length].ToLowerInvariant() : "control";
 
-    private static string AppName(string exe) => Path.GetFileNameWithoutExtension(exe);
+    /// <summary>An app as prompts, results and the Compact line name it: its file name, cleaned.</summary>
+    private static string AppName(string exe) => Screen(Path.GetFileNameWithoutExtension(exe), 40);
 
     /// <summary>What is typed must be what the user read: only text that cleaning leaves as it is, line breaks and tabs included.</summary>
     private static bool Showable(string text)
     {
         string unified = text.Replace("\r\n", "\n", StringComparison.Ordinal);
-        return McpTools.Bound(unified, unified.Length, lines: true).Text == unified;
+        return Visible(unified) == unified && McpTools.Bound(unified, unified.Length, lines: true).Text == unified;
+    }
+
+    /// <summary>The text without zero-width characters and variation selectors, which draw nothing and could split or hide a word.</summary>
+    private static string Visible(string? text)
+    {
+        text ??= "";
+        var visible = new StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c is (>= '\u200B' and <= '\u200D') or '\u2060' or '\uFEFF' or (>= '\uFE00' and <= '\uFE0F'))
+                continue;
+            // U+E0100 to U+E01EF, the supplementary variation selectors.
+            if (c == '\uDB40' && i + 1 < text.Length && text[i + 1] is >= '\uDD00' and <= '\uDDEF')
+            {
+                i++;
+                continue;
+            }
+
+            visible.Append(c);
+        }
+
+        return visible.ToString();
     }
 
     /// <summary>The text for the prompt: whole up to 200 characters, line breaks shown as spaces; past that, how much more.</summary>
@@ -390,11 +443,13 @@ public sealed class AutomationTools : IDisposable
     }
 
     /// <summary>
-    /// Another app's text, safe to put in a prompt or a tagged block: cleaned and cut as MCP text is, with the
-    /// characters that would open, close or quote a tag replaced, so a label cannot end the block it is in.
+    /// Another app's text, safe to put in a prompt or a tagged block: cleaned and cut as MCP text is, without
+    /// invisible characters, and with the characters that would open, close or quote a tag (and their full-width
+    /// forms) replaced, so a label cannot end the block it is in.
     /// </summary>
     internal static string Screen(string? text, int max) =>
-        McpTools.Clean(text, max).Replace('<', '‹').Replace('>', '›').Replace('"', '\'');
+        McpTools.Clean(Visible(text), max).Replace('<', '‹').Replace('>', '›').Replace('"', '\'')
+            .Replace('＜', '‹').Replace('＞', '›').Replace('＂', '\'');
 
     private static string Arg(JsonElement input, string name) =>
         input.ValueKind == JsonValueKind.Object && input.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";

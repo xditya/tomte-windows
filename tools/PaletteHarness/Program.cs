@@ -66,7 +66,7 @@ var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.L
 nint foreground = WindowContext.Foreground();
 var (app, title) = WindowContext.Describe(foreground);
 // No desktop watch here: the lock screen and sign-in are refused by their apps, which are on the fixed list.
-using var automation = AutomationTools.For(automationOn, settings.UiAutomation, foreground, () => false);
+using var automation = AutomationTools.For(automationOn, settings.UiAutomation, settings.AppRules, foreground, () => false);
 var chips = new List<ContextChip>
 {
     chipsWanted.Contains("selection") ? SelectionReader.Chip(foreground) : ContextChips.Selection(null),

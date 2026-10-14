@@ -213,6 +213,7 @@ public sealed class PaletteSession : IPaletteSession
         _answer.Clear();
         _mcpContacted.Clear();
         _skillFiles.Clear();
+        Automation?.ForgetList();
         ToolSteps = 0;
         Error = null;
         if (_options.DailyCapUsd is { } cap && SpentTodayUsd >= cap)

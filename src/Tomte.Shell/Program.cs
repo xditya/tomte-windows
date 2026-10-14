@@ -481,7 +481,7 @@ internal static class Program
             // Servers start on the send; disposing at the end of the run stops them, as closing the palette does.
             await using var mcp = McpTools.For(store.Current.McpServers);
             // --automation offers the UI Automation tools in this run; without it nothing of them is made.
-            using var automation = AutomationTools.For(Environment.GetCommandLineArgs().Contains("--automation"), store.Current.UiAutomation, foreground, () => triggers.OnSecureSurface);
+            using var automation = AutomationTools.For(Environment.GetCommandLineArgs().Contains("--automation"), store.Current.UiAutomation, store.Current.AppRules, foreground, () => triggers.OnSecureSurface);
             var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
             {
                 Prompt = prompt,

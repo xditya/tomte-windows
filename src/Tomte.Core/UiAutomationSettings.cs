@@ -38,8 +38,11 @@ public static class UiAutomationRules
     /// <summary>Store apps draw inside this frame process; the app itself is checked through its own process.</summary>
     public const string FrameHost = "applicationframehost";
 
-    /// <summary>Why the tools must not touch <paramref name="exe"/>, or null when they may.</summary>
-    public static string? Refusal(UiAutomationSettings settings, string exe)
+    /// <summary>
+    /// Why the tools must not touch <paramref name="exe"/>, or null when they may. An app the reveal rules deny
+    /// (<paramref name="appRules"/>) is refused too; a reveal Allow rule allows nothing here.
+    /// </summary>
+    public static string? Refusal(UiAutomationSettings settings, IReadOnlyList<AppRule> appRules, string exe)
     {
         string name = AppRules.Normalize(exe);
         if (name == "tomte.shell")
@@ -48,6 +51,8 @@ public static class UiAutomationRules
             return $"{name} is a secure surface (sign-in, a permission or credential prompt, or Windows Security). Tomte never reads or acts on it.";
         if (settings.DeniedApps.Any(d => AppRules.Normalize(d) == name))
             return $"{name} is on the deny list for UI Automation, so Tomte does not read or act on it.";
+        if (AppRules.Find(appRules, exe)?.Mode is AppRuleMode.Deny or AppRuleMode.DenyWithHotkeys)
+            return $"{name} has a Deny rule in Tomte's per-app rules, so Tomte does not read or act on it.";
         if (name != FrameHost && settings.AllowedApps.Count > 0 && !settings.AllowedApps.Any(a => AppRules.Normalize(a) == name))
             return $"{name} is not on the allow list for UI Automation.";
         return null;

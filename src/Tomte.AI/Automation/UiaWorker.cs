@@ -26,7 +26,10 @@ internal sealed class UiaWorker : IDisposable
         thread.Start();
     }
 
-    /// <summary>Runs <paramref name="call"/> on the thread; a <see cref="TimeoutException"/> when it has not finished within <paramref name="limit"/>.</summary>
+    /// <summary>
+    /// Runs <paramref name="call"/> on the thread. Past <paramref name="limit"/>: a <see cref="TimeoutException"/> when
+    /// the call had started (it may still finish), a <see cref="NotRunException"/> when it never will.
+    /// </summary>
     public async Task<T> RunAsync<T>(Func<T> call, TimeSpan limit, CancellationToken ct)
     {
         var state = new int[1]; // 0 waiting, 1 started, 2 given up
@@ -52,12 +55,15 @@ internal sealed class UiaWorker : IDisposable
         {
             bool started = Interlocked.CompareExchange(ref state[0], 2, 0) != 0;
             ct.ThrowIfCancellationRequested();
-            throw new TimeoutException(started
-                ? $"UI Automation did not answer within {limit.TotalSeconds:0.#} s; the other app may be busy. The call had started, so an action may still take effect."
-                : $"UI Automation was still busy with an earlier call after {limit.TotalSeconds:0.#} s, so nothing was done.");
+            if (started)
+                throw new TimeoutException($"UI Automation did not answer within {limit.TotalSeconds:0.#} s; the other app may be busy.");
+            throw new NotRunException($"UI Automation was still busy with an earlier call after {limit.TotalSeconds:0.#} s.");
         }
     }
 
     /// <summary>Lets the thread end after the call it is in, without waiting for it.</summary>
     public void Dispose() => _queue.CompleteAdding();
 }
+
+/// <summary>The call gave up while still queued, so it never ran.</summary>
+internal sealed class NotRunException(string message) : Exception(message);
