@@ -185,6 +185,7 @@ internal static partial class Program
 
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
+        tray.Ask += triggers.Ask;
         tray.OpenSettings += OpenSettings;
         tray.Paused += triggers.Hide;
         tray.Quit += () => PInvoke.PostQuitMessage(0);

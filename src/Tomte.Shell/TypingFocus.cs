@@ -121,7 +121,9 @@ internal sealed class TypingFocus
                 return false;
             }
 
-            previous = front;
+            // A window nobody can see (the tray's, after its menu) is no place for the keys to go back to; with none
+            // remembered, Windows activates the next window when the island hides.
+            previous = PInvoke.IsWindowVisible(front) ? front : default;
         }
 
         PInvoke.SetFocus(island.Hwnd);
