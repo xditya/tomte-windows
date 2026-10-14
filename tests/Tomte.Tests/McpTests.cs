@@ -529,13 +529,13 @@ public class McpToolsTests
     public void AShortHeaderValueIsNotCutOutOfText()
     {
         // Replacing the value 2 would turn "502" into "50[hidden]": mangled, and it shows where the value stood.
-        Assert.Equal(McpTools.Withheld, McpTools.Hide("The server answered 502.", "2"));
-        Assert.Equal("The server answered.", McpTools.Hide("The server answered.", "2"));
-        Assert.Equal("key [hidden] refused", McpTools.Hide("key abcdefgh refused", "abcdefgh"));
-        Assert.Equal("no header", McpTools.Hide("no header", null));
+        Assert.Equal(McpTools.Withheld, McpTools.Hide("The server answered 502.", ["2"]));
+        Assert.Equal("The server answered.", McpTools.Hide("The server answered.", ["2"]));
+        Assert.Equal("key [hidden] refused", McpTools.Hide("key abcdefgh refused", ["abcdefgh"]));
+        Assert.Equal("no header", McpTools.Hide("no header", []));
 
         var echoed = new CallToolResult { Content = [new TextContentBlock { Text = "version 2 is too old" }] };
-        Assert.Equal((McpTools.Withheld, 0), McpTools.Result(echoed, "2"));
+        Assert.Equal((McpTools.Withheld, 0), McpTools.Result(echoed, ["2"]));
     }
 
     [Fact]

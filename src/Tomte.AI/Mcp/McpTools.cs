@@ -48,7 +48,7 @@ public sealed class McpTools : IAsyncDisposable
 
     private readonly McpServerSettings[] _servers;
     private readonly string? _invalid;
-    private readonly Func<McpServerSettings, string?, CancellationToken, Task<Connection>> _connect;
+    private readonly Func<McpServerSettings, string?, IReadOnlyDictionary<string, string>, CancellationToken, Task<Connection>> _connect;
     private readonly Func<string, string?> _readSecret;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -62,7 +62,7 @@ public sealed class McpTools : IAsyncDisposable
     private bool _disposed;
 
     /// <param name="connect">Starts or connects one server; tests pass an in-process one.</param>
-    /// <param name="readSecret">Reads a header value by credential id; Credential Manager unless a test passes its own.</param>
+    /// <param name="readSecret">Reads a header or variable value by credential id; Credential Manager unless a test passes its own.</param>
     public McpTools(IEnumerable<McpServerSettings> servers, TimeSpan? idleTimeout = null, Func<McpServerSettings, CancellationToken, Task<McpClient>>? connect = null, Func<string, string?>? readSecret = null)
     {
         // Settings checks a server when it is saved; a hand-edited file skips that, and two servers with
@@ -77,7 +77,7 @@ public sealed class McpTools : IAsyncDisposable
         }
 
         _servers = [.. usable];
-        _connect = connect is null ? ConnectAsync : async (server, secret, ct) => new Connection(await connect(server, ct), null, secret);
+        _connect = connect is null ? ConnectAsync : async (server, header, environment, ct) => new Connection(await connect(server, ct), null, Secrets(header, environment));
         _readSecret = readSecret ?? CredentialStore.Read;
         IdleTimeout = idleTimeout ?? TimeSpan.FromMinutes(5);
         _idle = new Timer(_ => _ = StopIfIdleAsync());
@@ -173,12 +173,12 @@ public sealed class McpTools : IAsyncDisposable
             try
             {
                 var result = await UnlessGoneAsync(c => client.CallToolAsync(tool.Name, args, cancellationToken: c).AsTask(), client.Completion, ct);
-                var (text, cut) = Result(result, connection.Secret);
+                var (text, cut) = Result(result, connection.Secrets);
                 return (new ToolResultPart(call.Id, call.Name, text, result.IsError == true), cut);
             }
             catch (McpException e)
             {
-                return (new ToolResultPart(call.Id, call.Name, $"{Clean(server.Name, MaxName)}: {Clean(tool.Name, MaxName)} failed: {Explain(e, connection.Secret)}", IsError: true), 0);
+                return (new ToolResultPart(call.Id, call.Name, $"{Clean(server.Name, MaxName)}: {Clean(tool.Name, MaxName)} failed: {Explain(e, connection.Secrets)}", IsError: true), 0);
             }
             catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -195,7 +195,7 @@ public sealed class McpTools : IAsyncDisposable
                     _gate.Release();
                 }
 
-                throw Failure(server, "stopped", e, connection.Secret);
+                throw Failure(server, "stopped", e, connection.Secrets);
             }
         }
         finally
@@ -392,14 +392,14 @@ public sealed class McpTools : IAsyncDisposable
     }
 
     /// <summary>A result as text; see <see cref="Result"/>.</summary>
-    public static string ResultText(CallToolResult result) => Result(result, null).Text;
+    public static string ResultText(CallToolResult result) => Result(result, []).Text;
 
     /// <summary>
     /// A result as the text the model gets, and how many characters were cut from it. Text blocks as they
-    /// are, other content as a short marker, since tool results reach the model as text. The header value
-    /// is hidden here too: a server can quote it back ("token ... is invalid").
+    /// are, other content as a short marker, since tool results reach the model as text. The header and
+    /// variable values are hidden here too: a server can quote them back ("token ... is invalid").
     /// </summary>
-    internal static (string Text, int Cut) Result(CallToolResult result, string? secret)
+    internal static (string Text, int Cut) Result(CallToolResult result, IReadOnlyList<string> secrets)
     {
         var parts = result.Content.Select(block => block switch
         {
@@ -414,26 +414,28 @@ public sealed class McpTools : IAsyncDisposable
         string text = string.Join("\n", parts);
         if (text.Length == 0 && result.StructuredContent is { } structured)
             text = structured.ToString();
-        var (clean, cut) = Bound(Hide(text, secret), MaxResult, lines: true);
+        var (clean, cut) = Bound(Hide(text, secrets), MaxResult, lines: true);
         return (clean.Length == 0 ? "(no output)" : cut == 0 ? clean : clean + "\n" + CutNote(cut), cut);
     }
 
-    /// <summary>What a text becomes when it holds a header value too short to cut out of it.</summary>
-    public const string Withheld = "Not shown: this text holds the saved header value, which is too short to hide on its own.";
+    /// <summary>What a text becomes when it holds a saved value too short to cut out of it.</summary>
+    public const string Withheld = "Not shown: this text holds a saved header or variable value, which is too short to hide on its own.";
 
     /// <summary>
-    /// Replaces the header value wherever it appears in <paramref name="text"/>: the whole value, and each
-    /// long part of it, since "Bearer abc" can be quoted back without the scheme. A value under 8
+    /// Replaces each saved value wherever it appears in <paramref name="text"/>: the whole value, and each
+    /// long part of it, since "Bearer abc" can be quoted back without the scheme. Longest first, so a
+    /// value that holds another is hidden whole. A value under <see cref="McpSecrets.MinLength"/>
     /// characters is not cut out: replacing it would mangle ordinary text (the value 2 in "502") and
     /// show where it stood, so the whole text is withheld instead.
     /// </summary>
-    internal static string Hide(string text, string? secret)
+    internal static string Hide(string text, IReadOnlyList<string> secrets)
     {
-        if (string.IsNullOrEmpty(secret))
-            return text;
-        if (secret.Length < 8)
-            return text.Contains(secret, StringComparison.Ordinal) ? Withheld : text;
-        foreach (string part in secret.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Where(p => p.Length >= 8).Prepend(secret))
+        var present = secrets.Where(s => s.Length > 0).ToArray();
+        if (present.Any(s => s.Length < McpSecrets.MinLength && text.Contains(s, StringComparison.Ordinal)))
+            return Withheld;
+        var parts = present.Where(s => s.Length >= McpSecrets.MinLength)
+            .SelectMany(s => s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Where(p => p.Length >= McpSecrets.MinLength).Prepend(s));
+        foreach (string part in parts.OrderByDescending(p => p.Length))
             text = text.Replace(part, "[hidden]", StringComparison.Ordinal);
         return text;
     }
@@ -454,16 +456,16 @@ public sealed class McpTools : IAsyncDisposable
         }
     }
 
-    private static async Task<Connection> ConnectAsync(McpServerSettings server, string? secret, CancellationToken ct)
+    private static async Task<Connection> ConnectAsync(McpServerSettings server, string? header, IReadOnlyDictionary<string, string> environment, CancellationToken ct)
     {
         if (server.Transport == McpTransport.Stdio)
         {
             // Tomte starts the process and hands the SDK its streams. The SDK's own stdio transport wraps
             // every command in cmd.exe, which changes arguments, and leaves the process alive when Tomte dies.
-            var process = McpProcess.Start(server);
+            var process = McpProcess.Start(server, environment);
             try
             {
-                return new Connection(await McpClient.CreateAsync(new StreamClientTransport(process.Input, process.Output), cancellationToken: ct), process, secret);
+                return new Connection(await McpClient.CreateAsync(new StreamClientTransport(process.Input, process.Output), cancellationToken: ct), process, Secrets(header, environment));
             }
             catch (Exception e)
             {
@@ -482,11 +484,11 @@ public sealed class McpTools : IAsyncDisposable
             TransportMode = HttpTransportMode.StreamableHttp,
             // The long-lived GET stream is for messages a server starts on its own; a client that only calls tools has no use for it.
             EnableStandaloneGetStream = false,
-            AdditionalHeaders = secret is null ? null : new Dictionary<string, string> { [server.HeaderName] = secret },
+            AdditionalHeaders = header is null ? null : new Dictionary<string, string> { [server.HeaderName] = header },
         });
         try
         {
-            return new Connection(await McpClient.CreateAsync(transport, cancellationToken: ct), transport, secret);
+            return new Connection(await McpClient.CreateAsync(transport, cancellationToken: ct), transport, Secrets(header, environment));
         }
         catch
         {
@@ -495,18 +497,21 @@ public sealed class McpTools : IAsyncDisposable
         }
     }
 
+    private static string[] Secrets(string? header, IReadOnlyDictionary<string, string> environment) =>
+        [.. header is null ? [] : new[] { header }, .. environment.Values];
+
     // The exception itself is not kept as the inner one: it and the errors inside it can hold the header
-    // value, and whoever logs this error logs those too.
-    private static InvalidOperationException Failure(McpServerSettings server, string what, Exception e, string? secret) =>
-        new($"MCP server \"{Clean(server.Name, MaxName)}\" {what}: {Explain(e, secret)} Turn it off in Settings to send without it.");
+    // or a variable's value, and whoever logs this error logs those too.
+    private static InvalidOperationException Failure(McpServerSettings server, string what, Exception e, IReadOnlyList<string> secrets) =>
+        new($"MCP server \"{Clean(server.Name, MaxName)}\" {what}: {Explain(e, secrets)} Turn it off in Settings to send without it.");
 
     /// <summary>
-    /// An error's text for the user and the model: the header value hidden, then cleaned and cut like all
+    /// An error's text for the user and the model: the saved values hidden, then cleaned and cut like all
     /// server text. The SDK quotes a header value it could not add, and a server can send one back.
     /// </summary>
-    private static string Explain(Exception e, string? secret)
+    private static string Explain(Exception e, IReadOnlyList<string> secrets)
     {
-        string text = Clean(Hide(e.Message, secret), MaxError);
+        string text = Clean(Hide(e.Message, secrets), MaxError);
         return text.Length == 0 || text[^1] is '.' or '!' or '?' or ']' ? text : text + ".";
     }
 
@@ -581,13 +586,20 @@ public sealed class McpTools : IAsyncDisposable
     private async Task<(McpServerSettings Server, Connection? Connection, IList<Tool> Tools, Exception? Error)> StartAsync(McpServerSettings server, CancellationToken ct)
     {
         Connection? connection = null;
-        string? secret = null;
+        string? header = null;
+        var environment = new Dictionary<string, string>();
         try
         {
             // Read once and kept with the connection: what gets hidden later is the value that was sent,
             // also when Settings has changed or deleted it since.
-            secret = server.HeaderName.Length > 0 ? _readSecret(server.CredentialId) : null;
-            connection = await _connect(server, secret, ct);
+            header = server.HeaderName.Length > 0 ? _readSecret(server.CredentialId) : null;
+            foreach (string variable in server.Environment)
+            {
+                environment[variable] = _readSecret(server.EnvCredentialId(variable))
+                    ?? throw new InvalidOperationException($"The value of {variable} is not in Windows Credential Manager. Enter it again in Settings.");
+            }
+
+            connection = await _connect(server, header, environment, ct);
             var client = connection.Client;
             var tools = await UnlessGoneAsync(c => client.ListToolsAsync(cancellationToken: c).AsTask(), client.Completion, ct);
             return (server, connection, [.. tools.Select(t => t.ProtocolTool)], null);
@@ -597,7 +609,7 @@ public sealed class McpTools : IAsyncDisposable
             // Connected but not listed (a cancel, a timeout, a bad answer): nobody else knows this server.
             if (connection is not null)
                 await StopAsync(connection);
-            return (server, null, [], e is OperationCanceledException && ct.IsCancellationRequested ? null : Failure(server, "did not start", e, secret));
+            return (server, null, [], e is OperationCanceledException && ct.IsCancellationRequested ? null : Failure(server, "did not start", e, Secrets(header, environment)));
         }
     }
 
@@ -688,7 +700,8 @@ public sealed class McpTools : IAsyncDisposable
 
     /// <summary>
     /// A started server: the SDK's client, what Tomte has to stop itself (the process, or the HTTP
-    /// transport with its connections), and the header value it was given, to hide in what it sends back.
+    /// transport with its connections), and the header and variable values it was given, to hide in what
+    /// it sends back.
     /// </summary>
-    private sealed record Connection(McpClient Client, IAsyncDisposable? Owner, string? Secret);
+    private sealed record Connection(McpClient Client, IAsyncDisposable? Owner, IReadOnlyList<string> Secrets);
 }

@@ -203,6 +203,25 @@ public sealed class McpProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task VariablesReachOnlyTheServersEnvironmentAndAreHidden()
+    {
+        const string token = "tomte-test-token-1234567890";
+        var server = Echo(InFolder("info.json")) with { Environment = ["TOMTE_ECHO_TOKEN"] };
+        // A reader in place of Credential Manager: the test writes nothing to the real vault.
+        await using var tools = new McpTools([server], readSecret: id => id == server.EnvCredentialId("TOMTE_ECHO_TOKEN") ? token : null);
+        await tools.ListAsync(_limit.Token);
+
+        var info = await InfoAsync("info.json");
+        Assert.Equal(token, info.GetProperty("env").GetProperty("TOMTE_ECHO_TOKEN").GetString());
+        Assert.DoesNotContain(token, info.GetProperty("args").GetRawText());
+        Assert.Null(Environment.GetEnvironmentVariable("TOMTE_ECHO_TOKEN"));
+
+        // A server that quotes the value back: the model and the user see it hidden.
+        var echoed = (await tools.CallAsync(McpToolsTests.Call("echo__echo", $$"""{"text":"{{token}}"}"""), _limit.Token)).Result;
+        Assert.Equal("echo: [hidden]", echoed.Content);
+    }
+
+    [Fact]
     public async Task ACancelledStartEndsTheProcess()
     {
         // "sleep" never answers the first request, like a command that is not an MCP server but keeps running.
