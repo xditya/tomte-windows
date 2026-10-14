@@ -144,11 +144,13 @@ public sealed partial class SettingsWindow
             var remove = new Button { Content = "Remove" };
             remove.Click += (_, _) =>
             {
-                TryCredential(() => McpSecrets.Write(server, null, new Dictionary<string, string>(), CredentialStore.Save, CredentialStore.Delete));
+                var left = McpSecrets.Forget(server, CredentialStore.Delete);
                 // The server's always-allow grants go with it, so adding a server of the same name later starts from asking.
                 Save(s => McpTools.WithServer(s, server, null));
                 RenderMcpServers();
                 RenderGrants();
+                // The server is gone either way; what Windows would not delete, the user can delete by hand.
+                Show(mcpNote, left.Count == 0 ? null : $"{server.Name} is removed, but Windows Credential Manager could not delete {string.Join(", ", left.Select(id => CredentialStore.Prefix + id))}. Delete them there, under Windows Credentials.");
             };
             var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { enabled, list, edit, remove } };
             mcpList.Children.Add(new StackPanel { Spacing = 8, Children = { Row(server.Name, Note(server.Summary), controls), tools } });

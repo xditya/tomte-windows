@@ -74,12 +74,32 @@ public class McpSecretsTests
         Assert.Equal(["mcp-env/Files/B_TOKEN"], _vault.Keys);
 
         // What the Remove button does.
-        Write(fewer, null, []);
+        Assert.Empty(McpSecrets.Forget(fewer, id => _vault.Remove(id)));
         Assert.Empty(_vault);
 
         Assert.Null(Save(null, Web, new() { [Web.CredentialId] = "header-value-123" }));
-        Write(Web, null, []);
+        Assert.Empty(McpSecrets.Forget(Web, id => _vault.Remove(id)));
         Assert.Empty(_vault);
+    }
+
+    [Fact]
+    public void ForgettingAServerGoesOnPastAnEntryThatCannotBeDeleted()
+    {
+        var files = Files with { Environment = ["A_TOKEN", "B_TOKEN"] };
+        _vault[files.CredentialId] = "left-over-header";
+        _vault[files.EnvCredentialId("A_TOKEN")] = "a-value-123";
+        _vault[files.EnvCredentialId("B_TOKEN")] = "b-value-123";
+
+        // What CredentialStore.Delete throws when CredDelete fails.
+        var left = McpSecrets.Forget(files, id =>
+        {
+            if (id.EndsWith("/A_TOKEN", StringComparison.Ordinal))
+                throw new InvalidOperationException("CredDelete failed: Access is denied.");
+            _vault.Remove(id);
+        });
+        Assert.Equal(["mcp-env/Files/A_TOKEN"], left);
+        Assert.Equal(["mcp-env/Files/A_TOKEN"], _vault.Keys);
+        Assert.Empty(McpSecrets.Forget(files with { Environment = [] }, id => _vault.Remove(id)));
     }
 
     [Fact]

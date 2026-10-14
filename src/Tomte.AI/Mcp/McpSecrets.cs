@@ -69,10 +69,32 @@ public static partial class McpSecrets
             save(id, value);
         foreach (string id in Ids(before).Concat(Ids(now)).Except(values.Keys, StringComparer.OrdinalIgnoreCase))
             delete(id);
-
-        static IEnumerable<string> Ids(McpServerSettings? server) =>
-            server is null ? [] : [server.CredentialId, .. server.Environment.Select(server.EnvCredentialId)];
     }
+
+    /// <summary>
+    /// Deletes every entry a removed server can have, going on past one that fails, and returns the ids
+    /// that are still there, so the user can be told to delete them in Credential Manager.
+    /// </summary>
+    public static IReadOnlyList<string> Forget(McpServerSettings server, Action<string> delete)
+    {
+        var left = new List<string>();
+        foreach (string id in Ids(server))
+        {
+            try
+            {
+                delete(id);
+            }
+            catch (InvalidOperationException)
+            {
+                left.Add(id);
+            }
+        }
+
+        return left;
+    }
+
+    private static IEnumerable<string> Ids(McpServerSettings? server) =>
+        server is null ? [] : [server.CredentialId, .. server.Environment.Select(server.EnvCredentialId)];
 
     /// <summary>
     /// Whether an arguments line looks like it holds a token, for a warning in Settings that never blocks

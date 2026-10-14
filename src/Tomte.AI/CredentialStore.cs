@@ -12,7 +12,8 @@ namespace Tomte.AI;
 /// </summary>
 public static class CredentialStore
 {
-    private const string Prefix = "Tomte/ai/";
+    /// <summary>What every id is stored under: the name the user sees in Credential Manager is this plus the id.</summary>
+    public const string Prefix = "Tomte/ai/";
 
     public static unsafe void Save(string providerId, string secret)
     {
