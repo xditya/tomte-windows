@@ -55,6 +55,12 @@ public sealed record TomteSettings
     /// <summary>AI tools the user answered "always allow" for, by tool name; the AI layer reads and writes it, the settings window lists and removes.</summary>
     public IReadOnlyList<string> AlwaysAllowedTools { get; init; } = [];
 
+    /// <summary>
+    /// Keep finished AI conversations and drop zone results in tomte.db for the History tab. On by default; turning it
+    /// off deletes them.
+    /// </summary>
+    public bool KeepAiHistory { get; init; } = true;
+
     /// <summary>Read the reply to a voice command aloud with Windows speech. Off unless the user turns it on.</summary>
     public bool SpokenReplies { get; init; }
 

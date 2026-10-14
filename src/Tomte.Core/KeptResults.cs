@@ -14,7 +14,7 @@ public sealed record KeptResult(DropZone Zone, string? Skill, string SourceName,
     public string Line(IFormatProvider? culture = null) => string.Create(culture ?? CultureInfo.CurrentCulture,
         $"Kept from {At.ToLocalTime():d MMM, HH:mm} · {Model} · {Cost(CostUsd)}");
 
-    private static string Cost(decimal usd) => usd == 0 ? "no cost" : string.Create(CultureInfo.InvariantCulture, $"${usd:0.00##}");
+    internal static string Cost(decimal usd) => usd == 0 ? "no cost" : string.Create(CultureInfo.InvariantCulture, $"${usd:0.00##}");
 }
 
 /// <summary>
@@ -22,24 +22,35 @@ public sealed record KeptResult(DropZone Zone, string? Skill, string SourceName,
 /// same file on the same zone shows the kept one first. The same file is the same path, ignoring case, with the size
 /// and the last write time it had just before it was sent; a file changed since is a new file. Work runs on the pool,
 /// never on the island's thread; trouble with the disk or the database is logged and loses only that one result.
+/// The results are part of the AI history (<see cref="AiHistory"/>): with it off (<paramref name="on"/>) nothing is kept
+/// or found, and each keep prunes both by the history's limits.
 /// </summary>
-public sealed class KeptResults(TomteDb db, Action<string>? log = null)
+public sealed class KeptResults(TomteDb db, Action<string>? log = null, Func<bool>? on = null)
 {
-    private const string Feature = "results";
+    internal const string Feature = "results";
 
-    // The whole history, oldest first. Never edit or reorder a step that has merged; add at the end.
-    private static readonly string[] Schema =
+    // The whole history, oldest first. Never edit or reorder a step that has merged; add at the end. The feature's
+    // tables are the drop zones' results and the AI history's conversations, whose turns are JSON.
+    internal static readonly string[] Schema =
     [
         "CREATE TABLE results_kept(id INTEGER PRIMARY KEY, zone TEXT NOT NULL, skill TEXT, source_name TEXT NOT NULL, source_path TEXT NOT NULL, " +
         "source_stamp TEXT, provider TEXT NOT NULL, model TEXT NOT NULL, cost_usd TEXT NOT NULL, at INTEGER NOT NULL, answer TEXT NOT NULL, files TEXT NOT NULL)",
+        "CREATE TABLE results_history(id INTEGER PRIMARY KEY, key TEXT NOT NULL UNIQUE, source TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, " +
+        "cost_usd TEXT NOT NULL, at INTEGER NOT NULL, turns TEXT NOT NULL)",
     ];
 
     /// <param name="stamp">The file's <see cref="Stamp"/> from just before the send, so an edit during the send makes it a new file.</param>
     public Task Keep(KeptResult result, string? stamp) => Task.Run(() =>
     {
+        if (on?.Invoke() == false)
+        {
+            return;
+        }
+
         try
         {
             using var connection = db.Open(Feature, Schema);
+            using var transaction = connection.BeginTransaction();
             using var insert = connection.CreateCommand();
             insert.CommandText = """
                 INSERT INTO results_kept(zone, skill, source_name, source_path, source_stamp, provider, model, cost_usd, at, answer, files)
@@ -57,6 +68,8 @@ public sealed class KeptResults(TomteDb db, Action<string>? log = null)
             insert.Parameters.AddWithValue("$answer", result.Answer);
             insert.Parameters.AddWithValue("$files", string.Join('\n', result.Files));
             insert.ExecuteNonQuery();
+            AiHistory.Prune(connection, result.At);
+            transaction.Commit();
         }
         catch (Exception e) when (e is SqliteException or IOException or UnauthorizedAccessException)
         {
@@ -67,6 +80,11 @@ public sealed class KeptResults(TomteDb db, Action<string>? log = null)
     /// <summary>The newest result kept for this zone (and skill) and this file as it is now, or null.</summary>
     public Task<KeptResult?> Last(DropZone zone, string? skill, string sourcePath) => Task.Run(() =>
     {
+        if (on?.Invoke() == false)
+        {
+            return null;
+        }
+
         try
         {
             using var connection = db.Open(Feature, Schema);
