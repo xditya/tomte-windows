@@ -501,7 +501,7 @@ internal static partial class Program
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette skills: [{string.Join(", ", skills.Skills.Select(s => s.Name))}] from {skills.Folder}");
             // --dry keeps device tools from changing anything; the grants come from settings.json as they will for the real palette.
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
-            var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
+            var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, triggers.Timer);
             // Servers start on the send; disposing at the end of the run stops them, as closing the palette does.
             await using var mcp = McpTools.For(store.Current.McpServers);
             // --automation offers the UI Automation tools in this run; without it nothing of them is made.

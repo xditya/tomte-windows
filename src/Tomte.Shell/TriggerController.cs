@@ -114,6 +114,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     public IslandState State => machine.State;
 
+    /// <summary>The island's one timer: the ring, the tray menu and the AI's set_timer all start and stop this one.</summary>
+    internal IslandTimer Timer => timer;
+
     /// <summary>The lock screen or a secure desktop is up. Safe from any thread: the state is swapped whole.</summary>
     public bool OnSecureSurface => watch.State.Secure;
 

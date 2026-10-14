@@ -25,7 +25,7 @@ internal static partial class Program
         // The note's chip and tool read it at send; the rambler and the panel share this one instance.
         _ = Scratchpad.LoadAsync();
         paletteGrants ??= new PermissionGrants(store);
-        var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);
+        var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, timer: triggers.Timer);
         var session = DropZoneRequest.Ask(item, configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants);
         // The palette is up, so the event waits in the triggers' queue and shows once it hides.
         session.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
