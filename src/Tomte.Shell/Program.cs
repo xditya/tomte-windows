@@ -578,6 +578,59 @@ internal static partial class Program
         PInvoke.PostQuitMessage(0);
     }
 
+    // The configured palette's, made on its first open: one HTTP client, and grants that hold a handler on the store.
+    private static HttpClient? configuredHttp;
+    private static PermissionGrants? configuredGrants;
+
+    /// <summary>
+    /// A palette session against the provider set up in settings, with the key from Credential Manager, or null when
+    /// none is set up, so the palette says the AI layer is off. Settings are read at each open, so a provider saved or
+    /// removed counts from the next palette. Tools that ask are refused, the session's default, until the palette
+    /// draws a confirmation; reads, Tomte's own writes and the tools the user always allowed run. Kept out of Main so
+    /// Tomte.AI loads only when the palette opens.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static PaletteSession? ConfiguredSession(TriggerController triggers, SettingsStore store, Action<string>? log)
+    {
+        (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options)? palette;
+        try
+        {
+            palette = ProviderSetup.ForPalette(store.Current, configuredHttp ??= new HttpClient(), CredentialStore.Read);
+        }
+        catch (Exception e) when (e is InvalidOperationException or ArgumentException)
+        {
+            // Credential Manager would not read the key, or a hand-edited settings file has no address for the server.
+            log?.Invoke($"palette: the provider in settings cannot be used: {e.Message}");
+            return null;
+        }
+
+        if (palette is not { } configured)
+        {
+            return null;
+        }
+
+        // Read now, while the island is still not the foreground window.
+        nint foreground = WindowContext.Foreground();
+        var (app, title) = WindowContext.Describe(foreground);
+        var shelf = new InMemoryShelf();
+        // The note's chip reads it at send; the rambler and the panel share this one instance.
+        _ = Scratchpad.LoadAsync();
+        configuredGrants ??= new PermissionGrants(store);
+        var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);
+        List<ContextChip> chips =
+        [
+            ContextChips.Selection(null),
+            ContextChips.Window(app, title),
+            ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct)),
+            ContextChips.Shelf(shelf),
+            ContextChips.Scratchpad(Scratchpad),
+        ];
+        var session = new PaletteSession(configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, configuredGrants, chips);
+        // The palette is up, so the event waits in the triggers' queue and shows once it hides.
+        session.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
+        return session;
+    }
+
     /// <summary>
     /// --rambler: the hold-to-talk session Win+Alt+V drives. The provider comes from the command line until
     /// settings carry it (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential
