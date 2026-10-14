@@ -504,6 +504,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private sealed class CompactTargets(TriggerController owner) : IInteractive
     {
+        // Where the pointer was when the pill came up: a pill that came up under a still pointer was not come onto.
+        private System.Drawing.Point shownAt;
+
         public event Action? TargetsChanged;
 
         // Read on every pointer move, so built only when something changes.
@@ -517,6 +520,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 : [];
             if (owner.machine.State == IslandState.Compact)
             {
+                PInvoke.GetCursorPos(out shownAt);
                 owner.island.Interaction.Register(this, p => p, p => p);
             }
             else
@@ -542,7 +546,17 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         public bool TryDrag(string id, System.Numerics.Vector2 at) => owner.island.Drag(at);
 
-        public void Hovered(string? id) => owner.island.Mascot.Hover(id == CompactLayout.TomteId);
+        public void Hovered(string? id)
+        {
+            owner.island.Mascot.Hover(id == CompactLayout.TomteId);
+            // The window's own mouse messages put the pointer on the pill or the badge. The rest that opens Panels runs
+            // from the input thread's raw-input samples, which have been seen to miss a pointer resting on the peek
+            // badge, so that thread looks again now.
+            if (id is not null && PInvoke.GetCursorPos(out var at) && at != shownAt)
+            {
+                InputThread.SamplePointer();
+            }
+        }
     }
 
     /// <summary>

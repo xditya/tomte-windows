@@ -47,6 +47,7 @@ internal static unsafe class InputThread
     private const uint MsgApplySettings = PInvoke.WM_APP + 11;  // re-read the store: thresholds, hooks, hotkeys
     private const uint MsgRawMouse = PInvoke.WM_APP + 12;       // wParam 1 wants raw mouse input for pointer tracking, 0 no longer
     private const uint MsgSetConfirm = PInvoke.WM_APP + 13;     // wParam 1 registers Win+Alt+Enter, 0 releases it
+    private const uint MsgSample = PInvoke.WM_APP + 15;         // sample the pointer against the island bounds now
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B, VkReturn = 0x0D;
     private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, which CsWin32 does not emit
@@ -130,6 +131,12 @@ internal static unsafe class InputThread
         Volatile.Write(ref trackPointer, 0);
         PInvoke.PostMessage(window, MsgRawMouse, 0, 0);
     }
+
+    /// <summary>
+    /// Looks at the pointer against the island bounds now, and reports as a raw-input sample would: for when the island's
+    /// own window saw the pointer arrive and this thread's last sample may not have.
+    /// </summary>
+    public static void SamplePointer() => PInvoke.PostMessage(window, MsgSample, 0, 0);
 
     /// <summary>The button-down window said HTCLIENT: the next move into the drag band inside the zone reports once.</summary>
     public static void ArmDrag() => Volatile.Write(ref dragArmed, 1);
@@ -345,6 +352,11 @@ internal static unsafe class InputThread
                 case MsgRawMouse:
                     RawMouse(reveal.EdgePush || wParam.Value == 1);
                     return new LRESULT(0);
+                case MsgSample:
+                    System.Drawing.Point now;
+                    PInvoke.GetCursorPos(&now);
+                    Track(now);
+                    return new LRESULT(0);
                 case PInvoke.WM_CLOSE:
                     foreach (var r in registrations)
                     {
@@ -424,6 +436,12 @@ internal static unsafe class InputThread
             }
         }
 
+        Track(cursor);
+    }
+
+    /// <summary>Inside the bounds plus the margin, and on the island itself: posted when either or the bounds changed.</summary>
+    private static void Track(System.Drawing.Point cursor)
+    {
         if (Volatile.Read(ref trackPointer) == 0)
         {
             return;
