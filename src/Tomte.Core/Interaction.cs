@@ -6,6 +6,9 @@ namespace Tomte.Core.Interaction;
 /// <summary>What a clickable part of a view is, which says how the host treats it (a tab, say, switches as focus reaches it).</summary>
 public enum TargetKind { Button, Toggle, Tile, Row, Tab, Link }
 
+/// <summary>How a target was activated, for a view where a click, a double click and a key mean different things.</summary>
+public enum ActivateBy { Click, DoubleClick, Key }
+
 /// <summary>
 /// One clickable part of a view. <paramref name="Bounds"/> is in the view's own DIP space (a panel's body space, or island
 /// space for a view that sits on the island itself) and <paramref name="Corner"/> rounds it. A view's list order is its Tab
@@ -42,17 +45,40 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
     }
 
     /// <summary>
-    /// Tab (+1) or Shift+Tab (-1) from <paramref name="from"/>: the next enabled target in list order, wrapping at both
-    /// ends. From -1, nothing focused yet, Tab goes to the first and Shift+Tab to the last. -1 when none is enabled.
+    /// Tab (+1) or Shift+Tab (-1) from <paramref name="from"/>: the next Tab stop in list order, wrapping at both ends.
+    /// A target in no group is a stop of its own; a group is one stop, entered at its first enabled member (the host may
+    /// put focus on the member last focused instead) and left by Tab, while the arrows move inside it. From -1, nothing
+    /// focused yet, Tab goes to the first stop and Shift+Tab to the last. -1 when none is enabled.
     /// </summary>
     public static int Next(IReadOnlyList<Target> targets, int from, int direction)
     {
         int n = targets.Count, step = direction < 0 ? -1 : 1;
         int i = from < 0 ? (step > 0 ? -1 : n) : from;
+        int group = from >= 0 && from < n ? targets[from].Group : 0;
         for (int k = 0; k < n; k++)
         {
             i = (((i + step) % n) + n) % n;
-            if (targets[i].Enabled)
+            if (!targets[i].Enabled || (group != 0 && targets[i].Group == group && i != from))
+            {
+                continue;
+            }
+
+            if (i == from)
+            {
+                return i;
+            }
+
+            return targets[i].Group == 0 ? i : First(targets, targets[i].Group);
+        }
+
+        return -1;
+    }
+
+    private static int First(IReadOnlyList<Target> targets, int group)
+    {
+        for (int i = 0; i < targets.Count; i++)
+        {
+            if (targets[i].Group == group && targets[i].Enabled)
             {
                 return i;
             }
