@@ -110,20 +110,34 @@ public static class WindowCapture
         }
     }
 
+    /// <summary>
+    /// The WinRT device holds the only reference that outlives this call, so disposing it frees the hardware device.
+    /// Left to the runtime wrappers, the device and the driver's 30 MB of private memory stayed until a garbage
+    /// collection, which a hidden island may not run for hours.
+    /// </summary>
     private static unsafe IDirect3DDevice CreateDevice()
     {
         PInvoke.D3D11CreateDevice(null, D3D_DRIVER_TYPE.D3D_DRIVER_TYPE_HARDWARE, HMODULE.Null,
             D3D11_CREATE_DEVICE_FLAG.D3D11_CREATE_DEVICE_BGRA_SUPPORT, null, PInvoke.D3D11_SDK_VERSION,
-            out ID3D11Device? d3d, out _, out _).ThrowOnFailure();
-        PInvoke.CreateDirect3D11DeviceFromDXGIDevice((IDXGIDevice)d3d!, out var inspectable).ThrowOnFailure();
-        nint abi = Marshal.GetIUnknownForObject(inspectable);
+            out ID3D11Device? d3d, out _, out ID3D11DeviceContext? context).ThrowOnFailure();
         try
         {
-            return WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(abi);
+            PInvoke.CreateDirect3D11DeviceFromDXGIDevice((IDXGIDevice)d3d!, out var inspectable).ThrowOnFailure();
+            nint abi = Marshal.GetIUnknownForObject(inspectable);
+            try
+            {
+                return WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(abi);
+            }
+            finally
+            {
+                Marshal.Release(abi);
+                Marshal.ReleaseComObject(inspectable);
+            }
         }
         finally
         {
-            Marshal.Release(abi);
+            Marshal.ReleaseComObject(context!);
+            Marshal.ReleaseComObject(d3d!);
         }
     }
 
