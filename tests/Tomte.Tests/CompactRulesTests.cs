@@ -184,6 +184,17 @@ public class GlanceTests
     }
 
     [Fact]
+    public void TheCutNeverSplitsACharacter()
+    {
+        // An emoji outside the BMP is two UTF-16 units; 14 units fit, which would end in its first half.
+        string emoji = "Rep 📊 summary";
+        Assert.Equal("18:41 · Rep…", Glance(new GlanceFacts { Waiting = [new IslandEvent(emoji, Now)] }, 14 * 7));
+        Assert.Equal("18:41 · Rep 📊…", Glance(new GlanceFacts { Waiting = [new IslandEvent(emoji, Now)] }, 15 * 7));
+        // An accent typed as a combining mark stays with its letter.
+        Assert.Equal("18:41 · Caf…", Glance(new GlanceFacts { Waiting = [new IslandEvent("Café au lait", Now)] }, 13 * 7));
+    }
+
+    [Fact]
     public void WithNoRoomForTheMentionTheTimeStandsAlone()
     {
         Assert.Equal("18:41", Glance(new GlanceFacts { ShelfCount = 3 }, 9 * 7));

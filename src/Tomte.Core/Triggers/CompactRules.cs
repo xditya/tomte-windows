@@ -106,20 +106,22 @@ public static class CompactRules
             _ => (ShortDate(now, culture), ""),
         };
 
-        string Line(int length) => length == cut.Length ? $"{time} · {cut}{kept}" : $"{time} · {cut[..length].TrimEnd()}…{kept}";
-        bool Fits(int length) => measure(Line(length)) <= width;
-        if (Fits(cut.Length))
+        // Cut between text elements, so a surrogate pair, a combining mark or an emoji sequence is kept whole or left out.
+        int[] starts = StringInfo.ParseCombiningCharacters(cut);
+        string Line(int elements) => elements == starts.Length ? $"{time} · {cut}{kept}" : $"{time} · {cut[..starts[elements]].TrimEnd()}…{kept}";
+        bool Fits(int elements) => measure(Line(elements)) <= width;
+        if (Fits(starts.Length))
         {
-            return Line(cut.Length);
+            return Line(starts.Length);
         }
 
-        if (cut.Length < 2 || !Fits(1))
+        if (starts.Length < 2 || !Fits(1))
         {
             return time;
         }
 
-        // The longest cut that fits, between one character, which does, and the whole, which does not.
-        int fits = 1, over = cut.Length;
+        // The longest cut that fits, between one element, which does, and the whole, which does not.
+        int fits = 1, over = starts.Length;
         while (over - fits > 1)
         {
             int mid = (fits + over) / 2;
