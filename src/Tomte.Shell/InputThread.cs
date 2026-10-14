@@ -41,7 +41,6 @@ internal static unsafe class InputThread
     private const uint MsgRawMouse = PInvoke.WM_APP + 12;       // wParam 1 wants raw mouse input for pointer tracking, 0 no longer
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B;
-    private const ushort VkV = 0x56;
     private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, which CsWin32 does not emit
 
     private static HWND island, window;
@@ -50,6 +49,7 @@ internal static unsafe class InputThread
     private static RevealSettings reveal = null!;
     private static EdgePushDetector detector = null!;
     private static HoldDetector hold = null!;
+    private static ushort ramblerKey;
     private static readonly ManualResetEventSlim ready = new(false);
     private static Registration[] registrations = [];
     private static readonly Stopwatch clock = Stopwatch.StartNew();
@@ -155,11 +155,6 @@ internal static unsafe class InputThread
             }
         }
 
-        // Hold-to-talk: RegisterHotKey gives the press but not the release, so the detector arms raw keyboard input only
-        // while the chord is down and sees the first key-up. Auto-repeat presses while held are ignored by it.
-        hold = new HoldDetector(on => RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, on));
-        hold.Started += () => PInvoke.PostMessage(island, MsgHotkey, (nuint)HotkeyAction.Rambler + 1, 0);
-        hold.Ended += keep => PInvoke.PostMessage(island, MsgHotkeyReleased, (nuint)(keep ? 1 : 0), 0);
         Apply(store.Current);
         ready.Set();
         MSG message;
@@ -205,10 +200,27 @@ internal static unsafe class InputThread
 
             bool ok = PInvoke.RegisterHotKey(window, (int)action + 1, (HOT_KEY_MODIFIERS)hotkey.Modifiers | HOT_KEY_MODIFIERS.MOD_NOREPEAT, hotkey.Key);
             next.Add(new Registration(action, hotkey.ToString(), ok ? 0 : Marshal.GetLastPInvokeError()));
+            if (action == HotkeyAction.Rambler && (ushort)hotkey.Key != ramblerKey)
+            {
+                // The hold detector ends on the key-up of the chord's own key, so it follows the binding.
+                ramblerKey = (ushort)hotkey.Key;
+                NewHold();
+            }
         }
 
         registrations = [.. next];
         PInvoke.PostMessage(island, MsgHotkeysRegistered, 0, 0);
+    }
+
+    /// <summary>
+    /// Hold-to-talk: RegisterHotKey gives the press but not the release, so the detector arms raw keyboard input only
+    /// while the chord is down and sees the first key-up. Auto-repeat presses while held are ignored by it.
+    /// </summary>
+    private static void NewHold()
+    {
+        hold = new HoldDetector(on => RegisterRaw(PInvoke.HID_USAGE_GENERIC_KEYBOARD, on), ramblerKey);
+        hold.Started += () => PInvoke.PostMessage(island, MsgHotkey, (nuint)HotkeyAction.Rambler + 1, 0);
+        hold.Ended += keep => PInvoke.PostMessage(island, MsgHotkeyReleased, (nuint)(keep ? 1 : 0), 0);
     }
 
     private static void RawMouse(bool on)
@@ -262,10 +274,10 @@ internal static unsafe class InputThread
                     return new LRESULT(0);
                 case PInvoke.WM_HOTKEY when wParam.Value == (nuint)HotkeyAction.Rambler + 1:
                     hold.Press(clock.ElapsedMilliseconds);
-                    // A tap shorter than WM_HOTKEY's delivery has already released V when this runs.
-                    if ((PInvoke.GetAsyncKeyState(VkV) & 0x8000) == 0)
+                    // A tap shorter than WM_HOTKEY's delivery has already released the key when this runs.
+                    if ((PInvoke.GetAsyncKeyState(ramblerKey) & 0x8000) == 0)
                     {
-                        hold.KeyUp(VkV, clock.ElapsedMilliseconds);
+                        hold.KeyUp(ramblerKey, clock.ElapsedMilliseconds);
                     }
 
                     return new LRESULT(0);
@@ -398,6 +410,8 @@ internal static unsafe class InputThread
                     case PInvoke.WM_LBUTTONDOWN:
                         buttonDown = true;
                         candidate = false;
+                        // A hit-test answer that lands after a fast click's button-up must not arm the next drag.
+                        Volatile.Write(ref dragArmed, 0);
                         (downX, downY) = (x, y);
                         break;
                     case PInvoke.WM_MOUSEMOVE:
