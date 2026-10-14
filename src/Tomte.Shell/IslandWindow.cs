@@ -558,6 +558,10 @@ internal sealed unsafe class IslandWindow : IDisposable
         // so a reveal does not start as a line under the gap.
         pill.Shape.StrokeThickness = attached ? (panelLook ? 1 : 0) : g.Depth <= 0.5 ? 0 : (float)Math.Min(1, g.Depth * scale);
 
+        // Over its last 2 DIP of depth the pill fades with the depth the springs give each frame, so a retract does
+        // not end as a thin line under the gap and a reveal does not start as one.
+        pill.Visual.Opacity = attached ? 1 : (float)Math.Clamp(g.Depth / 2, 0, 1);
+
         root.Offset = Origin() + new Vector3(Bounds(g).X - windowX, 0, 0);
 
         // The outline's box and a pixel around it. Content anchors to this width, so the shadow's room stays out of it.
