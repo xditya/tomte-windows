@@ -187,14 +187,16 @@ internal sealed unsafe class CaptureOverlay : IDisposable
                 AddStroke(dimPath, points);
             }
 
-            dimGeometry.Path = new CompositionPath(CanvasGeometry.CreatePath(dimPath));
+            using var g = CanvasGeometry.CreatePath(dimPath);
+            dimGeometry.Path = new CompositionPath(g);
         }
 
         if (points.Count > 1)
         {
             using var strokePath = new CanvasPathBuilder(null);
             AddStroke(strokePath, points);
-            strokeGeometry.Path = new CompositionPath(CanvasGeometry.CreatePath(strokePath));
+            using var g = CanvasGeometry.CreatePath(strokePath);
+            strokeGeometry.Path = new CompositionPath(g);
             var b = Lasso.Box;
             boxGeometry.Offset = new Vector2(b.X, b.Y);
             boxGeometry.Size = new Vector2(b.Width, b.Height);
