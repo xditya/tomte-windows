@@ -243,4 +243,56 @@ public class PanelTests
             Assert.True(TabStrip.At(x, all, PanelId.Media, 380, mascot: true) is not { } id || shownTabs.Contains(id), $"x {x}");
         }
     }
+
+    private static readonly float[] PanelWidths = [(float)PanelSize.Media.W, (float)PanelSize.Shortcuts.W, (float)PanelSize.Scratchpad.W, (float)PanelSize.Shelf.W, (float)PanelSize.Clipboard.W];
+
+    [Fact]
+    public void TheAskPillEndsAtTheRightPaddingOfEveryPanelAndNoLabelRunsIntoIt()
+    {
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        foreach (float width in PanelWidths)
+        {
+            var (card, glyph, word) = TabStrip.AskPill(width);
+            Assert.Equal(width - TabStrip.RightPad, card.Right, 0.01);
+            Assert.Equal(TabStrip.Height, card.Height);
+            Assert.Equal(PanelSpace.TabStripHeight / 2, card.Y + card.Height / 2, 0.01);
+            // The sparkle, then the word, inside the card with the tab labels' padding either side.
+            Assert.Equal("Ask", word.Text);
+            Assert.Equal(card.Left + TabStrip.PadX, glyph.Left, 0.01);
+            Assert.Equal(glyph.Right + TabStrip.GlyphGap, word.Slot.Left, 0.01);
+            Assert.Equal(card.Right - TabStrip.PadX, word.Slot.Right, 0.01);
+            Assert.Equal(PanelSpace.TabStripHeight / 2, glyph.Y + glyph.Height / 2, 0.01);
+
+            foreach (bool mascot in new[] { true, false })
+            {
+                foreach (var current in all)
+                {
+                    var labels = TabStrip.Labels(all, current, width, mascot);
+                    Assert.True(labels.Count >= 3, $"{labels.Count} labels at {width}");
+                    Assert.All(labels, label => Assert.True(label.Slot.Right <= card.Left - TabStrip.Gap + 0.01, $"{label.Text} ends at {label.Slot.Right}, Ask starts at {card.Left}"));
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void APressOnTheAskPillIsAskAndNoTab()
+    {
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        foreach (float width in PanelWidths)
+        {
+            var card = TabStrip.AskPill(width).Card;
+            Assert.True(TabStrip.OnAsk(card.Left, width));
+            Assert.True(TabStrip.OnAsk(card.Right - 0.5f, width));
+            Assert.False(TabStrip.OnAsk(card.Left - 0.5f, width));
+            Assert.False(TabStrip.OnAsk(card.Right, width));
+            for (float x = 0; x < width; x++)
+            {
+                if (TabStrip.OnAsk(x, width))
+                {
+                    Assert.Null(TabStrip.At(x, all, PanelId.Media, width, mascot: true));
+                }
+            }
+        }
+    }
 }
