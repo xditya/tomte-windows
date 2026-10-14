@@ -59,6 +59,13 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
                 log($"{DateTime.Now:HH:mm:ss.fff} palette grow -> {height} ({session.AnswerText.Length} chars, {session.ToolSteps} steps)");
                 growth = island.MorphTo(Geometry(height), SpringPreset.Gentle);
             };
+            // The size line and each file's line, logged where the palette will show them once text renders.
+            Tomte.AI.Files.TokenEstimate? shown = null;
+            session.Changed += () =>
+            {
+                if (session.Estimate is { } estimate && estimate != shown)
+                    log($"{DateTime.Now:HH:mm:ss.fff} palette estimate: {(shown = estimate).Line} [{string.Join("; ", estimate.Files)}]");
+            };
             session.DeviceActionExecuted += e =>
             {
                 Events.Add(e);

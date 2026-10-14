@@ -424,7 +424,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// --palette "prompt" [--screenshot] [--dry]: the debug driver. Opens the palette on the island, runs the
+    /// --palette "prompt" [--screenshot] [--shelf] [--dry]: the debug driver. Opens the palette on the island, runs the
     /// prompt against local Ollama with the window chip on, an in-memory shelf and the real scratchpad note, logs the
     /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
     /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
@@ -465,6 +465,8 @@ internal static class Program
             };
             chips[1].On = true;
             chips[2].On = Environment.GetCommandLineArgs().Contains("--screenshot");
+            // The read tool reads only a shelf the user attached; --shelf attaches the driver's, with notes.txt.
+            chips[3].On = Environment.GetCommandLineArgs().Contains("--shelf");
             if (lasso is not null)
             {
                 chips.Insert(0, lasso);
