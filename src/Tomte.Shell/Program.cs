@@ -640,8 +640,9 @@ internal static partial class Program
             var provider = configured?.Provider ?? ProviderSetup.Load(config, http!);
             // One per store, kept as long as the store. A voice command asks every time, so the grants change nothing for it.
             var grants = new PermissionGrants(store);
-            // An in-memory shelf until the shelf store lands. The tiles open by name; that way never runs a script tile.
-            var tools = new BuiltInTools(new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
+            // The real shelf, so a file made by voice is still there after a restart. The tiles open by name; that way
+            // never runs a script tile.
+            var tools = new BuiltInTools((IShelf?)Jobs.Shelf ?? new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
                 args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
             voice = async () =>
             {
