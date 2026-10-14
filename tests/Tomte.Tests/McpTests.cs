@@ -788,8 +788,8 @@ public class McpPaletteTests : IDisposable
     public void BuiltInNamesNeverLookLikeMcpNames()
     {
         // The separator is what tells the two apart; a built-in name always means the built-in tool.
-        Assert.DoesNotContain(BuiltInTools.Definitions, d => d.Name.Contains(McpTools.Separator));
-        Assert.Equal(BuiltInTools.Definitions.Select(d => d.Name).Order(), BuiltInTools.Tiers.Keys.Order());
+        Assert.DoesNotContain(BuiltInTools.All, d => d.Name.Contains(McpTools.Separator));
+        Assert.Equal(BuiltInTools.All.Select(d => d.Name).Order(), BuiltInTools.Tiers.Keys.Order());
     }
 }
 

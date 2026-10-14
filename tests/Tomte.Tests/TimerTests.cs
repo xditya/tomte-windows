@@ -1,4 +1,8 @@
+using System.Text.Json;
+using Tomte.AI;
+using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Device;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -151,6 +155,62 @@ public sealed class TimerTests : IDisposable
         new IslandTimer(File).Run = TimerRun.Starting(T0, TimerRun.MaxDuration);
         Assert.NotNull(new IslandTimer(File).Run);
     }
+
+    [Theory]
+    [InlineData("""{}""")]
+    [InlineData("""{"minutes":"soon"}""")]
+    [InlineData("""{"minutes":0}""")]
+    [InlineData("""{"minutes":-3}""")]
+    [InlineData("""{"minutes":0.01}""")]
+    [InlineData("""{"minutes":1441}""")]
+    [InlineData("""{"minutes":"NaN"}""")]
+    [InlineData("""{"minutes":1e400}""")]
+    [InlineData("""[5]""")]
+    public void SetTimerRejectsBadMinutes(string json)
+    {
+        var timer = new IslandTimer(File);
+        Assert.NotNull(BuiltInTools.Validate(BuiltInTools.SetTimer, JsonDocument.Parse(json).RootElement));
+        var (result, undo) = Tools(timer).Run(Call(json));
+        Assert.True(result.IsError);
+        Assert.Null(undo);
+        Assert.Null(timer.Run);
+    }
+
+    [Fact]
+    public void SetTimerStartsAndItsUndoPutsBackThePreviousTimer()
+    {
+        // Small models send the number as text; that is taken, as for the device tools.
+        Assert.Null(BuiltInTools.Validate(BuiltInTools.SetTimer, JsonDocument.Parse("""{"minutes":"0.5"}""").RootElement));
+        Assert.Equal(ActionTier.AppLocalWrite, BuiltInTools.Tiers[BuiltInTools.SetTimer]);
+        Assert.Equal("Set a timer for 25 minutes", BuiltInTools.Describe(BuiltInTools.SetTimer, JsonDocument.Parse("""{"minutes":25}""").RootElement));
+        var timer = new IslandTimer(File);
+        var tools = Tools(timer);
+
+        var (first, cancel) = tools.Run(Call("""{"minutes":25}"""));
+        Assert.False(first.IsError);
+        var firstRun = timer.Run!;
+        Assert.Equal(TimeSpan.FromMinutes(25), firstRun.Duration);
+
+        var (_, restore) = tools.Run(Call("""{"minutes":5}"""));
+        Assert.Equal(TimeSpan.FromMinutes(5), timer.Run!.Duration);
+        Assert.Equal("The previous timer is back.", restore!().Message);
+        Assert.Equal(firstRun, timer.Run);
+        Assert.Equal("Timer cancelled.", cancel!().Message);
+        Assert.Null(timer.Run);
+        Assert.Null(new IslandTimer(File).Run);
+    }
+
+    [Fact]
+    public void SetTimerWithoutATimerReportsAnError()
+    {
+        var (result, undo) = new BuiltInTools(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { }).Run(Call("""{"minutes":5}"""));
+        Assert.True(result.IsError);
+        Assert.Null(undo);
+    }
+
+    private static BuiltInTools Tools(IslandTimer timer) => new(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { }, timer: timer);
+
+    private static ToolCallPart Call(string json) => new("id", BuiltInTools.SetTimer, JsonDocument.Parse(json).RootElement);
 
     [Theory]
     [InlineData("25", 25 * 60)]

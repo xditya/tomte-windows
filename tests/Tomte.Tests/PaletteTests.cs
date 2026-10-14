@@ -439,7 +439,7 @@ public class AgentToolsTests
     [Fact]
     public void DefinitionsCarryTheSchemaTheModelNeeds()
     {
-        Assert.Equal(5 + DeviceActionTiers.All.Count, BuiltInTools.Definitions.Count);
+        Assert.Equal(6 + DeviceActionTiers.All.Count, BuiltInTools.Definitions.Count);
         var open = BuiltInTools.Definitions.Single(d => d.Name == BuiltInTools.OpenUrl);
         Assert.Equal("object", open.InputSchema.GetProperty("type").GetString());
         Assert.Equal("string", open.InputSchema.GetProperty("properties").GetProperty("url").GetProperty("type").GetString());
