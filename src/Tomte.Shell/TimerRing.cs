@@ -57,9 +57,8 @@ internal sealed class TimerRing
     public void Show(TimerRun run, DateTimeOffset now, double scale, bool mascotOn)
     {
         float s = (float)scale;
-        float left = mascotOn ? MascotVisual.InsetX + MascotVisual.SizeDips + Gap : MascotVisual.InsetX;
         // From the pill's centre; the parent's half width is one margin pixel right of it.
-        float fromCenter = (float)(-IslandGeometry.Compact.Width / 2) + left;
+        float fromCenter = (float)(-IslandGeometry.Compact.Width / 2) + Left(mascotOn);
         visual.Scale = new Vector3(s, s, 1);
         visual.Offset = new Vector3(fromCenter * s - 1, Top * s, 0);
 
@@ -77,6 +76,11 @@ internal sealed class TimerRing
 
         visual.IsVisible = true;
     }
+
+    /// <summary>Where the ring starts, from the pill's left edge, in DIPs; what follows it starts at <see cref="After"/>.</summary>
+    public static float Left(bool mascotOn) => mascotOn ? MascotVisual.InsetX + MascotVisual.SizeDips + Gap : MascotVisual.InsetX;
+
+    public static float After(bool mascotOn) => Left(mascotOn) + Size + Gap;
 
     public void Hide()
     {

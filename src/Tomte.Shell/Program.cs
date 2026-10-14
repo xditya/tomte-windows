@@ -285,8 +285,9 @@ internal static class Program
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
         panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), log));
         triggers.Panels = panels;
-        // The row lives on the state changes and ContentReady it listens to.
+        // The row and the line live on the state changes and ContentReady they listen to.
         _ = new NowPlayingRow(island, triggers, media, text, log);
+        _ = new CompactLine(island, triggers, text);
 
         bool announcing = false;
         media.TrackChanged += playing =>
