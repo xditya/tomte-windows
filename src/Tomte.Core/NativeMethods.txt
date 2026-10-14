@@ -45,6 +45,12 @@ ReleaseDC
 AssocQueryString
 BITMAP
 GetLongPathName
+BHID_EnumItems
+IEnumShellItems
+S_OK
+IShellItem2
+PKEY_Link_TargetParsingPath
+PKEY_Link_Arguments
 CreateHardLink
 DWriteCreateFactory
 IDWriteFactory

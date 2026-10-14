@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using Tomte.Core.Shortcuts;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -15,6 +16,8 @@ public static class Apps
     public static ActionResult OpenApp(string target, bool dryRun = false)
     {
         if (ValidateAppTarget(target) is { } error) return ActionResult.Fail(error);
+        // Read from the shell, which open_app does off the island's thread.
+        if (ShortcutTarget.IsApp(target) && !ShortcutTarget.IsInstalledApp(target)) return ActionResult.Fail("That is not an installed app.");
         if (dryRun) return ActionResult.DryRun($"open or focus {target}.");
         if (ProcessNameFor(target) is { } exe && MainWindowOf(exe) is { } window) return Focus(target, window);
         return Launch(target);
@@ -59,14 +62,17 @@ public static class Apps
     public static string? ValidateAppTarget(string target)
     {
         if (string.IsNullOrWhiteSpace(target)) return "Name an app to open.";
+        if (target.IndexOfAny(['"', '\r', '\n']) >= 0) return "App names cannot contain quotes or line breaks.";
+        // An installed app by its AppUserModelID, which can itself hold a scheme (steam://...);
+        // OpenApp checks that the shell resolves it.
+        if (ShortcutTarget.IsApp(target)) return null;
         if (target.Contains("://", StringComparison.Ordinal)) return "That is a URL, not an app.";
         if (target.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase)) return "Use OpenSettingsPage for settings pages.";
         // A scheme such as mailto: or calculator: hands whatever follows it to a protocol handler,
-        // which is a command line by another name. Only a drive letter and shell:AppsFolder may hold a colon.
+        // which is a command line by another name. Only a drive letter may hold a colon.
         int colon = target.IndexOf(':');
-        if (colon >= 0 && colon != 1 && !target.StartsWith(@"shell:AppsFolder\", StringComparison.OrdinalIgnoreCase)) return "That is a link, not an app.";
+        if (colon >= 0 && colon != 1) return "That is a link, not an app.";
         if (NetworkPaths.IsUncLike(target)) return "Apps on a network path are not opened.";
-        if (target.IndexOfAny(['"', '\r', '\n']) >= 0) return "App names cannot contain quotes or line breaks.";
         return null;
     }
 

@@ -33,8 +33,10 @@ public readonly record struct ShortcutLaunch(ShortcutOutcome Outcome, string Mes
 /// here runs until a caller asks: the panel loads its tiles when it first shows.
 /// A script tile runs only when script shortcuts are on (<paramref name="scriptsOn"/>, the Settings switch) and
 /// the user confirmed that tile's exact command, and only from a click on the tile: <see cref="LaunchByName"/>,
-/// which voice and the AI layer reach, never runs one. Adding, confirming and the switch belong to the
-/// settings window; no AI tool calls them.
+/// which voice and the AI layer reach, never runs one. An app added from Start's list is not a script tile: an entry
+/// that runs a program with arguments (cmd /c, PowerShell, another interpreter) starts ungated, from a click and
+/// through <see cref="LaunchByName"/> alike, where voice still asks each time. Adding, confirming and the switch
+/// belong to the settings window; no AI tool calls them.
 /// </summary>
 /// <param name="start">Starts what a tile opens; tests replace it with a recorder.</param>
 public sealed class ShortcutStore(TomteDb db, Func<bool> scriptsOn, Func<ShortcutTarget, ActionResult>? start = null)
@@ -65,10 +67,11 @@ public sealed class ShortcutStore(TomteDb db, Func<bool> scriptsOn, Func<Shortcu
     }
 
     /// <summary>
-    /// Adds a tile at the end. Null when it was added; otherwise why not, in words for the user. A script can be
-    /// added; it stays off until the switch is on and the user confirms it.
+    /// Adds a tile at the end, named <paramref name="name"/> or after its target. Null when it was added; otherwise
+    /// why not, in words for the user. A script can be added; it stays off until the switch is on and the user
+    /// confirms it.
     /// </summary>
-    public string? Add(string target)
+    public string? Add(string target, string? name = null)
     {
         target = target.Trim();
         var read = ShortcutTarget.Read(target);
@@ -85,7 +88,7 @@ public sealed class ShortcutStore(TomteDb db, Func<bool> scriptsOn, Func<Shortcu
         // Stored as it opens: a web address normalised, a path as Windows reads it (no trailing dots or spaces).
         string stored = ShortcutTarget.Normalize(target);
         using var connection = db.Open(Feature, Schema);
-        using var command = Command(connection, "INSERT INTO shortcuts_tiles(name, target) VALUES ($name, $target)", ("$name", ShortcutTarget.NameFor(stored)), ("$target", stored));
+        using var command = Command(connection, "INSERT INTO shortcuts_tiles(name, target) VALUES ($name, $target)", ("$name", name?.Trim() is { Length: > 0 } given ? given : ShortcutTarget.NameFor(stored)), ("$target", stored));
         command.ExecuteNonQuery();
         return null;
     }

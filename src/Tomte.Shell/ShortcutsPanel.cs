@@ -99,7 +99,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
     }
 
     // A web page always shows the browser's icon (a .url file's own icon file could be on a server); blocked and
-    // missing tiles show none; anything else shows the icon of the local path the target names.
+    // missing tiles show none; anything else shows the icon of the local path or the Start app the target names.
     private static string? Source(Tile tile) => tile.Target.Kind == ShortcutKind.Url ? Web : tile.Target.Icon;
 
     private static ShellImage? Extract(string source, int pixels) => source == Web ? ShellIcon.ForWeb(pixels) : ShellIcon.For(source, pixels);
