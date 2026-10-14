@@ -130,7 +130,7 @@ internal static class Program
         // Off means no listener at all. Changed arrives on a pool thread.
         clipboard.Apply(store.Current.KeepClipboardHistory);
         store.Changed += s => island.Queue.TryEnqueue(() => clipboard.Apply(s.KeepClipboardHistory));
-        StartPanels(island, triggers, store, logLine, args.Contains("--debug-tabs"));
+        StartPanels(island, triggers, store, db, clipboard, logLine, args.Contains("--debug-tabs"));
 
         if (rambler)
         {
@@ -254,14 +254,18 @@ internal static class Program
     /// event is the one thing that listens to media while the island is hidden, and only when the user
     /// turned it on in settings.
     /// </summary>
-    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, bool debugTabs)
+    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ClipboardWatch clipboard, Action<string>? log, bool debugTabs)
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
-        panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
-        // tomte.db next to the settings file in use, so a run with its own settings file has its own tiles too.
-        var shortcuts = new ShortcutStore(new TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db")), () => store.Current.ScriptShortcuts);
+        // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
+        // own tiles, note and history too.
+        var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
+        panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
+        panels.Register(new ScratchpadPanel(island, Scratchpad, log));
+        // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
+        panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), log));
         if (debugTabs)
         {
             // --debug-tabs: an empty Shelf-sized tab to switch to, until a second panel exists.
