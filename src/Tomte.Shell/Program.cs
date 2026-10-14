@@ -564,6 +564,13 @@ internal static class Program
         var session = new Rambler(island, triggers.Machine, speech, speechSend, voice, scratchpad, sendLog, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
+        session.CommandDone += command =>
+        {
+            if (VoiceCommand.ReplyToSpeak(command, store.Current.SpokenReplies) is { } reply)
+            {
+                _ = SpokenReply.SpeakAsync(reply, log.WriteLine);
+            }
+        };
         log.WriteLine($"rambler: speech={speech.GetType().Name} voice={(voice is null ? "off, raw transcript" : config!.Id)}");
         return session;
     }
