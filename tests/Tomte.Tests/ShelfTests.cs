@@ -276,6 +276,28 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    public async Task AFolderTwoItemsNameStaysUntilBothAreRemoved()
+    {
+        var shelf = Store();
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, "note.txt", Content: "note"u8.ToArray())]);
+        var first = shelf.Items.Single();
+        // Shown in Explorer and Ctrl-dropped back: the copy keeps the shelf path, so two items name one folder.
+        await shelf.Accept(new DroppedItems([first.Path], [], null, KeepCopy: true));
+        var second = shelf.Items.Single(i => i.Id != first.Id);
+        Assert.Equal(first.Path, second.Path);
+
+        await shelf.Remove([first]);
+        var next = Store();
+        await next.Load();
+        Assert.Equal("note", File.ReadAllText(second.Path));
+        Assert.Equal([second.Name], next.ItemNames);
+
+        await next.Remove(next.Items);
+        await Store().Load();
+        Assert.False(Directory.Exists(Path.GetDirectoryName(second.Path)));
+    }
+
+    [Fact]
     public void TheSweepTakesOnlyTheShelfsOwnFolders()
     {
         string folder = Path.Combine(dir, "Shelf");

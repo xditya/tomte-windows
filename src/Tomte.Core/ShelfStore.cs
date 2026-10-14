@@ -561,7 +561,7 @@ public sealed class ShelfStore : IShelf
                 }
             }
 
-            Sweep(connection);
+            Sweep(connection, loadedRows);
         }
 
         rows = loadedRows;
@@ -572,10 +572,11 @@ public sealed class ShelfStore : IShelf
     /// <summary>
     /// Deletes what items removed in an earlier process left behind, then their rows. Only on that evidence: a marked
     /// row's folder, when <see cref="OwnSlot"/> accepts it and the shelf folder itself is no link. A folder that is in
-    /// use keeps its row for the next process. Two processes sweeping at once delete the same folders; the second finds
-    /// them gone.
+    /// use keeps its row for the next process. A folder that a <paramref name="live"/> row still names stays: a shelf
+    /// file Ctrl-dropped back onto the shelf is kept at its path, so two items can name one folder. Two processes
+    /// sweeping at once delete the same folders; the second finds them gone.
     /// </summary>
-    private void Sweep(SqliteConnection connection)
+    private void Sweep(SqliteConnection connection, List<ShelfItem> live)
     {
         var marked = new List<(long Id, string Path, ShelfKind Kind)>();
         using (var command = connection.CreateCommand())
@@ -597,7 +598,8 @@ public sealed class ShelfStore : IShelf
         var done = new List<long>();
         foreach (var (id, path, kind) in marked)
         {
-            if (kind != ShelfKind.Reference && !folderIsLink && OwnSlot(Folder, path) is { } slot && Directory.Exists(slot))
+            if (kind != ShelfKind.Reference && !folderIsLink && OwnSlot(Folder, path) is { } slot && Directory.Exists(slot)
+                && !live.Any(r => Same(r.Path, slot) || IsUnder(r.Path, slot)))
             {
                 try
                 {
