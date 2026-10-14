@@ -260,6 +260,7 @@ SetCursor
 ReleaseCapture
 SetFocus
 IsWindow
+IDC_ARROW
 IDC_IBEAM
 WM_CHAR
 WM_KEYUP

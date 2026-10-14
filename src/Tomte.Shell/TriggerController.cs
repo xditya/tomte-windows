@@ -191,10 +191,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// The words the Compact pill shows now, by <see cref="CompactRules.Line"/>, and the time left when they are
     /// the running timer's, which changes every second. Read it once the pill is up, like <see cref="Compact"/>.
     /// </summary>
-    public (string? Text, TimeSpan? TimerLeft) CompactLine(DateTimeOffset now)
+    public (string? Text, TimeSpan? TimerLeft) CompactLine(DateTimeOffset now, bool nowPlaying = false)
     {
         var left = (timer.Run ?? finished)?.Remaining(now);
-        var text = CompactRules.Line(Compact, eventShowing ? showing : [], left);
+        var text = CompactRules.Line(Compact, eventShowing ? showing : [], left, nowPlaying ? null : now);
         return (text, Compact == CompactReason.Summary ? left : null);
     }
 

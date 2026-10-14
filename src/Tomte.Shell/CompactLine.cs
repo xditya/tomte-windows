@@ -8,24 +8,28 @@ namespace Tomte.Shell;
 /// The words on the Compact pill: the first-run hint, an event's line (after the ring on the timer's done pill)
 /// and the time a running timer has left beside its ring. What it says comes from
 /// <see cref="TriggerController.CompactLine"/>. It shows from ContentReady on, follows changes the triggers make
-/// to the pill, and fades out with the next state change, like the now-playing row. Only the countdown ticks:
-/// one one-shot timer to the next whole second, while it shows.
+/// to the pill, and fades out with the next state change, like the now-playing row. On a push pill with no timer
+/// and nothing playing it says the time of day. Only the countdown and the time tick: one one-shot timer to the next
+/// whole second or the next minute, while it shows.
 /// </summary>
 internal sealed class CompactLine
 {
     private readonly IslandWindow island;
     private readonly TriggerController triggers;
     private readonly TextRenderer text;
+    private readonly NowPlayingRow row;
     private readonly ScalarKeyFrameAnimation fadeIn, fadeOut;
     private readonly Windows.System.DispatcherQueueTimer release, tick;
     private View? view, leaving;
     private bool ready;
 
-    public CompactLine(IslandWindow island, TriggerController triggers, TextRenderer text)
+    public CompactLine(IslandWindow island, TriggerController triggers, TextRenderer text, NowPlayingRow row)
     {
         this.island = island;
         this.triggers = triggers;
         this.text = text;
+        this.row = row;
+        row.ShowingChanged += Update;
         fadeIn = PanelHost.Fade(island.Compositor, 1, PanelHost.FadeInMs);
         fadeOut = PanelHost.Fade(island.Compositor, 0, PanelHost.FadeOutMs);
         release = PanelHost.AfterFadeOut(island, Release);
@@ -48,7 +52,8 @@ internal sealed class CompactLine
     private void Update()
     {
         tick.Stop();
-        var (line, left) = ready && triggers.Machine.State == IslandState.Compact ? triggers.CompactLine(DateTimeOffset.Now) : (null, null);
+        var now = DateTimeOffset.Now;
+        var (line, left) = ready && triggers.Machine.State == IslandState.Compact ? triggers.CompactLine(now, row.Showing) : (null, null);
         if (line is null)
         {
             if (view is not null)
@@ -81,6 +86,12 @@ internal sealed class CompactLine
             // The countdown reads whole seconds rounded up, so it changes as the time left passes one.
             double fraction = l.TotalSeconds - Math.Floor(l.TotalSeconds);
             tick.Interval = TimeSpan.FromSeconds((fraction > 0 ? fraction : 1) + 0.01);
+            tick.Start();
+        }
+        else if (left is null && triggers.Compact == CompactReason.Summary)
+        {
+            // The time of day changes on the minute.
+            tick.Interval = TimeSpan.FromSeconds(60 - now.Second - now.Millisecond / 1000.0 + 0.05);
             tick.Start();
         }
     }
