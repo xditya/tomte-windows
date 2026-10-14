@@ -46,6 +46,12 @@ internal interface IInteractive
     bool KeyDown(string id, int virtualKey) => false;
 
     /// <summary>
+    /// The same, saying whether the key is the keyboard's own repeat while it is held: the host calls this one. A view
+    /// where a repeat must not act twice (Delete on a row) answers it; any other leaves it to the two-argument one.
+    /// </summary>
+    bool KeyDown(string id, int virtualKey, bool repeat) => KeyDown(id, virtualKey);
+
+    /// <summary>
     /// The pointer moved over one of this view's targets, at this point of the view's own space. Not called during a
     /// press the host holds or a <see cref="TryDrag"/> loop. For content that follows the pointer, such as the time
     /// under it on a seek bar.
