@@ -1,3 +1,4 @@
+using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
 using Xunit;
@@ -60,6 +61,54 @@ public sealed class PanelLayoutTests
         // Scrolled by one row, the top of the list is the second row.
         float top = Clipboard.List.Y + ClipboardPanelLayout.RowHeight / 2;
         Assert.Equal((ClipboardTarget.Row, 1), Clipboard.Hit(new(100, top), rows, down, on: true));
+    }
+
+    public static TheoryData<double> Scales => [1.0, 1.25, 1.5];
+
+    [Theory]
+    [MemberData(nameof(Scales))]
+    public void APressHitsTheSameTargetAtEveryScale(double scale)
+    {
+        float row1 = Clipboard.List.Y + ClipboardPanelLayout.RowPitch + ClipboardPanelLayout.RowHeight / 2;
+        var remove = ClipboardPanelLayout.RemoveIn(Clipboard.List.Width);
+        Assert.Equal((ClipboardTarget.Row, 1), Clipboard.Hit(BodyPoint(100, row1, scale), 5, 0, on: true));
+        Assert.Equal((ClipboardTarget.RemoveRow, 1), Clipboard.Hit(BodyPoint(Clipboard.List.X + remove.X + remove.Width / 2, row1, scale), 5, 0, on: true));
+        var sw = Clipboard.Switch;
+        Assert.Equal((ClipboardTarget.Switch, -1), Clipboard.Hit(BodyPoint(sw.X + sw.Width / 2, sw.Y + sw.Height / 2, scale), 5, 0, on: true));
+        var clear = Clipboard.ClearAll;
+        Assert.Equal((ClipboardTarget.ClearAll, -1), Clipboard.Hit(BodyPoint(clear.X + clear.Width / 2, clear.Y + clear.Height / 2, scale), 5, 0, on: true));
+    }
+
+    [Fact]
+    public void EveryPartIsInsideTheBodyAndClearOfItsRoundedCorners()
+    {
+        // The body's bottom corners are the shape's, radius 22; the tab strip keeps the top ones away.
+        const float radius = 22;
+        var body = Clipboard.Body;
+        RectangleF[] parts = [Clipboard.Head, Clipboard.Switch, Clipboard.List, Clipboard.Foot, Clipboard.ClearAll];
+        foreach (var part in parts)
+        {
+            foreach (var (x, y) in new[] { (part.Left, part.Top), (part.Right, part.Top), (part.Left, part.Bottom), (part.Right, part.Bottom) })
+            {
+                Assert.True(x >= 0 && y >= 0 && x <= body.X && y <= body.Y, part.ToString());
+                if (y > body.Y - radius && (x < radius || x > body.X - radius))
+                {
+                    var corner = new Vector2(x < radius ? radius : body.X - radius, body.Y - radius);
+                    Assert.True(Vector2.Distance(new Vector2(x, y), corner) <= radius, $"{part} at its corner {x},{y}");
+                }
+            }
+        }
+    }
+
+    // A press arrives in window pixels: island space starts one pixel in plus half the outline's width and carries
+    // the monitor's scale; the body starts under the tab strip. This is the host's mapping, as the media tests use it.
+    private static Vector2 BodyPoint(float bodyX, float bodyY, double scale)
+    {
+        var size = PanelSize.Clipboard;
+        double originX = 1 + IslandGeometry.Panel(size.W, size.H).OuterWidth / 2 * scale;
+        int x = (int)Math.Round(originX + (bodyX - size.W / 2) * scale);
+        int y = (int)Math.Round(1 + (bodyY + PanelSpace.TabStripHeight) * scale);
+        return PanelSpace.ToBody(PanelSpace.FromPixels(x, y, (float)originX, 1, scale), size.W);
     }
 
     [Fact]
