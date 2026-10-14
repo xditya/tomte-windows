@@ -45,3 +45,4 @@ ReleaseDC
 AssocQueryString
 BITMAP
 GetLongPathName
+CreateHardLink
