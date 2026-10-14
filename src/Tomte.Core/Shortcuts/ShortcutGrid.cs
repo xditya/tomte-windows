@@ -5,9 +5,9 @@ namespace Tomte.Core.Shortcuts;
 
 /// <summary>
 /// The Shortcuts panel body in DIPs, origin at its top-left corner under the tab strip: a head line, then four
-/// columns of 80 DIP tiles with a 34 DIP icon, as many rows as the body holds. At the panel's 520 x 300 that is
-/// two rows, eight cells. The cell after the last tile shown is the add tile; with more tiles than cells, the ones that
-/// do not fit are not shown (they stay in Settings and can still be opened by name).
+/// columns of 80 DIP tiles with a 34 DIP icon, as many rows as the body holds (two at the panel's 520 x 300). The
+/// cells run on past the last row: tile after tile, then the add tile, and the wheel scrolls them by whole rows.
+/// Cell and At count from the first row that shows.
 /// </summary>
 public static class ShortcutGrid
 {
@@ -20,8 +20,18 @@ public static class ShortcutGrid
     /// <summary>Rows that fit with the top inset kept below the last one too.</summary>
     public static int Rows(Vector2 body) => Math.Max(0, (int)((body.Y - GridTop - Top + Gap) / (TileHeight + Gap)));
 
-    /// <summary>Tiles that show next to the add tile.</summary>
-    public static int Shown(int tiles, Vector2 body) => Math.Min(tiles, Math.Max(0, Columns * Rows(body) - 1));
+    /// <summary>The last first row there is: the add tile, after every tile, ends up in the bottom row.</summary>
+    public static int MaxFirstRow(int tiles, Vector2 body) => Math.Max(0, (int)Math.Ceiling((tiles + 1) / (double)Columns) - Rows(body));
+
+    /// <summary>A first row asked for (by the wheel, or kept from before), held to the rows there are.</summary>
+    public static int FirstRow(int wanted, int tiles, Vector2 body) => Math.Clamp(wanted, 0, MaxFirstRow(tiles, body));
+
+    /// <summary>The cells that show from this first row: the first one's number, and how many, the add tile counted.</summary>
+    public static (int First, int Count) Visible(int firstRow, int tiles, Vector2 body)
+    {
+        int first = firstRow * Columns;
+        return (first, Math.Clamp(tiles + 1 - first, 0, Columns * Rows(body)));
+    }
 
     public static RectangleF Cell(int index, Vector2 body)
     {

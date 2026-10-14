@@ -1,6 +1,5 @@
 using System.Drawing;
 using System.Runtime.InteropServices;
-using Tomte.Core.Shortcuts;
 using Windows.Graphics.DirectX;
 using Windows.UI.Composition;
 using Windows.Win32;
@@ -13,13 +12,14 @@ using Windows.Win32.System.WinRT.Composition;
 namespace Tomte.Shell;
 
 /// <summary>
-/// Shell icons on composition surfaces for one showing of the grid: one software Direct3D device (WARP; the job
-/// is a few copies per show, and the software device keeps the GPU driver out of this process), and one surface
-/// and brush per icon. Safe to build on a pool thread, which the first device in a process needs (30 to 90 ms);
-/// Dispose releases every surface and the device when the grid goes.
+/// Decoded pixels (album art, shell icons) on composition surfaces. Windows.UI.Composition only takes pixels
+/// through a Direct3D or Direct2D device, so one lives here until Dispose: the software device (WARP), because the
+/// job is a few copies per showing and the software device keeps the GPU driver out of this process. One surface
+/// and brush per image. Safe to build on a pool thread, which the first device in a process needs (30 to 90 ms);
+/// Dispose releases every surface, every brush and the device.
 /// a lost device is not handled, because the software device is not lost with the GPU.
 /// </summary>
-internal sealed unsafe class IconSurfaces : IDisposable
+internal sealed unsafe class PixelSurfaces : IDisposable
 {
     private readonly Compositor compositor;
     private readonly CompositionGraphicsDevice graphics;
@@ -27,7 +27,7 @@ internal sealed unsafe class IconSurfaces : IDisposable
     private ID3D11Device* device;
     private ID3D11DeviceContext* context;
 
-    public IconSurfaces(Compositor compositor)
+    public PixelSurfaces(Compositor compositor)
     {
         this.compositor = compositor;
         ID3D11Device* d;
@@ -48,12 +48,15 @@ internal sealed unsafe class IconSurfaces : IDisposable
         }
     }
 
-    /// <summary>A brush that shows the pixels 1:1 when its visual is the image's size in pixels.</summary>
-    public CompositionSurfaceBrush Brush(ShellImage image)
+    /// <summary>
+    /// A brush over premultiplied BGRA pixels, top row first; they show 1:1 when the visual is the image's size in
+    /// pixels. Callable from any thread.
+    /// </summary>
+    public CompositionSurfaceBrush Brush(int width, int height, byte[] pixels)
     {
-        var surface = graphics.CreateDrawingSurface(new Windows.Foundation.Size(image.Width, image.Height), DirectXPixelFormat.B8G8R8A8UIntNormalized, DirectXAlphaMode.Premultiplied);
+        var surface = graphics.CreateDrawingSurface(new Windows.Foundation.Size(width, height), DirectXPixelFormat.B8G8R8A8UIntNormalized, DirectXAlphaMode.Premultiplied);
         made.Add(surface);
-        Upload(surface, image);
+        Upload(surface, width, height, pixels);
         var brush = compositor.CreateSurfaceBrush(surface);
         made.Add(brush);
         return brush;
@@ -107,7 +110,7 @@ internal sealed unsafe class IconSurfaces : IDisposable
     }
 
     /// <summary>Copy the pixels in. The surface is a rectangle of a larger texture; BeginDraw says where.</summary>
-    private void Upload(CompositionDrawingSurface surface, ShellImage image)
+    private void Upload(CompositionDrawingSurface surface, int width, int height, byte[] pixels)
     {
         nint unknown = WinRT.MarshalInspectable<object>.FromManaged(surface);
         try
@@ -128,13 +131,13 @@ internal sealed unsafe class IconSurfaces : IDisposable
                     {
                         left = (uint)offset.X,
                         top = (uint)offset.Y,
-                        right = (uint)(offset.X + image.Width),
-                        bottom = (uint)(offset.Y + image.Height),
+                        right = (uint)(offset.X + width),
+                        bottom = (uint)(offset.Y + height),
                         back = 1,
                     };
-                    fixed (byte* pixels = image.Pixels)
+                    fixed (byte* bits = pixels)
                     {
-                        context->UpdateSubresource(texture, 0, &box, pixels, (uint)image.Width * 4, 0);
+                        context->UpdateSubresource(texture, 0, &box, bits, (uint)width * 4, 0);
                     }
 
                     texture->Release();

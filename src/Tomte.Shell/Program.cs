@@ -7,6 +7,8 @@ using Tomte.Core;
 using Tomte.Core.Device;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
+using Tomte.Core.Shortcuts;
+using Tomte.Core.Storage;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -125,11 +127,6 @@ internal static class Program
             triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
         }
 
-        if (args.Contains("--debug-shortcuts"))
-        {
-            ShortcutsDebug.Run(island, triggers, store, line => log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"), int.TryParse(Arg(args, "--debug-press"), out int press) ? press : null, int.TryParse(Arg(args, "--debug-hold"), out int hold) ? hold : 4000, int.TryParse(Arg(args, "--debug-cycles"), out int cycles) ? cycles : 1);
-        }
-
         using var tray = new TrayIcon(pause);
         tray.OpenIsland += triggers.Toggle;
         tray.OpenSettings += OpenSettings;
@@ -198,6 +195,9 @@ internal static class Program
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
         panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
+        // tomte.db next to the settings file in use, so a run with its own settings file has its own tiles too.
+        var shortcuts = new ShortcutStore(new TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db")), () => store.Current.ScriptShortcuts);
+        panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
         if (debugTabs)
         {
             // --debug-tabs: an empty Shelf-sized tab to switch to, until a second panel exists.

@@ -22,12 +22,6 @@ DwmSetWindowAttribute
 CreateDispatcherQueueController
 DCompositionWaitForCompositorClock
 ICompositorDesktopInterop
-D3D11CreateDevice
-D3D11_SDK_VERSION
-ICompositorInterop
-ICompositionDrawingSurfaceInterop
-IDXGISurface
-ID3D11Resource
 GetDoubleClickTime
 WM_CLOSE
 WM_DESTROY

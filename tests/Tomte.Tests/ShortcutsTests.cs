@@ -516,10 +516,8 @@ public sealed class ShortcutsTests : IDisposable
     public void TheGridHoldsTwoRowsOfFourAtThePanelSizeAndKeepsClearOfTheCorners()
     {
         var (width, height) = PanelSize.Shortcuts;
-        var body = new System.Numerics.Vector2((float)width, (float)height - 42);
+        var body = new System.Numerics.Vector2((float)width, (float)height - PanelSpace.TabStripHeight);
         Assert.Equal(2, ShortcutGrid.Rows(body));
-        Assert.Equal(7, ShortcutGrid.Shown(12, body));
-        Assert.Equal(3, ShortcutGrid.Shown(3, body));
 
         Assert.Equal(new System.Drawing.RectangleF(14, 39, 117, 80), ShortcutGrid.Cell(0, body));
         Assert.Equal(new System.Drawing.RectangleF(139, 127, 117, 80), ShortcutGrid.Cell(5, body));
@@ -534,6 +532,28 @@ public sealed class ShortcutsTests : IDisposable
         Assert.Null(ShortcutGrid.At(new(10, 10), body, 8));
     }
 
+    [Fact]
+    public void TheWheelScrollsByRowsUntilTheAddTileIsInTheBottomRow()
+    {
+        var body = new System.Numerics.Vector2(520, 300 - PanelSpace.TabStripHeight);
+        // Seven tiles and the add tile fill the two rows: nothing to scroll.
+        Assert.Equal(0, ShortcutGrid.MaxFirstRow(7, body));
+        Assert.Equal(0, ShortcutGrid.FirstRow(5, 7, body));
+        Assert.Equal((0, 8), ShortcutGrid.Visible(0, 7, body));
+        Assert.Equal((0, 4), ShortcutGrid.Visible(0, 3, body));
+
+        // A dozen tiles and the add tile take four rows; the first row runs 0 to 2.
+        Assert.Equal(2, ShortcutGrid.MaxFirstRow(12, body));
+        Assert.Equal(0, ShortcutGrid.FirstRow(-3, 12, body));
+        Assert.Equal(2, ShortcutGrid.FirstRow(9, 12, body));
+        Assert.Equal((4, 8), ShortcutGrid.Visible(1, 12, body));
+        Assert.Equal((8, 5), ShortcutGrid.Visible(2, 12, body));
+
+        // Tiles removed while scrolled down: the first row comes back to what there is.
+        Assert.Equal(0, ShortcutGrid.FirstRow(2, 4, body));
+        Assert.Equal(0, ShortcutGrid.MaxFirstRow(0, body));
+    }
+
     [Theory]
     [InlineData(1.0, 34)]
     [InlineData(1.25, 43)]
@@ -542,7 +562,7 @@ public sealed class ShortcutsTests : IDisposable
     {
         Assert.Equal(pixels, ShortcutGrid.IconPixels(scale));
         // The body starts under the 42 DIP tab strip, 52.5 pixels down at 125%; the icons snap to the island's pixels.
-        const float top = 42;
+        const float top = PanelSpace.TabStripHeight;
         var body = new System.Numerics.Vector2(520, 258);
         for (int i = 0; i < 8; i++)
         {
