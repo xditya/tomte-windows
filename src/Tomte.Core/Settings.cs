@@ -41,7 +41,7 @@ public sealed record TomteSettings
 
     /// <summary>
     /// Where the user dragged the island along the top edge: DIPs from the middle of the edge to its centre, negative to
-    /// the left. 0 is the middle, where "Reset position" and a double click on the pill put it back.
+    /// the left. 0 is the middle, where "Reset position" and a double click on the tab strip outside its labels put it back.
     /// </summary>
     public double IslandOffset { get; init; }
 

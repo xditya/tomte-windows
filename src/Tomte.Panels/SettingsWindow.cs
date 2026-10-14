@@ -55,7 +55,7 @@ public sealed partial class SettingsWindow : Window
             Row("Desktop peek", Note("Show the tomte at the top of the screen when no window is there. Point at it to open the island."), Toggle(s => s.DesktopPeek, (s, v) => s with { DesktopPeek = v })),
             Row("Track changes", Note("Show the pill for a few seconds when another track starts playing."), Toggle(s => s.MediaTrackChangeEvent, (s, v) => s with { MediaTrackChangeEvent = v })),
             Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors()),
-            Row("Island position", Note("Drag the island along the top edge to move it. Double-click it, or reset here, to bring it back to the middle."), ResetPosition())));
+            Row("Island position", Note("Drag the island along the top edge to move it. Double-click the empty part of its tab row, or reset here, to bring it back to the middle."), ResetPosition())));
 
         page.Children.Add(Header("Hotkeys"));
         page.Children.Add(Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), CopilotNote()]));
