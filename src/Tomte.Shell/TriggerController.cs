@@ -58,10 +58,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         settings = store.Current;
         island.MoveTo(settings.IslandOffset);
         island.Message = HandleMessage;
-        // Hover, a press or a scroll on Compact opens Panels; on the next turn, so the press or notch that opens
-        // them is not also taken by the panel host as a tab switch or a press on the new body.
+        // Hover, a press or a scroll on Compact opens Panels, and a click on the tomte the palette; on the next turn, so
+        // the press or notch that opens them is not also taken by the panel host as a tab switch or a press on the new body.
         island.Wheel += (_, _) => OpenPanelsNextTurn();
-        island.Pressed += _ => OpenPanelsNextTurn();
+        island.Pressed += OnPressed;
         // A drag on the pill's own surface moves the island along the top edge, and holds it open like any drag.
         island.Grabs = Grabs;
         island.MoveStarted += () =>
@@ -155,7 +155,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
 
-    /// <summary>After the palette hotkey opened the Palette state: its content and its prompt box, which takes the keys.</summary>
+    /// <summary>After the palette hotkey or a click on the tomte opened the Palette state: its content and its prompt box, which takes the keys.</summary>
     public Action? PaletteOpened { get; set; }
 
     /// <summary>After the scratchpad hotkey opened its tab: the note takes the keys.</summary>
@@ -407,6 +407,31 @@ internal sealed unsafe partial class TriggerController : IDisposable
             });
         }
     }
+
+    /// <summary>
+    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact, peek or Panels; with no provider set up
+    /// the palette says the AI layer is off. A press anywhere else on Compact opens Panels.
+    /// </summary>
+    private void OnPressed(System.Numerics.Vector2 at)
+    {
+        if (island.OnMascot(at) && OpensPalette())
+        {
+            island.Queue.TryEnqueue(() =>
+            {
+                if (OpensPalette())
+                {
+                    // The island is up and was clicked: the pause and the suppression had their say when it showed.
+                    Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+                    PaletteOpened?.Invoke();
+                }
+            });
+            return;
+        }
+
+        OpenPanelsNextTurn();
+    }
+
+    private bool OpensPalette() => machine.State is IslandState.Compact or IslandState.Panels && !activity.HasFlag(IslandActivity.Rambling);
 
     /// <summary>
     /// The pill's own surface, which a drag moves along the top edge: all of Compact, the tab strip's row outside its

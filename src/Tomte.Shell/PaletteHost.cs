@@ -11,8 +11,8 @@ namespace Tomte.Shell;
 /// with the gentle preset as the answer streams in. With the text renderer the palette shows its
 /// prompt box, chips, answer and footer (<see cref="PaletteView"/>) and grows to their measured
 /// height; without it (the rambler's voice palette) a placeholder marks the prompt box and the
-/// height is estimated from the answer length. The window activates only for the palette hotkey
-/// or a click into the prompt box (<see cref="TypingFocus"/>). A voice command enters from the rambler's pill, and while
+/// height is estimated from the answer length. The window activates only for the palette hotkey, a click on
+/// the tomte or a click into the prompt box (<see cref="TypingFocus"/>). A voice command enters from the rambler's pill, and while
 /// its session waits for the user's answer a second placeholder marks where the confirmation goes.
 /// </summary>
 internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachine machine, Action<string> log, TextRenderer? text = null, TypingFocus? focus = null, Action? hide = null)

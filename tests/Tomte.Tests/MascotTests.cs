@@ -277,6 +277,28 @@ public class MascotTests
         Assert.Equal(IslandGeometry.Peek.Width - peek.Max(p => p.X), peek.Min(p => p.X), 0.1);
     }
 
+    // A click on the tomte opens the palette, so its box must be where it is drawn and apart from what else takes clicks.
+    [Fact]
+    public void TheTomtesBoxIsApartFromTheLabelsAndTheLine()
+    {
+        // Island space: x from the shape's centre line. Compact's box ends before its line of words starts.
+        var compact = MascotArt.Box(IslandGeometry.Compact);
+        Assert.Equal(-110 + MascotArt.InsetX, compact.X);
+        Assert.True(compact.Right <= CompactLayout.Line(mascot: true, ring: false).X);
+
+        // The peek pill is little more than the box, centred on its centre line.
+        var peek = MascotArt.Box(IslandGeometry.Peek);
+        Assert.Equal(0, peek.X + peek.Width / 2, 0.01);
+
+        // In the strip the box ends before the first label, so a press on it is never a tab's.
+        PanelId[] tabs = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media];
+        var box = MascotArt.Box(IslandGeometry.Panel(380, 140));
+        float left = box.X + 380 / 2f;
+        Assert.True(left + box.Width <= TabStrip.Labels(tabs, PanelId.Media, 380, mascot: true)[0].Slot.X);
+        Assert.Null(TabStrip.At(left + box.Width / 2, tabs, PanelId.Media, 380, mascot: true));
+        Assert.InRange(box.Y + box.Height / 2, 0, PanelSpace.TabStripHeight);
+    }
+
     // The art's flattened outline and the edge of its two circles, in DIPs from the shape's top-left corner.
     private static List<Vector2> Art(in IslandGeometry shape)
     {
