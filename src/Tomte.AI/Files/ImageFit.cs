@@ -18,7 +18,7 @@ public sealed record FittedImage(string MediaType, byte[] Data, int Width, int H
 /// </summary>
 public static class ImageFit
 {
-    // Anthropic takes at most 5 MB an image; base64 adds a third.
+    // Anthropic takes 10 MB an image directly and 5 MB through Bedrock and Google Cloud; base64 adds a third.
     private const int MaxPngBytes = 3_500_000;
 
     public static (int Width, int Height) Fit(int width, int height, ImageBox box)

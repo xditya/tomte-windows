@@ -134,7 +134,8 @@ internal static class FileAttachments
             case FileKind.Pdf:
                 var pdf = await OffThread(c => Task.FromResult(Use(path, s => PdfExtraction.Read(s, limits, c))), limits, ct);
                 long size = new FileInfo(path).Length;
-                if (facts.NativePdf && size <= facts.MaxPdfBytes && pdf.Pages <= facts.MaxPdfPages)
+                // An encrypted PDF opens here with its empty password, but the providers take only unencrypted ones.
+                if (facts.NativePdf && size <= facts.MaxPdfBytes && pdf.Pages <= facts.MaxPdfPages && !pdf.Encrypted)
                 {
                     byte[] bytes = await File.ReadAllBytesAsync(path, ct);
                     int textTokens = pdf.Cut && pdf.PagesRead > 0
@@ -226,6 +227,7 @@ internal sealed class SendPlan
     private readonly int _contextBudget;
     private readonly int _limit;
     private readonly decimal _pricePerToken;
+    private readonly decimal _outputCostPerRequest;
     private readonly decimal? _left;
     private readonly List<PreparedFile> _files;
     private readonly List<PreparedFile> _cuttable;
@@ -247,6 +249,8 @@ internal sealed class SendPlan
         _fixedWithoutText = _fixed + _files.Where(f => !_cuttable.Contains(f)).Sum(f => f.Tokens);
         _contextBudget = facts.InputBudget(options.MaxTokens);
         _pricePerToken = options.Prices.TryGetValue(facts.Model, out var price) ? price.InputPerMillion / 1_000_000m : 0m;
+        // The whole reply cap at the output price: what one more request can cost past its input, at most.
+        _outputCostPerRequest = price is null ? 0m : options.MaxTokens * price.OutputPerMillion / 1_000_000m;
         _left = options.DailyCapUsd is { } cap && _pricePerToken > 0 ? Math.Max(0, cap - spentToday) : null;
         _limit = _left is { } left ? (int)Math.Min(_contextBudget, left / _pricePerToken) : _contextBudget;
 
@@ -321,7 +325,7 @@ internal sealed class SendPlan
 
     /// <summary>
     /// The files' text split at line breaks into requests that each fit the context, or null when splitting does not
-    /// help: nothing to split, too little room, more than <see cref="MaxParts"/> requests, all of them past today's cap,
+    /// help: nothing to split, too little room, more than <see cref="MaxParts"/> requests, all of them with full replies past today's cap,
     /// or a single request (the send was over the cap, and splitting only costs more).
     /// </summary>
     private List<Chunk>? ChunkPlan()
@@ -361,8 +365,9 @@ internal sealed class SendPlan
 
         if (pieces.Count > 0)
             chunks.Add(new Chunk(pieces, _fixedWithoutText + used + Overhead * (pieces.Count + 1)));
-        int total = chunks.Sum(c => c.Tokens);
-        return chunks.Count < 2 || (_left is { } left && total * _pricePerToken > left) ? null : chunks;
+        // Every part must fit the cap with a full reply, since nothing checks the cap between parts.
+        decimal cost = chunks.Sum(c => c.Tokens) * _pricePerToken + chunks.Count * _outputCostPerRequest;
+        return chunks.Count < 2 || (_left is { } left && cost > left) ? null : chunks;
     }
 
     /// <summary>Lines with their breaks, a line longer than <paramref name="max"/> characters in pieces of that size.</summary>

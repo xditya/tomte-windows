@@ -458,14 +458,14 @@ public sealed class FileTests : IDisposable
     [Fact]
     public void EachProviderHasItsOwnImageSizeAndTokens()
     {
-        // Anthropic: 2,576 on the long edge and about 4,784 tokens of 750 pixels each.
+        // Anthropic: 2,576 on the long edge and at most 4,784 patches of 28 x 28 pixels.
         var anthropic = Facts(ProviderKind.Anthropic);
-        Assert.Equal((2068, 1734), ImageFit.Fit(4000, 3355, anthropic.ImageBox));
-        Assert.Equal(1600, anthropic.ImageTokens(1200, 1000));
+        Assert.Equal((2114, 1773), ImageFit.Fit(4000, 3355, anthropic.ImageBox));
+        Assert.Equal(43 * 36, anthropic.ImageTokens(1200, 1000));
         Assert.Equal(4784, anthropic.ImageTokens(2576, 2576));
-        // Gemini: 258 for a small image, else Google's tiles (its own example: 960 x 540 is 6 tiles).
+        // Gemini: Google's tiles (its own example: 960 x 540 is 6 tiles), never under Gemini 3's 1,120 an image.
         var gemini = Facts(ProviderKind.Gemini);
-        Assert.Equal(258, gemini.ImageTokens(384, 300));
+        Assert.Equal(1120, gemini.ImageTokens(384, 300));
         Assert.Equal(6 * 258, gemini.ImageTokens(960, 540));
         Assert.Equal((3072, 1536), ImageFit.Fit(6000, 3000, gemini.ImageBox));
         // OpenAI: 85 and 170 a 512 tile after its fit; a small image is left as it is.
@@ -646,6 +646,30 @@ public sealed class FileTests : IDisposable
         Assert.Empty(handler.Bodies);
     }
 
+    [Fact]
+    public async Task ChunkingIsNotOfferedWhenFullRepliesWouldPassTheCap()
+    {
+        LargeLog();
+        async Task<SizeQuestion?> Ask(decimal output)
+        {
+            var options = new PaletteOptions { DailyCapUsd = 0.10m, Prices = new Dictionary<string, ModelPrice> { ["m"] = new(1m, output) } };
+            var session = Session(ProviderKind.OpenAICompatible, Handler(ProviderKind.OpenAICompatible), options);
+            SizeQuestion? asked = null;
+            session.ChooseSize = (q, _) =>
+            {
+                asked = q;
+                return Task.FromResult(SizeChoice.Cancel);
+            };
+            await session.SendAsync();
+            return asked;
+        }
+
+        // The input of every part costs about $0.02. With replies at $1 a million the parts fit $0.10; at $10 a million,
+        // four full 4,096-token replies alone would be $0.16.
+        Assert.NotNull((await Ask(1m))!.Chunk);
+        Assert.Null((await Ask(10m))!.Chunk);
+    }
+
     // The send log and untrusted text
 
     [Fact]
@@ -659,7 +683,7 @@ public sealed class FileTests : IDisposable
         await session.SendAsync();
 
         var attached = Assert.Single(new SendLog(LogPath).ReadAll()).Attached;
-        Assert.Equal("shelf:report.pdf", attached[0]);
+        Assert.Equal("shelf:report.pdf, names: plan.docx", attached[0]);
         Assert.Matches(@"^file report\.pdf · pdf · native, 1 pages · 1 KB · about 1,6\d\d tokens$", attached.Single(a => a.StartsWith("file report", StringComparison.Ordinal)));
         var texts = JsonNode.Parse(handler.Bodies[0])!["messages"]![0]!["content"]!.AsArray().Select(b => (string?)b!["text"]);
         Assert.Contains("<shelf_items>\nplan.docx\n</shelf_items>", texts);

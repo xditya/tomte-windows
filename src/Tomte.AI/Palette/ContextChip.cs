@@ -137,7 +137,8 @@ public static class ContextChips
         var name = shelf.ItemNames.Count > 0 ? shelf.ItemNames[0] : null;
         return new(ContextKind.ShelfItem,
             name is null ? "Shelf · empty" : $"Shelf · {name}",
-            name is null ? "shelf" : $"shelf:{name}",
+            // The other items' names go to the provider too, so the send log names them.
+            name is null ? "shelf" : $"shelf:{name}" + (shelf.ItemNames.Count > 1 ? $", names: {string.Join(", ", shelf.ItemNames.Skip(1).Select(PreparedFile.Clean))}" : ""),
             _ => Task.FromResult<IReadOnlyList<ContentPart>>(shelf.ItemNames.Count > 1
                 ? [new ShelfFilePart(name!), ContextAssembly.Block("shelf_items", string.Join('\n', shelf.ItemNames.Skip(1).Select(PreparedFile.Clean)))]
                 : [new ShelfFilePart(name!)]),

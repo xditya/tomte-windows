@@ -42,50 +42,55 @@ public sealed record ModelFacts(ProviderKind Kind, string Model, int ContextToke
     }
 
     /// <summary>
-    /// The largest image worth sending. Anthropic: 2,576 pixels on the long edge and about 4,784 tokens at 750 pixels a
-    /// token (older models scale down to 1,568 on their side). Gemini: tiles of 768 pixels, with pages scaled to 3,072
-    /// at most. OpenAI: fits a 2,048 square, then the short side to 768.
+    /// The largest image worth sending. Anthropic: 2,576 pixels on the long edge and 4,784 patches of 28 by 28 pixels
+    /// for Claude 4.7 and later (older models scale down to 1,568 on their side, so they get more than they use). Gemini:
+    /// documents no maximum for images and scales PDF pages to 3,072, used here as the bound. OpenAI: fits a 2,048
+    /// square, then the short side to 768.
     /// </summary>
     public ImageBox ImageBox => Kind switch
     {
-        ProviderKind.Anthropic => new(2576, 2576, 4784L * 750),
+        ProviderKind.Anthropic => new(2576, 2576, 4784L * 28 * 28),
         ProviderKind.Gemini => new(3072, 3072, long.MaxValue),
         _ => new(2048, 768, long.MaxValue),
     };
 
-    /// <summary>Anthropic: width times height over 750. Gemini: 258 for a small image, else 258 per tile. OpenAI: 85 plus 170 per 512-pixel tile.</summary>
+    /// <summary>
+    /// Anthropic: one token per 28 by 28 patch, at most 4,784. Gemini: the larger of Google's two rules, 258 per 768
+    /// tile (258 for a small image) and the 1,120 its media-resolution page gives Gemini 3 and later by default.
+    /// OpenAI: 85 plus 170 per 512-pixel tile, gpt-4o's rule; other families differ.
+    /// </summary>
     public int ImageTokens(int width, int height)
     {
         switch (Kind)
         {
             case ProviderKind.Anthropic:
-                return (int)Math.Min(4784, Math.Ceiling(width * (double)height / 750));
+                return (int)Math.Min(4784, Math.Ceiling(width / 28.0) * Math.Ceiling(height / 28.0));
             case ProviderKind.Gemini when width <= 384 && height <= 384:
-                return 258;
+                return 1120;
             case ProviderKind.Gemini:
                 // Google's rule: a crop unit of the short side over 1.5, and a tile per unit in each direction.
                 double unit = Math.Max(1, Math.Floor(Math.Min(width, height) / 1.5));
-                return (int)(Math.Ceiling(width / unit) * Math.Ceiling(height / unit)) * 258;
+                return Math.Max(1120, (int)(Math.Ceiling(width / unit) * Math.Ceiling(height / unit)) * 258);
             default:
                 return 85 + 170 * (int)(Math.Ceiling(width / 512.0) * Math.Ceiling(height / 512.0));
         }
     }
 
     /// <summary>
-    /// The largest PDF sent as a PDF: 4 MB, well inside Anthropic's 32 MB and Gemini's 20 MB request. The request body is
+    /// The largest PDF sent as a PDF: 4 MB, well inside Anthropic's 32 MB request and Gemini's inline limit. The request body is
     /// built in memory, where the file, its base64 and the JSON around it come to about nine times its size, so 4 MB
     /// keeps a send within the app's memory budget. A larger PDF goes as its extracted text.
     /// </summary>
     public long MaxPdfBytes => 4L << 20;
 
-    /// <summary>Anthropic takes 600 pages (100 on 200,000-token models), Gemini 1,000.</summary>
-    public int MaxPdfPages => Kind == ProviderKind.Anthropic ? (ContextTokens > 200_000 ? 600 : 100) : 1000;
+    /// <summary>Anthropic takes 600 pages (100 when the context is under a million tokens), Gemini 1,000.</summary>
+    public int MaxPdfPages => Kind == ProviderKind.Anthropic ? (ContextTokens >= 1_000_000 ? 600 : 100) : 1000;
 
     /// <summary>
-    /// A PDF sent as a PDF. Anthropic sends each page's text and an image of the page, about 1,600 tokens; Gemini
-    /// counts 258 tokens a page and does not charge for the text it reads from the file.
+    /// A PDF sent as a PDF. Anthropic sends each page's text and an image of the page, taken here as 1,600 tokens; Gemini
+    /// counts 560 a page on Gemini 3 and later (258 on older models) and does not charge for the text it reads from it.
     /// </summary>
-    public int PdfTokens(int pages, int textTokens) => Kind == ProviderKind.Anthropic ? textTokens + pages * 1600 : pages * 258;
+    public int PdfTokens(int pages, int textTokens) => Kind == ProviderKind.Anthropic ? textTokens + pages * 1600 : pages * 560;
 
     /// <summary>Room left for the answer: the reply cap, but never more than a quarter of a small model's context.</summary>
     public int InputBudget(int maxTokens) => ContextTokens - Math.Min(maxTokens, ContextTokens / 4);

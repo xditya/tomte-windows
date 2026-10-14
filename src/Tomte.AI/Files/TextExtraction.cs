@@ -29,8 +29,11 @@ public sealed record FileLimits
     public TimeSpan TimeLimit { get; init; } = TimeSpan.FromSeconds(20);
 }
 
-/// <summary>Text read from a file. Cut is true when the reader stopped at the character cap; Pages counts a PDF's pages, PagesRead how many were read.</summary>
-public sealed record Extracted(string Text, bool Cut, int Pages = 0, int PagesRead = 0);
+/// <summary>
+/// Text read from a file. Cut is true when the reader stopped at the character cap; Pages counts a PDF's pages, PagesRead
+/// how many were read, and Encrypted says the PDF needed its (empty) password to open.
+/// </summary>
+public sealed record Extracted(string Text, bool Cut, int Pages = 0, int PagesRead = 0, bool Encrypted = false);
 
 /// <summary>A file Tomte could not read. The message completes a sentence that starts with the file's name, and never holds its path.</summary>
 public sealed class FileReadException(string message) : Exception(message);
