@@ -475,7 +475,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         if (machine.State is IslandState.ShelfDrop or IslandState.Compact or IslandState.Panels)
         {
-            // Open, this is a tab switch; until the Shelf panel registers, Panels opens on the last-used tab.
+            // While Panels is open on another tab this is a tab switch.
             Panels?.Select(PanelId.Shelf);
             Go(IslandState.Panels);
         }
