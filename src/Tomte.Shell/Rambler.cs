@@ -10,17 +10,19 @@ using Windows.UI.Composition;
 namespace Tomte.Shell;
 
 /// <summary>
-/// Hold the chord, speak, release: the recording becomes a transcript, the transcript becomes a note
-/// (structured by the AI provider when one is configured, raw otherwise) and the note lands on the
-/// scratchpad. Runs on the UI thread. The microphone is open only between the press and the release,
-/// and the hold is the visible user action that lets audio or text leave the PC.
+/// Hold the chord, speak, release: the recording becomes a transcript. With the AI layer off the transcript is
+/// the raw note on the scratchpad. With it on, the pill becomes the palette and the model reads the transcript as
+/// a command or a note; the palette asks before anything runs. Runs on the UI thread. The microphone is open only
+/// between the press and the release, and the hold is the visible user action that lets audio (to a speech-to-text
+/// provider) or the transcript (to the AI provider) leave the PC.
 /// </summary>
+/// <param name="voice">A new voice session per transcript; null with the AI layer off or no provider.</param>
 internal sealed class Rambler(
     IslandWindow island,
     IslandStateMachine machine,
     ISpeechToText speech,
     ProviderSend? speechSend,
-    RamblerStructure? structure,
+    Func<PaletteSession>? voice,
     ScratchpadNote scratchpad,
     SendLog sendLog,
     Action<string> log)
@@ -41,12 +43,31 @@ internal sealed class Rambler(
     private CompositionRoundedRectangleGeometry[]? bars;
     private CompositionSpriteShape[]? barShapes;
     private bool transcribing;
+    private PaletteSession? command;
+    private PaletteHost? palette;
+    private TaskCompletionSource<PermissionAnswer>? answer;
 
     /// <summary>Microphone level 0..1, once per capture packet while recording, on the UI thread. The mascot bounces to it.</summary>
     public event Action<double>? Bounce;
 
     /// <summary>The pill is gone after a hold; the triggers release pointer tracking and the Esc hotkey here.</summary>
     public event Action? Retracted;
+
+    /// <summary>The palette asks before a voice command's tool runs.</summary>
+    public event Action<ToolRequest>? Asking;
+
+    /// <summary>A voice command's session has finished, before the island retracts.</summary>
+    public event Action<PaletteSession>? CommandDone;
+
+    /// <summary>The user's answer to the palette's question (Win+Alt+Enter is yes, Esc no). False when nothing is asked.</summary>
+    public bool Answer(bool allow) => answer?.TrySetResult(allow ? PermissionAnswer.AllowOnce : PermissionAnswer.Deny) == true;
+
+    /// <summary>The palette is going away under a voice command: what it was about to ask or run never runs.</summary>
+    public void Cancel()
+    {
+        command?.Cancel();
+        answer?.TrySetResult(PermissionAnswer.Deny);
+    }
 
     public void Begin()
     {
@@ -109,30 +130,37 @@ internal sealed class Rambler(
                 return;
             }
 
-            string note = text;
-            if (structure is not null)
+            // Only while the rambler's pill is still up: a hold that the lock screen or a fullscreen app took down
+            // keeps the words as a note and opens nothing.
+            command = machine.State == IslandState.Compact ? voice?.Invoke() : null;
+            if (command is not null)
             {
-                int inputTokens = 0, outputTokens = 0;
                 try
                 {
-                    using var timeout = new CancellationTokenSource(SendTimeout);
-                    var structured = await structure.Run(text, timeout.Token);
-                    (note, inputTokens, outputTokens) = (structured.Note, structured.InputTokens, structured.OutputTokens);
+                    // The note tool reads and writes the loaded note; if it cannot be read, the words go in as the raw note.
+                    await scratchpad.LoadAsync();
                 }
-                catch (Exception e) when (e is ProviderException or OperationCanceledException)
+                catch (Exception e)
                 {
-                    // The transcript is kept as it is; losing what the user said is worse than an untidy note.
-                    log($"{DateTime.Now:HH:mm:ss.fff} rambler: structuring failed, raw transcript kept: {e.Message}");
-                }
-                finally
-                {
-                    LogSend(structure.Send, inputTokens, outputTokens, "transcript");
+                    log($"{DateTime.Now:HH:mm:ss.fff} voice: the scratchpad could not be read, keeping the words as a note: {e.Message}");
+                    command = null;
                 }
             }
 
-            // A locked database does not lose the note: it waits in memory and is saved as soon as it can be.
-            bool saved = await scratchpad.AppendAsync(note, DateTime.Now);
-            log($"{DateTime.Now:HH:mm:ss.fff} rambler: note {(saved ? "appended" : "kept until the database is free")} ({note.Length} chars)");
+            if (command is not null)
+            {
+                RemoveView();
+                command.ConfirmTool = ConfirmAsync;
+                log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{text}\"");
+            }
+
+            var session = command;
+            await VoiceCommand.RouteAsync(text, KeepAsync, session, s => (palette = new PaletteHost(island, machine, log)).RunAsync(s));
+            if (session is not null)
+            {
+                log($"{DateTime.Now:HH:mm:ss.fff} voice: {session.Status}{(session.Error is null ? "" : ": " + session.Error)} steps={session.ToolSteps} reply=\"{session.AnswerText.ReplaceLineEndings(" | ")}\"");
+                CommandDone?.Invoke(session);
+            }
         }
         catch (Exception e)
         {
@@ -141,7 +169,42 @@ internal sealed class Rambler(
         finally
         {
             transcribing = false;
-            await Retract();
+            // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill.
+            bool handedOver = palette is not null;
+            command = null;
+            palette = null;
+            if (handedOver)
+                Retracted?.Invoke();
+            else
+                await Retract();
+        }
+    }
+
+    /// <summary>The raw words as a note. A locked database does not lose it: it waits in memory and is saved as soon as it can be.</summary>
+    private async Task KeepAsync(string note)
+    {
+        bool saved = await scratchpad.AppendAsync(note, DateTime.Now);
+        log($"{DateTime.Now:HH:mm:ss.fff} rambler: note {(saved ? "appended" : "kept until the database is free")} ({note.Length} chars)");
+    }
+
+    /// <summary>Waits for the user's answer while the palette shows where the confirmation goes. A hide answers no.</summary>
+    private async Task<PermissionAnswer> ConfirmAsync(ToolRequest request, CancellationToken ct)
+    {
+        var asked = answer = new TaskCompletionSource<PermissionAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancel = ct.Register(() => asked.TrySetResult(PermissionAnswer.Deny));
+        InputThread.SetConfirm(true);
+        log($"{DateTime.Now:HH:mm:ss.fff} voice: asks {request.Tier}: {request.Summary} (Win+Alt+Enter runs it, Esc cancels)");
+        Asking?.Invoke(request);
+        try
+        {
+            var given = await palette!.AskAsync(asked.Task);
+            log($"{DateTime.Now:HH:mm:ss.fff} voice: answer {given}");
+            return given;
+        }
+        finally
+        {
+            InputThread.SetConfirm(false);
+            answer = null;
         }
     }
 
@@ -243,6 +306,20 @@ internal sealed class Rambler(
         Retracted?.Invoke();
     }
 
+    /// <summary>The microphone and the bars leave at once when the pill turns into the palette.</summary>
+    private void RemoveView()
+    {
+        if (view is not null)
+        {
+            island.Content.Children.Remove(view);
+            view.Dispose();
+        }
+
+        view = null;
+        bars = null;
+        barShapes = null;
+    }
+
     private static ScalarKeyFrameAnimation Fade(Compositor c, float to, int delayMs, int durationMs)
     {
         var fade = c.CreateScalarKeyFrameAnimation();
@@ -255,6 +332,3 @@ internal sealed class Rambler(
 
 /// <summary>Which provider and model a rambler send goes to, for the send log.</summary>
 internal sealed record ProviderSend(string Provider, string Model);
-
-/// <summary>The structuring step: where it sends, and the call that turns a transcript into a note.</summary>
-internal sealed record RamblerStructure(ProviderSend Send, Func<string, CancellationToken, Task<RamblerNote.Structured>> Run);

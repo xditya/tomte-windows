@@ -112,8 +112,9 @@ internal static class Program
         using var store = new SettingsStore(Arg(args, "--debug-settings"));
         settingsFile = store.FilePath;
         var pause = new PauseState();
-        // Beside the settings file, so a run with its own settings keeps its timer to itself too.
-        var timer = new IslandTimer(Path.Combine(Path.GetDirectoryName(store.FilePath)!, Path.GetFileName(IslandTimer.DefaultPath)));
+        // Beside the settings file, so a run with its own settings keeps its timer, note and logs to itself too.
+        string data = Path.GetDirectoryName(store.FilePath)!;
+        var timer = new IslandTimer(Path.Combine(data, Path.GetFileName(IslandTimer.DefaultPath)));
         Action<string>? logLine = log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}");
         var triggers = new TriggerController(island, store, pause, timer, logLine);
         if (debugTimer is TimeSpan length)
@@ -123,7 +124,6 @@ internal static class Program
 
         // The note and clipboard history live beside the settings file too. Nothing here opens the database: the note
         // loads when something first reads it, history on the first copy.
-        string data = Path.GetDirectoryName(store.FilePath)!;
         var db = new TomteDb(Path.Combine(data, "tomte.db"));
         Scratchpad = new ScratchpadNote(db, Path.Combine(data, "scratchpad.md"));
         var history = new ClipboardHistory(db);
@@ -136,7 +136,7 @@ internal static class Program
 
         if (rambler)
         {
-            triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
+            triggers.Rambler = CreateRambler(args, island, triggers, store, timer, log!);
         }
 
         if (palettePrompt is not null)
@@ -509,11 +509,12 @@ internal static class Program
     /// --rambler: the hold-to-talk session Win+Alt+V drives. The provider comes from the command line until
     /// settings carry it (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential
     /// Manager under the id). Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or
-    /// the provider's /audio/transcriptions with --stt-provider and --stt-model. Without a provider the note is
-    /// the raw transcript. Kept out of Main so Tomte.AI loads only for this switch.
+    /// the provider's /audio/transcriptions with --stt-provider and --stt-model. Without a provider the note is the
+    /// raw transcript; with one the transcript is a voice command the model reads with the voice tools, and --dry
+    /// keeps device tools from changing anything. Kept out of Main so Tomte.AI loads only for this switch.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static Rambler? CreateRambler(string[] args, IslandWindow island, IslandStateMachine machine, TextWriter log)
+    private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, TextWriter log)
     {
         ProviderConfig? config = Arg(args, "--provider-id") is { } id
             ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
@@ -538,19 +539,32 @@ internal static class Program
             return null;
         }
 
-        RamblerStructure? structure = null;
-        if (config is { DefaultModel: { } model })
-        {
-            var provider = ProviderSetup.Load(config, http!);
-            structure = new RamblerStructure(new ProviderSend(config.Id, model), (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct));
-        }
-
+        // The one note the palette and the Scratchpad panel use too.
         var scratchpad = Scratchpad;
         var sendLog = new SendLog(SendLogPath);
-        var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
+        Func<PaletteSession>? voice = null;
+        if (config is { DefaultModel: not null })
+        {
+            var provider = ProviderSetup.Load(config, http!);
+            // One per store, kept as long as the store. A voice command asks every time, so the grants change nothing for it.
+            var grants = new PermissionGrants(store);
+            // An in-memory shelf until the shelf store lands, and no launcher until the shortcut tiles land: until then
+            // open_shortcut is not offered. That seam is the last argument.
+            var tools = new BuiltInTools(new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
+                args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: null);
+            voice = () =>
+            {
+                var command = new PaletteSession(provider, config, new PaletteOptions(), sendLog, tools, grants, []) { Voice = true };
+                // Raised while the palette is up, the event waits in the triggers' queue and shows once the palette hides.
+                command.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
+                return command;
+            };
+        }
+
+        var session = new Rambler(island, triggers.Machine, speech, speechSend, voice, scratchpad, sendLog, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
-        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"}");
+        log.WriteLine($"rambler: speech={speech.GetType().Name} voice={(voice is null ? "off, raw transcript" : config!.Id)}");
         return session;
     }
 

@@ -502,6 +502,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
+        if (id == InputThread.ConfirmHotkeyId)
+        {
+            rambler?.Answer(allow: true);
+            return;
+        }
+
         var action = (HotkeyAction)(id - 1);
         log?.Invoke($"hotkey: {action}");
         switch (action)
@@ -778,6 +784,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             // A hotkey, the tray or the pause took over while the overlay was up; Capture() resumes as a cancel.
             overlay?.Dispose();
+        }
+
+        if (from == IslandState.Palette && state != IslandState.Palette)
+        {
+            // A voice command still in the palette must not ask or run once the palette is gone.
+            rambler?.Cancel();
         }
 
         if (!IslandStateMachine.CanTransition(from, state))
