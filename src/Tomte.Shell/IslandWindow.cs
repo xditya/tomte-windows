@@ -115,6 +115,9 @@ internal sealed unsafe class IslandWindow : IDisposable
                 cbSize = (uint)sizeof(WNDCLASSEXW),
                 lpfnWndProc = &HandleMessage,
                 hInstance = hInstance,
+                // Without a class cursor Windows sets none over the island, and the pointer keeps the shape of
+                // whatever it was over last: an I-beam, a resize arrow.
+                hCursor = PInvoke.LoadCursor(HINSTANCE.Null, PInvoke.IDC_ARROW),
                 lpszClassName = className,
             };
             if (PInvoke.RegisterClassEx(in windowClass) == 0)
