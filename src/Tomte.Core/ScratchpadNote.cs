@@ -103,7 +103,11 @@ public sealed class ScratchpadNote : IScratchpad
         }
     }
 
-    /// <summary>The editor's whole text and caret after the user typed. Raises nothing; saves after <see cref="SaveDelay"/>.</summary>
+    /// <summary>
+    /// The editor's whole text and caret after the user typed. Raises nothing; saves after <see cref="SaveDelay"/>.
+    /// This replaces the note, so pass <see cref="Text"/> as it is now with the keystroke applied, on the island's
+    /// thread: a copy kept from before the last <see cref="Changed"/> would overwrite a rambler note added since.
+    /// </summary>
     public void Edit(string newText, int newCaret)
     {
         lock (gate)
