@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Numerics;
+using Tomte.Core.Text;
 
 namespace Tomte.Core.Shortcuts;
 
@@ -72,4 +73,50 @@ public static class ShortcutGrid
 
     /// <summary>Where a tile's name goes, centred under the icon.</summary>
     public static RectangleF Label(RectangleF cell) => new(cell.X + LabelInset, cell.Y + LabelTop, cell.Width - 2 * LabelInset, LabelHeight);
+
+    /// <summary>The head line: the panel's title, then what a tile can be.</summary>
+    public static RectangleF Head(Vector2 body) => new(Inset, Top, body.X - 2 * Inset, HeadHeight);
+
+    /// <summary>The panel's title, then what a tile can be, on the head line.</summary>
+    public static IReadOnlyList<TextSlot> HeadText(Vector2 body)
+    {
+        const string title = "Shortcuts";
+        var head = Head(body);
+        float after = TextSlot.Measure(title, TextStyle.Title, head.Width) + 10;
+        return
+        [
+            new(title, TextStyle.Title, head),
+            new("apps, files, folders, web pages, scripts", TextStyle.Secondary, new(head.X + after, head.Y, head.Width - after, head.Height)),
+        ];
+    }
+
+    /// <summary>A tile's name under its icon and, when it would not open, why, across its top; in the cell's own coordinates.</summary>
+    public static IReadOnlyList<TextSlot> TileText(RectangleF cell, string name, ShortcutOutcome? why)
+    {
+        var label = new TextSlot(name, NameStyle, InCell(Label(cell), cell));
+        return why is { } reason ? [label, new(BadgeText(reason), BadgeStyle, InCell(BadgeSlot(cell), cell))] : [label];
+    }
+
+    /// <summary>The add tile's word, where a name would be; in the cell's own coordinates.</summary>
+    public static TextSlot AddText(RectangleF cell) => new("Add", AddStyle, InCell(Label(cell), cell));
+
+    private static RectangleF InCell(RectangleF slot, RectangleF cell) => new(slot.X - cell.X, slot.Y - cell.Y, slot.Width, slot.Height);
+
+    /// <summary>A tile's name, the add tile's word, and why a tile would not open, in the warn colour.</summary>
+    public static readonly TextStyle NameStyle = new(12, Color: 0xFFE9E9EE, Align: TextAlign.Center);
+    public static readonly TextStyle AddStyle = NameStyle with { Color = TextStyle.TertiaryColor };
+    public static readonly TextStyle BadgeStyle = new(10, Color: TextStyle.WarnColor, Align: TextAlign.Trailing);
+
+    /// <summary>The band across a tile's top where why it would not open reads, right-aligned, clear of the card's corners.</summary>
+    public static RectangleF BadgeSlot(RectangleF cell) => new(cell.X + 4, cell.Y + 1, cell.Width - 10, 12);
+
+    /// <summary>Why a tile would not open, in a few words.</summary>
+    public static string BadgeText(ShortcutOutcome why) => why switch
+    {
+        ShortcutOutcome.ScriptsOff => "Scripts off",
+        ShortcutOutcome.NeedsConfirm => "Confirm in Settings",
+        ShortcutOutcome.Changed => "Changed, confirm again",
+        ShortcutOutcome.Missing => "Moved or deleted",
+        _ => "Can't open",
+    };
 }

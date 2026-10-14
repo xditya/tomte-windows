@@ -1,6 +1,8 @@
 using System.Drawing;
+using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Media;
+using Tomte.Core.Shortcuts;
 using Tomte.Core.Text;
 using Xunit;
 
@@ -201,10 +203,10 @@ public class TextTests
         // Each part of the run lays it out again.
         Assert.True(block.Set(run with { Text = "Daybreak" }, 1.5));
         Assert.NotSame(layout, block.Layout);
-        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.Warn } }, 1.5));
-        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.Warn }, MaxWidth = 200 }, 1.5));
-        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.Warn }, MaxWidth = 200, Lines = 2 }, 1.5));
-        Assert.False(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.Warn }, MaxWidth = 200, Lines = 2 }, 1.5));
+        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.WarnColor } }, 1.5));
+        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.WarnColor }, MaxWidth = 200 }, 1.5));
+        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.WarnColor }, MaxWidth = 200, Lines = 2 }, 1.5));
+        Assert.False(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.WarnColor }, MaxWidth = 200, Lines = 2 }, 1.5));
     }
 
     [Fact]
@@ -216,6 +218,37 @@ public class TextTests
         Assert.Null(block.Layout);
         Assert.Equal((0, 0), block.Pixels);
         Assert.False(block.Set(new TextRun("", Title, 272), 1.5));
+    }
+
+    [Fact]
+    public void ALineHeightSpacesEveryLineAlike()
+    {
+        var note = new TextStyle(13, LineHeight: 19.5f);
+        using var three = Lay("one\ntwo\nthree", note, 300, lines: 5);
+        using var cut = Lay("one\ntwo\nthree", note, 300, lines: 2);
+
+        Assert.Equal(3, three.LineCount);
+        Assert.Equal(3 * 19.5f, three.Height, 0.01);
+        Assert.True(cut.Trimmed);
+        Assert.Equal(2 * 19.5f, cut.Height, 0.01);
+    }
+
+    [Fact]
+    public void TheShortcutBadgesFitTheirBand()
+    {
+        // The Shortcuts body at the panel's 520 x 300, less the tab strip.
+        var cell = ShortcutGrid.Cell(0, new Vector2(520, 300 - PanelSpace.TabStripHeight));
+        var band = ShortcutGrid.BadgeSlot(cell);
+        foreach (var why in new[] { ShortcutOutcome.ScriptsOff, ShortcutOutcome.NeedsConfirm, ShortcutOutcome.Changed, ShortcutOutcome.Missing, ShortcutOutcome.Blocked })
+        {
+            using var badge = Lay(ShortcutGrid.BadgeText(why), ShortcutGrid.BadgeStyle, band.Width);
+            using var natural = Lay(ShortcutGrid.BadgeText(why), ShortcutGrid.BadgeStyle);
+            Assert.False(badge.Trimmed, $"{ShortcutGrid.BadgeText(why)} needs {natural.Width} of {band.Width}");
+        }
+
+        // Right-aligned 6 DIP in from the tile's edge, and above the name.
+        Assert.Equal(cell.Right - 6, band.Right, 0.01);
+        Assert.True(band.Bottom < ShortcutGrid.Label(cell).Top);
     }
 
     [Fact]

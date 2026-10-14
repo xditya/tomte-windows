@@ -14,21 +14,34 @@ public enum TextAlign
 
 /// <summary>
 /// How a run looks: size in DIPs, weight (400 regular, 500 medium, 600 semibold), colour as 0xAARRGGBB,
-/// where it sits inside its width, and tabular figures for clocks, so the digits do not shift as they change.
+/// where it sits inside its width, tabular figures for clocks, so the digits do not shift as they change, and
+/// a line height for text of several lines (0 keeps the font's own).
 /// </summary>
-public sealed record TextStyle(float Size, int Weight = 400, uint Color = TextStyle.White, TextAlign Align = TextAlign.Leading, bool Tabular = false, string Family = TextStyle.Ui)
+public sealed record TextStyle(float Size, int Weight = 400, uint Color = TextStyle.WhiteColor, TextAlign Align = TextAlign.Leading, bool Tabular = false, string Family = TextStyle.Ui, float LineHeight = 0)
 {
     public const string Ui = "Segoe UI Variable Text";
-    public const uint White = 0xFFFFFFFF;
+    public const uint WhiteColor = 0xFFFFFFFF;
 
     /// <summary>Secondary text, 60% white.</summary>
-    public const uint Secondary = 0x99FFFFFF;
+    public const uint SecondaryColor = 0x99FFFFFF;
 
     /// <summary>Tertiary text, 38% white.</summary>
-    public const uint Tertiary = 0x61FFFFFF;
+    public const uint TertiaryColor = 0x61FFFFFF;
 
     /// <summary>Something did not work.</summary>
-    public const uint Warn = 0xFFF0B35A;
+    public const uint WarnColor = 0xFFF0B35A;
+
+    /// <summary>A panel's heading: 13 DIP semibold, white.</summary>
+    public static readonly TextStyle Title = new(13, 600);
+
+    /// <summary>A row's own text: 12.5 DIP, white.</summary>
+    public static readonly TextStyle Primary = new(12.5f);
+
+    /// <summary>What goes beside a heading, a switch's label, a button's word: 12 DIP, 60% white.</summary>
+    public static readonly TextStyle Secondary = new(12, Color: SecondaryColor);
+
+    /// <summary>Footers, ages and hints: 11 DIP, 38% white.</summary>
+    public static readonly TextStyle Small = new(11, Color: TertiaryColor);
 }
 
 /// <summary>
@@ -37,6 +50,22 @@ public sealed record TextStyle(float Size, int Weight = 400, uint Color = TextSt
 /// ellipsis when the rest does not fit.
 /// </summary>
 public sealed record TextRun(string Text, TextStyle Style, float MaxWidth, int Lines = 1);
+
+/// <summary>One line of text in a slot of a view: as wide as the slot, centred in its height. Layouts hand these out.</summary>
+public readonly record struct TextSlot(string Text, TextStyle Style, System.Drawing.RectangleF Slot)
+{
+    /// <summary>How wide <paramref name="text"/> is in <paramref name="style"/>, at most <paramref name="max"/>, in DIPs.</summary>
+    public static float Measure(string text, TextStyle style, float max)
+    {
+        if (text.Length == 0)
+        {
+            return 0;
+        }
+
+        using var layout = TextLayout.Of(new TextRun(text, style, max));
+        return layout.Width;
+    }
+}
 
 /// <summary>
 /// A run laid out by DirectWrite in DIPs: wrapped and trimmed to its width and line count, measured, and ready
@@ -72,6 +101,13 @@ public sealed class TextLayout : IDisposable
             }
 
             made.SetWordWrapping(lines == 1 ? DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_NO_WRAP : DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_WRAP);
+            if (run.Style.LineHeight > 0)
+            {
+                // Every line the given height, the font's own line centred in it, as CSS's line-height does.
+                var font = LineMetrics(made)[0];
+                float height = run.Style.LineHeight;
+                made.SetLineSpacing(DWRITE_LINE_SPACING_METHOD.DWRITE_LINE_SPACING_METHOD_UNIFORM, height, (height - font.height) / 2 + font.baseline);
+            }
 
             // Laid out once untrimmed to see whether it fits; only a run that does not is cut.
             var natural = Metrics(made);
@@ -82,7 +118,7 @@ public sealed class TextLayout : IDisposable
                 {
                     // The box ends under the last line allowed; DirectWrite drops the lines below it and puts the
                     // ellipsis on that one.
-                    made.SetMaxHeight(HeightOf(made, natural.lineCount, lines) + Slack);
+                    made.SetMaxHeight(HeightOf(made, lines) + Slack);
                 }
 
                 made.SetTrimming(new DWRITE_TRIMMING { granularity = DWRITE_TRIMMING_GRANULARITY.DWRITE_TRIMMING_GRANULARITY_CHARACTER }, ellipsis);
@@ -151,22 +187,19 @@ public sealed class TextLayout : IDisposable
         return metrics;
     }
 
-    private static unsafe float HeightOf(IDWriteTextLayout layout, uint count, int lines)
+    /// <summary>Every line's metrics; the buffer is sized from the layout's own count, which GetLineMetrics wants exactly.</summary>
+    private static unsafe DWRITE_LINE_METRICS[] LineMetrics(IDWriteTextLayout layout)
     {
-        var metrics = new DWRITE_LINE_METRICS[count];
-        float height = 0;
+        var metrics = new DWRITE_LINE_METRICS[Math.Max(1, Metrics(layout).lineCount)];
         fixed (DWRITE_LINE_METRICS* all = metrics)
         {
-            layout.GetLineMetrics(all, count, out _);
+            layout.GetLineMetrics(all, (uint)metrics.Length, out _);
         }
 
-        for (int i = 0; i < lines; i++)
-        {
-            height += metrics[i].height;
-        }
-
-        return height;
+        return metrics;
     }
+
+    private static float HeightOf(IDWriteTextLayout layout, int lines) => LineMetrics(layout).Take(lines).Sum(line => line.height);
 
     /// <summary>
     /// The DirectWrite factory and one text format per family, size and weight, for the life of the process:

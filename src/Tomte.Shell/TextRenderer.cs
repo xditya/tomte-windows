@@ -181,6 +181,9 @@ internal sealed unsafe class TextVisual : IDisposable
         Place();
     }
 
+    /// <summary>Show a line a layout handed out.</summary>
+    public void Show(TextSlot line) => Show(line.Text, line.Style, line.Slot);
+
     /// <summary>Show one line in a slot of the host: as wide as the slot, centred in its height.</summary>
     public void Show(string text, TextStyle style, RectangleF slot)
     {
@@ -211,7 +214,10 @@ internal sealed unsafe class TextVisual : IDisposable
         renderer.Released(this);
     }
 
-    /// <summary>The scale changed: draw again at the new one and land on its pixel grid.</summary>
+    /// <summary>
+    /// Land on the pixel grid again after a container above moved (a list scrolled), and draw again if the scale changed.
+    /// The same run costs no drawing.
+    /// </summary>
     internal void Refresh()
     {
         if (block.Run is { } run && block.Set(run, renderer.Island.Scale))

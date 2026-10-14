@@ -242,9 +242,9 @@ public static class MediaPanelLayout
 
     // How each run looks: the title, the artist (or the app, or a command that just failed), the two clocks.
     public static readonly TextStyle TitleStyle = new(14, 600);
-    public static readonly TextStyle ArtistStyle = new(12, Color: TextStyle.Secondary);
-    public static readonly TextStyle FailedStyle = ArtistStyle with { Color = TextStyle.Warn };
-    public static readonly TextStyle ElapsedStyle = new(11, Color: TextStyle.Tertiary, Tabular: true);
+    public static readonly TextStyle ArtistStyle = TextStyle.Secondary;
+    public static readonly TextStyle FailedStyle = ArtistStyle with { Color = TextStyle.WarnColor };
+    public static readonly TextStyle ElapsedStyle = TextStyle.Small with { Tabular = true };
     public static readonly TextStyle TotalStyle = ElapsedStyle with { Align = TextAlign.Trailing };
 
     public static readonly RectangleF Art = new(14, 16, 66, 66);

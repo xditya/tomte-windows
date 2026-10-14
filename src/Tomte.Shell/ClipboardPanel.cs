@@ -2,6 +2,7 @@ using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Clipboard;
+using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
 
@@ -12,9 +13,9 @@ namespace Tomte.Shell;
 /// selected one) with a remove button each, and Clear all; or the off or empty state. Composition
 /// visuals in DIPs laid out by <see cref="ClipboardPanelLayout"/>, built when the tab shows and
 /// released when it hides. Rows come from the watch's worker, so <see cref="Shown"/> returns at once and
-/// the rows are drawn when they land. Row text is the history's shortened form, through the text seam.
+/// the rows are drawn when they land. Row text is the history's shortened form, one line each.
 /// </summary>
-internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, Action<bool> keepHistory, Action<string>? log) : IPanel
+internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, Action<bool> keepHistory, TextRenderer text, Action<string>? log) : IPanel
 {
     private View? view;
     private IReadOnlyList<ClipboardRow> rows = [];
@@ -26,7 +27,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
-        view = new View(island.Compositor, body, new ClipboardPanelLayout(size));
+        view = new View(island.Compositor, text, body, new ClipboardPanelLayout(size));
         watch.Changed += OnChanged;
         Reload();
     }
@@ -119,7 +120,6 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
     private sealed class View : IDisposable
     {
-        private const float HeadLine = ClipboardPanelLayout.HeadHeight;
         private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
         private static readonly Color CardSelected = Color.FromArgb(28, 255, 255, 255);
         private static readonly Color Line = Color.FromArgb(46, 255, 255, 255);
@@ -130,15 +130,19 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         private static readonly Color White = Color.FromArgb(255, 255, 255, 255);
 
         private readonly Compositor c;
+        private readonly TextRenderer text;
         private readonly ContainerVisual body;
         private readonly ShapeVisual frame;
         private readonly ContainerVisual list;
         private readonly ContainerVisual rowsVisual;
         private readonly List<(long Id, CompositionColorBrush Fill)> rowBrushes = [];
 
-        public View(Compositor compositor, ContainerVisual body, ClipboardPanelLayout layout)
+        // Every text visual of the current build; the rows' own move with the scroll and land on whole pixels again.
+        private readonly List<TextVisual> texts = [], rowTexts = [];
+
+        public View(Compositor compositor, TextRenderer text, ContainerVisual body, ClipboardPanelLayout layout)
         {
-            (c, this.body, Layout) = (compositor, body, layout);
+            (c, this.text, this.body, Layout) = (compositor, text, body, layout);
             frame = c.CreateShapeVisual();
             frame.Size = layout.Body;
             body.Children.InsertAtTop(frame);
@@ -159,25 +163,27 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         public void Show(bool on, IReadOnlyList<ClipboardRow> rows, long selected, float scroll, DateTimeOffset now, int keeps)
         {
             frame.Shapes.Clear();
+            DisposeTexts();
             var old = rowsVisual.Children.ToList();
             rowsVisual.Children.RemoveAll();
             old.ForEach(row => row.Dispose());
             rowBrushes.Clear();
-            var head = Layout.Head;
-            float title = TextSeam.Slot(c, frame, "Clipboard history", new(head.X, head.Y), HeadLine, head.Width, TextLook.Title);
-            TextSeam.Slot(c, frame, on ? $"last {keeps} items, this PC only" : "off by default", new(head.X + title + 10, head.Y), HeadLine, 160, TextLook.Secondary);
-            TextSeam.Slot(c, frame, "Keep history", new(Layout.Switch.X - 10, head.Y), HeadLine, 90, TextLook.Secondary, alignRight: true);
-            DrawSwitch(on);
+            foreach (var line in Layout.HeadText(on, keeps))
+            {
+                Text(texts, body).Show(line);
+            }
 
-            var foot = Layout.Foot;
+            DrawSwitch(on);
             if (!on || rows.Count == 0)
             {
-                Box(Layout.List, on ? ["Nothing copied yet."] : [$"History is off. Turn it on to keep the last {keeps} items on this PC.", "Items marked by password managers are never kept."]);
+                Box(Layout.List, Layout.BoxText(on, keeps));
                 return;
             }
 
-            TextSeam.Slot(c, frame, "Items marked by password managers are never kept.", new(foot.X, foot.Y), foot.Height, foot.Width - 90, TextLook.Small);
-            TextSeam.Slot(c, frame, "Clear all", new(foot.Right, foot.Y), foot.Height, 64, TextLook.Secondary, alignRight: true);
+            foreach (var line in Layout.FootText())
+            {
+                Text(texts, body).Show(line);
+            }
 
             float width = Layout.List.Width;
             for (int i = 0; i < rows.Count; i++)
@@ -197,10 +203,18 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             }
         }
 
-        public void Scroll(float scroll) => rowsVisual.Offset = new Vector3(0, -scroll, 0);
+        public void Scroll(float scroll)
+        {
+            rowsVisual.Offset = new Vector3(0, -scroll, 0);
+            foreach (var visual in rowTexts)
+            {
+                visual.Refresh();
+            }
+        }
 
         public void Dispose()
         {
+            DisposeTexts();
             body.Children.RemoveAll();
             frame.Dispose();
             rowsVisual.Dispose();
@@ -252,10 +266,30 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
                 shapes.Shapes.Add(shape);
             }
 
-            float whenWidth = TextSeam.Slot(c, shapes, row.Ago(now), new(remove.X - gap, 0), at.Height, 48, TextLook.Small, alignRight: true);
-            float textX = gap + icon + gap;
-            TextSeam.Slot(c, shapes, row.Display, new(textX, 0), at.Height, remove.X - gap - whenWidth - gap - textX, TextLook.Primary);
+            foreach (var line in ClipboardPanelLayout.RowText(row.Display, row.Ago(now), at.Width))
+            {
+                Text(rowTexts, shapes).Show(line);
+            }
+
             return shapes;
+        }
+
+        private TextVisual Text(List<TextVisual> into, ContainerVisual host)
+        {
+            var visual = text.Create(host);
+            into.Add(visual);
+            return visual;
+        }
+
+        private void DisposeTexts()
+        {
+            foreach (var visual in texts.Concat(rowTexts))
+            {
+                visual.Dispose();
+            }
+
+            texts.Clear();
+            rowTexts.Clear();
         }
 
         private void DrawSwitch(bool on)
@@ -270,7 +304,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             frame.Shapes.Add(shape);
         }
 
-        private void Box(RectangleF area, string[] lines)
+        private void Box(RectangleF area, IReadOnlyList<TextSlot> lines)
         {
             var outline = c.CreateRoundedRectangleGeometry();
             outline.Offset = new Vector2(area.X + 0.5f, area.Y + 0.5f);
@@ -280,15 +314,9 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             shape.StrokeBrush = c.CreateColorBrush(Line);
             shape.StrokeThickness = 1;
             frame.Shapes.Add(shape);
-
-            const float lineHeight = 18;
-            float y = area.Y + (area.Height - lines.Length * lineHeight) / 2;
             foreach (var line in lines)
             {
-                var look = line == lines[0] ? TextLook.Secondary : TextLook.Small;
-                float width = Math.Min(area.Width - 40, line.Length * TextSeam.CharWidth(look));
-                TextSeam.Slot(c, frame, line, new(area.X + (area.Width - width) / 2, y), lineHeight, width, look);
-                y += lineHeight;
+                Text(texts, body).Show(line);
             }
         }
 

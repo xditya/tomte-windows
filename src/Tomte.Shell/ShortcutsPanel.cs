@@ -18,7 +18,7 @@ namespace Tomte.Shell;
 /// the island hides. A click starts the tile on the thread pool, so a slow launch never holds the island's thread;
 /// a script that may not run yet opens Settings, where it is confirmed.
 /// </summary>
-internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, Func<bool> scriptsOn, Action openSettings, Action<string>? log) : IPanel
+internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, Func<bool> scriptsOn, Action openSettings, TextRenderer text, Action<string>? log) : IPanel
 {
     private const string Web = "web:";
     private const int WheelNotch = 120;
@@ -36,7 +36,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
     public void Shown(ContainerVisual body, Vector2 size)
     {
         int generation = ++showing;
-        view = new View(island.Compositor, body, size, island.Scale);
+        view = new View(island.Compositor, text, body, size, island.Scale);
         firstRow = ShortcutGrid.FirstRow(firstRow, tiles.Count, size);
         view.Build(tiles, firstRow, scriptsOn());
         _ = LoadAsync(generation);
@@ -224,14 +224,13 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
 
     private sealed record Tile(Shortcut Row, ShortcutTarget Target);
 
-    private sealed class View(Compositor compositor, ContainerVisual body, Vector2 size, double scale) : IDisposable
+    private sealed class View(Compositor compositor, TextRenderer text, ContainerVisual body, Vector2 size, double scale) : IDisposable
     {
         private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
         private static readonly Color Pressed = Color.FromArgb(28, 255, 255, 255);
         private static readonly Color Placeholder = Color.FromArgb(28, 255, 255, 255);
         private static readonly Color Faint = Color.FromArgb(64, 255, 255, 255);
         private static readonly Color Glyph = Color.FromArgb(97, 255, 255, 255);
-        private static readonly Color Warn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
 
         // A missing target's tile is drawn at 55% opacity.
         private const float MissingOpacity = 0.55f;
@@ -268,8 +267,10 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
             Tiles = [.. all.Skip(First).Take(Math.Min(Count, all.Count - First))];
             grid = Keep(compositor.CreateContainerVisual());
             body.Children.InsertAtTop(grid);
-            var (_, head) = Shapes(new Vector2(size.X, ShortcutGrid.GridTop), Vector2.Zero);
-            Rounded(head, new RectangleF(ShortcutGrid.Inset, ShortcutGrid.Top + 3.5f, 72, 10), 5, Brush(Placeholder));
+            foreach (var line in ShortcutGrid.HeadText(size))
+            {
+                Text(grid).Show(line);
+            }
 
             for (int i = 0; i < Tiles.Count; i++)
             {
@@ -282,13 +283,9 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
                 // A neutral square under the icon: what shows while the icon loads, for a missing target, or with no icon.
                 var icon = ShortcutGrid.Icon(cell, scale, PanelSpace.TabStripHeight);
                 Rounded(shapes, new RectangleF(icon.X - cell.X, icon.Y - cell.Y, icon.Width, icon.Height), 8, Brush(Placeholder));
-                Label(shapes, cell, tile.Row.Name.Length);
-                if (ShortcutStore.Gate(tile.Row, tile.Target, scriptsOn) is not null)
+                foreach (var line in ShortcutGrid.TileText(cell, tile.Row.Name, ShortcutStore.Gate(tile.Row, tile.Target, scriptsOn)))
                 {
-                    var dot = Keep(compositor.CreateEllipseGeometry());
-                    dot.Center = new Vector2(cell.Width - 12, 12);
-                    dot.Radius = new Vector2(3);
-                    Fill(shapes, dot, Brush(Warn));
+                    Text(holder).Show(line);
                 }
 
                 if (tile.Target.Missing)
@@ -307,8 +304,6 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
             {
                 AddTile(ShortcutGrid.Cell(Tiles.Count, size));
             }
-
-            DrawText();
         }
 
         /// <summary>One brush per tile in view, null for a tile with no icon; the view owns the surfaces from here.</summary>
@@ -368,25 +363,9 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
             surfaces = null;
         }
 
-        /// <summary>
-        /// TEXT SEAM. Nothing draws text on the island yet; which text surface to use is an open owner decision. The
-        /// renderer draws these runs, each clipped to its slot:
-        ///   Head: "Shortcuts", 13 DIP semibold, white, at (Inset, Top), then "apps, files, folders, web pages, scripts",
-        ///         12 DIP, 60% white, on the same line.
-        ///   Each tile: tile.Row.Name, 12 DIP, #e9e9ee, one line centred in ShortcutGrid.Label(cell), ellipsis.
-        ///   A tile with the warn dot: why it would not open, 10 DIP in the warn colour, in place of the dot:
-        ///         "Scripts off", "Confirm in Settings", "Changed, confirm again", "Moved or deleted", "Can't open".
-        ///         A line under the name instead would need about 14 DIP more than the 80 DIP tile has.
-        ///   The add tile: "Add", centred in its label slot, 38% white.
-        /// Until then a neutral bar stands where each name goes and a warn-coloured dot marks a tile that would not open.
-        /// </summary>
-        private static void DrawText()
-        {
-        }
-
         private void AddTile(RectangleF cell)
         {
-            var (_, shapes) = Shapes(new Vector2(cell.Width, cell.Height), new Vector2(cell.X, cell.Y));
+            var (holder, shapes) = Shapes(new Vector2(cell.Width, cell.Height), new Vector2(cell.X, cell.Y));
             var outline = Rounded(shapes, new RectangleF(0.5f, 0.5f, cell.Width - 1, cell.Height - 1), ShortcutGrid.Corner, null);
             Dashed(outline, Faint);
             var icon = ShortcutGrid.Icon(cell, scale, PanelSpace.TabStripHeight);
@@ -396,16 +375,11 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
             float mid = icon.Width / 2;
             Rounded(shapes, new RectangleF(x + mid - 7, y + mid - 1, 14, 2), 1, plus);
             Rounded(shapes, new RectangleF(x + mid - 1, y + mid - 7, 2, 14), 1, plus);
-            Label(shapes, cell, 3);
+            Text(holder).Show(ShortcutGrid.AddText(cell));
         }
 
-        private void Label(CompositionShapeCollection shapes, RectangleF cell, int length)
-        {
-            // About the width the name will take at 12 DIP, so tiles do not all look alike before text renders.
-            var slot = ShortcutGrid.Label(cell);
-            float width = Math.Min(slot.Width, 12 + 6 * length);
-            Rounded(shapes, new RectangleF(slot.X - cell.X + (slot.Width - width) / 2, slot.Y - cell.Y + 4, width, 8), 4, Brush(Placeholder));
-        }
+        /// <summary>A text visual that goes with this build, like every other part of it.</summary>
+        private TextVisual Text(ContainerVisual host) => Keep(text.Create(host));
 
         private (ContainerVisual Holder, CompositionShapeCollection Shapes) Shapes(Vector2 extent, Vector2 offset)
         {
