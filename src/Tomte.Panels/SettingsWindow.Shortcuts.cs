@@ -45,7 +45,7 @@ public sealed partial class SettingsWindow
             Row("Add an app, a file or a folder", Note("Apps as Start lists them. Browse in the list for any file, folder or script."), app),
             Row("Add a web address", null, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { webAddress, web } }),
             shortcutsNote,
-            Row("Script shortcuts", Note("Off: script tiles do nothing. On: each script asks once before it runs, showing its full command, and asks again when it changes. Scripts are batch, PowerShell and Windows Script Host files, and every shortcut (.lnk) that passes arguments to a program, browser web apps and profiles included."), scripts));
+            Row("Script shortcuts", Note("Off: script tiles do nothing. On: each script asks once before it runs, showing its full command, and asks again when it changes. Scripts are batch, PowerShell and Windows Script Host files, and every shortcut (.lnk) that passes arguments to a program, browser web apps and profiles included, except apps added from Start's list."), scripts));
     }
 
     /// <summary>
@@ -137,17 +137,29 @@ public sealed partial class SettingsWindow
 
         var byTarget = apps.ToDictionary(app => app.Target);
         var icons = new Dictionary<string, WriteableBitmap>();
+        // Start lists some names more than once (an "Uninstall" per app); a second line with the ID tells them apart.
+        var repeated = apps.GroupBy(app => app.Name, StringComparer.CurrentCultureIgnoreCase).Where(g => g.Skip(1).Any())
+            .Select(g => g.Key).ToHashSet(StringComparer.CurrentCultureIgnoreCase);
+        var secondary = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
         void Show(SelectorItem row, string target)
         {
+            var app = byTarget[target];
+            string? id = repeated.Contains(app.Name) ? app.Id : null;
             var parts = ((StackPanel)row.ContentTemplateRoot).Children;
             ((Image)parts[0]).Source = icons.GetValueOrDefault(target);
-            ((TextBlock)parts[1]).Text = byTarget[target].Name;
-            AutomationProperties.SetName(row, byTarget[target].Name);
+            var lines = ((StackPanel)parts[1]).Children;
+            ((TextBlock)lines[0]).Text = app.Name;
+            var second = (TextBlock)lines[1];
+            second.Text = id ?? "";
+            second.Foreground = secondary;
+            second.Visibility = id is null ? Visibility.Collapsed : Visibility.Visible;
+            AutomationProperties.SetName(row, id is null ? app.Name : $"{app.Name}, {id}");
         }
 
         list.ItemTemplate = (DataTemplate)XamlReader.Load(
             "<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><StackPanel Orientation=\"Horizontal\" Spacing=\"12\">"
-            + "<Image Width=\"24\" Height=\"24\"/><TextBlock VerticalAlignment=\"Center\"/></StackPanel></DataTemplate>");
+            + "<Image Width=\"24\" Height=\"24\"/><StackPanel VerticalAlignment=\"Center\"><TextBlock/><TextBlock FontSize=\"12\"/></StackPanel>"
+            + "</StackPanel></DataTemplate>");
         list.ContainerContentChanging += (_, e) =>
         {
             if (!e.InRecycleQueue && e.Item is string target)
