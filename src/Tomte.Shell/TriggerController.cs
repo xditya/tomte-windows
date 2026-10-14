@@ -255,16 +255,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// The tray's "Ask AI": the palette, as the palette hotkey opens it, after the menu has closed. Like "Open island" it
-    /// ignores the pause, not the suppression. An open palette stays as it is.
+    /// The tray's "Ask AI", after the menu has closed: the Palette state at its smallest, as the palette hotkey opens it,
+    /// for the shell to fill. Like "Open island" it ignores the pause, not the suppression. False when it did not open.
     /// </summary>
-    public void Ask()
-    {
-        if (machine.State != IslandState.Palette && Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), ignorePause: true))
-        {
-            PaletteOpened?.Invoke();
-        }
-    }
+    public bool Ask() => Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), ignorePause: true);
+
+    /// <summary>The window the user last worked in, if it is still up, else 0 (<see cref="DesktopWatch.LastApp"/>).</summary>
+    public nint LastApp => watch.LastApp;
 
     /// <summary>The current panel changed while Panels is open (a tab switch): Panels re-enters itself and the shape morphs to the new size.</summary>
     public void ResizePanels()

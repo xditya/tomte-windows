@@ -39,6 +39,7 @@ internal sealed unsafe class DesktopWatch : IDisposable
     private uint locationPid;
     private bool shellFullscreen, rectFullscreen, qunsBusy, qunsExclusive, qunsQuiet, locked, secureDesktop;
     private string? foregroundExe;
+    private HWND lastApp;
 
     public DesktopWatch(HWND island, Windows.System.DispatcherQueue queue, Func<bool> needsForegroundExe)
     {
@@ -71,6 +72,13 @@ internal sealed unsafe class DesktopWatch : IDisposable
     public event Action? WindowsChanged;
 
     public SuppressionState State { get; private set; } = SuppressionState.Clear;
+
+    /// <summary>
+    /// The window the user last worked in while it is still up, or 0: the last foreground window that is visible, not a
+    /// tool window (the taskbar and its overflow are) and not Tomte's own. The tray's menu takes the foreground, and the
+    /// taskbar had it before that, so this is what the tray's "Ask AI" asks about.
+    /// </summary>
+    public nint LastApp => PInvoke.IsWindowVisible(lastApp) ? (nint)lastApp.Value : 0;
 
     /// <summary>Re-reads the foreground window, for example after the app rules changed.</summary>
     public void Refresh() => OnForeground(PInvoke.GetForegroundWindow());
@@ -239,6 +247,12 @@ internal sealed unsafe class DesktopWatch : IDisposable
             PInvoke.UnhookWinEvent(locationHook);
             locationPid = pid;
             locationHook = PInvoke.SetWinEventHook(PInvoke.EVENT_OBJECT_LOCATIONCHANGE, PInvoke.EVENT_OBJECT_LOCATIONCHANGE, HMODULE.Null, &OnWinEvent, pid, 0, PInvoke.WINEVENT_OUTOFCONTEXT | PInvoke.WINEVENT_SKIPOWNPROCESS);
+        }
+
+        if (pid != Environment.ProcessId && PInvoke.IsWindowVisible(foreground)
+            && !((WINDOW_EX_STYLE)PInvoke.GetWindowLong(foreground, WINDOW_LONG_PTR_INDEX.GWL_EXSTYLE)).HasFlag(WINDOW_EX_STYLE.WS_EX_TOOLWINDOW))
+        {
+            lastApp = foreground;
         }
 
         // Looked up each time: process ids are reused, so a cache would hand a closed game's rule to the next app.
