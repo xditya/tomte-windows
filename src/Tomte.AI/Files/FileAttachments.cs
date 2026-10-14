@@ -107,6 +107,10 @@ internal static class FileAttachments
             // Not the exception's text: it holds the whole path, with the Windows user name in it.
             return (null, $"{shown} could not be opened. It may be in use or not readable.");
         }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            return (null, $"{shown} {Unsupported}");
+        }
     }
 
     private static async Task<PreparedFile> ReadAsync(string name, string path, ModelFacts facts, FileLimits limits, CancellationToken ct)
@@ -176,12 +180,15 @@ internal static class FileAttachments
         };
     }
 
+    /// <summary>The sentence for a file a reader failed on in a way it did not name.</summary>
+    internal const string Unsupported = "could not be read: it is damaged or not supported.";
+
     /// <summary>
-    /// Runs a reader on the pool. The reader stops at its next check once the time limit passes; the send stops waiting
-    /// then even if it does not.
+    /// Runs a reader on the pool under the time limit. Whatever it throws becomes a sentence for the user, out of memory
+    /// included, so a bad file can neither end the send unfinished nor show a raw error; only the user's own cancel
+    /// goes through as it is.
     /// </summary>
-    // a reader stuck inside one PDF page keeps its pool thread until it returns; a child process that can be killed is the upgrade.
-    private static async Task<T> OffThread<T>(Func<CancellationToken, Task<T>> read, FileLimits limits, CancellationToken ct)
+    internal static async Task<T> OffThread<T>(Func<CancellationToken, Task<T>> read, FileLimits limits, CancellationToken ct)
     {
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(ct);
         limit.CancelAfter(limits.TimeLimit);
@@ -192,6 +199,10 @@ internal static class FileAttachments
         catch (Exception e) when (!ct.IsCancellationRequested && e is OperationCanceledException or TimeoutException)
         {
             throw new FileReadException(Invariant($"took longer than {limits.TimeLimit.TotalSeconds:0} s to read, so it was not sent."));
+        }
+        catch (Exception e) when (e is not (FileReadException or OperationCanceledException))
+        {
+            throw new FileReadException(Unsupported);
         }
     }
 
