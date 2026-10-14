@@ -795,6 +795,8 @@ internal sealed partial class TriggerController
         {
             machine.TransitionTo(IslandState.Hidden);
             island.Mascot.Follow(IslandState.Capture, IslandState.Hidden);
+            // An event raised while the overlay was up waited for the island to be free; this path skips Hide().
+            ReleaseEvents();
         }
     }
 }
