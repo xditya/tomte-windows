@@ -32,4 +32,11 @@
   <ItemGroup>
     <Content Include="Assets\tomte.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <!-- The app's resource index holds the WinUI theme resources the settings window starts with. The build makes it,
+       but only the MSIX tooling, which an unpackaged build leaves out, adds it to a publish. -->
+  <Target Name="PublishProjectPri" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(ProjectPriFullPath)" RelativePath="$(ProjectPriFileName)" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+  </Target>
 </Project>
