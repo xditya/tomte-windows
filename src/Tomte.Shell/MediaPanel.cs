@@ -2,7 +2,6 @@ using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Media;
-using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
 
@@ -90,12 +89,6 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         private static readonly Color Dim = Color.FromArgb(97, 255, 255, 255);
         private static readonly Color Black = Color.FromArgb(255, 0, 0, 0);
         private static readonly Color Clear = Color.FromArgb(0, 0, 0, 0);
-
-        private static readonly TextStyle TitleStyle = new(14, 600);
-        private static readonly TextStyle ArtistStyle = new(12, Color: TextStyle.Secondary);
-        private static readonly TextStyle FailedStyle = new(12, Color: TextStyle.Warn);
-        private static readonly TextStyle ElapsedStyle = new(11, Color: TextStyle.Tertiary, Tabular: true);
-        private static readonly TextStyle TotalStyle = ElapsedStyle with { Align = TextAlign.Trailing };
 
         private readonly Compositor compositor;
         private readonly Func<DateTimeOffset> now;
@@ -206,8 +199,8 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         /// </summary>
         private void DrawTextRuns(NowPlaying playing, string? failure)
         {
-            title.Show(playing.HasSession ? playing.Title : NowPlaying.NothingPlaying, TitleStyle, MediaPanelLayout.Title);
-            artist.Show(failure ?? (playing.Artist.Length > 0 ? playing.Artist : playing.App), failure is null ? ArtistStyle : FailedStyle, MediaPanelLayout.Artist);
+            title.Show(playing.HasSession ? playing.Title : NowPlaying.NothingPlaying, MediaPanelLayout.TitleStyle, MediaPanelLayout.Title);
+            artist.Show(failure ?? (playing.Artist.Length > 0 ? playing.Artist : playing.App), failure is null ? MediaPanelLayout.ArtistStyle : MediaPanelLayout.FailedStyle, MediaPanelLayout.Artist);
             shown = playing;
             ShowClocks();
         }
@@ -221,8 +214,8 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             clock.Stop();
             var at = now();
             var timeline = shown.Timeline;
-            elapsed.Show(timeline is { } t ? NowPlaying.Clock(t.PositionAt(at)) : "", ElapsedStyle, MediaPanelLayout.Elapsed);
-            total.Show(timeline is { } d ? NowPlaying.Clock(d.Duration) : "", TotalStyle, MediaPanelLayout.Total);
+            elapsed.Show(timeline is { } t ? NowPlaying.Clock(t.PositionAt(at)) : "", MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed);
+            total.Show(timeline is { } d ? NowPlaying.Clock(d.Duration) : "", MediaPanelLayout.TotalStyle, MediaPanelLayout.Total);
             if (timeline is { Playing: true, Rate: > 0 } moving && moving.PositionAt(at) < moving.End)
             {
                 double seconds = moving.PositionAt(at).TotalSeconds;
