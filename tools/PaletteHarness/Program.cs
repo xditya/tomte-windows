@@ -3,11 +3,17 @@
 // permission prompts and the Compact event line after each device action. The shelf holds one
 // seeded item, notes.txt, so a tool round trip can happen.
 //   PaletteHarness "prompt" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--model id] [--cap usd]
-// --yes answers every permission prompt with "allow once". --dry runs device tools in dry-run
-// mode, so nothing on the PC changes. --undo runs the undo of every device action at the end, so
-// a run that changed dark mode or the volume leaves them as they were. --chip selection reads the
-// selection of the foreground window, which from a console is the console itself; use it from a
-// script that launches the harness while another window is in front.
+// --yes answers "allow once" to every permission prompt for Tomte's own tools. It never approves a
+// tool of an MCP server: that prompt is answered "no", because nobody read it. Run without --yes to
+// answer such a prompt yourself.
+// --dry runs device tools in dry-run mode, so they change nothing on the PC. It does not cover
+// open_url and copy_to_clipboard, which still act when allowed, or MCP tools, which have no dry run.
+// An MCP tool runs without a prompt only when the user set it to Read in Settings; always-allow
+// grants are kept in memory here and start empty, so they cover only answers given in this run.
+// --undo runs the undo of every device action at the end, so a run that changed dark mode or the
+// volume leaves them as they were. --chip selection reads the selection of the foreground window,
+// which from a console is the console itself; use it from a script that launches the harness while
+// another window is in front.
 // MCP servers come from the user's settings (Settings > MCP servers); they start on the send
 // and stop when the harness exits.
 using System.Diagnostics;
@@ -78,8 +84,11 @@ var session = new PaletteSession(provider, config, new PaletteOptions { DailyCap
         Console.WriteLine($"ask   {request.Tier}: {request.Summary}  [y]es / [n]o{(request.OfferAlwaysAllow ? " / [a]lways" : "")}");
         if (yes)
         {
-            Console.WriteLine("      (auto: yes)");
-            return Task.FromResult(PermissionAnswer.AllowOnce);
+            // As in the shell's driven run: --yes stands in for a person at Tomte's own prompts only.
+            // A server's tool would really run, --dry or not, so it is not approved on the user's behalf.
+            bool outside = mcp?.Owns(request.Tool) == true;
+            Console.WriteLine(outside ? "      (auto: no, --yes does not approve an MCP tool; run without --yes to answer it)" : "      (auto: yes)");
+            return Task.FromResult(outside ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
         }
 
         // A PowerShell pipe prefixes the line with a byte order mark; Trim does not count it as whitespace.
