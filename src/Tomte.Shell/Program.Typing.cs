@@ -54,20 +54,19 @@ internal static partial class Program
     /// </summary>
     private static async void AskFromTray(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log)
     {
-        if (triggers.Machine.State == IslandState.Palette)
-        {
-            hotkeyPalette?.TakeKeys();
-            return;
-        }
-
-        if (!triggers.Ask())
-        {
-            return;
-        }
-
+        // An exception leaving an async void ends the process, so the whole of it is guarded.
         try
         {
-            await OpenPalette(island, triggers, store, log, front: triggers.LastApp);
+            if (triggers.Machine.State == IslandState.Palette)
+            {
+                hotkeyPalette?.TakeKeys();
+                return;
+            }
+
+            if (triggers.Ask())
+            {
+                await OpenPalette(island, triggers, store, log, front: triggers.LastApp);
+            }
         }
         catch (Exception e)
         {
@@ -222,7 +221,8 @@ internal static partial class Program
         {
             Skills = skills,
             Mcp = McpTools.For(settings.McpServers),
-            Automation = AutomationTools.For(settings.UiAutomation.Enabled, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),
+            // With no window to point them at (the tray's Ask AI with none remembered) the tools are not offered.
+            Automation = AutomationTools.For(settings.UiAutomation.Enabled && foreground != 0, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),
         };
         // The palette is up, so the event waits in the triggers' queue and shows once it hides.
         session.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));

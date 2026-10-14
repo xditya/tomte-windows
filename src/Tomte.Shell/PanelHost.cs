@@ -249,7 +249,9 @@ internal sealed class PanelHost
 
         if (point.Y < PanelSpace.TabStripHeight)
         {
-            if (LabelAt(point) is { } id)
+            // The Ask pill opens the palette through the triggers. While the shape grows to a wider panel a label
+            // laid out for the new width can sit under it, and the press must not switch tabs as well.
+            if (!AskAt(point) && LabelAt(point) is { } id)
             {
                 Select(id);
             }
@@ -377,6 +379,10 @@ internal sealed class PanelHost
             {
                 labels.Add(text.Create(Visual));
             }
+
+            // New labels go on top; the Ask pill stays over them while a morph slides it across their row.
+            Visual.Children.Remove(askVisual);
+            Visual.Children.InsertAtTop(askVisual);
 
             for (int i = 0; i < labels.Count; i++)
             {
