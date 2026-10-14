@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using Tomte.AI;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
+using Tomte.AI.Skills;
 using Tomte.Core;
 using Tomte.Core.Clipboard;
 using Tomte.Core.Device;
@@ -416,7 +417,10 @@ internal static class Program
             }
 
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory before: {Memory()}");
-            var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
+            var logPath = SendLogPath;
+            // Skills come from beside the settings file when the palette opens, never at start, and only those turned on.
+            var skills = await Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette skills: [{string.Join(", ", skills.Skills.Select(s => s.Name))}] from {skills.Folder}");
             // --dry keeps device tools from changing anything; the grants come from settings.json as they will for the real palette.
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
             var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
@@ -426,6 +430,7 @@ internal static class Program
             {
                 Prompt = prompt,
                 Mcp = mcp,
+                Skills = skills,
                 ConfirmTool = (request, _) =>
                 {
                     // Nobody is at the keyboard in a driven run: refuse what has no undo and no bound, and
@@ -437,6 +442,12 @@ internal static class Program
                     return Task.FromResult(deny ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
                 },
             };
+            // "/name" runs the palette command of the skill called name, as picking it from the command list does.
+            if (session.Commands.FirstOrDefault(c => "/" + c.Skill == prompt) is { } command)
+            {
+                session.Prompt = command.Text;
+            }
+
             int steps = 0;
             session.Changed += () =>
             {
@@ -526,13 +537,16 @@ internal static class Program
         }
 
         var scratchpad = Scratchpad;
-        var sendLog = new SendLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl"));
+        var sendLog = new SendLog(SendLogPath);
         var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
         log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"}");
         return session;
     }
+
+    // Beside the settings file, so a run with its own settings file keeps its send log to itself too.
+    private static string SendLogPath => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsFile))!, "send-log.jsonl");
 
     private static string? Arg(string[] args, string name)
     {

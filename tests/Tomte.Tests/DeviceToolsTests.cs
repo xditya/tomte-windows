@@ -114,6 +114,7 @@ public sealed class DeviceToolsTests : IDisposable
     [InlineData(BuiltInTools.OpenApp, """{"name":"https://example.com"}""", "URL")]
     [InlineData(BuiltInTools.OpenApp, """{"name":"ms-settings:display"}""", "OpenSettingsPage")]
     [InlineData(BuiltInTools.OpenApp, """{"name":"cmd\" /c del"}""", "quotes")]
+    [InlineData(BuiltInTools.OpenApp, """{"name":"//example.invalid/share/app.exe"}""", "network path")]
     [InlineData(BuiltInTools.OpenSettingsPage, """{"uri":"display"}""", "ms-settings:display")]
     [InlineData(BuiltInTools.OpenSettingsPage, """{"uri":"ms-settings:display&x"}""", "ms-settings:display")]
     public void RejectsBadDeviceArgumentsBeforeAnythingRuns(string tool, string json, string expected)
