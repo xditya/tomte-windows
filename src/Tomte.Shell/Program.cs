@@ -3,7 +3,9 @@ using System.Runtime.CompilerServices;
 using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Device;
 using Tomte.Core.Rambler;
+using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
@@ -89,12 +91,12 @@ internal static class Program
 
         if (palettePrompt is not null)
         {
-            _ = PaletteRun(island, triggers, log!, palettePrompt);
+            _ = PaletteRun(island, triggers, store, log!, palettePrompt);
         }
 
         if (captureQuestion is not null)
         {
-            triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, log!, captureQuestion, overlay, crop, foreground);
+            triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
         }
 
         using var tray = new TrayIcon(pause);
@@ -202,7 +204,7 @@ internal static class Program
     /// Tomte.AI loads only on the first capture.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task AskAboutCapture(IslandWindow island, TriggerController triggers, TextWriter log, string question, CaptureOverlay overlay, PixelRect crop, nint foreground)
+    private static async Task AskAboutCapture(IslandWindow island, TriggerController triggers, SettingsStore store, TextWriter log, string question, CaptureOverlay overlay, PixelRect crop, nint foreground)
     {
         long released = Stopwatch.GetTimestamp();
         var png = await WindowCapture.CaptureMonitorRegionPngAsync(overlay.Monitor, crop, CancellationToken.None);
@@ -210,16 +212,18 @@ internal static class Program
         var chip = ContextChips.Lasso(png, w, h);
         File.WriteAllBytes(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "capture-last.png"), png);
         log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} capture chip \"{chip.Label}\" px={crop} points={overlay.Lasso.Points.Count} png={png.Length}B in {Stopwatch.GetElapsedTime(released).TotalMilliseconds:F1}ms");
-        await PaletteRun(island, triggers, log, question, chip, foreground);
+        await PaletteRun(island, triggers, store, log, question, chip, foreground);
     }
 
     /// <summary>
-    /// --palette "prompt": the debug driver. Opens the palette on the island, runs the prompt against local
-    /// Ollama with the window chip on and an in-memory shelf and scratchpad, logs the stream and the tool
-    /// steps, then retracts and quits. External-effect tools are allowed once each, as a user would.
+    /// --palette "prompt" [--screenshot] [--dry]: the debug driver. Opens the palette on the island, runs the
+    /// prompt against local Ollama with the window chip on and an in-memory shelf and scratchpad, logs the
+    /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
+    /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
+    /// Destructive requests (lock, sleep, restart, shut down) are denied without --dry: nobody is there to answer.
     /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
-    private static async Task PaletteRun(IslandWindow island, TriggerController triggers, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
+    private static async Task PaletteRun(IslandWindow island, TriggerController triggers, SettingsStore store, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
     {
         try
         {
@@ -254,14 +258,18 @@ internal static class Program
 
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory before: {Memory()}");
             var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
-            var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);
-            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(), chips)
+            // --dry keeps device tools from changing anything; the grants come from settings.json as they will for the real palette.
+            bool dry = Environment.GetCommandLineArgs().Contains("--dry");
+            var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
+            var session = new PaletteSession(ProviderSetup.Create(config, http, null), config, new PaletteOptions(), new SendLog(logPath), tools, new PermissionGrants(store), chips)
             {
                 Prompt = prompt,
                 ConfirmTool = (request, _) =>
                 {
-                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette confirm {request.Tier}: {request.Summary} -> allow once");
-                    return Task.FromResult(PermissionAnswer.AllowOnce);
+                    // Nobody is at the keyboard in a driven run: refuse what has no undo and no bound.
+                    bool deny = !dry && (request.Tier == ActionTier.Destructive || request.Tool == BuiltInTools.OpenApp);
+                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette confirm {request.Tier}: {request.Summary} -> {(deny ? "deny, needs --dry" : "allow once")}");
+                    return Task.FromResult(deny ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
                 },
             };
             int steps = 0;
@@ -273,11 +281,32 @@ internal static class Program
                     log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette tool {step.Tool}: {step.Summary} -> {(step.IsError ? "error: " : "")}{step.Result.ReplaceLineEndings(" | ")}");
                 }
             };
-            await new PaletteHost(island, triggers.Machine, log.WriteLine).RunAsync(session);
+            var host = new PaletteHost(island, triggers.Machine, log.WriteLine);
+            await host.RunAsync(session);
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette answer: {session.AnswerText.ReplaceLineEndings(" | ")}");
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory after answer: {Memory()}");
             await Task.Delay(2000);
             triggers.Hide();
+            // The controller owns every reveal, so a device event goes to it like any other: the pause, the suppression
+            // check, the Focus queue and the 4 s Compact hold are its to apply.
+            foreach (var e in host.Events)
+            {
+                triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
+                log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette event raised: {e.Line}{(e.Undo is null ? "" : " [undo]")}");
+            }
+
+            if (host.Events.Count > 0)
+            {
+                // Long enough for the hold and the retract; then the undos run so a debug run leaves the PC as it was.
+                await Task.Delay(4500);
+                foreach (var e in host.Events)
+                {
+                    if (e.Undo is { } undo)
+                    {
+                        log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette undo: {undo().Message}");
+                    }
+                }
+            }
             GC.Collect();
             GC.WaitForPendingFinalizers();
             await Task.Delay(1000);

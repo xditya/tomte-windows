@@ -12,5 +12,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Tomte.Core\Tomte.Core.csproj" />
+    <!-- The AI tool list and its tiers, shown in the settings window. -->
+    <ProjectReference Include="..\Tomte.AI\Tomte.AI.csproj" />
   </ItemGroup>
 </Project>

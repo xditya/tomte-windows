@@ -99,8 +99,24 @@ public class DeviceActionsTests
     [InlineData("https://example.com", false)]
     [InlineData("ms-settings:display", false)]
     [InlineData("cmd\" /c del", false)]
+    [InlineData(@"C:\Tools\obs64.exe", true)]
+    [InlineData("mailto:a@b.c", false)]
+    [InlineData("calculator:", false)]
+    [InlineData("someapp:open?x=1&y=2", false)]
+    [InlineData("shell:startup", false)]
+    [InlineData(@"\\host\share\tool.exe", false)]
     public void AppTargetValidation(string target, bool valid) =>
         Assert.Equal(valid, Apps.ValidateAppTarget(target) is null);
+
+    // Only a plain name or an exe path can be matched to a running process for the focus half of "open or focus".
+    [Theory]
+    [InlineData("notepad", "notepad")]
+    [InlineData("Notepad.exe", "Notepad")]
+    [InlineData(@"C:\Tools\obs64.exe", "obs64")]
+    [InlineData(@"C:\Users\me\Desktop\Tool.lnk", null)]
+    [InlineData(@"shell:AppsFolder\Microsoft.WindowsCalculator_8wekyb3d8bbwe!App", null)]
+    public void ProcessNameComesFromNamesAndExePathsOnly(string target, string? expected) =>
+        Assert.Equal(expected, Apps.ProcessNameFor(target));
 
     private static readonly OutputDevice[] Devices =
     [

@@ -18,6 +18,9 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
 {
     private double _targetHeight;
 
+    /// <summary>Device actions the session ran, in order. The shell raises them as island events once the palette has retracted.</summary>
+    public List<DeviceEvent> Events { get; } = [];
+
     public async Task RunAsync(PaletteSession session)
     {
         var from = machine.State;
@@ -46,6 +49,11 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
                 _targetHeight = height;
                 log($"{DateTime.Now:HH:mm:ss.fff} palette grow -> {height} ({session.AnswerText.Length} chars, {session.ToolSteps} steps)");
                 growth = island.MorphTo(Geometry(height), SpringPreset.Gentle);
+            };
+            session.DeviceActionExecuted += e =>
+            {
+                Events.Add(e);
+                log($"{DateTime.Now:HH:mm:ss.fff} palette device event: {e.Line}{(e.Undo is null ? "" : " (undo available)")}");
             };
             await session.SendAsync();
             island.Mascot.Set(session.Status == PaletteStatus.Done ? MascotState.Result : MascotState.Error);

@@ -29,3 +29,6 @@ AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
 _AUDCLNT_BUFFERFLAGS
 CreateEvent
 WaitForSingleObject
+SetForegroundWindow
+ShowWindow
+IsIconic
