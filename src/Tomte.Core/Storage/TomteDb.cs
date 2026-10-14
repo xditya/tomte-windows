@@ -40,15 +40,16 @@ public sealed class TomteDb(string? path = null)
     /// <exception cref="SqliteException">Locked for longer than the wait, disk full, access denied, or a step that is not valid SQL.</exception>
     /// <exception cref="IOException">A damaged file could not be renamed because something else kept it open.</exception>
     /// <exception cref="UnauthorizedAccessException">The folder, the file or the lock around a set-aside is not this user's to touch.</exception>
-    /// <exception cref="ArgumentException">The feature name is not lowercase letters and digits.</exception>
+    /// <exception cref="ArgumentException">The feature name is missing, is not lowercase letters and digits, or is "schema".</exception>
     /// <exception cref="InvalidOperationException">A step made an object whose name does not start with the feature name.</exception>
     public SqliteConnection Open(string feature, IReadOnlyList<string> steps)
     {
         // SQLite compares object names without case, so "Shelf" and "shelf" would be two version rows for one set of
-        // tables; and an underscore would let one feature's prefix cover another's.
-        if (feature.Length == 0 || feature.Any(c => c is not ((>= 'a' and <= 'z') or (>= '0' and <= '9'))))
+        // tables; an underscore would let one feature's prefix cover another's; and "schema" would cover schema_versions.
+        ArgumentException.ThrowIfNullOrEmpty(feature);
+        if (feature == "schema" || feature.Any(c => c is not ((>= 'a' and <= 'z') or (>= '0' and <= '9'))))
         {
-            throw new ArgumentException("A feature name is lowercase letters and digits.", nameof(feature));
+            throw new ArgumentException("A feature name is lowercase letters and digits, and not 'schema'.", nameof(feature));
         }
 
         if (TryConnect(feature, steps) is { } db)

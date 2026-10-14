@@ -177,10 +177,12 @@ public sealed class StorageTests : IDisposable
     [InlineData("Shelf")]
     [InlineData("shelf_tags")]
     [InlineData("shelf items")]
+    [InlineData("schema")]
     [InlineData("")]
-    public void AFeatureNameIsLowercaseLettersAndDigits(string feature)
+    [InlineData(null)]
+    public void AFeatureNameIsLowercaseLettersAndDigits(string? feature)
     {
-        Assert.Throws<ArgumentException>(() => new TomteDb(DbPath).Open(feature, Shelf));
+        Assert.ThrowsAny<ArgumentException>(() => new TomteDb(DbPath).Open(feature!, Shelf));
         Assert.False(Directory.Exists(dir));
     }
 
