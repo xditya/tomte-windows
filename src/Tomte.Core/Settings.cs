@@ -42,6 +42,9 @@ public sealed record TomteSettings
     /// <summary>AI tools the user answered "always allow" for, by tool name; the AI layer reads and writes it, the settings window lists and removes.</summary>
     public IReadOnlyList<string> AlwaysAllowedTools { get; init; } = [];
 
+    /// <summary>Read the reply to a voice command aloud with Windows speech. Off unless the user turns it on.</summary>
+    public bool SpokenReplies { get; init; }
+
     /// <summary>MCP servers whose tools the AI palette may use; see <see cref="McpServerSettings"/>.</summary>
     public IReadOnlyList<McpServerSettings> McpServers { get; init; } = [];
 

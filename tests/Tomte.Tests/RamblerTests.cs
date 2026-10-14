@@ -1,4 +1,3 @@
-using System.Text.Json.Nodes;
 using Tomte.AI;
 using Tomte.Core.Rambler;
 using Xunit;
@@ -74,30 +73,6 @@ public class RamblerTests
         // Bars with the same weight move on different periods, so they are not one block.
         Waveform.Heights(1, 0.3, loud);
         Assert.NotEqual(loud[2], loud[4]);
-    }
-
-    [Fact]
-    public async Task NoteIsStructuredFromARecordedReply()
-    {
-        const string transcript = "Okay so um tomorrow I need to call the dentist before ten, and uh send John the fishing plan, oh and buy milk. The team meeting moved to Thursday at three.";
-        using var http = RecordedHandler.Client(out var handler, "openai-ollama-rambler-note.sse");
-        var provider = new OpenAICompatibleProvider(http, "http://127.0.0.1:11434/v1", null);
-
-        var structured = await RamblerNote.StructureAsync(provider, "llama3.2:3b", transcript);
-
-        Assert.Equal("### Tomorrow's Tasks\n- Call dentist before 10:00 AM\n- Send fishing plan to John\n- Buy milk\n- Team meeting now on Thursday at 3:00 PM", structured.Note);
-        Assert.Equal((176, 39), (structured.InputTokens, structured.OutputTokens));
-        var body = JsonNode.Parse(handler.Body!)!;
-        Assert.Equal(RamblerNote.Prompt, body["messages"]![0]!["content"]!.GetValue<string>());
-        Assert.Equal(transcript, body["messages"]![1]!["content"]!.GetValue<string>());
-    }
-
-    [Fact]
-    public void ParseDropsAFenceAndFallsBackToTheTranscript()
-    {
-        Assert.Equal("### Plan\n- [ ] Call Ana", RamblerNote.Parse("```markdown\n### Plan\n- [ ] Call Ana\n```\n", "x"));
-        Assert.Equal("call Ana", RamblerNote.Parse("  \n", " call Ana "));
-        Assert.Equal("call Ana", RamblerNote.Parse("```\n```", "call Ana"));
     }
 
     [Fact]

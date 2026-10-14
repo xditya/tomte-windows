@@ -312,6 +312,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 // The session retracts itself once the note is written; Retracted then releases the rest.
                 rambler?.End(keep: wParam == 1);
                 return true;
+            case InputThread.MsgConfirmUnavailable:
+                log?.Invoke($"hotkey conflict: Win+Alt+Enter could not be registered (error {wParam})");
+                rambler?.Answer(allow: false);
+                return true;
             case InputThread.MsgHotkeysRegistered:
                 Conflicts = InputThread.Registrations
                     .Where(r => r.Error != 0)
@@ -499,6 +503,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             peekWanted = false;
             Hide();
+            return;
+        }
+
+        if (id == InputThread.ConfirmHotkeyId)
+        {
+            rambler?.Answer(allow: true);
             return;
         }
 
@@ -780,6 +790,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
             overlay?.Dispose();
         }
 
+        if (from == IslandState.Palette && state != IslandState.Palette)
+        {
+            // A voice command still in the palette must not ask or run once the palette is gone.
+            rambler?.Cancel();
+        }
+
         if (!IslandStateMachine.CanTransition(from, state))
         {
             machine.TransitionTo(IslandState.Hidden);
@@ -787,8 +803,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         if (state != IslandState.Hidden)
         {
-            // Whatever shows now was asked for; the peek pill's "retract when a window comes under" rule ends here.
-            activity &= ~IslandActivity.Peek;
+            // Whatever shows now was asked for: the peek pill's window rule and the rambler's hold on the island end here.
+            activity = RetractionRules.TakenOver(activity);
         }
 
         if (state == IslandState.Panels)

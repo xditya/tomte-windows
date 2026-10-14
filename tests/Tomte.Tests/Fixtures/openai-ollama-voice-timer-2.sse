@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-157","object":"chat.completion.chunk","created":1791957969,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"Would you like me to turn off the notification tone for timers?"},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-157","object":"chat.completion.chunk","created":1791957969,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":243,"completion_tokens":14,"total_tokens":257}}
+
+data: [DONE]
+

@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-685","object":"chat.completion.chunk","created":1791957027,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"The system is now in dark mode."},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-685","object":"chat.completion.chunk","created":1791957027,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":234,"completion_tokens":9,"total_tokens":243}}
+
+data: [DONE]
+

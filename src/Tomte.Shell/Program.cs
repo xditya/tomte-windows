@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Tomte.AI;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
@@ -65,6 +66,13 @@ internal static class Program
             debugTimer = duration;
         }
 
+        // A driven yes writes a note and starts a timer: only into a run's own data folder, never the user's.
+        if (Arg(args, "--debug-answer") == "yes" && Arg(args, "--debug-settings") is null)
+        {
+            Console.Error.WriteLine("usage: --debug-answer yes needs --debug-settings <file>, so the run's notes and timer stay beside that file");
+            return 2;
+        }
+
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null;
 
@@ -112,8 +120,9 @@ internal static class Program
         using var store = new SettingsStore(Arg(args, "--debug-settings"));
         settingsFile = store.FilePath;
         var pause = new PauseState();
-        // Beside the settings file, so a run with its own settings keeps its timer to itself too.
-        var timer = new IslandTimer(Path.Combine(Path.GetDirectoryName(store.FilePath)!, Path.GetFileName(IslandTimer.DefaultPath)));
+        // Beside the settings file, so a run with its own settings keeps its timer, note and logs to itself too.
+        string data = Path.GetDirectoryName(store.FilePath)!;
+        var timer = new IslandTimer(Path.Combine(data, Path.GetFileName(IslandTimer.DefaultPath)));
         Action<string>? logLine = log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}");
         var triggers = new TriggerController(island, store, pause, timer, logLine);
         if (debugTimer is TimeSpan length)
@@ -123,7 +132,6 @@ internal static class Program
 
         // The note and clipboard history live beside the settings file too. Nothing here opens the database: the note
         // loads when something first reads it, history on the first copy.
-        string data = Path.GetDirectoryName(store.FilePath)!;
         var db = new TomteDb(Path.Combine(data, "tomte.db"));
         Scratchpad = new ScratchpadNote(db, Path.Combine(data, "scratchpad.md"));
         var history = new ClipboardHistory(db);
@@ -132,11 +140,17 @@ internal static class Program
         // waits for its window and stopping it waits for its thread, neither of which belongs on the island's thread.
         clipboard.Apply(store.Current.KeepClipboardHistory);
         store.Changed += s => clipboard.Apply(s.KeepClipboardHistory);
-        StartPanels(island, triggers, store, db, clipboard, logLine);
+        // One store of tiles for the Shortcuts panel and for voice; nothing opens the database until a tile is wanted.
+        var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
+        StartPanels(island, triggers, store, db, shortcuts, clipboard, logLine);
 
         if (rambler)
         {
-            triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
+            triggers.Rambler = CreateRambler(args, island, triggers, store, timer, shortcuts, log!);
+            if (triggers.Rambler is { } hold && int.TryParse(Arg(args, "--debug-hold"), out int holdMs))
+            {
+                DebugHold(island, hold, holdMs, Arg(args, "--debug-answer"), args.Contains("--dry"), log!);
+            }
         }
 
         if (palettePrompt is not null)
@@ -256,14 +270,13 @@ internal static class Program
     /// The event is the one thing that listens to media while the island is hidden, and only when the user
     /// turned it on in settings.
     /// </summary>
-    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ClipboardWatch clipboard, Action<string>? log)
+    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ShortcutStore shortcuts, ClipboardWatch clipboard, Action<string>? log)
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, log));
-        var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
         panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
         panels.Register(new ScratchpadPanel(island, Scratchpad, log));
@@ -509,11 +522,13 @@ internal static class Program
     /// --rambler: the hold-to-talk session Win+Alt+V drives. The provider comes from the command line until
     /// settings carry it (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential
     /// Manager under the id). Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or
-    /// the provider's /audio/transcriptions with --stt-provider and --stt-model. Without a provider the note is
-    /// the raw transcript. Kept out of Main so Tomte.AI loads only for this switch.
+    /// the provider's /audio/transcriptions with --stt-provider and --stt-model; --debug-transcript "text" or
+    /// --debug-wav file.wav stands in for what the microphone heard. Without a provider the note is the raw
+    /// transcript; with one the transcript is a voice command the model reads with the voice tools, and --dry keeps
+    /// device tools from changing anything. Kept out of Main so Tomte.AI loads only for this switch.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static Rambler? CreateRambler(string[] args, IslandWindow island, IslandStateMachine machine, TextWriter log)
+    private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, ShortcutStore shortcuts, TextWriter log)
     {
         ProviderConfig? config = Arg(args, "--provider-id") is { } id
             ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
@@ -532,35 +547,138 @@ internal static class Program
             speech = new WhisperTranscriber(WhisperTranscriber.DefaultDirectory);
         }
 
+        if (Arg(args, "--debug-transcript") is { } said)
+        {
+            speech = new DebugSpeech(null, said, null);
+        }
+        else if (Arg(args, "--debug-wav") is { } wav && speech is not null)
+        {
+            speech = new DebugSpeech(speech, null, ReadWav(wav));
+        }
+
         if (speech is null)
         {
             log.WriteLine("rambler: no speech to text. Run tools/whisper/Get-Whisper.ps1, or pass --stt-provider with an OpenAI-compatible provider.");
             return null;
         }
 
-        RamblerStructure? structure = null;
-        if (config is { DefaultModel: { } model })
-        {
-            var provider = ProviderSetup.Load(config, http!);
-            structure = new RamblerStructure(new ProviderSend(config.Id, model), (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct));
-        }
-
+        // The one note the palette and the Scratchpad panel use too.
         var scratchpad = Scratchpad;
         var sendLog = new SendLog(SendLogPath);
-        var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
+        Func<Task<PaletteSession>>? voice = null;
+        if (config is { DefaultModel: not null })
+        {
+            var provider = ProviderSetup.Load(config, http!);
+            // One per store, kept as long as the store. A voice command asks every time, so the grants change nothing for it.
+            var grants = new PermissionGrants(store);
+            // An in-memory shelf until the shelf store lands. The tiles open by name; that way never runs a script tile.
+            var tools = new BuiltInTools(new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
+                args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
+            voice = async () =>
+            {
+                // Voice is offered no skill. The turned-on ones are still read, so open_app keeps refusing their scripts.
+                var skills = await Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
+                var command = new PaletteSession(provider, config, new PaletteOptions(), sendLog, tools, grants, []) { Voice = true, Skills = skills };
+                // Raised while the palette is up, the event waits in the triggers' queue and shows once the palette hides.
+                command.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
+                return command;
+            };
+        }
+
+        var session = new Rambler(island, triggers.Machine, speech, speechSend, voice, scratchpad, sendLog, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
-        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"}");
+        session.CommandDone += command =>
+        {
+            if (VoiceCommand.ReplyToSpeak(command, store.Current.SpokenReplies) is { } reply)
+            {
+                _ = SpokenReply.SpeakAsync(reply, log.WriteLine);
+            }
+        };
+        log.WriteLine($"rambler: speech={speech.GetType().Name} voice={(voice is null ? "off, raw transcript" : config!.Id)}");
         return session;
     }
 
     // Beside the settings file, so a run with its own settings file keeps its send log to itself too.
     private static string SendLogPath => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsFile))!, "send-log.jsonl");
 
+    // What a driven run may say yes to with nobody at the keyboard: the app's own data, kept in the run's folder, and
+    // reads. A device action only as a dry run (--dry), so a test never changes a setting on the PC, not even for a
+    // moment; open_url has no dry run, so it is always refused.
+    private static readonly HashSet<string> KeptToTheRun =
+    [
+        BuiltInTools.SetTimer, BuiltInTools.SaveNote, BuiltInTools.CreateShelfFile, BuiltInTools.ReadShelfItem, BuiltInTools.ListOutputDevices,
+    ];
+
+    /// <summary>
+    /// --debug-hold ms [--debug-answer yes|no]: one hold of the rambler chord, posted to the island the way the input
+    /// thread posts it, so a run needs neither the global hotkey nor injected keys. Each question the palette asks is
+    /// answered after 1.5 s, yes only for what the run keeps to itself (see above); without --debug-answer it waits
+    /// for Win+Alt+Enter or Esc. After the hold the run waits out the event pill and quits.
+    /// </summary>
+    private static void DebugHold(IslandWindow island, Rambler rambler, int holdMs, string? answer, bool dry, TextWriter log)
+    {
+        rambler.Asking += async request =>
+        {
+            bool yes = answer == "yes" && (KeptToTheRun.Contains(request.Tool) || (dry && BuiltInTools.IsDeviceTool(request.Tool)));
+            if (answer is null)
+            {
+                return;
+            }
+
+            await Task.Delay(1500);
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: answers {(yes ? "yes" : "no")}");
+            // Only to the question it was decided for: by now the user may have answered and another may be up.
+            rambler.Answer(yes, to: request);
+        };
+        rambler.Retracted += async () =>
+        {
+            await Task.Delay(4500);
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: memory hidden again: {Memory()}");
+            PInvoke.PostQuitMessage(0);
+        };
+        _ = Hold();
+
+        async Task Hold()
+        {
+            await Task.Delay(1000);
+            PInvoke.PostMessage(island.Hwnd, InputThread.MsgHotkey, (nuint)HotkeyAction.Rambler + 1, 0);
+            await Task.Delay(holdMs);
+            PInvoke.PostMessage(island.Hwnd, InputThread.MsgHotkeyReleased, 1, 0);
+        }
+    }
+
+    /// <summary>16 kHz mono 16-bit PCM, as the speech to text takes it: the samples of the "data" chunk.</summary>
+    private static float[] ReadWav(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        int at = 12;
+        while (at + 8 <= bytes.Length && System.Text.Encoding.ASCII.GetString(bytes, at, 4) != "data")
+        {
+            at += 8 + BitConverter.ToInt32(bytes, at + 4);
+        }
+
+        var pcm = MemoryMarshal.Cast<byte, short>(bytes.AsSpan(at + 8));
+        var samples = new float[pcm.Length];
+        for (int i = 0; i < pcm.Length; i++)
+        {
+            samples[i] = pcm[i] / 32768f;
+        }
+
+        return samples;
+    }
+
     private static string? Arg(string[] args, string name)
     {
         int i = Array.IndexOf(args, name);
         return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+    }
+
+    /// <summary>A known text, or a recorded file through the real speech to text, in place of what the microphone heard.</summary>
+    private sealed class DebugSpeech(ISpeechToText? inner, string? text, float[]? samples) : ISpeechToText
+    {
+        public Task<string> TranscribeAsync(float[] recorded, CancellationToken ct = default) =>
+            text is not null ? Task.FromResult(text) : inner!.TranscribeAsync(samples ?? recorded, ct);
     }
 
     /// <summary>Routes await continuations back to the UI thread's dispatcher queue.</summary>

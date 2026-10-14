@@ -1,15 +1,25 @@
+using System.Globalization;
 using System.Text.Json;
 using Tomte.Core;
 using Tomte.Core.Device;
+using Tomte.Core.Rambler;
 
 namespace Tomte.AI.Palette;
 
 /// <summary>
-/// The tools the model sees: the five built-in ones and one per device action. Definitions,
-/// argument validation, permission tiers and execution live here. Clipboard, URL opening and
-/// the device actions are injected so tests and the harness can fake or dry-run them.
+/// The tools the model sees: the five built-in ones, the timer, one per device action, and for voice the note
+/// step and the shortcut tiles. Definitions, argument validation, permission tiers and execution live here.
+/// Clipboard, URL opening, the device actions and the shortcut launcher are injected so tests and the harness
+/// can fake or dry-run them; without a timer, set_timer reports that it is unavailable.
 /// </summary>
-public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<string> copyToClipboard, Action<string> openUrl, Func<string, JsonElement, ActionResult>? device = null)
+public sealed class BuiltInTools(
+    IShelf shelf,
+    IScratchpad scratchpad,
+    Action<string> copyToClipboard,
+    Action<string> openUrl,
+    Func<string, JsonElement, ActionResult>? device = null,
+    IslandTimer? timer = null,
+    Func<string, bool>? launchShortcut = null)
 {
     public const string ReadShelfItem = "read_shelf_item";
     public const string WriteScratchpad = "write_scratchpad";
@@ -32,6 +42,9 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
     public const string SleepPc = "sleep_pc";
     public const string RestartPc = "restart_pc";
     public const string ShutDownPc = "shut_down_pc";
+    public const string SetTimer = "set_timer";
+    public const string SaveNote = "save_note";
+    public const string OpenShortcut = "open_shortcut";
 
     private sealed record Param(string Name, string Type, bool Required = true);
 
@@ -61,9 +74,23 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         new(SleepPc, "Put the PC to sleep (low power, resumes where it was). Not lock, not shut down.", [], "Power.Sleep"),
         new(RestartPc, "Restart the PC (everything closes, then Windows starts again).", [], "Power.Restart"),
         new(ShutDownPc, "Shut down the PC completely (everything closes, power off). Not lock, not sleep.", [], "Power.ShutDown"),
+        new(SetTimer, "Start a countdown timer that shows on the island and announces when it ends. Replaces a running timer. minutes is the length in minutes: 1 for one minute, 0.5 for thirty seconds.", [new("minutes", "number")]),
+        new(SaveNote, "Save what the user dictated as a note on their scratchpad. note is markdown: a short title line starting with \"### \", " +
+            "then one \"- [ ] \" line per thing to do, or \"- \" bullets. Keep names, times and numbers exactly as spoken, drop filler words, add nothing.",
+            [new("note", "string")]),
+        new(OpenShortcut, "Open one of the user's shortcut tiles by its name.", [new("name", "string")]),
     ];
 
-    public static readonly IReadOnlyList<ToolDefinition> Definitions = [.. Table.Select(t => new ToolDefinition(t.Name, t.Description, Schema(t.Params)))];
+    /// <summary>Every tool in the table, as Settings lists them.</summary>
+    public static readonly IReadOnlyList<ToolDefinition> All = [.. Table.Select(t => new ToolDefinition(t.Name, t.Description, Schema(t.Params)))];
+
+    // Typed chat keeps the clipboard and free scratchpad writes. A transcript gets the note step and the shortcut
+    // tiles instead, so a dictated sentence has one obvious place to go.
+    private static readonly HashSet<string> ChatOnly = [WriteScratchpad, CopyToClipboard];
+    private static readonly HashSet<string> VoiceOnly = [SaveNote, OpenShortcut];
+
+    /// <summary>What the typed palette offers the model.</summary>
+    public static readonly IReadOnlyList<ToolDefinition> Definitions = [.. All.Where(d => !VoiceOnly.Contains(d.Name))];
 
     private static readonly HashSet<string> DeviceTools = [.. Table.Where(t => t.Action is not null).Select(t => t.Name)];
 
@@ -75,12 +102,25 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         [CreateShelfFile] = ActionTier.AppLocalWrite,
         [OpenUrl] = ActionTier.ExternalEffect,
         [CopyToClipboard] = ActionTier.ExternalEffect,
+        [SetTimer] = ActionTier.AppLocalWrite,
+        [SaveNote] = ActionTier.AppLocalWrite,
+        [OpenShortcut] = ActionTier.ExternalEffect,
     };
 
     public static readonly IReadOnlyDictionary<string, ActionTier> Tiers =
         Table.ToDictionary(t => t.Name, t => t.Action is null ? BuiltInTiers[t.Name] : DeviceActionTiers.All[t.Action]);
 
     public static bool IsDeviceTool(string name) => DeviceTools.Contains(name);
+
+    /// <summary>Device actions block on WinRT, COM and WMI, and the shortcut launcher reads the database: these run on the pool.</summary>
+    public static bool RunsOffThread(string name) => IsDeviceTool(name) || name == OpenShortcut;
+
+    /// <summary>
+    /// What a voice transcript may reach: the device actions, the power ones included, opening a URL, the timer, the
+    /// shelf, the note step and, once a launcher is wired, the shortcut tiles. Never an MCP server's tools.
+    /// </summary>
+    public IReadOnlyList<ToolDefinition> VoiceDefinitions =>
+        [.. All.Where(d => !ChatOnly.Contains(d.Name) && (d.Name != OpenShortcut || launchShortcut is not null))];
 
     // Kept with no caller yet: the scheduled-job runner will filter a job's tool list with it.
     /// <summary>A scheduled job may only carry tools that never need a prompt while unattended; destructive ones never run there.</summary>
@@ -107,6 +147,7 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
             {
                 "boolean" => Bool(value) is not null,
                 "integer" => Int(value) is not null,
+                "number" => Number(value) is not null,
                 _ => value.ValueKind == JsonValueKind.String && (!p.Required || value.GetString()!.Length > 0),
             };
             if (!ok)
@@ -119,6 +160,10 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
             CreateShelfFile when !IsFileName(Arg(input, "name")) => "name must be a plain file name with no path separators or device names.",
             WriteScratchpad when input.TryGetProperty("mode", out var mode) && mode.GetString() is not ("append" or "replace") => "mode must be \"append\" or \"replace\".",
             SetBrightness or SetVolume when Int(input.GetProperty("percent")) is < 0 or > 100 => "percent must be between 0 and 100.",
+            SetTimer when Duration(input) is null =>
+                FormattableString.Invariant($"minutes must be between {TimerRun.MinDuration.TotalMinutes:0.###} (one second) and {TimerRun.MaxDuration.TotalMinutes:0} (one day)."),
+            // With nothing left inside its fence, the note says nothing; the transcript is kept as the raw note instead.
+            SaveNote when NoteText(input).Length == 0 => "note is empty.",
             OpenApp => Apps.ValidateAppTarget(Arg(input, "name")),
             OpenSettingsPage when !Apps.IsSettingsUri(Arg(input, "uri")) => "A settings page looks like ms-settings:display.",
             _ => null,
@@ -149,6 +194,9 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         SleepPc => "Put the PC to sleep",
         RestartPc => "Restart the PC",
         ShutDownPc => "Shut down the PC",
+        SetTimer => Duration(input)?.TotalMinutes is { } minutes ? FormattableString.Invariant($"Set a timer for {minutes:0.##} minute{(minutes == 1 ? "" : "s")}") : "Set a timer",
+        SaveNote => $"Save a note to the scratchpad: \"{Preview(NoteText(input))}\"",
+        OpenShortcut => $"Open the shortcut \"{Arg(input, "name")}\"",
         _ => name,
     };
 
@@ -193,6 +241,9 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
                 WriteScratchpad => Write(call),
                 CreateShelfFile => Create(call),
                 OpenUrl => Open(call),
+                SetTimer => StartTimer(call),
+                SaveNote => Note(call),
+                OpenShortcut => Shortcut(call),
                 _ => Copy(call),
             };
         }
@@ -248,6 +299,54 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         return (new ToolResultPart(call.Id, call.Name, "Opened in the browser."), null);
     }
 
+    /// <summary>The undo puts back what ran before: no timer, or the one this call replaced.</summary>
+    private (ToolResultPart, Func<ActionResult>?) StartTimer(ToolCallPart call)
+    {
+        if (timer is null)
+            return (new ToolResultPart(call.Id, call.Name, "The timer is not available here.", IsError: true), null);
+        var previous = timer.Run;
+        var run = TimerRun.Starting(DateTimeOffset.Now, Duration(call.Input)!.Value);
+        timer.Run = run;
+        return (new ToolResultPart(call.Id, call.Name, $"Timer set; it ends at {run.EndsAt.LocalDateTime:HH:mm:ss}."), () =>
+        {
+            timer.Run = previous;
+            return ActionResult.Done(previous is null ? "Timer cancelled." : "The previous timer is back.");
+        }
+        );
+    }
+
+    /// <summary>
+    /// The rambler's note: added at the end of the scratchpad under a time heading. The undo takes off only the note,
+    /// and only while it is still the end of the scratchpad, so an edit made since is never lost.
+    /// </summary>
+    private (ToolResultPart, Func<ActionResult>?) Note(ToolCallPart call)
+    {
+        var before = scratchpad.Text;
+        scratchpad.Text = RamblerNotes.Append(before, NoteText(call.Input), DateTime.Now);
+        // Appending keeps the text up to its trailing line breaks; everything after that is the note's.
+        int kept = before.TrimEnd('\r', '\n').Length;
+        string added = scratchpad.Text[kept..];
+        return (new ToolResultPart(call.Id, call.Name, "Note saved to the scratchpad."), () =>
+        {
+            var now = scratchpad.Text;
+            if (!now.EndsWith(added, StringComparison.Ordinal))
+                return ActionResult.Fail("The scratchpad changed after the note, so the note stays.");
+            scratchpad.Text = now[..^added.Length] + before[kept..];
+            return ActionResult.Done("Note taken off the scratchpad.");
+        }
+        );
+    }
+
+    private (ToolResultPart, Func<ActionResult>?) Shortcut(ToolCallPart call)
+    {
+        var name = Arg(call.Input, "name");
+        if (launchShortcut is null)
+            return (new ToolResultPart(call.Id, call.Name, "Shortcuts are not available here.", IsError: true), null);
+        return launchShortcut(name)
+            ? (new ToolResultPart(call.Id, call.Name, $"Opened {name}."), null)
+            : (new ToolResultPart(call.Id, call.Name, $"No shortcut named \"{name}\" could be opened.", IsError: true), null);
+    }
+
     private (ToolResultPart, Func<ActionResult>?) Copy(ToolCallPart call)
     {
         copyToClipboard(Arg(call.Input, "text"));
@@ -273,6 +372,37 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         _ => null,
     };
 
+    // llama3.2:3b escapes the note's line breaks twice and once wrote terminal colour codes into one. A dictated
+    // note never means a backslash and an n, or a control character other than a line break or a tab. A model may
+    // also wrap the note in a code fence, as it did when the rambler asked for the note on its own.
+    private static string NoteText(JsonElement input)
+    {
+        var note = string.Concat(Arg(input, "note").Replace("\\n", "\n", StringComparison.Ordinal).Where(c => !char.IsControl(c) || c is '\n' or '\t')).Trim();
+        if (note.StartsWith("```", StringComparison.Ordinal))
+        {
+            int firstLine = note.IndexOf('\n');
+            note = firstLine < 0 ? "" : note[(firstLine + 1)..].TrimEnd();
+            if (note.EndsWith("```", StringComparison.Ordinal))
+                note = note[..^3];
+            note = note.Trim();
+        }
+
+        return note;
+    }
+
+    private static TimeSpan? Duration(JsonElement input) =>
+        input.ValueKind == JsonValueKind.Object && input.TryGetProperty("minutes", out var v)
+            && TimerRun.TryParseMinutes(v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText(), out var duration)
+            ? duration
+            : null;
+
+    private static double? Number(JsonElement v) => v.ValueKind switch
+    {
+        JsonValueKind.Number when v.TryGetDouble(out var d) => d,
+        JsonValueKind.String when double.TryParse(v.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) => d,
+        _ => null,
+    };
+
     private static bool Bool(JsonElement input, string name) => input.TryGetProperty(name, out var v) && Bool(v) == true;
 
     private static int Int(JsonElement input, string name) => input.TryGetProperty(name, out var v) ? Int(v) ?? 0 : 0;
@@ -283,6 +413,7 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
     {
         "boolean" => "a true or false",
         "integer" => "a whole-number",
+        "number" => "a number",
         _ => "a non-empty string",
     };
 

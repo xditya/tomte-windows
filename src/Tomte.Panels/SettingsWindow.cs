@@ -86,10 +86,12 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("AI tools"));
         page.Children.Add(Card(
             Note("Tools the AI layer can use when you ask for their effect. Nothing runs without a provider configured. Tools marked \"asks each time\" can be always allowed from the prompt; remove a grant here to be asked again."),
+            Note("By voice (hold the rambler hotkey and speak), every tool asks before it runs, always allowed or not, and MCP server tools are not offered."),
+            Row("Spoken replies", Note("Read the answer to a voice command aloud with Windows speech."), Toggle(s => s.SpokenReplies, (s, v) => s with { SpokenReplies = v })),
             Note("Always allowed"),
             grantsList,
             Note("All tools"),
-            Card([.. BuiltInTools.Definitions.Select(ToolRow)])));
+            Card([.. BuiltInTools.All.Select(ToolRow)])));
 
         page.Children.Add(Header("MCP servers"));
         page.Children.Add(McpSection());
