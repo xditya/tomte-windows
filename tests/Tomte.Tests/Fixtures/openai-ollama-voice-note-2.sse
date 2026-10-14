@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-715","object":"chat.completion.chunk","created":1791957035,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"What would you like me to create or do for you now?"},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-715","object":"chat.completion.chunk","created":1791957035,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":270,"completion_tokens":14,"total_tokens":284}}
+
+data: [DONE]
+

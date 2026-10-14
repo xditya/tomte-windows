@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-452","object":"chat.completion.chunk","created":1791957058,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"Since the user didn't give a question, no action can be performed."},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-452","object":"chat.completion.chunk","created":1791957058,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":1341,"completion_tokens":16,"total_tokens":1357}}
+
+data: [DONE]
+

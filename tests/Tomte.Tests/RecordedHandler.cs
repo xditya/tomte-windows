@@ -5,12 +5,16 @@ namespace Tomte.Tests;
 /// <summary>
 /// Answers every request with a fixture file and keeps the last request for assertions. No network.
 /// A non-zero <paramref name="readSize"/> hands the body out that many bytes per read, so events
-/// and UTF-8 sequences split across reads the way they do on a slow connection.
+/// and UTF-8 sequences split across reads the way they do on a slow connection. With <paramref name="then"/>
+/// the second request gets the first of those files, and so on; the last one repeats.
 /// </summary>
-internal sealed class RecordedHandler(string fixture, HttpStatusCode status = HttpStatusCode.OK, int readSize = 0) : HttpMessageHandler
+internal sealed class RecordedHandler(string fixture, HttpStatusCode status = HttpStatusCode.OK, int readSize = 0, params string[] then) : HttpMessageHandler
 {
     public HttpRequestMessage? Request { get; private set; }
     public string? Body { get; private set; }
+
+    /// <summary>Every request body, in order.</summary>
+    public List<string> Bodies { get; } = [];
 
     public static HttpClient Client(out RecordedHandler handler, string fixture, HttpStatusCode status = HttpStatusCode.OK, int readSize = 0)
     {
@@ -22,7 +26,9 @@ internal sealed class RecordedHandler(string fixture, HttpStatusCode status = Ht
     {
         Request = request;
         Body = request.Content is null ? null : await request.Content.ReadAsStringAsync(ct);
-        var bytes = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", fixture), ct);
+        Bodies.Add(Body ?? "");
+        string file = Bodies.Count == 1 || then.Length == 0 ? fixture : then[Math.Min(Bodies.Count - 1, then.Length) - 1];
+        var bytes = await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", file), ct);
         Stream body = readSize > 0 ? new TrickleStream(bytes, readSize) : new MemoryStream(bytes);
         return new HttpResponseMessage(status) { Content = new StreamContent(body) };
     }

@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-724","object":"chat.completion.chunk","created":1791957071,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"call_m42sos4s","index":0,"type":"function","function":{"name":"create_shelf_file","arguments":"{\"content\":\"milk, eggs\",\"name\":\"groceries\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-724","object":"chat.completion.chunk","created":1791957071,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-724","object":"chat.completion.chunk","created":1791957071,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":1351,"completion_tokens":29,"total_tokens":1380}}
+
+data: [DONE]
+
