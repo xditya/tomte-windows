@@ -241,6 +241,7 @@ internal static unsafe class Program
         var body = new Vector2((float)(-size.W / 2), PanelSpace.TabStripHeight);
         c.Pill();
         c.Mascot();
+        Tabs(c, PanelId.Media, PanelSize.Media);
         var art = Offset(MediaPanelLayout.Art, body);
         if (track is null)
         {
@@ -314,6 +315,22 @@ internal static unsafe class Program
 
     private static IslandGeometry Panel((double W, double H) size) => IslandGeometry.Panel(size.W, size.H);
 
+    // The strip row as the panel host draws it: every tab on main, the current one white on a card.
+    private static void Tabs(Canvas c, PanelId current, (double W, double H) size)
+    {
+        var strip = new Vector2((float)(-size.W / 2), 0);
+        var labels = TabStrip.Labels(Enum.GetValues<PanelId>(), current, (float)size.W, mascot: true);
+        foreach (var line in labels)
+        {
+            if (line.Style == TabStrip.Current)
+            {
+                c.RoundRect(Offset(line.Slot, strip), TabStrip.Corner, 0x1CFFFFFF);
+            }
+
+            c.Text(line, strip);
+        }
+    }
+
     private static Vector2 Body((double W, double H) size) => new((float)size.W, (float)size.H - PanelSpace.TabStripHeight);
 
     private static Vector2 BodyOrigin((double W, double H) size) => new((float)(-size.W / 2), PanelSpace.TabStripHeight);
@@ -334,6 +351,7 @@ internal static unsafe class Program
         var body = BodyOrigin(PanelSize.Shelf);
         c.Pill();
         c.Mascot();
+        Tabs(c, PanelId.Shelf, PanelSize.Shelf);
         foreach (var line in ShelfLayout.HeadText(size, items.Length))
         {
             c.Text(line, body);
@@ -399,6 +417,7 @@ internal static unsafe class Program
         var body = BodyOrigin(PanelSize.Shortcuts);
         c.Pill();
         c.Mascot();
+        Tabs(c, PanelId.Shortcuts, PanelSize.Shortcuts);
         foreach (var line in ShortcutGrid.HeadText(size))
         {
             c.Text(line, body);
@@ -435,6 +454,7 @@ internal static unsafe class Program
         var body = BodyOrigin(PanelSize.Scratchpad);
         c.Pill();
         c.Mascot();
+        Tabs(c, PanelId.Scratchpad, PanelSize.Scratchpad);
         foreach (var line in layout.FrameText())
         {
             c.Text(line, body);
@@ -461,6 +481,7 @@ internal static unsafe class Program
         var body = BodyOrigin(PanelSize.Clipboard);
         c.Pill();
         c.Mascot();
+        Tabs(c, PanelId.Clipboard, PanelSize.Clipboard);
         foreach (var line in layout.HeadText(on, 50))
         {
             c.Text(line, body);
