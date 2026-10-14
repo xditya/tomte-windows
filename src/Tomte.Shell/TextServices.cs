@@ -237,6 +237,12 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
 
         set
         {
+            if (Rich)
+            {
+                Write(0, int.MaxValue, value);
+                return;
+            }
+
             fixed (char* p = ToServices(value))
             {
                 services->TxSetText(p);
@@ -264,13 +270,55 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
     public void Replace(Splice change)
     {
         var (start, end) = Selection;
-        Selection = (change.Start, change.End);
-        fixed (char* p = ToServices(change.Text))
+        if (Rich)
         {
-            Send(PInvoke.EM_REPLACESEL, 0, (nint)p);
+            Write(change.Start, change.End, change.Text);
+        }
+        else
+        {
+            Selection = (change.Start, change.End);
+            fixed (char* p = ToServices(change.Text))
+            {
+                Send(PInvoke.EM_REPLACESEL, 0, (nint)p);
+            }
         }
 
         Selection = (change.Map(start), change.Map(end));
+    }
+
+    // Rich text set through the services' own calls is read as RTF when it starts with {\rtf, so a note that does would
+    // change under the user; the object model's SetText takes it as it is. No undo step, and the undo stack emptied, as
+    // a replacement the user cannot undo empties it in a plain box.
+    private void Write(int start, int end, string text)
+    {
+        var document = Document();
+        ITextRange* range = null;
+        nint bstr = Marshal.StringToBSTR(ToServices(text));
+        try
+        {
+            document->Range(start, end, &range);
+            document->Undo((int)tomConstants.tomSuspend, null);
+            try
+            {
+                range->SetText(new BSTR((char*)bstr));
+            }
+            finally
+            {
+                document->Undo((int)tomConstants.tomResume, null);
+            }
+        }
+        finally
+        {
+            Marshal.FreeBSTR(bstr);
+            if (range is not null)
+            {
+                range->Release();
+            }
+
+            document->Release();
+        }
+
+        Send(PInvoke.EM_EMPTYUNDOBUFFER);
     }
 
     /// <summary>In-place activate for the client rectangle, once it has a size: the services draw and take messages.</summary>
@@ -652,7 +700,8 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
             case PInvoke.EN_STARTCOMPOSITION:
                 Composing = true;
                 break;
-            case PInvoke.EN_ENDCOMPOSITION:
+            // Raised for new characters in a composition too; only its end ends it.
+            case PInvoke.EN_ENDCOMPOSITION when pv is null || ((ENDCOMPOSITIONNOTIFY*)pv)->dwCode == ENDCOMPOSITIONNOTIFY_CODE.ECN_ENDCOMPOSITION:
                 Composing = false;
                 Notify(Composed);
                 break;

@@ -219,8 +219,11 @@ internal sealed unsafe class NoteEditor : IDisposable
             return;
         }
 
+        // A selection of all of it reaches past the text, onto rich text's own last paragraph mark.
+        string text = services.Text;
         var (start, end) = services.Selection;
-        bool copied = start != end && Put(services.Window, services.Text[start..end].Replace("\n", "\r\n"));
+        (start, end) = (Math.Min(start, text.Length), Math.Min(end, text.Length));
+        bool copied = start != end && Put(services.Window, text[start..end].Replace("\n", "\r\n"));
         if (copied && key == NoteKey.Cut)
         {
             fixed (char* nothing = "")
