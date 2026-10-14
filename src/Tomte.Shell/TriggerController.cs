@@ -7,17 +7,6 @@ using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
 
-/// <summary>Why the Compact pill is up: an edge push, desktop peek, an event, the first-run hint or the rambler.</summary>
-internal enum CompactReason
-{
-    None,
-    Summary,
-    Peek,
-    Event,
-    Hint,
-    Rambler,
-}
-
 /// <summary>
 /// Turns trigger messages into state changes on the UI thread. The pause and the suppression check run before
 /// every MorphTo. Owns the retraction, hover, event, peek, first-run, drag, timer-done and quiet-recheck timers,
@@ -113,6 +102,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 PInvoke.SetTimer(island.Hwnd, FirstRunTimer, FirstRunHintMs, null);
                 settings = settings with { FirstRunHintShown = true };
                 store.Save(settings);
+                // The hint's pill is settled only now; it carries no ring.
+                UpdateRing();
             }
         }
     }
@@ -164,8 +155,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         : activity.HasFlag(IslandActivity.Peek) ? CompactReason.Peek
         : CompactReason.Summary;
 
-    /// <summary>The event the pill is up for; null for a digest of several, and when no event shows.</summary>
-    public IslandEvent? ShownEvent => eventShowing && showing.Count == 1 ? showing[0] : null;
+    /// <summary>
+    /// What the Compact pill's one line shows now, by <see cref="CompactRules.Content"/>: the ring and the
+    /// now-playing row both ask here. <paramref name="playing"/> says whether something plays.
+    /// </summary>
+    public CompactContent CompactShows(bool playing) =>
+        CompactRules.Content(Compact, eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other, (timer.Run ?? finished) is not null, playing);
 
     /// <summary>
     /// An internal event: shows Compact for the hold time. It waits while Focus, DND or fullscreen is on, and while
@@ -373,7 +368,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     finished = run;
                     log?.Invoke($"timer: done, ended {run!.EndsAt:O}");
-                    Raise(new IslandEvent(TimerDoneText, DateTimeOffset.Now));
+                    Raise(new IslandEvent(TimerDoneText, DateTimeOffset.Now) { Source = IslandEventSource.Timer });
                 }
                 else
                 {
@@ -632,14 +627,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// The ring shows in Compact while a timer runs, and full from the moment it ends until its done pill has
-    /// been shown. Not tied to the event pill being up: the done event takes a thread hop to show, and a peek
-    /// pill that is already up at the end would lose the ring for those frames.
+    /// The ring shows where <see cref="CompactShows"/> puts it: on the push pill while a timer runs, and full
+    /// from the moment it ends until its done pill has been shown; on the done pill itself; nowhere else. A push
+    /// pill that is up when the timer ends keeps the ring through the thread hop the done event takes. Called
+    /// again after the reason for the pill is settled (peek, the first-run hint, an event, the rambler).
     /// </summary>
     private void UpdateRing()
     {
         var run = timer.Run ?? finished;
-        if (machine.State == IslandState.Compact && run is not null && !activity.HasFlag(IslandActivity.Rambling))
+        if (run is not null && CompactShows(playing: false) == CompactContent.TimerRing)
         {
             ring.Show(run, DateTimeOffset.Now, island.Scale, island.Mascot.Enabled);
         }
@@ -649,7 +645,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    private static bool IsTimerDone(IslandEvent e) => e.Text == TimerDoneText;
+    private static bool IsTimerDone(IslandEvent e) => e.Source == IslandEventSource.Timer;
 
     private void OnWindowsChanged()
     {
@@ -682,6 +678,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact))
             {
                 activity |= IslandActivity.Peek;
+                // Peek is settled only now, after Go; the peek pill carries no ring.
+                UpdateRing();
             }
         }
         else if (activity.HasFlag(IslandActivity.Peek))

@@ -200,7 +200,8 @@ internal static class Program
         }
 
         triggers.Panels = panels;
-        var row = new NowPlayingRow(island, triggers, media, log);
+        // The row lives on the state changes and ContentReady it listens to.
+        _ = new NowPlayingRow(island, triggers, media, log);
 
         bool announcing = false;
         media.TrackChanged += playing =>
@@ -208,7 +209,7 @@ internal static class Program
             if (announcing)
             {
                 log?.Invoke($"media: track changed, raising the event ({playing.App})");
-                triggers.Raise(row.Announced = new IslandEvent(playing.Title, DateTimeOffset.Now));
+                triggers.Raise(new IslandEvent(playing.Title, DateTimeOffset.Now) { Source = IslandEventSource.TrackChange });
             }
         };
         Apply(store.Current);
