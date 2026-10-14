@@ -30,6 +30,9 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
 
     public Action<string>? Log { get; init; }
 
+    /// <summary>Where each run's request and result go for the History tab, as the palette's do; null keeps none.</summary>
+    public AiHistory? History { get; init; }
+
     /// <summary>Raised on the caller's context for each run as it starts and ends, each device action a run made, and each kept result.</summary>
     public event Action<IslandEvent>? Raised;
 
@@ -96,6 +99,7 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
                 Job = job,
                 Prompt = job.Prompt,
                 Now = Now,
+                History = History,
                 // The user approved these tools when the job was made; nothing else is offered to the model.
                 ConfirmTool = (request, _) => Task.FromResult(job.Tools.Contains(request.Tool) && request.Tier != ActionTier.Destructive
                     ? PermissionAnswer.AllowOnce

@@ -94,6 +94,12 @@ public interface IPaletteSession
     /// <summary>The size of the send, set after its files are read and before anything is sent; null before that.</summary>
     Files.TokenEstimate? Estimate { get; }
 
+    /// <summary>The conversation so far: the turns of <see cref="Continuing"/>, then each finished turn of this session. A follow-up sends their text.</summary>
+    IReadOnlyList<AiTurn> Conversation { get; }
+
+    /// <summary>The conversation from the history this session goes on with; null for a new one.</summary>
+    AiExchange? Continuing { get; }
+
     event Action? Changed;
 
     Task SendAsync();
@@ -147,6 +153,9 @@ public sealed partial class PaletteSession : IPaletteSession
     private readonly string _defaultModel;
     private CancellationTokenSource? _userCancel;
     private string _indicator = "Nothing sent";
+    private List<AiTurn>? _conversation;
+    private string? _historyKey;
+    private decimal _spent;
 
     public PaletteSession(IChatProvider provider, ProviderConfig config, PaletteOptions options, SendLog log, BuiltInTools tools, PermissionGrants grants, IReadOnlyList<ContextChip> chips)
     {
@@ -208,6 +217,21 @@ public sealed partial class PaletteSession : IPaletteSession
 
     /// <summary>Making a job from the prompt: the model is offered only schedule_job, and nothing is stored before the user says yes.</summary>
     public JobPlanner? Scheduling { get; init; }
+
+    /// <summary>
+    /// Where each finished turn goes, with the whole conversation, once it is done or once it cost money; null keeps
+    /// nothing. A drop zone's send is never kept here: its result is kept with the zone's.
+    /// </summary>
+    public AiHistory? History { get; init; }
+
+    public AiExchange? Continuing { get; init; }
+
+    public IReadOnlyList<AiTurn> Conversation => Turns;
+
+    private List<AiTurn> Turns => _conversation ??= [.. Continuing?.Turns ?? []];
+
+    // A typed send goes on with the conversation; a drop zone, a job, a voice command and making a job are each one request.
+    private bool Converses => !FromDropZone && Job is null && Scheduling is null && !Voice;
 
     /// <summary>Clock for the daily cap; tests set it.</summary>
     public Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.Now;
@@ -274,6 +298,8 @@ public sealed partial class PaletteSession : IPaletteSession
                 attached.Insert(0, "transcript");
             else if (Skills?.Sent is { } skills)
                 attached.Add(skills);
+            if (Converses && Conversation.Count > 0)
+                attached.Add($"text of {Conversation.Count} earlier turn{(Conversation.Count == 1 ? "" : "s")}");
             // A transcript reaches the device tools and the shell's own actions only: no skill and no MCP server.
             IReadOnlyList<ToolDefinition> tools = Scheduling is not null ? [Scheduling.Definition]
                 : Job is not null ? [.. BuiltInTools.Definitions.Where(d => Job.Tools.Contains(d.Name) && BuiltInTools.AllowedInScheduledJobs(d.Name))]
@@ -307,7 +333,8 @@ public sealed partial class PaletteSession : IPaletteSession
                 return;
             timeout.CancelAfter(_options.Timeout);
 
-            var messages = new List<ChatMessage> { new(ChatRole.User, first) };
+            var messages = Converses ? Earlier() : [];
+            messages.Add(new ChatMessage(ChatRole.User, first));
             while (true)
             {
                 // A palette closed while it asked sends nothing more, whatever the provider does with a cancelled token.
@@ -368,13 +395,17 @@ public sealed partial class PaletteSession : IPaletteSession
         {
             _userCancel.Dispose();
             _userCancel = null;
+            var cost = sent ? SendLog.Estimate(_options, ModelId, inputTokens, outputTokens) : 0;
             if (sent)
             {
-                var cost = SendLog.Estimate(_options, ModelId, inputTokens, outputTokens);
                 _log.Append(new SendLogEntry(Now(), _config.Id, ModelId, inputTokens, outputTokens, cost, [.. attached, .. _skillFiles, .. _fileReads],
                     _options.LogContent ? $"{Prompt}\n---\n{AnswerText}" : null, Job?.Name));
                 SpentTodayUsd += cost;
             }
+
+            // A request that failed or was cancelled is kept, with its error line, only when it cost money.
+            if (!FromDropZone && (Status == PaletteStatus.Done || cost > 0))
+                Remember(cost);
 
             // MCP servers got data too (a header on connect, the arguments of a call), also when the model was never reached.
             string mcp = _mcpContacted.Count == 0 ? "" : $"MCP: {string.Join(", ", _mcpContacted)}";
@@ -387,6 +418,53 @@ public sealed partial class PaletteSession : IPaletteSession
     }
 
     public void Cancel() => _userCancel?.Cancel();
+
+    // The conversation so far as text, a user turn and an answer each; what the chips attached then is not sent again.
+    private List<ChatMessage> Earlier()
+    {
+        var messages = new List<ChatMessage>();
+        foreach (var turn in Conversation)
+        {
+            string answer = turn.Answer.Length > 0 ? turn.Answer
+                : turn.Steps.Count > 0 ? string.Join('\n', turn.Steps)
+                : turn.Error ?? "(no answer)";
+            messages.Add(ChatMessage.User(turn.Prompt));
+            messages.Add(new ChatMessage(ChatRole.Assistant, [new TextPart(answer)]));
+        }
+
+        return messages;
+    }
+
+    // The finished turn joins the conversation, and the whole of it goes to the history. Each tool call is one line: what
+    // was asked, and what came of it unless that is what a read brought back, which stays out like the chips' content.
+    private void Remember(decimal cost)
+    {
+        static string Line(string text, int max = 160)
+        {
+            var line = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+            return line.Length <= max ? line : line[..(max - 1)].TrimEnd() + "…";
+        }
+
+        var steps = _answer.OfType<ToolStepSegment>().Select(s =>
+            s.IsError ? $"{s.Summary}: {Line(s.Result)}"
+            : BuiltInTools.Tiers.TryGetValue(s.Tool, out var tier) && tier != ActionTier.Read ? $"{s.Summary}: {Line(s.Result)}"
+            : s.Summary).ToList();
+        var chips = Chips.Where(c => c.On && c.Available).Select(c => c.AttachedName).ToList();
+        var turn = new AiTurn(Job is { } job ? $"{job.Name}: {Prompt}" : Prompt, chips, steps, AnswerText.Trim(),
+            Status == PaletteStatus.Done ? null : Error ?? "Cancelled.");
+        var conversation = Turns;
+        conversation.Add(turn);
+        _spent += cost;
+        if (History is null)
+            return;
+
+        // Going on with a conversation from the history keeps it under its own row; a drop zone result's stays as it was.
+        var earlier = Continuing is { Source: not AiSource.DropZone } row ? row : null;
+        _historyKey ??= earlier?.Key ?? AiExchange.NewKey();
+        var source = earlier?.Source ?? (Voice ? AiSource.Voice : Job is not null ? AiSource.Job
+            : Chips.Any(c => c.Kind == ContextKind.Region) ? AiSource.CircleToAsk : AiSource.Palette);
+        _ = History.Keep(new AiExchange(_historyKey, source, Now(), ProviderName, ModelId, (earlier?.CostUsd ?? 0) + _spent, [.. conversation]));
+    }
 
     private async Task<(List<ContentPart> Assistant, List<ToolCallPart> Calls, TurnDone Usage)> StreamTurnAsync(List<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken ct)
     {
