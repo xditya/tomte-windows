@@ -77,7 +77,11 @@ internal sealed class PaletteView : IDisposable, IInteractive
     private DispatcherQueueTimer? readTimer;
 
     // What the targets were last built from: rebuilt only when one of these changes, not for every streamed word.
-    private (PaletteLayout? Layout, float Height, bool Sending, bool Readable, bool CanSend) targeted;
+    private (PaletteLayout? Layout, float Height, bool Sending, bool Readable, bool CanSend, bool History) targeted;
+
+    // The footer's AI history button: its clock, and what a click does; neither while nothing opens the tab (voice).
+    private CompositionContainerShape? clock;
+    private Action? openHistory;
 
     /// <param name="send">What Enter does with the prompt's text; null for a palette that only shows (voice, a driven run).</param>
     /// <param name="question">The session's open question, drawn with its buttons; null where nobody can answer (a driven run).</param>
@@ -214,6 +218,17 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
     public event Action? TargetsChanged;
 
+    /// <summary>The footer's AI history button: Panels on the History tab. Without it the palette shows no button (voice).</summary>
+    public Action? OpenHistory
+    {
+        get => openHistory;
+        set
+        {
+            openHistory = value;
+            Update();
+        }
+    }
+
     /// <summary>A chip turns on or off, Send sends, or a question's button answers it; nothing while that target is disabled.</summary>
     public void Activate(string id)
     {
@@ -229,6 +244,11 @@ internal sealed class PaletteView : IDisposable, IInteractive
         else if (shownChips.FirstOrDefault(chip => ChipId + chip.Label == id) is { } chip)
         {
             chip.On = !chip.On;
+        }
+        else if (id == PaletteLayout.HistoryId)
+        {
+            openHistory?.Invoke();
+            return;
         }
         else if (PaletteLayout.ButtonFor(id, questions) is { } button)
         {
@@ -303,7 +323,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         // every streamed word lays the answer out again (and its run once more to draw it); cache the blocks
         // that did not change if long answers cost frames.
-        var (answer, measured) = layout.Answer(Blocks(session));
+        var (answer, measured) = layout.Answer(Blocks(session, followUp: typed));
         float height = layout.Height(measured);
         var area = layout.AnswerBand(height);
         band.Offset = new Vector3(area.X, area.Y, 0);
@@ -322,6 +342,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
         var foot = layout.Foot(session.ProviderIndicator, session.ToolSteps, session.SpentTodayUsd, session.DailyCapUsd, height);
         provider.Show(foot[0]);
         spend.Show(foot[1]);
+        Clock(layout.History(height));
         ShowAsk(height);
         SetHeight(height);
         Retarget();
@@ -500,7 +521,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
     {
         bool sending = Sending, ready = ReferenceEquals(readable, laidAsk);
         bool canSend = sendVisual is not null && PaletteLayout.CanSend(prompt!.Services.Text, sending);
-        var from = (layout, Height, sending, ready, canSend);
+        var from = (layout, Height, sending, ready, canSend, openHistory is not null);
         if (disposed || session is null || from == targeted)
         {
             return;
@@ -522,6 +543,11 @@ internal sealed class PaletteView : IDisposable, IInteractive
         foreach (var (button, at, _) in layout.Ask(Height)?.Buttons ?? [])
         {
             list.Add(new Target(PaletteLayout.ButtonId(button, questions), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ready));
+        }
+
+        if (openHistory is not null)
+        {
+            list.Add(layout.HistoryTarget(Height));
         }
 
         if (!list.SequenceEqual(targets))
@@ -684,8 +710,12 @@ internal sealed class PaletteView : IDisposable, IInteractive
             _ => PermissionAnswer.Deny,
         }, shown);
 
-    /// <summary>The answer as blocks: the model's text, each tool step on its own line, and an error last.</summary>
-    internal static List<(string Text, TextStyle Style)> Blocks(IPaletteSession session)
+    /// <summary>
+    /// The answer as blocks: the model's text, each tool step on its own line, and an error last. In a palette that can
+    /// ask again (<paramref name="followUp"/>), a conversation so far adds the line that says the next question takes its
+    /// text along.
+    /// </summary>
+    internal static List<(string Text, TextStyle Style)> Blocks(IPaletteSession session, bool followUp = false)
     {
         var blocks = session.Answer.Select(segment => segment switch
         {
@@ -698,7 +728,48 @@ internal sealed class PaletteView : IDisposable, IInteractive
             blocks.Add((error, PaletteLayout.ErrorText));
         }
 
+        if (followUp && session.Conversation.Count > 0 && session.Status != PaletteStatus.Sending)
+        {
+            bool fresh = session.Continuing is not null && session.Conversation.Count == session.Continuing.Turns.Count;
+            blocks.Add((PaletteLayout.ContinueLine(fresh ? session.Continuing!.Question : null), PaletteLayout.StepText));
+        }
+
         return blocks;
+    }
+
+    // The history button's clock in the footer: a ring and two hands, made once, moved with the palette's height.
+    private void Clock(RectangleF at)
+    {
+        if (openHistory is null)
+        {
+            return;
+        }
+
+        if (clock is null)
+        {
+            var c = island.Compositor;
+            clock = c.CreateContainerShape();
+            var ink = c.CreateColorBrush(Argb(TextStyle.SecondaryColor));
+            var ring = c.CreateEllipseGeometry();
+            ring.Center = new Vector2(at.Width / 2);
+            ring.Radius = new Vector2(PaletteLayout.ClockRadius);
+            var stroke = c.CreateSpriteShape(ring);
+            stroke.StrokeBrush = ink;
+            stroke.StrokeThickness = PaletteLayout.ClockStroke;
+            clock.Shapes.Add(stroke);
+            foreach (var hand in PaletteLayout.ClockHands)
+            {
+                var bar = c.CreateRoundedRectangleGeometry();
+                (bar.Offset, bar.Size, bar.CornerRadius) = (new Vector2(hand.X, hand.Y), new Vector2(hand.Width, hand.Height), new Vector2(0.75f));
+                var fill = c.CreateSpriteShape(bar);
+                fill.FillBrush = ink;
+                clock.Shapes.Add(fill);
+            }
+
+            shapes.Shapes.Add(clock);
+        }
+
+        clock.Offset = new Vector2(at.X, at.Y);
     }
 
     private void Show(int i, TextRun run, Vector2 at)
@@ -825,7 +896,7 @@ internal sealed partial class PaletteHost
         var question = new ToolQuestion();
         Task sending = Task.CompletedTask;
         PaletteView? view = null;
-        view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question);
+        view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question) { OpenHistory = OpenHistory };
         typed = view;
         view.HeightChanged += () => Grow(view.Height);
         if (hide is not null)

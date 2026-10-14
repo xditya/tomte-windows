@@ -37,6 +37,9 @@ internal static partial class Program
     // The one scratchpad note: the rambler, the palette and the Scratchpad panel all use this instance.
     private static ScratchpadNote Scratchpad = null!;
 
+    /// <summary>The AI history beside the settings file in use: the palette, voice, jobs and the History tab share it.</summary>
+    internal static AiHistory? History { get; private set; }
+
     [STAThread]
     private static unsafe int Main(string[] args)
     {
@@ -155,6 +158,19 @@ internal static partial class Program
         // waits for its window and stopping it waits for its thread, neither of which belongs on the island's thread.
         clipboard.Apply(store.Current.KeepClipboardHistory);
         store.Changed += s => clipboard.Apply(s.KeepClipboardHistory);
+        // The AI history shares tomte.db; nothing opens it until the History tab shows or an answer is kept. Turning it
+        // off deletes what was kept, conversations and drop zone results alike.
+        var aiHistory = History = new AiHistory(db, () => store.Current.KeepAiHistory, logLine);
+        bool keepHistory = store.Current.KeepAiHistory;
+        store.Changed += s =>
+        {
+            if (keepHistory && !s.KeepAiHistory)
+            {
+                _ = aiHistory.Clear();
+            }
+
+            keepHistory = s.KeepAiHistory;
+        };
         // One store of tiles for the Shortcuts panel and for voice; nothing opens the database until a tile is wanted.
         var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         StartPanels(island, triggers, store, db, shortcuts, clipboard, logLine);
@@ -245,6 +261,24 @@ internal static partial class Program
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static int RunExtractor() => Tomte.AI.Files.ChildExtractor.Run();
 
+    // The History tab's Copy answer, on the island's thread, where the clipboard's owner window lives. Kept out of the
+    // panel so Tomte.AI loads only on the first copy.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static bool CopyAnswer(string answer, Action<string>? log)
+    {
+        try
+        {
+            DesktopEffects.CopyToClipboard(answer);
+            return true;
+        }
+        catch (InvalidOperationException e)
+        {
+            // Another app kept the clipboard open.
+            log?.Invoke($"history panel: the answer was not copied ({e.Message})");
+            return false;
+        }
+    }
+
     // Kept out of Main so the WinUI assemblies load only in the settings process.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void RunSettings(string? settingsPath) => Tomte.Panels.SettingsWindow.Run(settingsPath);
@@ -328,6 +362,8 @@ internal static partial class Program
         };
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
         panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), text, log));
+        // Continue opens the AI box on the next turn, after the click that asked for it.
+        panels.Register(new HistoryPanel(island, History!, text, item => island.Queue.TryEnqueue(() => ContinueInPalette(triggers, item)), answer => CopyAnswer(answer, log), log));
         triggers.Panels = panels;
         // The row and the line live on the state changes and ContentReady they listen to.
         _ = new CompactLine(island, triggers, text, new NowPlayingRow(island, triggers, media, text, log), log);
@@ -713,7 +749,7 @@ internal static partial class Program
             var now = named is null ? Configured(store, log.WriteLine)
                 : named.DefaultModel is null ? null
                 : (ProviderSetup.Load(named, paletteHttp ??= ProviderSetup.NewHttp()), named, new PaletteOptions());
-            var command = await VoiceCommand.StartAsync(now, () => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills), sendLog, tools, grants);
+            var command = await VoiceCommand.StartAsync(now, () => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills), sendLog, tools, grants, History);
             // Raised while the palette is up, the event waits in the triggers' queue and shows once the palette hides.
             command?.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
             log.WriteLine($"rambler: voice {(command is null ? "off, no provider set up: raw transcript" : command.ModelId)}");

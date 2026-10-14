@@ -192,10 +192,10 @@ public class PanelTests
     [Fact]
     public void TabLabelsRunInTabOrderAfterTheTomteAndStayInsideThePanel()
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
         var wide = TabStrip.Labels(all, PanelId.Media, 560, mascot: true);
 
-        Assert.Equal(["Shelf", "Shortcuts", "Media", "Scratchpad", "Clipboard"], wide.Select(label => label.Text));
+        Assert.Equal(["Shelf", "Shortcuts", "Media", "Scratchpad", "Clipboard", "History"], wide.Select(label => label.Text));
         // After the tomte (5.5 in, 26 wide, 6 more), each pill its measured text and 10 DIP either side, 2 apart.
         Assert.Equal(37.5f, wide[0].Slot.X);
         for (int i = 0; i < wide.Count; i++)
@@ -212,7 +212,7 @@ public class PanelTests
 
         // The Media panel is 380 wide: what does not fit is cut or left out, never past the right padding.
         var narrow = TabStrip.Labels(all, PanelId.Media, 380, mascot: true);
-        Assert.InRange(narrow.Count, 3, 5);
+        Assert.InRange(narrow.Count, 3, 6);
         Assert.All(narrow, label => Assert.True(label.Slot.Right <= 380 - TabStrip.RightPad + 0.01, $"{label.Text} ends at {label.Slot.Right}"));
         // With the tomte off the labels start at the left padding; only registered panels get one.
         Assert.Equal(TabStrip.LeftPad, TabStrip.Labels([PanelId.Media], PanelId.Media, 380, mascot: false)[0].Slot.X);
@@ -222,7 +222,7 @@ public class PanelTests
     [Fact]
     public void APressOnALabelPicksItsTabAndNothingElseDoes()
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
         var labels = TabStrip.Labels(all, PanelId.Shelf, 560, mascot: true);
 
         for (int i = 0; i < labels.Count; i++)
@@ -249,7 +249,7 @@ public class PanelTests
     [Fact]
     public void TheAskPillEndsAtTheRightPaddingOfEveryPanelAndNoLabelRunsIntoIt()
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
         foreach (float width in PanelWidths)
         {
             var (card, glyph, word) = TabStrip.AskPill(width);
@@ -278,7 +278,7 @@ public class PanelTests
     [Fact]
     public void AnAttachedStripStartsAtTheBodyNotAtTheRamps()
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
         var shape = IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H).Attached();
         Assert.True(shape.RampW > 0);
         float width = (float)shape.Width;
@@ -311,7 +311,7 @@ public class PanelTests
     [Fact]
     public void APressOnTheAskPillIsAskAndNoTab()
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
         foreach (float width in PanelWidths)
         {
             var card = TabStrip.AskPill(width).Card;

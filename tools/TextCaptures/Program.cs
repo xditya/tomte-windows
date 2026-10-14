@@ -288,7 +288,9 @@ internal static unsafe partial class Program
             new("clipboard-clear-asking", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows, asking: true)),
             new("clipboard-targets", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows, targets: true)),
             new("shortcuts-targets", Panel(PanelSize.Shortcuts), c => Shortcuts(c, targets: true)),
+            new("palette-continuing", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Is that this week?", Chips(false), Continuing)), c => Palette(c, "Is that this week?", Chips(false), "Nothing sent", Continuing, 0, 0.03m)),
             .. DropZoneScenes(),
+            .. HistoryScenes(),
             CaptureHint(),
         ];
     }
@@ -868,7 +870,21 @@ internal static unsafe partial class Program
         {
             c.Text(line, origin);
         }
+
+        // The AI history button's clock, as the view draws it; the voice palette has none.
+        if (!voice && prompt is not null)
+        {
+            var button = Offset(layout.History(height), origin);
+            c.StrokeCircle(new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2), PaletteLayout.ClockRadius, PaletteLayout.ClockStroke, TextStyle.SecondaryColor);
+            foreach (var hand in PaletteLayout.ClockHands)
+            {
+                c.RoundRect(Offset(hand, new Vector2(button.X, button.Y)), 0.75f, TextStyle.SecondaryColor);
+            }
+        }
     }
+
+    // A conversation from the History tab, loaded and not sent yet: the box says what going on with it sends.
+    private static readonly (string, TextStyle)[] Continuing = [(PaletteLayout.ContinueLine("Remind me what the dentist said"), PaletteLayout.StepText)];
 
     private static readonly (string Display, string Ago)[] Rows =
     [
@@ -1091,6 +1107,24 @@ internal static unsafe partial class Program
             }
 
             green->Release();
+        }
+
+        /// <summary>A circle's outline.</summary>
+        public void StrokeCircle(Vector2 centre, float radius, float stroke, uint argb)
+        {
+            var brush = Brush(argb);
+            var ellipse = new D2D1_ELLIPSE { point = new D2D_POINT_2F { x = centre.X, y = centre.Y }, radiusX = radius, radiusY = radius };
+            dc->DrawEllipse(&ellipse, (ID2D1Brush*)brush, stroke, null);
+            brush->Release();
+        }
+
+        /// <summary>Closed figures, one each, scaled by <paramref name="k"/> from <paramref name="at"/>.</summary>
+        public void Figures(OutlineSegment[][] figures, Vector2 at, float k, uint argb)
+        {
+            foreach (var figure in figures)
+            {
+                Fill(figure, at, k, argb);
+            }
         }
 
         /// <summary>A transport glyph from its 24-unit box, 14 DIPs wide and centred in its button.</summary>

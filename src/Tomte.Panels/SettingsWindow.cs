@@ -33,6 +33,7 @@ public sealed partial class SettingsWindow : Window
     private readonly StackPanel grantsList = new() { Spacing = 4 };
     private readonly ToggleSwitch startup = new() { OnContent = "On", OffContent = "Off" };
     private readonly TextBlock startupNote = Note();
+    private readonly TextBlock clearedNote = Note();
     private StartupTask? startupTask;
 
     public SettingsWindow()
@@ -100,6 +101,13 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("AI provider"));
         page.Children.Add(ProviderSection());
 
+        page.Children.Add(Header("AI history"));
+        page.Children.Add(Card(
+            Row("Keep a history of AI answers on this PC",
+                Note($"The History tab shows your last {AiHistory.MaxItems} AI conversations and drop zone results, for up to {AiHistory.MaxDays} days: what you asked, the names of what you attached, the answers, the model and the cost. Attached content is never kept, and nothing leaves this PC. Turning it off deletes the history."),
+                KeepHistory()),
+            Row("Clear history", clearedNote, ClearHistory())));
+
         page.Children.Add(Header("AI tools"));
         page.Children.Add(Card(
             Note("Tools the AI layer can use when you ask for their effect. Nothing runs without a provider configured. Tools marked \"asks each time\" can be always allowed from the prompt; remove a grant here to be asked again."),
@@ -160,6 +168,43 @@ public sealed partial class SettingsWindow : Window
         var box = new ComboBox { ItemsSource = new[] { "Every monitor", "Primary monitor only" }, SelectedIndex = store.Current.AllMonitors ? 0 : 1, MinWidth = 200 };
         box.SelectionChanged += (_, _) => Save(s => s with { AllMonitors = box.SelectedIndex == 0 });
         return box;
+    }
+
+    // Turning the history off deletes it here too, so it is gone even when the shell is not running.
+    private ToggleSwitch KeepHistory()
+    {
+        var keep = Toggle(s => s.KeepAiHistory, (s, v) => s with { KeepAiHistory = v });
+        keep.Toggled += async (_, _) =>
+        {
+            if (!keep.IsOn)
+            {
+                await ClearAiHistory();
+            }
+        };
+        return keep;
+    }
+
+    private Button ClearHistory()
+    {
+        var clear = new Button { Content = "Clear history" };
+        clear.Click += async (_, _) =>
+        {
+            clear.IsEnabled = false;
+            await ClearAiHistory();
+            clear.IsEnabled = true;
+        };
+        return clear;
+    }
+
+    // Deletes every kept conversation and drop zone result in the tomte.db beside the settings file, off the UI thread.
+    private async Task ClearAiHistory()
+    {
+        var db = new Tomte.Core.Storage.TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db"));
+        // The failure line comes from the pool; the note is set back on this thread.
+        string? failed = null;
+        await new AiHistory(db, () => true, line => failed = line).Clear();
+        clearedNote.Text = failed is null ? "Cleared." : "Not cleared: tomte.db could not be opened. Try again in a moment.";
+        clearedNote.Visibility = Visibility.Visible;
     }
 
     private Button ResetPosition()

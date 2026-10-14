@@ -26,11 +26,11 @@ internal static partial class Program
         _ = Scratchpad.LoadAsync();
         paletteGrants ??= new PermissionGrants(store);
         var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, timer: triggers.Timer);
-        var session = DropZoneRequest.Ask(item, configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants);
+        var session = DropZoneRequest.Ask(item, configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants, history: History);
         // The palette is up, so the event waits in the triggers' queue and shows once it hides.
         session.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
         _ = DescribeAsync(session, configured.Provider, configured.Config);
-        hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide);
+        hotkeyPalette ??= NewPaletteHost(island, triggers, log);
         hotkeyPalette.Type(session);
         return true;
     }

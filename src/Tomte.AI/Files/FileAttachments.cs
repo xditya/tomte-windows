@@ -251,12 +251,13 @@ internal sealed class SendPlan
     private readonly List<PreparedFile> _cuttable;
     private readonly int _fixedWithoutText;
 
-    public SendPlan(IReadOnlyList<ContentPart> parts, string system, IReadOnlyList<ToolDefinition> tools, ModelFacts facts, PaletteOptions options, decimal spentToday, string provider)
+    /// <param name="earlier">The text of a conversation's earlier turns, which goes in front of <paramref name="parts"/>.</param>
+    public SendPlan(IReadOnlyList<ContentPart> parts, string system, IReadOnlyList<ToolDefinition> tools, ModelFacts facts, PaletteOptions options, decimal spentToday, string provider, string? earlier = null)
     {
         _parts = parts;
         _facts = facts;
         _files = [.. parts.OfType<PreparedFilePart>().Select(p => p.File)];
-        _fixed = facts.TextTokens(system) + tools.Sum(t => facts.TextTokens(t.Name + t.Description + t.InputSchema.GetRawText()))
+        _fixed = facts.TextTokens(system) + facts.TextTokens(earlier ?? "") + tools.Sum(t => facts.TextTokens(t.Name + t.Description + t.InputSchema.GetRawText()))
             + parts.Sum(p => p switch
             {
                 TextPart text => facts.TextTokens(text.Text),

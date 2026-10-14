@@ -164,10 +164,10 @@ public sealed class DropResultLayout
     /// <summary>
     /// Markdown blocks one under the other inside <paramref name="width"/>, from x = <see cref="Pad"/>: a list item's
     /// marker at its level's indent and its text hanging right of it, so wrapped lines start under the text, not under
-    /// the marker. Items of one list sit closer together than other blocks. At most <see cref="MaxLines"/> lines; an
-    /// answer that goes on, or that was <paramref name="cut"/> before, ends with <see cref="Rest"/>.
+    /// the marker. Items of one list sit closer together than other blocks. At most <paramref name="maxLines"/> lines; an
+    /// answer that goes on, or that was <paramref name="cut"/> before, ends with <paramref name="rest"/>.
     /// </summary>
-    private static (IReadOnlyList<TextAt> Runs, float Height) Lay(IReadOnlyList<MarkdownBlock> blocks, TextStyle style, float width, bool cut)
+    internal static (IReadOnlyList<TextAt> Runs, float Height) Lay(IReadOnlyList<MarkdownBlock> blocks, TextStyle style, float width, bool cut, int maxLines = MaxLines, string rest = Rest)
     {
         var runs = new List<TextAt>();
         float y = 0, numbers = TextSlot.Measure("00.", style, width) + 6;
@@ -175,7 +175,7 @@ public sealed class DropResultLayout
         MarkdownBlock? last = null;
         foreach (var block in blocks)
         {
-            if (lines >= MaxLines)
+            if (lines >= maxLines)
             {
                 cut = true;
                 break;
@@ -198,7 +198,7 @@ public sealed class DropResultLayout
                 x += hang;
             }
 
-            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), MaxLines - lines) { Bold = block.Bold };
+            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), maxLines - lines) { Bold = block.Bold };
             using var laid = TextLayout.Of(run);
             runs.Add(new TextAt(run, new Vector2(x, y)));
             y += laid.Height;
@@ -210,9 +210,9 @@ public sealed class DropResultLayout
         if (cut)
         {
             y += BlockGap;
-            var rest = new TextRun(Rest, RestStyle, width);
-            using var laid = TextLayout.Of(rest);
-            runs.Add(new TextAt(rest, new Vector2(Pad, y)));
+            var line = new TextRun(rest, RestStyle, width);
+            using var laid = TextLayout.Of(line);
+            runs.Add(new TextAt(line, new Vector2(Pad, y)));
             y += laid.Height;
         }
 

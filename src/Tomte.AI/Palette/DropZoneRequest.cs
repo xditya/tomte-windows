@@ -60,8 +60,8 @@ public static partial class DropZoneRequest
         };
 
     /// <summary>"Ask about it": the palette with the file attached and an empty prompt. Nothing is sent until the user asks.</summary>
-    public static PaletteSession Ask(string item, IChatProvider provider, ProviderConfig config, PaletteOptions options, SendLog log, BuiltInTools tools, PermissionGrants grants, ModelInfo? model = null) =>
-        new(provider, config, options, log, tools, grants, [Chip(DropZoneLayout.Label(DropZone.Ask, null), item)]) { Model = model };
+    public static PaletteSession Ask(string item, IChatProvider provider, ProviderConfig config, PaletteOptions options, SendLog log, BuiltInTools tools, PermissionGrants grants, ModelInfo? model = null, AiHistory? history = null) =>
+        new(provider, config, options, log, tools, grants, [Chip(DropZoneLayout.Label(DropZone.Ask, null), item)]) { Model = model, History = history };
 
     /// <summary>
     /// The size question as a zone asks it. A name is one answer about the whole file, and parts would each give one,
