@@ -18,6 +18,11 @@ internal sealed class TimerRing
     private const float Gap = 9;
     private static readonly float Top = (float)(IslandGeometry.Compact.Depth - Size) / 2;
 
+    // The fill moves in this many steps over the time left, not on every frame. A linear fill made the compositor
+    // redraw at the refresh rate for as long as the ring showed: on dwm.exe at 165 Hz, roughly a tenth of a core
+    // and 4% of the GPU more than this stepped fill. A step is a degree of arc or less, under a pixel at this size.
+    private const int FillSteps = 360;
+
     private readonly ShapeVisual visual;
     private readonly CompositionEllipseGeometry arc;
     private readonly ScalarKeyFrameAnimation fill;
@@ -39,7 +44,7 @@ internal sealed class TimerRing
 
         // One fill for the ring's life; each show only gives it the time left.
         fill = compositor.CreateScalarKeyFrameAnimation();
-        fill.InsertKeyFrame(1, 1, compositor.CreateLinearEasingFunction());
+        fill.InsertKeyFrame(1, 1, compositor.CreateStepEasingFunction(FillSteps));
     }
 
     /// <summary>Goes into the island's content visual, which is the outline's bounds plus a 1 px margin each side.</summary>
