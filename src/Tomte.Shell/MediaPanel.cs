@@ -1,8 +1,13 @@
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Media;
 using Windows.UI.Composition;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.UI.Input.KeyboardAndMouse;
+using Windows.Win32.UI.WindowsAndMessaging;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
@@ -12,18 +17,32 @@ namespace Tomte.Shell;
 /// next, all composition visuals laid out by <see cref="MediaPanelLayout"/>. It exists only while the tab
 /// shows. The bar moves as one compositor animation from the position now to the end over the time left,
 /// restarted whenever the app reports something; the elapsed clock is drawn again once a second while
-/// something plays, and nothing else in this process ticks for it.
+/// something plays, and nothing else in this process ticks for it. While the app takes a position the bar
+/// is a seek bar: the pointer on it shows the knob and the time under the pointer, a click seeks there, a drag
+/// moves the knob and seeks where it lets go, and with the keys Left and Right move 5 s, Home and End go to the
+/// ends. Clicks and keys come through the island's interaction host.
 /// </summary>
-internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, TextRenderer text, Func<DateTimeOffset> now, Action<string>? log) : IPanel
+internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, TextRenderer text, Func<DateTimeOffset> now, Action<string>? log) : IPanel, IInteractive
 {
     private View? view;
+    private float bodyWidth;
+    private IReadOnlyList<Target> targets = [];
+    private Vector2? pressAt;
+
+    // The last seek sent, and the timeline it was sent from: until the app reports another, positions count from it.
+    private (TimeSpan To, MediaTimeline From)? sought;
     private bool drooped;
 
     public PanelId Id => PanelId.Media;
 
+    public IReadOnlyList<Target> Targets => targets;
+
+    public event Action? TargetsChanged;
+
     public void Shown(ContainerVisual body, Vector2 size)
     {
         view = new View(island, text, body, size, now, log);
+        bodyWidth = size.X;
         tracker.Changed += Update;
         tracker.Watch();
         Update();
@@ -35,24 +54,183 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         tracker.Unwatch();
         view?.Dispose();
         view = null;
-        drooped = false;
+        (drooped, pressAt, sought) = (false, null, null);
+        targets = [];
+        TargetsChanged?.Invoke();
     }
 
-    public async void Press(Vector2 point)
+    /// <summary>Presses come through the targets.</summary>
+    public void Press(Vector2 point)
     {
-        var command = MediaPanelLayout.Command(point, tracker.Current);
-        if (command == MediaCommand.None)
+    }
+
+    /// <summary>Nothing here scrolls.</summary>
+    public void Wheel(Vector2 point, int delta)
+    {
+    }
+
+    /// <summary>A transport button sends its command; a click on the seek bar (not Enter on it) seeks to where it was pressed.</summary>
+    public void Activate(string id)
+    {
+        if (id != MediaPanelLayout.SeekId)
+        {
+            Send(MediaPanelLayout.Command(id, tracker.Current));
+        }
+        else if (pressAt is { } at && tracker.Current.Timeline is { } timeline)
+        {
+            Seek(MediaPanelLayout.SeekAt(at.X, timeline));
+        }
+
+        pressAt = null;
+    }
+
+    /// <summary>
+    /// A press on the seek bar: kept for the click it may be, then a drag once the pointer leaves the drag distance,
+    /// which seeks where the button comes up.
+    /// </summary>
+    public bool TryDrag(string id, Vector2 at)
+    {
+        pressAt = at;
+        if (id != MediaPanelLayout.SeekId || view is null || tracker.Current.Timeline is not { } timeline
+            || !PInvoke.GetCursorPos(out var screen) || !PInvoke.DragDetect(island.Hwnd, screen))
+        {
+            return false;
+        }
+
+        pressAt = null;
+        if (Scrub(timeline) is { } to)
+        {
+            Seek(to);
+        }
+
+        return true;
+    }
+
+    public void Hovered(string? id) => view?.Hover(id == MediaPanelLayout.SeekId);
+
+    public void PointerMoved(string id, Vector2 at)
+    {
+        if (id == MediaPanelLayout.SeekId && tracker.Current.Timeline is { } timeline)
+        {
+            view?.Label(at.X, MediaPanelLayout.SeekAt(at.X, timeline));
+        }
+    }
+
+    /// <summary>On the seek bar, Left and Right move 5 s and Home and End go to the ends; repeated keys add up before the app reports back.</summary>
+    public bool KeyDown(string id, int virtualKey)
+    {
+        if (id != MediaPanelLayout.SeekId || tracker.Current is not { CanSeek: true, Timeline: { } timeline })
+        {
+            return false;
+        }
+
+        var from = sought is { } last && last.From == timeline ? last.To : timeline.PositionAt(now());
+        TimeSpan? to = (VIRTUAL_KEY)virtualKey switch
+        {
+            VIRTUAL_KEY.VK_LEFT => MediaPanelLayout.Stepped(from, -1, timeline),
+            VIRTUAL_KEY.VK_RIGHT => MediaPanelLayout.Stepped(from, 1, timeline),
+            VIRTUAL_KEY.VK_HOME => timeline.Start,
+            VIRTUAL_KEY.VK_END => timeline.End,
+            _ => null,
+        };
+        if (to is not { } position)
+        {
+            return false;
+        }
+
+        view?.Label(MediaPanelLayout.BarX(position, timeline), position);
+        Seek(position);
+        return true;
+    }
+
+    /// <summary>
+    /// The drag on the seek bar, from the drag distance until the button comes up: the fill, the knob and the time follow
+    /// the pointer, and the position under it at the release is the answer. Esc, the mouse going to another window or
+    /// the panel hiding end it with nothing to seek to. Every other message is dispatched as the island's loop would.
+    /// </summary>
+    private unsafe TimeSpan? Scrub(MediaTimeline timeline)
+    {
+        var hwnd = island.Hwnd;
+        PInvoke.SetCapture(hwnd);
+        try
+        {
+            MSG message;
+            while (view is not null && PInvoke.GetCapture() == hwnd)
+            {
+                if (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value <= 0)
+                {
+                    // The app is quitting: the island's own loop has to see it too.
+                    PInvoke.PostQuitMessage((int)message.wParam.Value);
+                    return null;
+                }
+
+                if (message.message is PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP && message.hwnd == hwnd)
+                {
+                    int x = (short)(message.lParam.Value & 0xFFFF), y = (short)((message.lParam.Value >> 16) & 0xFFFF);
+                    var to = MediaPanelLayout.SeekAt(PanelSpace.ToBody(island.ToIsland(x, y), bodyWidth).X, timeline);
+                    if (message.message == PInvoke.WM_LBUTTONUP)
+                    {
+                        return to;
+                    }
+
+                    view?.Scrub(MediaPanelLayout.BarX(to, timeline), to);
+                    continue;
+                }
+
+                if (message.message == PInvoke.WM_KEYDOWN && message.wParam.Value == (nuint)VIRTUAL_KEY.VK_ESCAPE)
+                {
+                    return null;
+                }
+
+                PInvoke.TranslateMessage(&message);
+                PInvoke.DispatchMessage(&message);
+            }
+
+            return null;
+        }
+        finally
+        {
+            PInvoke.ReleaseCapture();
+            view?.Scrubbed();
+        }
+    }
+
+    private async void Seek(TimeSpan position)
+    {
+        if (tracker.Current.Timeline is not { } timeline)
         {
             return;
         }
 
-        bool accepted = await tracker.SendAsync(command);
+        sought = (position, timeline);
+        view?.Hold(MediaPanelLayout.BarX(position, timeline));
+        bool accepted = await tracker.SeekAsync(position);
+        if (!accepted)
+        {
+            // Refused: the fill goes back to where the track is.
+            sought = null;
+            Update();
+        }
+
+        Done(accepted);
+    }
+
+    private async void Send(MediaCommand command)
+    {
+        if (command != MediaCommand.None)
+        {
+            Done(await tracker.SendAsync(command));
+        }
+    }
+
+    // A command that did nothing is the mascot's blocked action: the cap droops until one works.
+    private void Done(bool accepted)
+    {
         if (view is null)
         {
             return;
         }
 
-        // A command that did nothing is the mascot's blocked action: the cap droops until one works.
         if (!accepted)
         {
             island.Mascot.Set(MascotState.Error);
@@ -65,16 +243,25 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         }
     }
 
-    /// <summary>Nothing here scrolls.</summary>
-    public void Wheel(Vector2 point, int delta)
-    {
-    }
-
     private void Update()
     {
         var playing = tracker.Current;
         var at = now();
         view?.Update(playing, tracker.Failure, at);
+        // A seek the app has not reported yet keeps the fill where it was sent.
+        // an app that takes a seek and never reports its timeline leaves the fill held there; let a timer free it if one shows up.
+        if (sought is { } last && last.From == playing.Timeline)
+        {
+            view?.Hold(MediaPanelLayout.BarX(last.To, last.From));
+        }
+
+        var next = MediaPanelLayout.Targets(playing);
+        if (!next.SequenceEqual(targets))
+        {
+            targets = next;
+            TargetsChanged?.Invoke();
+        }
+
         log?.Invoke(playing.HasSession
             ? $"media: {playing.App} {(playing.IsPlaying ? "playing" : "paused")} \"{playing.Title}\" at {(playing.PositionAt(at) is { } p ? NowPlaying.Clock(p) : "no timeline")}"
             : "media: nothing playing");
@@ -86,23 +273,26 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         private const float GlyphBox = 24, GlyphSize = 14;
 
         private static readonly Color White = Color.FromArgb(255, 255, 255, 255);
-        private static readonly Color Dim = Color.FromArgb(97, 255, 255, 255);
+        // A button the app does not take is drawn at the disabled opacity.
+        private static readonly Color Dim = Color.FromArgb((byte)(255 * StateLook.DisabledOpacity), 255, 255, 255);
         private static readonly Color Black = Color.FromArgb(255, 0, 0, 0);
         private static readonly Color Clear = Color.FromArgb(0, 0, 0, 0);
+        private static readonly Color Card = Color.FromArgb(255, 0x2A, 0x2A, 0x2F);
 
         private readonly Compositor compositor;
         private readonly Func<DateTimeOffset> now;
         private readonly Action<string>? log;
         private readonly ArtVisual art;
-        private readonly ShapeVisual shapes;
-        private readonly TextVisual title, artist, elapsed, total;
+        private readonly ShapeVisual shapes, seekShapes;
+        private readonly TextVisual title, artist, elapsed, total, seekTime;
         private readonly Windows.System.DispatcherQueueTimer clock;
         private NowPlaying shown = NowPlaying.None;
+        private bool hovered, scrubbing;
 
         // One brush per part, recoloured as the state changes. A brush taken off its last shape and put back
         // later does not draw again (seen on Windows 11 26200), so brushes are never swapped or removed.
-        private readonly CompositionColorBrush previous, next, circle, play, pause, track, fill;
-        private readonly CompositionRoundedRectangleGeometry fillShape;
+        private readonly CompositionColorBrush previous, next, circle, play, pause, track, fill, knob, card;
+        private readonly CompositionRoundedRectangleGeometry fillShape, cardShape;
         private readonly Vector2KeyFrameAnimation advance;
 
         public View(IslandWindow island, TextRenderer text, ContainerVisual body, Vector2 size, Func<DateTimeOffset> now, Action<string>? log)
@@ -129,6 +319,16 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             advance = compositor.CreateVector2KeyFrameAnimation();
             advance.InsertKeyFrame(1, new Vector2(bar.Width, bar.Height), compositor.CreateLinearEasingFunction());
 
+            // The knob rides the fill's end on the compositor, so it moves with the bar and nothing here ticks for it.
+            var dot = compositor.CreateEllipseGeometry();
+            dot.Radius = new Vector2(MediaPanelLayout.Knob);
+            var ride = compositor.CreateExpressionAnimation("Vector2(x + fill.Size.X, y)");
+            ride.SetReferenceParameter("fill", fillShape);
+            ride.SetScalarParameter("x", bar.X);
+            ride.SetScalarParameter("y", bar.Y + bar.Height / 2);
+            dot.StartAnimation("Center", ride);
+            knob = Add(shapes.Shapes, dot, compositor.CreateColorBrush());
+
             var glyph = Glyph(MediaPanelLayout.Previous);
             previous = compositor.CreateColorBrush();
             Add(glyph.Shapes, Bar(6, 4, 2, 16), previous);
@@ -137,7 +337,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             var button = MediaPanelLayout.PlayPause;
             var disc = compositor.CreateEllipseGeometry();
             disc.Center = new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2);
-            disc.Radius = new Vector2(button.Width / 2);
+            disc.Radius = new Vector2(MediaPanelLayout.Disc / 2);
             circle = Add(shapes.Shapes, disc, compositor.CreateColorBrush());
             glyph = Glyph(button);
             play = Add(glyph.Shapes, Triangle(new(7, 4), new(21, 12), new(7, 20)), compositor.CreateColorBrush());
@@ -149,25 +349,78 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             next = compositor.CreateColorBrush();
             Add(glyph.Shapes, Bar(16, 4, 2, 16), next);
             Add(glyph.Shapes, Triangle(new(4, 4), new(15, 12), new(4, 20)), next);
+
+            // The seek time's card and its clock, over everything else: it sits over the artist's line.
+            seekShapes = compositor.CreateShapeVisual();
+            seekShapes.Size = size;
+            body.Children.InsertAtTop(seekShapes);
+            cardShape = Rounded(default, 4);
+            card = Add(seekShapes.Shapes, cardShape, compositor.CreateColorBrush());
+            seekTime = text.Create(body);
+        }
+
+        /// <summary>The pointer or keyboard focus came onto the seek bar, or left it: the knob shows while it is there.</summary>
+        public void Hover(bool on)
+        {
+            hovered = on;
+            ShowKnob();
+            if (!on && !scrubbing)
+            {
+                Label(null);
+            }
+        }
+
+        /// <summary>The time a seek would go to, on its card over the bar at <paramref name="x"/>; null hides it.</summary>
+        public void Label(float x, TimeSpan time) => Label((x, time));
+
+        /// <summary>A drag holds the knob: the fill ends at <paramref name="x"/>, with the time over it.</summary>
+        public void Scrub(float x, TimeSpan time)
+        {
+            scrubbing = true;
+            Hold(x);
+            ShowKnob();
+            Label(x, time);
+        }
+
+        /// <summary>The drag ended; the knob stays only if the pointer is still on the bar.</summary>
+        public void Scrubbed()
+        {
+            scrubbing = false;
+            ShowKnob();
+            Label(null);
+        }
+
+        /// <summary>The fill stops at <paramref name="x"/>, where a seek went or a drag holds it, until the app reports again.</summary>
+        public void Hold(float x)
+        {
+            var bar = MediaPanelLayout.Bar;
+            fillShape.StopAnimation("Size");
+            fillShape.Size = new Vector2(Math.Clamp(x - bar.X, 0, bar.Width), bar.Height);
         }
 
         public void Update(NowPlaying playing, string? failure, DateTimeOffset at)
         {
             art.Show(playing.Thumbnail, log);
 
-            // A command the app does not accept is dimmed, and a press on it sends nothing.
+            // A command the app does not accept is drawn disabled, and its target is too.
             previous.Color = playing.Accepts(MediaCommand.Previous) ? White : Dim;
             next.Color = playing.Accepts(MediaCommand.Next) ? White : Dim;
             circle.Color = playing.PlayPause == MediaCommand.None ? Dim : White;
             play.Color = playing.IsPlaying ? Clear : Black;
             pause.Color = playing.IsPlaying ? Black : Clear;
 
-            // An app with no timeline gets no bar at all, rather than an empty one that never moves.
+            // An app with no timeline gets no bar at all, rather than an empty one that never moves. A drag keeps the fill where it holds it.
             var bar = MediaPanelLayout.Bar;
-            fillShape.StopAnimation("Size");
             track.Color = playing.Timeline is null ? Clear : Color.FromArgb(41, 255, 255, 255);
             fill.Color = playing.Timeline is null ? Clear : White;
-            if (playing.Timeline is { } timeline)
+            shown = playing;
+            ShowKnob();
+            if (!scrubbing)
+            {
+                fillShape.StopAnimation("Size");
+            }
+
+            if (playing.Timeline is { } timeline && !scrubbing)
             {
                 fillShape.Size = new Vector2(bar.Width * (float)timeline.ProgressAt(at), bar.Height);
                 if (timeline.RemainingAt(at) is { } left && left > TimeSpan.FromMilliseconds(1))
@@ -186,10 +439,30 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             fillShape.StopAnimation("Size");
             art.Dispose();
             shapes.Dispose();
+            seekShapes.Dispose();
             title.Dispose();
             artist.Dispose();
             elapsed.Dispose();
             total.Dispose();
+            seekTime.Dispose();
+        }
+
+        private void ShowKnob() => knob.Color = shown.CanSeek && (hovered || scrubbing) ? White : Clear;
+
+        private void Label((float X, TimeSpan Time)? at)
+        {
+            if (at is not { } label)
+            {
+                card.Color = Clear;
+                seekTime.Show("", MediaPanelLayout.SeekStyle, default);
+                return;
+            }
+
+            var slot = MediaPanelLayout.SeekLabel(label.X);
+            cardShape.Offset = new Vector2(slot.X, slot.Y);
+            cardShape.Size = new Vector2(slot.Width, slot.Height);
+            card.Color = Card;
+            seekTime.Show(NowPlaying.Clock(label.Time), MediaPanelLayout.SeekStyle, slot);
         }
 
         /// <summary>

@@ -133,6 +133,7 @@ GetMonitorInfo
 SetWindowDisplayAffinity
 SetCapture
 ReleaseCapture
+GetCapture
 LoadCursor
 IDC_CROSS
 WM_KEYDOWN

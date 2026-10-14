@@ -1,5 +1,5 @@
 using System.Drawing;
-using System.Numerics;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 
 namespace Tomte.Core.Media;
@@ -14,6 +14,9 @@ public enum MediaCommand
     Toggle = 4,
     Next = 8,
     Previous = 16,
+
+    /// <summary>The app takes a new playback position; sent through <see cref="MediaTracker.SeekAsync"/>, not as a command.</summary>
+    Seek = 32,
 }
 
 /// <summary>
@@ -99,6 +102,9 @@ public sealed record NowPlaying
             : (Accepts(MediaCommand.Play) ? MediaCommand.Play : Commands & MediaCommand.Toggle);
 
     public bool Accepts(MediaCommand command) => (Commands & command) != 0;
+
+    /// <summary>Whether the bar is a seek bar: the app takes a position and reports a timeline to place it on.</summary>
+    public bool CanSeek => Accepts(MediaCommand.Seek) && Timeline is not null;
 
     public bool SameTrackAs(NowPlaying other) => SessionId == other.SessionId && Title == other.Title && Artist == other.Artist;
 
@@ -233,12 +239,22 @@ public sealed class MediaWatchers
 /// Where things sit in the Media panel's body (380 x 98 DIPs under the tab strip): art on the left,
 /// then title, artist, the progress row and the transport row. The text slots are where the text is
 /// drawn, each run as wide as its slot; the clocks have room for "99:59:59" either side of the
-/// bar. The buttons are what a press is tested against.
+/// bar. The buttons (32 DIP square) and the seek area (24 DIP tall, as far past each end of the bar as
+/// the knob reaches) are what a press is tested against; they touch and do not overlap.
 /// a clock of 100 hours or more is cut with an ellipsis; measure it and move the bar if one shows up.
 /// </summary>
 public static class MediaPanelLayout
 {
     public const float ArtCorner = 8;
+
+    /// <summary>The play or pause disc is drawn this wide in the middle of its button.</summary>
+    public const float Disc = 28;
+
+    /// <summary>The knob's radius: at the fill's end while the pointer is on the bar, under the pointer while it drags.</summary>
+    public const float Knob = 6;
+
+    /// <summary>How far one arrow key moves the position.</summary>
+    public static readonly TimeSpan SeekStep = TimeSpan.FromSeconds(5);
 
     // How each run looks: the title, the artist (or the app, or a command that just failed), the two clocks.
     public static readonly TextStyle TitleStyle = new(14, 600);
@@ -247,23 +263,65 @@ public static class MediaPanelLayout
     public static readonly TextStyle ElapsedStyle = TextStyle.Small with { Tabular = true };
     public static readonly TextStyle TotalStyle = ElapsedStyle with { Align = TextAlign.Trailing };
 
+    /// <summary>The time a seek would go to, on its card above the bar.</summary>
+    public static readonly TextStyle SeekStyle = ElapsedStyle with { Color = TextStyle.WhiteColor, Align = TextAlign.Center };
+
     public static readonly RectangleF Art = new(14, 16, 66, 66);
-    public static readonly RectangleF Title = new(94, 9, 272, 19);
-    public static readonly RectangleF Artist = new(94, 29, 272, 16);
-    public static readonly RectangleF Elapsed = new(94, 49, 44, 14);
-    public static readonly RectangleF Bar = new(140, 54, 180, 4);
-    public static readonly RectangleF Total = new(322, 49, 44, 14);
-    public static readonly RectangleF Previous = new(94, 66, 28, 28);
-    public static readonly RectangleF PlayPause = new(128, 66, 28, 28);
-    public static readonly RectangleF Next = new(162, 66, 28, 28);
+    public static readonly RectangleF Title = new(94, 6, 272, 19);
+    public static readonly RectangleF Artist = new(94, 25, 272, 16);
+    public static readonly RectangleF Elapsed = new(94, 43, 44, 14);
+    public static readonly RectangleF Bar = new(140, 48, 180, 4);
+    public static readonly RectangleF Total = new(322, 43, 44, 14);
+    public static readonly RectangleF Seek = new(Bar.X - Knob, Bar.Y + Bar.Height / 2 - 12, Bar.Width + 2 * Knob, 24);
+    public static readonly RectangleF Previous = new(94, 62, 32, 32);
+    public static readonly RectangleF PlayPause = new(130, 62, 32, 32);
+    public static readonly RectangleF Next = new(166, 62, 32, 32);
+
+    public const string SeekId = "seek", PreviousId = "previous", PlayPauseId = "playpause", NextId = "next";
 
     /// <summary>
-    /// The command a press at this body point sends for what plays now. None outside the buttons, and
-    /// on a button whose command the app does not accept.
+    /// The clickable parts for what plays now, in Tab order: the seek bar while the app takes a position (a plain
+    /// progress bar otherwise, and no target), then previous, play or pause and next, one arrow-key group. A button whose
+    /// command the app does not accept is disabled.
     /// </summary>
-    public static MediaCommand Command(Vector2 point, NowPlaying now) =>
-        Previous.Contains(point.X, point.Y) ? now.Commands & MediaCommand.Previous
-        : PlayPause.Contains(point.X, point.Y) ? now.PlayPause
-        : Next.Contains(point.X, point.Y) ? now.Commands & MediaCommand.Next
-        : MediaCommand.None;
+    public static IReadOnlyList<Target> Targets(NowPlaying now)
+    {
+        var buttons = new List<Target>();
+        if (now.CanSeek)
+        {
+            buttons.Add(new(SeekId, Seek, Seek.Height / 2, TargetKind.Button, Draggable: true));
+        }
+
+        buttons.Add(new(PreviousId, Previous, Previous.Width / 2, TargetKind.Button, now.Accepts(MediaCommand.Previous), "Previous", Group: 1));
+        buttons.Add(new(PlayPauseId, PlayPause, PlayPause.Width / 2, TargetKind.Button, now.PlayPause != MediaCommand.None, now.IsPlaying ? "Pause" : "Play", Group: 1));
+        buttons.Add(new(NextId, Next, Next.Width / 2, TargetKind.Button, now.Accepts(MediaCommand.Next), "Next", Group: 1));
+        return buttons;
+    }
+
+    /// <summary>What a click on a transport button sends now; None for anything else or a command the app does not accept.</summary>
+    public static MediaCommand Command(string id, NowPlaying now) => id switch
+    {
+        PreviousId => now.Commands & MediaCommand.Previous,
+        PlayPauseId => now.PlayPause,
+        NextId => now.Commands & MediaCommand.Next,
+        _ => MediaCommand.None,
+    };
+
+    /// <summary>The position a point on the bar stands for, held to the track's ends.</summary>
+    public static TimeSpan SeekAt(float x, MediaTimeline timeline) =>
+        timeline.Start + timeline.Duration * Math.Clamp((x - Bar.X) / Bar.Width, 0, 1);
+
+    /// <summary>Where on the bar a position is, from its left end to its right one.</summary>
+    public static float BarX(TimeSpan position, MediaTimeline timeline) =>
+        Bar.X + Bar.Width * (float)Math.Clamp((position - timeline.Start) / timeline.Duration, 0, 1);
+
+    /// <summary>An arrow key's seek: <paramref name="steps"/> times <see cref="SeekStep"/> on from here, held to the track.</summary>
+    public static TimeSpan Stepped(TimeSpan from, int steps, MediaTimeline timeline)
+    {
+        var to = from + SeekStep * steps;
+        return to < timeline.Start ? timeline.Start : to > timeline.End ? timeline.End : to;
+    }
+
+    /// <summary>The seek time's card: centred on <paramref name="x"/> held to the bar, just above it, over the artist's line.</summary>
+    public static RectangleF SeekLabel(float x) => new(Math.Clamp(x, Bar.Left, Bar.Right) - 22, Bar.Y - 20, 44, 16);
 }
