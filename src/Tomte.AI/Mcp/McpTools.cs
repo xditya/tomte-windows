@@ -370,8 +370,8 @@ public sealed class McpTools : IAsyncDisposable
 
     /// <summary>
     /// The cleaned start of a text, and how many characters after it were left out. Control characters
-    /// go, and so do the characters that reorder text, so a name cannot read as something else in a
-    /// prompt. Whitespace runs become one space unless <paramref name="lines"/> keeps line breaks and tabs.
+    /// go, and so do the characters that reorder text and the invisible tag characters, so a name cannot
+    /// read as something else in a prompt. Whitespace runs become one space unless <paramref name="lines"/> keeps line breaks and tabs.
     /// </summary>
     internal static (string Text, int Cut) Bound(string? text, int max, bool lines)
     {
@@ -384,6 +384,13 @@ public sealed class McpTools : IAsyncDisposable
             char c = text[i];
             if (c is '\u061C' or '\u200E' or '\u200F' or (>= '\u202A' and <= '\u202E') or (>= '\u2066' and <= '\u2069'))
                 continue;
+            // Tag characters (U+E0000 to U+E007F) draw nothing, yet a model reads them: they could carry hidden words.
+            if (c == '\uDB40' && i + 1 < text.Length && text[i + 1] is >= '\uDC00' and <= '\uDC7F')
+            {
+                i++;
+                continue;
+            }
+
             if (lines ? char.IsControl(c) && c is not ('\n' or '\t') : char.IsControl(c) || char.IsWhiteSpace(c))
             {
                 gap = !lines;
