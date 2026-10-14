@@ -52,8 +52,13 @@ public sealed class ClipboardPanelLayout(Vector2 body)
     /// <summary>The remove button inside a row, in the row's own coordinates.</summary>
     public static RectangleF RemoveIn(float rowWidth) => new(rowWidth - Gap - Remove, (RowHeight - Remove) / 2, Remove, Remove);
 
-    /// <summary>The fixed square at a row's left end for what kind of item it is, in the row's own coordinates.</summary>
+    /// <summary>The fixed square at a text row's left end for what kind of item it is, in the row's own coordinates.</summary>
     public static RectangleF IconIn => new(Gap, (RowHeight - Icon) / 2, Icon, Icon);
+
+    public const float ThumbWidth = 48, ThumbHeight = 32;
+
+    /// <summary>An image row's thumbnail at its left end, where a text row has its icon, in the row's own coordinates.</summary>
+    public static RectangleF ThumbIn => new(Gap, (RowHeight - ThumbHeight) / 2, ThumbWidth, ThumbHeight);
 
     /// <summary>The heading, what goes beside it, and the switch's label left of the switch.</summary>
     public IReadOnlyList<TextSlot> HeadText(bool on, int keeps)

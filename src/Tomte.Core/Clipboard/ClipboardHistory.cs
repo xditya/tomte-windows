@@ -223,20 +223,30 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<string,
         return [];
     });
 
-    /// <summary>Puts the item back on the clipboard. It does not paste, and it does not come back as a new item.</summary>
-    public Task PickAsync(long id) => Enqueue(() =>
+    /// <summary>
+    /// Puts the item back on the clipboard. It does not paste, and it does not come back as a new item. True when the
+    /// item was there and went to the listener; the write itself happens on the listener's thread, which only logs a
+    /// clipboard that stayed busy.
+    /// </summary>
+    public Task<bool> PickAsync(long id) => Enqueue(() =>
     {
         if (history.Text(id) is not { } text)
         {
-            return;
+            return false;
         }
 
         lock (gate)
         {
-            listener?.Put(text);
+            if (listener is null)
+            {
+                return false;
+            }
+
+            listener.Put(text);
         }
 
         log?.Invoke($"clipboard: picked an item of {text.Length} characters");
+        return true;
     });
 
     public Task RemoveAsync(long id) => Enqueue(() =>

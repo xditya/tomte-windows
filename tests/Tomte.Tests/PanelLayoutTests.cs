@@ -226,6 +226,12 @@ public sealed class PanelLayoutTests
         Assert.Equal(ClipboardPanelLayout.Gap + ClipboardPanelLayout.Icon + ClipboardPanelLayout.Gap, row[1].Slot.X);
         Assert.Equal(ClipboardPanelLayout.IconIn.Right + ClipboardPanelLayout.Gap, row[1].Slot.X);
 
+        // An image row's thumbnail starts where the icon does and fits the same 40 DIP row with room above and below.
+        var thumb = ClipboardPanelLayout.ThumbIn;
+        Assert.Equal((ClipboardPanelLayout.IconIn.X, 48f, 32f), (thumb.X, thumb.Width, thumb.Height));
+        Assert.Equal(ClipboardPanelLayout.RowHeight - thumb.Bottom, thumb.Top);
+        Assert.True(thumb.Top >= 4);
+
         // The footer: the note ends before Clear all at its widest, so asking never moves it; the button's word fits.
         foreach (bool asking in new[] { false, true })
         {

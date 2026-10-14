@@ -5,6 +5,7 @@ using Tomte.Core.Clipboard;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
+using Windows.Win32;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Color = Windows.UI.Color;
 
@@ -28,6 +29,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
     private long selected = -1;
     private int generation;
     private bool historyOn, asking;
+    private long askedAt, removedAt;
     private Windows.System.DispatcherQueueTimer? askTimer;
 
     public PanelId Id => PanelId.Clipboard;
@@ -60,17 +62,10 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
     }
 
     /// <summary>
-    /// The second click of a double click is dropped on Clear all and on a remove button: it would answer Clear all's
-    /// question before it could be read, or land on the next row's button once the first row has gone.
+    /// A click within the double-click time of the last one is dropped on Clear all's question and on a remove button:
+    /// a double or triple click would answer the question before it could be read, or take the next row too once the
+    /// first has gone (each x is a target of its own, so the host sees two single clicks).
     /// </summary>
-    public void Activate(string id, ActivateBy by)
-    {
-        if (by != ActivateBy.DoubleClick || (id != ClipboardPanelLayout.ClearId && Find(id) is not (_, true)))
-        {
-            Activate(id);
-        }
-    }
-
     public void Activate(string id)
     {
         if (view is null)
@@ -84,8 +79,11 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         }
         else if (id == ClipboardPanelLayout.ClearId && asking)
         {
-            Ask(false);
-            Observe(watch.ClearAsync(), "clear the history");
+            if (!Soon(askedAt))
+            {
+                Ask(false);
+                Observe(watch.ClearAsync(), "clear the history");
+            }
         }
         else if (id == ClipboardPanelLayout.ClearId)
         {
@@ -93,7 +91,11 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         }
         else if (Find(id) is ({ } index, true))
         {
-            Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
+            if (!Soon(removedAt))
+            {
+                removedAt = Environment.TickCount64;
+                Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
+            }
         }
         else if (Find(id) is ({ } picked, false))
         {
@@ -113,15 +115,15 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         return true;
     }
 
-    /// <summary>Focus that reaches a row out of view (only the arrow keys can) scrolls the list to show it.</summary>
+    /// <summary>Focus or the pointer on a row not wholly in view scrolls the list just far enough to show all of it.</summary>
     public void Hovered(string? id)
     {
-        if (view is null || id is null || Find(id) is not ({ } index, _) || targets.FirstOrDefault(t => t.Id == id).Bounds.Height > 0)
+        if (view is null || id is null || Find(id) is not ({ } index, _) || view.Layout.ScrolledTo(index, scroll, rows.Count) is var to && to == scroll)
         {
             return;
         }
 
-        scroll = view.Layout.ScrolledTo(index, scroll, rows.Count);
+        scroll = to;
         view.Scroll(scroll);
         Retarget();
     }
@@ -135,6 +137,8 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             Retarget();
         }
     }
+
+    private static bool Soon(long since) => Environment.TickCount64 - since < PInvoke.GetDoubleClickTime();
 
     // The row a target stands for, and whether it is the row's remove button.
     private (int? Index, bool Remove) Find(string id)
@@ -150,7 +154,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         return (null, false);
     }
 
-    /// <summary>The row goes back on the clipboard; once it is there, "Copied" shows at the row.</summary>
+    /// <summary>The row goes back on the clipboard; once it has gone to the listener, "Copied" shows at the row.</summary>
     private async void Pick(ClipboardRow row, string id)
     {
         int shownAs = generation;
@@ -158,8 +162,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         view?.Select(selected);
         try
         {
-            await watch.PickAsync(row.Id);
-            if (shownAs == generation)
+            if (await watch.PickAsync(row.Id) && shownAs == generation)
             {
                 island.Interaction.Acknowledge(this, id);
             }
@@ -177,6 +180,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         askTimer?.Stop();
         if (on)
         {
+            askedAt = Environment.TickCount64;
             if (askTimer is null)
             {
                 askTimer = island.Queue.CreateTimer();
