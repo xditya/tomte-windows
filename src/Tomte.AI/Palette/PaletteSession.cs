@@ -296,6 +296,8 @@ public sealed partial class PaletteSession : IPaletteSession
             }
 
             tools = OfferShelf(tools);
+            if (FromDropZone)
+                tools = [.. tools.Where(t => t.Name == SkillSet.ReadTool)];
             _offered = [.. tools.Select(t => t.Name)];
 
             // Attached files are read, checked against the model and sized before anything is sent. Each read has its
