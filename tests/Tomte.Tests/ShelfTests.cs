@@ -345,17 +345,20 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
-    public void AReceivedVirtualFileGoesStraightToDiskAndStopsAtTheCap()
+    public void AReceivedVirtualFileGoesStraightToDiskAndIsRefusedPastTheCapOrAFailedRead()
     {
         var shelf = Store(maxReceived: 1000);
         string? path = shelf.Receive("CON.txt", Reader(new byte[1000]));
         Assert.Equal("_CON.txt", Path.GetFileName(path));
         Assert.Equal(1000, new FileInfo(path!).Length);
 
-        // One byte over the cap is refused and leaves nothing behind; so is a stream that never ends.
+        // One byte over the cap is refused and leaves nothing behind; so is a stream that never ends, and a transfer
+        // that breaks partway.
         int before = Directory.GetDirectories(ShelfFolder).Length;
         Assert.Null(shelf.Receive("big.bin", Reader(new byte[1001])));
         Assert.Null(shelf.Receive("endless.bin", buffer => buffer.Length));
+        int reads = 0;
+        Assert.Null(shelf.Receive("broken.bin", buffer => ++reads == 1 ? 100 : -1));
         Assert.Equal(before, Directory.GetDirectories(ShelfFolder).Length);
     }
 

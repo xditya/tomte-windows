@@ -372,8 +372,8 @@ internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
         uint got = 0;
         fixed (byte* p = buffer)
         {
-            // S_FALSE with fewer bytes is the end; a failure ends it too.
-            return stream->Read(p, (uint)buffer.Length, &got).Failed ? 0 : (int)got;
+            // S_FALSE with fewer bytes is the end. A failure is not: it reads as -1, and the file is refused.
+            return stream->Read(p, (uint)buffer.Length, &got).Failed ? -1 : (int)got;
         }
     }
 }

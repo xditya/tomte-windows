@@ -164,7 +164,8 @@ public sealed class ShelfStore : IShelf
 
     /// <summary>
     /// Writes one virtual file into a new folder of the shelf as it is read. Called inside the drop, where the stream is
-    /// valid. Null when it is larger than <see cref="MaxReceivedBytes"/> or cannot be written; nothing is left behind then.
+    /// valid. Null when a read fails, when it is larger than <see cref="MaxReceivedBytes"/> or when it cannot be written;
+    /// nothing is left behind then.
     /// </summary>
     public string? Receive(string name, ReadChunk read)
     {
@@ -185,7 +186,7 @@ public sealed class ShelfStore : IShelf
                 return path;
             }
 
-            log?.Invoke($"shelf: refused {name}: larger than {MaxReceivedBytes >> 20} MB");
+            log?.Invoke($"shelf: refused {name}: a read failed or it is larger than {MaxReceivedBytes >> 20} MB");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

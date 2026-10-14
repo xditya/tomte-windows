@@ -17,7 +17,7 @@ public enum ShelfEffect
 /// <summary>One entry of a FileGroupDescriptorW. DeclaredSize is null when the source did not set FD_FILESIZE.</summary>
 public readonly record struct VirtualFile(string Name, long? DeclaredSize, bool IsFolder);
 
-/// <summary>Reads up to buffer.Length bytes into the buffer and returns how many; 0 at the end.</summary>
+/// <summary>Reads up to buffer.Length bytes into the buffer and returns how many: 0 at the end, negative when the read failed.</summary>
 public delegate int ReadChunk(Span<byte> buffer);
 
 /// <summary>
@@ -139,8 +139,9 @@ public static class ShelfFormats
 
     /// <summary>
     /// A virtual file's stream copied into <paramref name="into"/> in 64 KB chunks until the stream says it is done: the
-    /// size in the descriptor is a hint that browsers set to 0, so it never stops the read early. False when the stream
-    /// holds more than <paramref name="cap"/> bytes; the read stops there, so a stream that never ends cannot hang it.
+    /// size in the descriptor is a hint that browsers set to 0, so it never stops the read early. False when a read
+    /// fails, so a transfer that breaks partway is not taken for a whole file, and when the stream holds more than
+    /// <paramref name="cap"/> bytes; the read stops there, so a stream that never ends cannot hang it.
     /// </summary>
     public static bool CopyCapped(ReadChunk read, Stream into, long cap)
     {
@@ -158,7 +159,7 @@ public static class ShelfFormats
             into.Write(buffer, 0, got);
         }
 
-        return true;
+        return got == 0;
     }
 
     /// <summary>
