@@ -114,4 +114,168 @@ public class InteractionTests
         Assert.Equal(new RectangleF(7, 17, 106, 34), ring);
         Assert.Equal(11, corner);
     }
+
+    private static readonly object Strip = new(), Body = new();
+    private static readonly TargetRef Ask = new(Strip, "ask"), Media = new(Strip, "Media");
+
+    // The press at a screen point and time, with Windows' default double-click box and time.
+    private static void Press(PointerPress p, TargetRef at, int x = 100, long ms = 0) => p.Down(at, x, 10, ms, 4, 4, 500);
+
+    [Fact]
+    public void AClickActsOnReleaseOverTheSameTarget()
+    {
+        var p = new PointerPress();
+        Assert.True(p.Move(Ask));
+        Assert.False(p.Move(Ask));
+        Assert.Equal((Ask, StateLook.Hover), p.Layer(_ => true));
+        // A disabled target under the pointer gets no hover look.
+        Assert.Null(p.Layer(_ => false));
+
+        Press(p, Ask);
+        Assert.Equal((Ask, StateLook.Pressed), p.Layer(_ => true));
+        Assert.Equal((Ask, ActivateBy.Click), p.Up(Ask));
+        Assert.Null(p.Pressed);
+        Assert.Equal(Ask, p.Hovered);
+    }
+
+    [Fact]
+    public void MovingOffCancelsAndMovingBackOnClicksAgain()
+    {
+        var p = new PointerPress();
+        Press(p, Ask);
+
+        // Off the target the pressed look goes and nothing else hovers while the button is down.
+        Assert.True(p.Move(Media));
+        Assert.Null(p.Layer(_ => true));
+        Assert.Equal(Ask, p.Hovered);
+        Assert.True(p.Move(Ask));
+        Assert.Equal((Ask, StateLook.Pressed), p.Layer(_ => true));
+        Assert.Equal((Ask, ActivateBy.Click), p.Up(Ask));
+
+        Press(p, Ask, ms: 2000);
+        p.Move(null);
+        Assert.Null(p.Up(null));
+        Assert.Null(p.Hovered);
+
+        // Leaving the window mid-press takes the pressed look but keeps the press; coming back and letting go clicks.
+        Press(p, Ask, ms: 4000);
+        Assert.True(p.Leave());
+        Assert.Null(p.Layer(_ => true));
+        Assert.Equal(Ask, p.Pressed);
+        p.Move(Ask);
+        Assert.Equal((Ask, ActivateBy.Click), p.Up(Ask));
+
+        // The mouse going elsewhere mid-press clicks nothing.
+        Press(p, Ask, ms: 6000);
+        p.Cancel();
+        Assert.Null(p.Up(Ask));
+    }
+
+    [Fact]
+    public void ASecondClickOnTheSameTargetSoonAfterIsADoubleClick()
+    {
+        var p = new PointerPress();
+        Press(p, Ask, ms: 0);
+        Assert.Equal((Ask, ActivateBy.Click), p.Up(Ask));
+        Press(p, Ask, x: 101, ms: 300);
+        Assert.Equal((Ask, ActivateBy.DoubleClick), p.Up(Ask));
+        // A third click starts over.
+        Press(p, Ask, ms: 400);
+        Assert.Equal((Ask, ActivateBy.Click), p.Up(Ask));
+
+        // Too late, too far, or on another target: two clicks.
+        Press(p, Ask, ms: 1000);
+        Assert.Equal((Ask, ActivateBy.Click), p.Up(Ask));
+        Press(p, Media, ms: 1100);
+        Assert.Equal((Media, ActivateBy.Click), p.Up(Media));
+        Press(p, Media, x: 110, ms: 1200);
+        Assert.Equal((Media, ActivateBy.Click), p.Up(Media));
+        Press(p, Media, x: 110, ms: 1900);
+        Assert.Equal((Media, ActivateBy.Click), p.Up(Media));
+
+        // A cancelled press does not pair with the next one.
+        Press(p, Ask, ms: 3000);
+        p.Cancel();
+        Press(p, Ask, ms: 3100);
+        Assert.Equal((Ask, ActivateBy.Click), p.Up(Ask));
+    }
+
+    [Fact]
+    public void TabCrossesViewsAndEntersAGroupWhereItWasLeft()
+    {
+        // The strip: the tomte, three tabs with Media current, the Ask pill. The body: a button and three tiles, its own group 1.
+        IReadOnlyList<Target>[] views =
+        [
+            [At("tomte", 0, 0), At("Shelf", 30, 0, group: 1), At("Media", 60, 0, group: 1) with { Checked = true }, At("Clipboard", 90, 0, group: 1), At("ask", 120, 0)],
+            [At("add", 0, 50), At("t1", 30, 50, group: 1), At("t2", 60, 50, group: 1), At("t3", 90, 50, group: 1)],
+        ];
+        string? last = null;
+        (int, int)? Tab((int, int)? from, int direction = 1) => Target.Stop(views, from, direction, (v, g) => v == 1 && g == 1 ? last : null);
+
+        Assert.Equal((0, 0), Tab(null));
+        // The tab group is entered at the current tab, not its first one.
+        Assert.Equal((0, 2), Tab((0, 0)));
+        Assert.Equal((0, 4), Tab((0, 2)));
+        Assert.Equal((1, 0), Tab((0, 4)));
+        // The body's group 1 is not the strip's: Tab enters it, at its first tile until one was focused there.
+        Assert.Equal((1, 1), Tab((1, 0)));
+        last = "t3";
+        Assert.Equal((1, 3), Tab((1, 0)));
+        Assert.Equal((0, 0), Tab((1, 3)));
+        Assert.Equal((1, 3), Tab((0, 0), -1));
+        Assert.Equal((1, 3), Tab(null, -1));
+        Assert.Null(Target.Stop([[At("a", 0, 0, enabled: false)]], null, 1, (_, _) => null));
+    }
+
+    [Fact]
+    public void KeysMapToMovesAndTabStaysTextInTheNote()
+    {
+        Assert.Equal(NavKey.Next, NavKeys.Of(NavKeys.Tab, shift: false, ctrl: false));
+        Assert.Equal(NavKey.Previous, NavKeys.Of(NavKeys.Tab, shift: true, ctrl: false));
+        Assert.Equal(NavKey.NextTab, NavKeys.Of(NavKeys.Tab, shift: false, ctrl: true));
+        Assert.Equal(NavKey.PreviousTab, NavKeys.Of(NavKeys.Tab, shift: true, ctrl: true));
+        Assert.Equal(NavKey.Activate, NavKeys.Of(NavKeys.Return, false, false));
+        Assert.Equal(NavKey.Activate, NavKeys.Of(NavKeys.Space, true, false));
+        Assert.Equal(NavKey.None, NavKeys.Of(NavKeys.Space, false, ctrl: true));
+        Assert.Equal(NavKey.Left, NavKeys.Of(0x25, false, false));
+        Assert.Equal(NavKey.Down, NavKeys.Of(0x28, false, false));
+        Assert.Equal(NavKey.None, NavKeys.Of(NavKeys.Escape, false, false));
+        Assert.Equal(NavKey.None, NavKeys.Of('A', false, false));
+        Assert.Equal(new Vector2(0, -1), NavKeys.Direction(NavKey.Up));
+        Assert.Equal(Vector2.Zero, NavKeys.Direction(NavKey.Next));
+
+        // The prompt gives up Tab; the note keeps it and gives up only Ctrl+Tab; other keys are typing in both.
+        Assert.True(NavKeys.LeavesBox(NavKeys.Tab, ctrl: false, tabLeaves: true));
+        Assert.False(NavKeys.LeavesBox(NavKeys.Tab, ctrl: false, tabLeaves: false));
+        Assert.True(NavKeys.LeavesBox(NavKeys.Tab, ctrl: true, tabLeaves: false));
+        Assert.False(NavKeys.LeavesBox(NavKeys.Return, ctrl: false, tabLeaves: true));
+        Assert.False(NavKeys.LeavesBox(0x25, ctrl: true, tabLeaves: true));
+    }
+
+    [Fact]
+    public void ATipSitsUnderItsTargetElseAboveElseOverItAndStaysOnTheIsland()
+    {
+        var island = new RectangleF(-300, 0, 600, 300);
+
+        var (card, tick, label) = StateLook.Tip("Ask Tomte anything", tick: false, new RectangleF(240, 7, 50, 28), island);
+        Assert.Equal(7 + 28 + StateLook.TipGap, card.Y);
+        Assert.Equal(StateLook.TipHeight, card.Height);
+        // Centred on the target would run past the right edge, so it is kept the gap inside it.
+        Assert.Equal(island.Right - StateLook.TipGap, card.Right, 3);
+        Assert.Equal(0, tick.Width);
+        Assert.Equal(card.X + StateLook.TipPadX, label.Slot.X, 3);
+        Assert.Equal(card.Width, label.Slot.Width + (2 * StateLook.TipPadX), 3);
+
+        // No room under a target at the bottom: above it. A pill too shallow for either: over it, inside the shape.
+        Assert.Equal(250 - StateLook.TipGap - StateLook.TipHeight, StateLook.Tip("Remove", false, new RectangleF(0, 250, 24, 40), island).Card.Y);
+        var pill = new RectangleF(-110, 0, 220, 38);
+        var over = StateLook.Tip("Copied", tick: true, new RectangleF(-100, 6, 26, 26), pill).Card;
+        Assert.Equal(7, over.Y);
+        Assert.Equal(pill.Left + StateLook.TipGap, over.X, 3);
+
+        // An acknowledgement's tick comes before its word.
+        var ack = StateLook.Tip("Copied", tick: true, new RectangleF(-50, 50, 100, 40), island);
+        Assert.Equal(StateLook.TickSize, ack.Tick.Width);
+        Assert.Equal(ack.Tick.Right + StateLook.TickGap, ack.Label.Slot.X, 3);
+    }
 }

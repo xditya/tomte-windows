@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Numerics;
+using Tomte.Core.Text;
 
 namespace Tomte.Core.Interaction;
 
@@ -131,7 +132,214 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
         return best;
     }
 
+    /// <summary>
+    /// Tab (+1) or Shift+Tab (-1) across several views' lists in the order they registered: <see cref="Next"/> over them
+    /// as one list, each view's groups its own. A group is entered at the member <paramref name="lastIn"/> names for it
+    /// (the one last focused there), else at a checked one (the current tab), else at its first enabled member. Null when
+    /// nothing is enabled.
+    /// </summary>
+    public static (int View, int Index)? Stop(IReadOnlyList<IReadOnlyList<Target>> views, (int View, int Index)? from, int direction, Func<int, int, string?> lastIn)
+    {
+        var flat = new List<Target>();
+        var at = new List<(int View, int Index)>();
+        var groups = new Dictionary<(int View, int Group), int>();
+        int start = -1;
+        for (int v = 0; v < views.Count; v++)
+        {
+            for (int i = 0; i < views[v].Count; i++)
+            {
+                var t = views[v][i];
+                if (t.Group != 0 && !groups.ContainsKey((v, t.Group)))
+                {
+                    groups[(v, t.Group)] = groups.Count + 1;
+                }
+
+                start = from == (v, i) ? flat.Count : start;
+                flat.Add(t with { Group = t.Group == 0 ? 0 : groups[(v, t.Group)] });
+                at.Add((v, i));
+            }
+        }
+
+        int to = Next(flat, start, direction);
+        if (to < 0)
+        {
+            return null;
+        }
+
+        var (view, index) = at[to];
+        var list = views[view];
+        int group = list[index].Group;
+        if (group == 0 || (from is { } f && f.View == view && list[f.Index].Group == group))
+        {
+            return (view, index);
+        }
+
+        string? last = lastIn(view, group);
+        int pick = Index(list, m => m.Group == group && m.Enabled && m.Id == last);
+        pick = pick >= 0 ? pick : Index(list, m => m.Group == group && m.Enabled && m.Checked);
+        return (view, pick >= 0 ? pick : index);
+    }
+
+    private static int Index(IReadOnlyList<Target> targets, Func<Target, bool> match)
+    {
+        for (int i = 0; i < targets.Count; i++)
+        {
+            if (match(targets[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
     private static Vector2 Centre(RectangleF r) => new(r.X + (r.Width / 2), r.Y + (r.Height / 2));
+}
+
+/// <summary>One target of one registered view, by the view and the target's id, which outlive a change of its list.</summary>
+public readonly record struct TargetRef(object View, string Id);
+
+/// <summary>What a key does to the island's targets.</summary>
+public enum NavKey { None, Next, Previous, Left, Right, Up, Down, Activate, NextTab, PreviousTab }
+
+/// <summary>Which keys move between the island's targets, and which ones a text box gives up.</summary>
+public static class NavKeys
+{
+    public const int Tab = 0x09, Return = 0x0D, Escape = 0x1B, Space = 0x20;
+    private const int VkLeft = 0x25, VkUp = 0x26, VkRight = 0x27, VkDown = 0x28;
+
+    /// <summary>Tab and Shift+Tab move between stops, the arrows inside a group, Enter and Space click, Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs.</summary>
+    public static NavKey Of(int virtualKey, bool shift, bool ctrl) => virtualKey switch
+    {
+        Tab when ctrl => shift ? NavKey.PreviousTab : NavKey.NextTab,
+        Tab => shift ? NavKey.Previous : NavKey.Next,
+        VkLeft => NavKey.Left,
+        VkRight => NavKey.Right,
+        VkUp => NavKey.Up,
+        VkDown => NavKey.Down,
+        Return or Space when !ctrl => NavKey.Activate,
+        _ => NavKey.None,
+    };
+
+    /// <summary>The unit step of an arrow key in DIP space, y down; zero for any other key.</summary>
+    public static Vector2 Direction(NavKey key) => key switch
+    {
+        NavKey.Left => new(-1, 0),
+        NavKey.Right => new(1, 0),
+        NavKey.Up => new(0, -1),
+        NavKey.Down => new(0, 1),
+        _ => Vector2.Zero,
+    };
+
+    /// <summary>
+    /// A key down in a text box that the box gives up to the targets: Ctrl+Tab from any box, which switches panel tabs,
+    /// and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note is a tab.
+    /// </summary>
+    public static bool LeavesBox(int virtualKey, bool ctrl, bool tabLeaves) => virtualKey == Tab && (ctrl || tabLeaves);
+}
+
+/// <summary>
+/// The pointer's side of the island's interaction, with no window: the target under the pointer, the one the button went
+/// down on and whether the pointer is still on it, and what letting go does. A release on the pressed target activates
+/// it; a release anywhere else, or capture going elsewhere, cancels. A second click on the same target within the
+/// system's double-click time and box is a double click, and a third one starts over. While the button is down the
+/// hover stays on the pressed target.
+/// </summary>
+public sealed class PointerPress
+{
+    private TargetRef? lastClick;
+    private long lastAt;
+    private int lastX, lastY;
+    private ActivateBy pending;
+
+    public TargetRef? Hovered { get; private set; }
+
+    public TargetRef? Pressed { get; private set; }
+
+    /// <summary>The pointer is on the pressed target, which then shows the pressed look; off it, a release cancels.</summary>
+    public bool OnPressed { get; private set; }
+
+    /// <summary>The pointer is over <paramref name="under"/> now, null over no target. True when the hover or the pressed look changed.</summary>
+    public bool Move(TargetRef? under)
+    {
+        if (Pressed is { } pressed)
+        {
+            bool on = under == pressed;
+            (bool changed, OnPressed) = (on != OnPressed, on);
+            return changed;
+        }
+
+        if (under == Hovered)
+        {
+            return false;
+        }
+
+        Hovered = under;
+        return true;
+    }
+
+    /// <summary>
+    /// The pointer left the window: nothing is hovered, and a press that holds the mouse loses its pressed look until the
+    /// pointer comes back onto its target. True when the look changed.
+    /// </summary>
+    public bool Leave()
+    {
+        if (Pressed is null)
+        {
+            return Move(null);
+        }
+
+        bool was = OnPressed;
+        OnPressed = false;
+        return was;
+    }
+
+    /// <summary>The button went down on <paramref name="target"/> at this screen point and time, with the system's double-click box and time.</summary>
+    public void Down(TargetRef target, int x, int y, long ms, int boxX, int boxY, uint timeMs)
+    {
+        pending = IslandPlace.IsDoubleClick(lastClick == target, x - lastX, y - lastY, ms - lastAt, boxX, boxY, timeMs) ? ActivateBy.DoubleClick : ActivateBy.Click;
+        (lastX, lastY, lastAt) = (x, y, ms);
+        (Pressed, Hovered, OnPressed) = (target, target, true);
+    }
+
+    /// <summary>The button came up over <paramref name="under"/>: the pressed target and how it was clicked, or null when the press is cancelled.</summary>
+    public (TargetRef Target, ActivateBy By)? Up(TargetRef? under)
+    {
+        var pressed = Pressed;
+        (Pressed, Hovered, OnPressed) = (null, under, false);
+        if (pressed is not { } target || under != target)
+        {
+            lastClick = null;
+            return null;
+        }
+
+        lastClick = pending == ActivateBy.Click ? target : null;
+        return (target, pending);
+    }
+
+    /// <summary>Capture went elsewhere, a drag took the press, or the island hid: nothing activates and no click waits for a second one.</summary>
+    public void Cancel()
+    {
+        (Pressed, OnPressed, lastClick) = (null, false, null);
+    }
+
+    /// <summary>The state layer: the pressed look on the pressed target while the pointer is on it, else the hover look on an enabled hovered one.</summary>
+    public (TargetRef Target, uint Fill)? Layer(Func<TargetRef, bool> enabled)
+    {
+        if (Pressed is { } pressed)
+        {
+            return OnPressed ? (pressed, StateLook.Pressed) : null;
+        }
+
+        return Hovered is { } hovered && enabled(hovered) ? (hovered, StateLook.Hover) : null;
+    }
+
+    /// <summary>The island hid: nothing is hovered or pressed.</summary>
+    public void Reset()
+    {
+        Cancel();
+        Hovered = null;
+    }
 }
 
 /// <summary>The one source of interaction colours, sizes and times; colours are ARGB.</summary>
@@ -164,10 +372,50 @@ public static class StateLook
     /// <summary>A confirmation after an action (a tick and "Copied") shows this long.</summary>
     public const int AcknowledgeMs = 1200;
 
+    /// <summary>
+    /// The tooltip's card: this tall, this much room either side of its line, this far off the target and the island's
+    /// edges, with these corners; a grey a step above the island's black, with a faint hairline.
+    /// </summary>
+    public const float TipHeight = 24, TipPadX = 8, TipGap = 4, TipCorner = 6;
+
+    public const uint TipFill = 0xFF2C2C30, TipLine = 0x1AFFFFFF;
+
+    public static readonly TextStyle TipText = new(12, Color: 0xEBFFFFFF);
+
+    /// <summary>An acknowledgement's tick: a filled check this square, this far before the word, in the accent.</summary>
+    public const float TickSize = 10, TickGap = 5;
+
+    public static readonly OutlineSegment[] Tick =
+    [
+        OutlineSegment.Move(new(0, 5.3f)), OutlineSegment.Line(new(1.3f, 4)), OutlineSegment.Line(new(3.8f, 6.5f)),
+        OutlineSegment.Line(new(8.7f, 1.6f)), OutlineSegment.Line(new(10, 2.9f)), OutlineSegment.Line(new(3.8f, 9.1f)),
+    ];
+
     /// <summary>The focus ring's stroke line for a target: its bounds and corner pushed out to the middle of the stroke.</summary>
     public static (RectangleF Bounds, float Corner) FocusRing(RectangleF bounds, float corner)
     {
         const float Out = FocusGap + (FocusWidth / 2);
         return (RectangleF.Inflate(bounds, Out, Out), corner + Out);
+    }
+
+    /// <summary>
+    /// A tooltip, or with <paramref name="tick"/> an acknowledgement, for a target, everything in island space: the card
+    /// under the target, else above it, else over it, always inside <paramref name="island"/> (the shape's box), centred
+    /// on the target as far as the edges allow; the tick's box; and the one line of text, cut to the room there is.
+    /// </summary>
+    public static (RectangleF Card, RectangleF Tick, TextSlot Label) Tip(string text, bool tick, RectangleF target, RectangleF island)
+    {
+        float lead = tick ? TickSize + TickGap : 0;
+        float room = Math.Max(0, island.Width - (2 * TipGap) - (2 * TipPadX) - lead);
+        float textWidth = TextSlot.Measure(text, TipText, room);
+        float width = (2 * TipPadX) + lead + textWidth;
+        float x = Math.Clamp(target.X + ((target.Width - width) / 2), island.Left + TipGap, Math.Max(island.Left + TipGap, island.Right - TipGap - width));
+        float below = target.Bottom + TipGap, above = target.Top - TipGap - TipHeight;
+        float y = below + TipHeight <= island.Bottom - TipGap ? below
+            : above >= island.Top + TipGap ? above
+            : Math.Clamp(target.Y + ((target.Height - TipHeight) / 2), island.Top, Math.Max(island.Top, island.Bottom - TipHeight));
+        var card = new RectangleF(x, y, width, TipHeight);
+        var mark = new RectangleF(x + TipPadX, y + ((TipHeight - TickSize) / 2), tick ? TickSize : 0, tick ? TickSize : 0);
+        return (card, mark, new TextSlot(text, TipText, new RectangleF(x + TipPadX + lead, y, textWidth, TipHeight)));
     }
 }
