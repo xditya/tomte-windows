@@ -32,12 +32,15 @@ public static class PdfExtraction
             throw new FileReadException("could not be read: it is damaged or not a PDF.");
         }
 
+        var text = new StringBuilder();
+        int pages, failed = 0, read = 0;
+        bool encrypted;
         using (document)
         {
-            int pages, failed = 0, read = 0;
             try
             {
                 pages = document.NumberOfPages;
+                encrypted = document.IsEncrypted;
             }
             catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
             {
@@ -47,7 +50,6 @@ public static class PdfExtraction
             if (pages == 0)
                 throw new FileReadException("could not be read: it has no pages.");
 
-            var text = new StringBuilder();
             for (int number = 1; number <= pages && text.Length < limits.MaxChars; number++)
             {
                 ct.ThrowIfCancellationRequested();
@@ -64,12 +66,13 @@ public static class PdfExtraction
                     failed++;
                 }
             }
-
-            if (failed == read)
-                throw new FileReadException("could not be read: it is damaged or not a PDF.");
-            bool cut = text.Length >= limits.MaxChars || read < pages;
-            string result = TextExtraction.Start(text.ToString(), limits.MaxChars);
-            return new Extracted(string.IsNullOrWhiteSpace(result) ? "" : result, cut && result.Length > 0, pages, read, document.IsEncrypted);
         }
+
+        // The document and what it parsed are gone before the text is copied out.
+        if (failed == read)
+            throw new FileReadException("could not be read: it is damaged or not a PDF.");
+        bool cut = text.Length >= limits.MaxChars || read < pages;
+        string result = TextExtraction.Start(text.ToString(), limits.MaxChars);
+        return new Extracted(string.IsNullOrWhiteSpace(result) ? "" : result, cut && result.Length > 0, pages, read, encrypted);
     }
 }

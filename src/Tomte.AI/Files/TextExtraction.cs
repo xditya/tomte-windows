@@ -11,8 +11,8 @@ namespace Tomte.AI.Files;
 /// </summary>
 public sealed record FileLimits
 {
-    /// <summary>Characters of text kept from one file, about 250,000 to 330,000 tokens.</summary>
-    public int MaxChars { get; init; } = 1_000_000;
+    /// <summary>Characters of text kept from one file, about 125,000 to 170,000 tokens.</summary>
+    public int MaxChars { get; init; } = 500_000;
 
     /// <summary>A PDF, Word file or image larger than this is not opened. Plain text is read only up to the character cap.</summary>
     public long MaxBytes { get; init; } = 100L << 20;
