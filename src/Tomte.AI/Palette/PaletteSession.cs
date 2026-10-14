@@ -104,6 +104,7 @@ public sealed class PaletteSession : IPaletteSession
     private readonly BuiltInTools _tools;
     private readonly PermissionGrants _grants;
     private readonly List<AnswerSegment> _answer = [];
+    private readonly SortedSet<string> _mcpContacted = new(StringComparer.Ordinal);
     private readonly string _model;
     private CancellationTokenSource? _userCancel;
     private string _indicator = "Nothing sent";
@@ -165,6 +166,7 @@ public sealed class PaletteSession : IPaletteSession
             return;
 
         _answer.Clear();
+        _mcpContacted.Clear();
         ToolSteps = 0;
         Error = null;
         if (_options.DailyCapUsd is { } cap && SpentTodayUsd >= cap)
@@ -186,7 +188,21 @@ public sealed class PaletteSession : IPaletteSession
         {
             List<ContentPart> parts;
             (parts, attached) = await ContextAssembly.BuildAsync(Chips, Prompt, ct);
-            IReadOnlyList<ToolDefinition> tools = Mcp is null ? BuiltInTools.Definitions : [.. BuiltInTools.Definitions, .. await Mcp.ListAsync(ct)];
+            IReadOnlyList<ToolDefinition> tools = BuiltInTools.Definitions;
+            if (Mcp is not null)
+            {
+                // Starting or connecting a server sends it data (an HTTP server gets its header), so the user sees which ones.
+                if (Mcp.NotRunning is { Count: > 0 } starting)
+                {
+                    _mcpContacted.UnionWith(starting);
+                    _indicator = $"Connecting to MCP: {string.Join(", ", starting)}";
+                    Changed?.Invoke();
+                }
+
+                // A built-in name always means the built-in tool.
+                tools = [.. tools, .. (await Mcp.ListAsync(ct)).Where(d => !BuiltInTools.Tiers.ContainsKey(d.Name))];
+            }
+
             var messages = new List<ChatMessage> { new(ChatRole.User, parts) };
             while (true)
             {
@@ -242,7 +258,13 @@ public sealed class PaletteSession : IPaletteSession
                 _log.Append(new SendLogEntry(Now(), _config.Id, _model, inputTokens, outputTokens, cost, attached,
                     _options.LogContent ? $"{Prompt}\n---\n{AnswerText}" : null));
                 SpentTodayUsd += cost;
-                _indicator = $"Sent to {_config.Id} · {_model}";
+            }
+
+            // MCP servers got data too (a header on connect, the arguments of a call), also when the model was never reached.
+            string mcp = _mcpContacted.Count == 0 ? "" : $"MCP: {string.Join(", ", _mcpContacted)}";
+            if (sent || mcp.Length > 0)
+            {
+                _indicator = "Sent to " + (sent ? $"{_config.Id} · {_model}{(mcp.Length == 0 ? "" : " and ")}" : "") + mcp;
                 Changed?.Invoke();
             }
         }
@@ -306,7 +328,7 @@ public sealed class PaletteSession : IPaletteSession
 
     private async Task<ToolResultPart> RunToolAsync(ToolCallPart call, CancellationToken ct)
     {
-        bool mcp = Mcp?.Owns(call.Name) == true;
+        bool mcp = !BuiltInTools.Tiers.ContainsKey(call.Name) && Mcp?.Owns(call.Name) == true;
         // MCP servers check their own arguments; the only shape rule here is the one every tool shares.
         string? invalid = mcp
             ? call.Input.ValueKind == JsonValueKind.Object ? null : "Arguments must be a JSON object."
@@ -330,7 +352,14 @@ public sealed class PaletteSession : IPaletteSession
 
         if (mcp)
         {
-            var mcpResult = await Mcp!.CallAsync(call, ct);
+            // The arguments go to the server, not to the model's provider; the indicator says so while they do.
+            string server = Mcp!.ServerOf(call.Name);
+            string provider = _indicator;
+            _mcpContacted.Add(server);
+            _indicator = $"Sending to MCP: {server}";
+            Changed?.Invoke();
+            var mcpResult = await Mcp.CallAsync(call, ct);
+            _indicator = provider;
             return Step(call, summary, mcpResult.Content, mcpResult.IsError);
         }
 

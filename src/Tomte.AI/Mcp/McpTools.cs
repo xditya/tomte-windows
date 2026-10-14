@@ -88,7 +88,13 @@ public sealed class McpTools : IAsyncDisposable
     public IReadOnlyList<McpToolInfo> Tools =>
         [.. _tools.Values.Select(t => new McpToolInfo(t.Key, Clean(t.Tool.Name, MaxName), Clean(t.Tool.Description, MaxDescription)))];
 
+    /// <summary>The servers a listing would start or connect now, by name: what the "where data goes" indicator shows.</summary>
+    public IReadOnlyList<string> NotRunning => [.. _servers.Where(s => !_clients.ContainsKey(s.Name)).Select(s => Clean(s.Name, MaxName))];
+
     public bool Owns(string tool) => _tools.ContainsKey(tool);
+
+    /// <summary>The name of the server a tool runs on, for the same indicator.</summary>
+    public string ServerOf(string tool) => Clean(_tools[tool].Server.Name, MaxName);
 
     /// <summary>What this tool's tier override and "always allow" are stored under; see <see cref="Key"/>.</summary>
     public string KeyOf(string tool) => _tools[tool].Key;

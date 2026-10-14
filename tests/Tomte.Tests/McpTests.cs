@@ -602,6 +602,44 @@ public class McpPaletteTests : IDisposable
         Assert.Equal(PaletteStatus.Failed, session.Status);
         Assert.Contains("MCP server \"Files\" did not start", session.Error);
         Assert.Empty(_provider.Requests);
+        // The model was never reached, but the server was contacted: "Nothing sent" would not be true.
+        Assert.Equal("Sent to MCP: Files", session.ProviderIndicator);
+    }
+
+    [Fact]
+    public async Task TheIndicatorNamesTheServersDataGoesTo()
+    {
+        _provider.Turns.Add(ScriptedProvider.Call("files__echo", """{"text":"hi"}"""));
+        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "done"));
+        await using var mcp = Tools();
+        var session = Session(mcp, PermissionAnswer.AllowOnce);
+        var shown = new List<string>();
+        session.Changed += () =>
+        {
+            if (shown.Count == 0 || shown[^1] != session.ProviderIndicator)
+                shown.Add(session.ProviderIndicator);
+        };
+        await session.SendAsync();
+
+        string provider = "p " + (char)0xB7 + " m";
+        Assert.Equal(
+            ["Nothing sent", "Connecting to MCP: Files", $"Sending to {provider}", "Sending to MCP: Files", $"Sending to {provider}", $"Sent to {provider} and MCP: Files"],
+            shown);
+
+        // The server is running now, so a second send connects to nothing new.
+        shown.Clear();
+        _provider.Requests.Clear();
+        await session.SendAsync();
+        Assert.DoesNotContain("Connecting to MCP: Files", shown);
+        Assert.Equal($"Sent to {provider} and MCP: Files", shown[^1]);
+    }
+
+    [Fact]
+    public void BuiltInNamesNeverLookLikeMcpNames()
+    {
+        // The separator is what tells the two apart; a built-in name always means the built-in tool.
+        Assert.DoesNotContain(BuiltInTools.Definitions, d => d.Name.Contains(McpTools.Separator));
+        Assert.Equal(BuiltInTools.Definitions.Select(d => d.Name).Order(), BuiltInTools.Tiers.Keys.Order());
     }
 }
 
