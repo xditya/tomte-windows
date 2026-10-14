@@ -11,7 +11,8 @@ namespace Tomte.Shell;
 /// the request went, a line of progress or trouble, the answer as it streams, the size question's choices and the
 /// result files, which a press and drag takes out of the island through the shelf's own drag. Text is the text
 /// renderer's; only a run that changed is drawn again. It fades in with the shape and goes when the island leaves
-/// the Palette state, which also ends the request and answers an open size question with cancel.
+/// the Palette state (Esc, or the island retracting once nothing is in progress), which also ends the request and
+/// answers an open size question with cancel. While the question is open the island stays out until it is answered.
 /// </summary>
 internal sealed class DropResultView
 {

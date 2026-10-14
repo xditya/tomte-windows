@@ -8,10 +8,11 @@ using Tomte.Core;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The AI drop zones: whether the Shelf-drop surface has them (only with a provider set up), and the drop that lands
-/// on one. Such a drop is read inside Drop exactly as the shelf reads it, the item goes on the shelf, and everything
-/// after that (reading the file, sending it, the result files) runs in a <see cref="ZoneRun"/> off the drop. Holds
-/// only shell and Core types, so making it at start loads nothing of the AI layer.
+/// The AI drop zones: whether the Shelf-drop surface has them (only with a provider set up in settings), and the drop
+/// that lands on one. Such a drop is read inside Drop exactly as the shelf reads it and the item goes on the shelf;
+/// everything after that (loading the AI layer, the panel, reading the file, sending it, the result files) runs in a
+/// <see cref="ZoneRun"/> once Drop has returned to the source. Holds only shell and Core types and reads only the
+/// settings, so making it at start, and a drag over it, loads nothing of the AI layer and reads no key.
 /// </summary>
 internal sealed class DropZones
 {
@@ -20,12 +21,11 @@ internal sealed class DropZones
     private readonly ShelfStore shelf;
     private readonly TextRenderer text;
     private readonly SettingsStore store;
-    private readonly Func<ProviderConfig?> provider;
     private readonly Action<string>? log;
 
-    public DropZones(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, Func<ProviderConfig?> provider, Action<string>? log)
+    public DropZones(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, Action<string>? log)
     {
-        (this.island, this.triggers, this.shelf, this.text, this.store, this.provider, this.log) = (island, triggers, shelf, text, store, provider, log);
+        (this.island, this.triggers, this.shelf, this.text, this.store, this.log) = (island, triggers, shelf, text, store, log);
         Surface = new ShelfDropSurface(island, triggers.Machine, triggers.Drops, text, Layout);
         triggers.DropOnZone = Take;
     }
@@ -33,51 +33,52 @@ internal sealed class DropZones
     public ShelfDropSurface Surface { get; }
 
     /// <summary>The zones for the surface about to show: none without a provider that has a model.</summary>
-    private DropZoneLayout? Layout() =>
-        provider() is { DefaultModel: not null } config
-            ? DropZoneLayout.For(config.Id, store.Current.DropZoneSkill, IslandGeometry.ShelfDrop.Width, IslandGeometry.ShelfDrop.Depth)
-            : null;
+    private DropZoneLayout? Layout() => DropZoneLayout.For(store.Current, IslandGeometry.ShelfDrop.Width, IslandGeometry.ShelfDrop.Depth);
 
     private bool Take(DroppedItems drop)
     {
-        if (Surface.Layout is null || Surface.Hot is not { } zone || zone == DropZone.Shelf || provider() is not { DefaultModel: not null } config)
+        if (Surface.Layout is null || Surface.Hot is not { } zone || zone == DropZone.Shelf || !DropZoneLayout.HasProvider(store.Current))
         {
             return false;
         }
 
         // What the source may take back after Drop returns is read here, as for any drop on the shelf.
         var accepted = shelf.Accept(drop);
+        bool fromText = drop.Text is not null && drop.Paths.Count + drop.Files.Count == 0;
         log?.Invoke($"drop zone: {zone}, {drop.Paths.Count + drop.Files.Count + (drop.Text is null ? 0 : 1)} items");
-        Run(zone, accepted, drop.Text is not null && drop.Paths.Count + drop.Files.Count == 0, config);
+        // The rest waits until Drop has returned: the source is not held while the AI layer loads and the island morphs.
+        island.Queue.TryEnqueue(() => Run(zone, accepted, fromText));
         return true;
     }
 
     // Kept out of Take so the AI layer loads with the first drop on a zone, not before.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private void Run(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText, ProviderConfig config) =>
-        _ = new ZoneRun(island, triggers, shelf, text, store, log).RunAsync(zone, accepted, fromText, config);
+    private void Run(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText) =>
+        _ = new ZoneRun(island, triggers, shelf, text, store, log).RunAsync(zone, accepted, fromText);
 }
 
 /// <summary>
-/// One drop on a zone, from the drop to its result: the panel opens at once, the item goes on the shelf, then the
-/// file is read and sent as a palette send of its own (its readers, size question, spend cap and send log), and what
-/// comes back goes on the shelf as files the panel shows. Leaving the panel ends the send and answers an open size
-/// question with cancel. On the island's thread; the reading and the sending await on the pool.
+/// One drop on a zone, from the drop to its result: the panel opens, the item is on the shelf, then the file is read
+/// and sent as a palette send of its own to the provider set up in settings (its key, cap and prices, B5's readers,
+/// the size question and the send log), and what comes back goes on the shelf as files the panel shows. The island
+/// stays out while the send runs and while the size question waits for an answer; Esc, or anything else that takes the
+/// island down, ends the send and answers the question with cancel. On the island's thread; the reading and the
+/// sending await on the pool.
 /// </summary>
 internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, Action<string>? log)
 {
-    private static HttpClient? http;
+    private const string NoProvider = "The provider in settings cannot be used. Set it up again in Settings. Nothing was sent.";
     private static PermissionGrants? grants;
     private DropResultView view = null!;
     private TaskCompletionSource<SizeChoice>? asking;
     private SizeQuestion? question;
     private bool queued;
 
-    public async Task RunAsync(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText, ProviderConfig config)
+    public async Task RunAsync(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText)
     {
         if (zone == DropZone.Ask)
         {
-            await AskAsync(accepted, config);
+            await AskAsync(accepted);
             return;
         }
 
@@ -114,7 +115,14 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             }
 
             var item = items[0];
-            var (provider, model, sendLog, tools) = await Connect(config);
+            if (Program.Configured(store, log) is not { } configured)
+            {
+                Finish(new DropResult($"{title} · {item.Name}", "Nothing sent", NoProvider, true, "", [], []), ok: false);
+                return;
+            }
+
+            var (provider, config, options) = configured;
+            var model = await ProviderSetup.DescribeAsync(provider, config);
             // Esc while the model was looked up: nothing is sent into a panel that is gone.
             if (!view.Open)
             {
@@ -145,10 +153,18 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
                 }
             }
 
-            var running = session = DropZoneRequest.Session(zone, title, item.Name, provider, config, new PaletteOptions(), sendLog, tools, grants!, skill, model);
+            grants ??= new PermissionGrants(store);
+            var tools = new BuiltInTools(shelf, new InMemoryScratchpad(), DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);
+            var running = session = DropZoneRequest.Session(zone, title, item.Name, provider, config, options, NewSendLog(), tools, grants, skill, model);
             running.ChooseSize = (q, _) =>
             {
-                // Asked in the panel after the drop; leaving the panel answers it with cancel, the default.
+                // A panel that is already gone answers cancel, since nothing would ever answer this question.
+                if (!view.Open)
+                {
+                    return Task.FromResult(SizeChoice.Cancel);
+                }
+
+                // Asked in the panel after the drop; it waits for a choice, and Esc answers cancel, the default.
                 question = DropZoneRequest.Asked(zone, q);
                 asking = new TaskCompletionSource<SizeChoice>(TaskCreationOptions.RunContinuationsAsynchronously);
                 Update(running, item.Name, title);
@@ -177,41 +193,26 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
 
     /// <summary>
     /// "Ask about it": once the item is on the shelf, which takes a moment while the surface stays, the Palette state
-    /// opens with a session that has the item's chip on and an empty prompt, and nothing is sent until the user asks.
-    /// The palette that can be typed in shows it when there is one; otherwise this zone's panel says what is attached.
+    /// opens with the typing palette on a session to the configured provider that has the item's chip on and an empty
+    /// prompt; its prompt box takes the keys and nothing is sent until the user asks. Without a usable provider this
+    /// zone's panel says so.
     /// </summary>
-    private async Task AskAsync(Task<IReadOnlyList<ShelfItem>> accepted, ProviderConfig config)
+    private async Task AskAsync(Task<IReadOnlyList<ShelfItem>> accepted)
     {
         if (await accepted is not [var item, ..] || triggers.Machine.State != IslandState.ShelfDrop)
         {
             return;
         }
 
-        var (provider, model, sendLog, tools) = await Connect(config, describe: false);
-        var ask = DropZoneRequest.Ask(item.Name, provider, config, new PaletteOptions(), sendLog, tools, grants!, model);
         triggers.ZonePalette(PanelSize.PaletteMinHeight, busy: false);
-        if (Program.AskInPalette(island, triggers, log, ask))
+        if (!Program.AskInPalette(island, triggers, store, shelf, log, item.Name))
         {
-            return;
+            view = new DropResultView(island, triggers, shelf, text, log);
+            Finish(new DropResult($"{DropZoneLayout.Label(DropZone.Ask, null)} · {item.Name}", "Nothing sent", NoProvider, true, "", [], []), ok: false);
         }
-
-        view = new DropResultView(island, triggers, shelf, text, log);
-        Finish(new DropResult($"{DropZoneLayout.Label(DropZone.Ask, null)} · {item.Name}", ask.ProviderIndicator, $"{ask.Chips[0].Label} is attached. Nothing is sent until you ask.", false, $"Ask about {item.Name}", [], []), ok: true);
     }
 
-    /// <summary>
-    /// The provider with its key from Credential Manager, what a local Ollama says about the model, the send log beside
-    /// the settings file and the tools over the real shelf. A zone's send is offered none of the tools; Ask's palette is.
-    /// </summary>
-    private async Task<(IChatProvider Provider, ModelInfo? Model, SendLog Log, BuiltInTools Tools)> Connect(ProviderConfig config, bool describe = true)
-    {
-        http ??= new HttpClient();
-        grants ??= new PermissionGrants(store);
-        var provider = ProviderSetup.Load(config, http);
-        var model = describe ? await ProviderSetup.DescribeAsync(provider, config) : null;
-        var sendLog = new SendLog(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(store.FilePath))!, "send-log.jsonl"));
-        return (provider, model, sendLog, new BuiltInTools(shelf, new InMemoryScratchpad(), DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl));
-    }
+    private SendLog NewSendLog() => new(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(store.FilePath))!, "send-log.jsonl"));
 
     /// <summary>The result: its files on the shelf, or the renamed copy, and the panel shows them.</summary>
     private async Task Done(DropZone zone, PaletteSession session, ShelfItem item, string title)
@@ -263,8 +264,8 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             queued = false;
             if (view.Open && session.Status is PaletteStatus.Sending or PaletteStatus.Idle)
             {
-                // While the size question is open nothing is in flight: leaving the panel then cancels, as the default does.
-                Show(DropZoneRequest.Panel(title, item, session, question), busy: question is null);
+                // An open size question holds the island like the send does, until it is answered or Esc cancels it.
+                Show(DropZoneRequest.Panel(title, item, session, question), busy: true);
             }
         });
     }
