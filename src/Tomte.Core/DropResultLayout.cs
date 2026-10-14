@@ -48,6 +48,20 @@ public sealed class DropResultLayout
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
     public const float WheelStep = 3 * 19;
 
+    /// <summary>
+    /// The most lines of an answer the panel lays out. Each block is one surface, and 250 lines of 19 DIP stay inside
+    /// Direct3D's 16384 pixel texture even at 300%; it also bounds what a streaming update lays out again.
+    /// </summary>
+    public const int MaxLines = 250;
+
+    /// <summary>The most characters of an answer that are read at all, so a huge answer costs no more than this.</summary>
+    public const int MaxChars = 30_000;
+
+    /// <summary>The line under an answer that was cut at <see cref="MaxLines"/> or <see cref="MaxChars"/>.</summary>
+    public const string Rest = "The answer goes on. All of it is in its file on the shelf.";
+
+    public static readonly TextStyle RestStyle = TextStyle.Secondary with { LineHeight = 19 };
+
     private readonly List<RectangleF> tiles = [], choices = [];
     private readonly List<TextSlot> slots = [];
 
@@ -70,7 +84,9 @@ public sealed class DropResultLayout
         float y = problem ? LineTop + 4 : BodyTop;
         if (shown.Length > 0)
         {
-            (Body, BodyHeight) = Lay(Markdown.Parse(shown), problem ? BodyStyle with { Color = TextStyle.WarnColor } : BodyStyle, inner);
+            // A cut never splits a character in two.
+            int read = shown.Length <= MaxChars ? shown.Length : char.IsHighSurrogate(shown[MaxChars - 1]) ? MaxChars - 1 : MaxChars;
+            (Body, BodyHeight) = Lay(Markdown.Parse(shown[..read]), problem ? BodyStyle with { Color = TextStyle.WarnColor } : BodyStyle, inner, read < shown.Length);
             // What fits above the choices and tiles; the rest scrolls.
             float room = Math.Max(BodyStyle.LineHeight, maxHeight - y - below - Pad - 4);
             Band = new RectangleF(0, y, width, Math.Min(MathF.Ceiling(BodyHeight), room));
@@ -131,15 +147,23 @@ public sealed class DropResultLayout
     /// <summary>
     /// Markdown blocks one under the other inside <paramref name="width"/>, from x = <see cref="Pad"/>: a list item's
     /// marker at its level's indent and its text hanging right of it, so wrapped lines start under the text, not under
-    /// the marker. Items of one list sit closer together than other blocks.
+    /// the marker. Items of one list sit closer together than other blocks. At most <see cref="MaxLines"/> lines; an
+    /// answer that goes on, or that was <paramref name="cut"/> before, ends with <see cref="Rest"/>.
     /// </summary>
-    private static (IReadOnlyList<TextAt> Runs, float Height) Lay(IReadOnlyList<MarkdownBlock> blocks, TextStyle style, float width)
+    private static (IReadOnlyList<TextAt> Runs, float Height) Lay(IReadOnlyList<MarkdownBlock> blocks, TextStyle style, float width, bool cut)
     {
         var runs = new List<TextAt>();
         float y = 0, numbers = TextSlot.Measure("00.", style, width) + 6;
+        int lines = 0;
         MarkdownBlock? last = null;
         foreach (var block in blocks)
         {
+            if (lines >= MaxLines)
+            {
+                cut = true;
+                break;
+            }
+
             bool item = block.Kind is MarkdownKind.Bullet or MarkdownKind.Numbered;
             y += last is null ? 0 : item && last.Kind is MarkdownKind.Bullet or MarkdownKind.Numbered ? ItemGap : BlockGap;
             var look = block.Kind switch
@@ -157,11 +181,22 @@ public sealed class DropResultLayout
                 x += hang;
             }
 
-            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), int.MaxValue) { Bold = block.Bold };
+            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), MaxLines - lines) { Bold = block.Bold };
             using var laid = TextLayout.Of(run);
             runs.Add(new TextAt(run, new Vector2(x, y)));
             y += laid.Height;
+            lines += laid.LineCount;
+            cut |= laid.Trimmed;
             last = block;
+        }
+
+        if (cut)
+        {
+            y += BlockGap;
+            var rest = new TextRun(Rest, RestStyle, width);
+            using var laid = TextLayout.Of(rest);
+            runs.Add(new TextAt(rest, new Vector2(Pad, y)));
+            y += laid.Height;
         }
 
         return (runs, y);

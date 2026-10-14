@@ -452,6 +452,35 @@ public sealed class DropZoneTests : IDisposable
     }
 
     [Fact]
+    public void AVeryLongAnswerIsCutWhereEverySurfaceStillDraws()
+    {
+        // A table of a thousand rows in one code block, a hundred thousand characters with no break, and many paragraphs.
+        string csv = "```csv\n" + string.Join("\n", Enumerable.Range(0, 1000).Select(i => $"row {i},{i * 3},north")) + "\n```";
+        string[] answers = [csv, new string('x', 100_000), string.Join("\n\n", Enumerable.Range(0, 400).Select(i => $"Paragraph {i}."))];
+        foreach (string answer in answers)
+        {
+            var layout = new DropResultLayout(DropResult.Empty with { Title = "Tables to CSV · big.xlsx", Indicator = "Sent", Body = answer }, 640, true);
+            Assert.Equal(DropResultLayout.Rest, layout.Body[^1].Run.Text);
+            int lines = 0;
+            foreach (var (run, at) in layout.Body.SkipLast(1))
+            {
+                using var laid = TextLayout.Of(run);
+                lines += laid.LineCount;
+                // Each run is one surface: at 300% it stays inside Direct3D's 16384 pixel texture. A word with no break
+                // in it breaks inside the panel's padding.
+                Assert.True(laid.Height * 3 < 16384, $"{laid.Height} DIP");
+                Assert.True(at.X + laid.Width <= 640 - DropResultLayout.Pad + 0.5f);
+            }
+
+            Assert.InRange(lines, DropResultLayout.MaxLines - 2, DropResultLayout.MaxLines);
+        }
+
+        // An answer under the cap has no such line.
+        var whole = new DropResultLayout(DropResult.Empty with { Title = "Summarize · a.txt", Indicator = "Sent", Body = string.Join("\n", Enumerable.Range(0, 200).Select(i => $"Line {i}.")) }, 640, true);
+        Assert.DoesNotContain(whole.Body, r => r.Run.Text == DropResultLayout.Rest);
+    }
+
+    [Fact]
     public void TheAnswerIsReadAsMarkdownAndWrapsInsideThePanel()
     {
         const float width = 640;

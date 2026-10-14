@@ -118,7 +118,8 @@ public sealed class TextLayout : IDisposable
                 }
             }
 
-            made.SetWordWrapping(lines == 1 ? DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_NO_WRAP : DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_WRAP);
+            // Several lines wrap at word breaks, and a word wider than the run (an address, a hash) breaks where it has to.
+            made.SetWordWrapping(lines == 1 ? DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_NO_WRAP : DWRITE_WORD_WRAPPING.DWRITE_WORD_WRAPPING_EMERGENCY_BREAK);
             if (run.Style.LineHeight > 0)
             {
                 // Every line the given height, the font's own line centred in it, as CSS's line-height does.
