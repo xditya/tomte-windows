@@ -35,7 +35,7 @@ public static class ClipboardImages
     /// <summary>
     /// What history keeps of a copied image, or null when its bitmap (4 bytes a pixel, as a pick puts it
     /// back) would be over <paramref name="maxBytes"/>. A PNG is kept as it came; a bitmap becomes one.
-    /// Throws when the bytes are not an image Windows can decode.
+    /// Throws when the bytes are not a PNG or a bitmap, as each says it is.
     /// </summary>
     public static KeptImage? Keep(CopiedImage copied, long maxBytes)
     {
@@ -48,17 +48,21 @@ public static class ClipboardImages
 
         Wait(stream.WriteAsync(copied.Bytes.AsBuffer()));
         stream.Seek(0);
-        var decoder = Wait(BitmapDecoder.CreateAsync(stream));
-        int width = (int)decoder.PixelWidth, height = (int)decoder.PixelHeight;
-        if ((long)width * height * 4 > maxBytes)
+        // The codec named, so no other one installed on the PC parses what an app put on the clipboard.
+        var decoder = Wait(BitmapDecoder.CreateAsync(copied.Png ? BitmapDecoder.PngDecoderId : BitmapDecoder.BmpDecoderId, stream));
+        if (!BitmapFits(decoder.PixelWidth, decoder.PixelHeight, maxBytes))
         {
             return null;
         }
 
+        int width = (int)decoder.PixelWidth, height = (int)decoder.PixelHeight;
         byte[] png = copied.Png ? Trimmed(copied.Bytes) : WholeAsPng(decoder);
         using var thumb = Bitmap(decoder, BitmapAlphaMode.Straight, Cover(decoder, ThumbWidth, ThumbHeight));
         return new KeptImage(png, width, height, Png(thumb));
     }
+
+    /// <summary>Whether the image as a 32-bit bitmap is at most <paramref name="maxBytes"/>, for any size a header can claim.</summary>
+    public static bool BitmapFits(uint width, uint height, long maxBytes) => (ulong)width * height <= (ulong)maxBytes / 4;
 
     /// <summary>
     /// A packed bitmap for CF_DIB: a BITMAPINFOHEADER, 32 bits a pixel with premultiplied alpha, bottom row
@@ -67,7 +71,7 @@ public static class ClipboardImages
     public static byte[] Dib(byte[] png)
     {
         using var stream = new MemoryStream(png).AsRandomAccessStream();
-        var decoder = Wait(BitmapDecoder.CreateAsync(stream));
+        var decoder = Wait(BitmapDecoder.CreateAsync(BitmapDecoder.PngDecoderId, stream));
         int width = (int)decoder.PixelWidth, height = (int)decoder.PixelHeight, size = width * height * 4;
         using var bitmap = Bitmap(decoder, BitmapAlphaMode.Premultiplied, new BitmapTransform { Flip = BitmapFlip.Vertical });
         var dib = new byte[InfoHeader + size];
@@ -87,7 +91,7 @@ public static class ClipboardImages
     public static byte[] Thumbnail(byte[] thumb, int width, int height)
     {
         using var stream = new MemoryStream(thumb).AsRandomAccessStream();
-        var decoder = Wait(BitmapDecoder.CreateAsync(stream));
+        var decoder = Wait(BitmapDecoder.CreateAsync(BitmapDecoder.PngDecoderId, stream));
         return Wait(decoder.GetPixelDataAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, Cover(decoder, width, height),
             ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage)).DetachPixelData();
     }

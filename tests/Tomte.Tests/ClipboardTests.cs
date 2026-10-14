@@ -480,6 +480,35 @@ public sealed class ClipboardTests : IDisposable
 
         Assert.ThrowsAny<Exception>(() => ClipboardImages.Keep(new CopiedImage([1, 2, 3], Png: true), Limits.MaxImageReadBytes));
         Assert.Throws<ArgumentException>(() => ClipboardImages.BmpHeader([40, 0, 0]));
+
+        // Only the codec the format names reads it: a bitmap file put in the PNG format is not taken as one.
+        var bitmap = Dib(4, 4, 24, Colour);
+        Assert.ThrowsAny<Exception>(() => ClipboardImages.Keep(new CopiedImage([.. ClipboardImages.BmpHeader(bitmap), .. bitmap], Png: true), Limits.MaxImageReadBytes));
+    }
+
+    [Fact]
+    public void AHeaderClaimingAHugeBitmapIsNotKept()
+    {
+        // 0x7FFFFFFF squared times 4 does not fit a long; the size must still count as over.
+        var header = new byte[40];
+        BinaryPrimitives.WriteInt32LittleEndian(header, 40);
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(4), 0x7FFFFFFF);
+        BinaryPrimitives.WriteInt32LittleEndian(header.AsSpan(8), 0x7FFFFFFF);
+        BinaryPrimitives.WriteInt16LittleEndian(header.AsSpan(12), 1);
+        BinaryPrimitives.WriteInt16LittleEndian(header.AsSpan(14), 24);
+
+        // Windows' bitmap codec refuses this header itself; either way nothing is kept and memory is not the reason.
+        KeptImage? kept = null;
+        var thrown = Record.Exception(() => kept = ClipboardImages.Keep(new CopiedImage(header, Png: false), Limits.MaxImageReadBytes));
+        Assert.Null(kept);
+        Assert.False(thrown is OutOfMemoryException);
+
+        // The size check itself, at that claim and at the edge.
+        Assert.False(ClipboardImages.BitmapFits(0x7FFFFFFF, 0x7FFFFFFF, Limits.MaxImageReadBytes));
+        Assert.False(ClipboardImages.BitmapFits(uint.MaxValue, uint.MaxValue, long.MaxValue));
+        Assert.True(ClipboardImages.BitmapFits(5120, 2880, Limits.MaxImageReadBytes));
+        Assert.True(ClipboardImages.BitmapFits(4, 4, 64));
+        Assert.False(ClipboardImages.BitmapFits(4, 4, 63));
     }
 
     [Fact]
@@ -550,14 +579,42 @@ public sealed class ClipboardTests : IDisposable
     }
 
     [Fact]
+    public async Task CopiesThatLandWhileTheWorkerIsBusyAreDecodedOnceTheLatestWins()
+    {
+        var listeners = new List<FakeListener>();
+        var watch = Watch(listeners);
+        watch.Apply(true);
+        Assert.Empty(await watch.RowsAsync(Now));
+
+        // Another connection holds the write lock, so the text copy waits on the worker and the images queue behind it.
+        using (var holder = new TomteDb(DbPath).Open("holder", []))
+        {
+            using (var begin = holder.CreateCommand())
+            {
+                begin.CommandText = "BEGIN EXCLUSIVE";
+                begin.ExecuteNonQuery();
+            }
+
+            listeners[0].Copy("first");
+            listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+            listeners[0].Copy(new CopiedImage(Dib(7, 2, 24, Colour), Png: false));
+        }
+
+        Assert.Equal(["Image · 7 x 2", "first"], (await watch.RowsAsync(Now.AddMinutes(1))).Select(r => r.Display));
+        Assert.Single(log, line => line.StartsWith("clipboard: store an image took", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task TheSameBitmapCopiedTwiceIsOneRow()
     {
         var listeners = new List<FakeListener>();
         var watch = Watch(listeners);
         watch.Apply(true);
         listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+        await watch.RowsAsync(Now);
         listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
         Assert.Single(await watch.RowsAsync(Now));
+        Assert.Equal(2, log.Count(line => line.StartsWith("clipboard: store an image took", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -588,6 +645,7 @@ public sealed class ClipboardTests : IDisposable
         var watch = Watch(listeners);
         watch.Apply(true);
         listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+        await watch.RowsAsync(Now);
         listeners[0].Copy(new CopiedImage([1, 2, 3], Png: true));
 
         var row = Assert.Single(await watch.RowsAsync(Now));

@@ -231,7 +231,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
         (rows, historyOn) = (next, on);
         scroll = Math.Min(scroll, view.Layout.MaxScroll(rows.Count));
-        view.Show(on, rows, selected, scroll, DateTimeOffset.Now, watch.Retention.MaxItems, asking);
+        view.Show(on, rows, selected, scroll, DateTimeOffset.Now, watch.Retention, asking);
         Retarget();
     }
 
@@ -299,7 +299,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
         public ClipboardPanelLayout Layout { get; }
 
-        public void Show(bool on, IReadOnlyList<ClipboardRow> rows, long selected, float scroll, DateTimeOffset now, int keeps, bool asking)
+        public void Show(bool on, IReadOnlyList<ClipboardRow> rows, long selected, float scroll, DateTimeOffset now, ClipboardRetention kept, bool asking)
         {
             frame.Shapes.Clear();
             DisposeTexts();
@@ -310,7 +310,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             rowsVisual.Children.RemoveAll();
             old.ForEach(row => row.Dispose());
             rowBrushes.Clear();
-            foreach (var line in Layout.HeadText(on, keeps))
+            foreach (var line in Layout.HeadText(on, kept))
             {
                 Text(texts, body).Show(line);
             }
@@ -318,7 +318,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             DrawSwitch(on);
             if (!on || rows.Count == 0)
             {
-                Box(Layout.List, Layout.BoxText(on, keeps));
+                Box(Layout.List, Layout.BoxText(on, kept));
                 return;
             }
 

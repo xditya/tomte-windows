@@ -207,6 +207,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
     private IClipboardListener? listener;
     private int generation;
     private Task queue = Task.CompletedTask;
+    private (CopiedImage Image, DateTimeOffset At)? pendingImage;
 
     /// <summary>The history or the switch changed. Raised on a worker thread or the caller's.</summary>
     public event Action? Changed;
@@ -245,6 +246,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
             }
             else
             {
+                pendingImage = null;
                 _ = Enqueue(() => Logged("clear the history", history.Clear));
             }
         }
@@ -358,9 +360,16 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
 
             if (read.Image is { } image)
             {
-                _ = Enqueue(() => Logged("store an image", () => StoreImage(image, at)));
-                // A step of its own, so the copy is no longer held by the step that stored it.
-                _ = Enqueue(GiveBackImageMemory);
+                // One slot: copies that land while the worker is busy replace each other, so only the latest is
+                // decoded and at most two copies are held, the one being decoded and the one waiting.
+                bool waiting = pendingImage is not null;
+                pendingImage = (image, at);
+                if (!waiting)
+                {
+                    _ = Enqueue(() => Logged("store an image", StoreImage));
+                    // A step of its own, so the copy is no longer held by the step that stored it.
+                    _ = Enqueue(GiveBackImageMemory);
+                }
             }
             else
             {
@@ -375,22 +384,34 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
     /// returns what is free to Windows. Without it the memory stays committed, tens of megabytes, for as long as the
     /// hidden shell allocates nothing more. Every thread pauses for a few milliseconds.
     /// </summary>
-    public static void GiveBackImageMemory()
+    private static void GiveBackImageMemory()
     {
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
     }
 
-    // The decode and the encode run here, on the worker, never on the listener's thread.
-    private void StoreImage(CopiedImage image, DateTimeOffset at)
+    // The decode and the encode run here, on the worker, never on the listener's thread. Takes the waiting copy.
+    private void StoreImage()
     {
+        CopiedImage image;
+        DateTimeOffset at;
+        lock (gate)
+        {
+            if (pendingImage is not { } pending)
+            {
+                return;
+            }
+
+            ((image, at), pendingImage) = (pending, null);
+        }
+
         KeptImage? kept;
         try
         {
             kept = ClipboardImages.Keep(image, history.Retention.MaxImageReadBytes);
         }
-        catch (Exception e) when (e is not OutOfMemoryException)
+        catch (Exception e)
         {
             log?.Invoke($"clipboard: an image could not be read ({e.GetType().Name})");
             return;

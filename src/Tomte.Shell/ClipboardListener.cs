@@ -129,14 +129,7 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
                         OnUpdate();
                         continue;
                     case MsgPut:
-                        // An image (two formats) was copied several times over on its way here; its memory goes back.
-                        // the worker that made the bitmap may still hold it for a moment; it then waits for
-                        // the next collection.
-                        if (PutNow() > 1)
-                        {
-                            ClipboardWatch.GiveBackImageMemory();
-                        }
-
+                        PutNow();
                         continue;
                     case PInvoke.WM_CLOSE:
                         PInvoke.RemoveClipboardFormatListener(window);
@@ -177,8 +170,8 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
         log?.Invoke($"clipboard: {read.Outcome} in {us} us");
     }
 
-    /// <summary>A picked item back on the clipboard in its formats, owned by this window. Returns how many it was handed.</summary>
-    private int PutNow()
+    /// <summary>A picked item back on the clipboard in its formats, owned by this window.</summary>
+    private void PutNow()
     {
         (uint Format, byte[] Bytes)[]? formats;
         lock (gate)
@@ -189,7 +182,7 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
         if (formats is null || !source.Open())
         {
             log?.Invoke("clipboard: could not put the item back, the clipboard stayed busy");
-            return formats?.Length ?? 0;
+            return;
         }
 
         try
@@ -216,8 +209,6 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
         {
             PInvoke.CloseClipboard();
         }
-
-        return formats.Length;
     }
 
     /// <summary>The Win32 clipboard as the reader asks for it, on the listener's thread.</summary>

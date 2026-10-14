@@ -951,7 +951,7 @@ internal static unsafe partial class Program
         c.Pill();
         c.Mascot();
         Tabs(c, PanelId.Clipboard, PanelSize.Clipboard);
-        foreach (var line in layout.HeadText(on, 50))
+        foreach (var line in layout.HeadText(on, new ClipboardRetention()))
         {
             c.Text(line, body);
         }
@@ -962,7 +962,7 @@ internal static unsafe partial class Program
         if (!on || rows.Length == 0)
         {
             c.StrokeRect(Offset(layout.List, body), ClipboardPanelLayout.Corner, 0x2EFFFFFF);
-            foreach (var line in layout.BoxText(on, 50))
+            foreach (var line in layout.BoxText(on, new ClipboardRetention()))
             {
                 c.Text(line, body);
             }

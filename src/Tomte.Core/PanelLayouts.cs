@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Numerics;
+using Tomte.Core.Clipboard;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 
@@ -61,15 +62,16 @@ public sealed class ClipboardPanelLayout(Vector2 body)
     public static RectangleF ThumbIn => new(Gap, (RowHeight - ThumbHeight) / 2, ThumbWidth, ThumbHeight);
 
     /// <summary>The heading, what goes beside it, and the switch's label left of the switch.</summary>
-    public IReadOnlyList<TextSlot> HeadText(bool on, int keeps)
+    public IReadOnlyList<TextSlot> HeadText(bool on, ClipboardRetention kept)
     {
         const string title = "Clipboard history";
         float after = TextSlot.Measure(title, TextStyle.Title, Head.Width) + Gap;
+        var label = new RectangleF(Switch.X - Gap - 90, Top, 90, HeadHeight);
         return
         [
             new(title, TextStyle.Title, Head),
-            new(on ? $"last {keeps} items, this PC only" : "off by default", TextStyle.Secondary, new(Head.X + after, Top, 160, HeadHeight)),
-            new("Keep history", Trailing(TextStyle.Secondary), new(Switch.X - Gap - 90, Top, 90, HeadHeight)),
+            new(on ? $"last {kept.MaxItems} pieces of text and {kept.MaxImages} images" : "off by default", TextStyle.Secondary, RectangleF.FromLTRB(Head.X + after, Top, label.X - Gap, Top + HeadHeight)),
+            new("Keep history", Trailing(TextStyle.Secondary), label),
         ];
     }
 
@@ -84,9 +86,9 @@ public sealed class ClipboardPanelLayout(Vector2 body)
     ];
 
     /// <summary>In the list's box while history is off or empty: centred, line under line.</summary>
-    public IReadOnlyList<TextSlot> BoxText(bool on, int keeps)
+    public IReadOnlyList<TextSlot> BoxText(bool on, ClipboardRetention kept)
     {
-        string[] lines = on ? ["Nothing copied yet."] : [$"History is off. Turn it on to keep the last {keeps} items on this PC.", NeverKept];
+        string[] lines = on ? ["Nothing copied yet."] : [$"History is off. Turn it on to keep {kept.MaxItems} pieces of text and {kept.MaxImages} images on this PC.", NeverKept];
         float y = List.Y + (List.Height - lines.Length * BoxLineHeight) / 2;
         return [.. lines.Select((line, i) => new TextSlot(line, (i == 0 ? TextStyle.Secondary : TextStyle.Small) with { Align = TextAlign.Center }, new(List.X + 20, y + i * BoxLineHeight, List.Width - 40, BoxLineHeight)))];
     }

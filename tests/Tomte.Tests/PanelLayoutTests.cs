@@ -208,10 +208,11 @@ public sealed class PanelLayoutTests
     [Fact]
     public void ClipboardWordsStayClearOfTheSwitchAndTheButtons()
     {
-        var head = Clipboard.HeadText(on: true, keeps: 50);
+        var head = Clipboard.HeadText(on: true, new ClipboardRetention());
         float title = TextSlot.Measure("Clipboard history", TextStyle.Title, 500);
 
-        Assert.Equal("last 50 items, this PC only", head[1].Text);
+        Assert.Equal("last 50 pieces of text and 50 images", head[1].Text);
+        Assert.True(TextSlot.Measure(head[1].Text, TextStyle.Secondary, 1000) <= head[1].Slot.Width, "the note is cut");
         Assert.Equal(Clipboard.Head.X + title + ClipboardPanelLayout.Gap, head[1].Slot.X, 0.01);
         Assert.True(head[1].Slot.Right <= head[2].Slot.Left, "the note runs into the switch's label");
         Assert.Equal(Clipboard.Switch.X - ClipboardPanelLayout.Gap, head[2].Slot.Right, 0.01);
@@ -246,8 +247,10 @@ public sealed class PanelLayoutTests
         }
 
         // Off: two centred lines in the middle of the list's box.
-        var box = Clipboard.BoxText(on: false, keeps: 50);
+        var box = Clipboard.BoxText(on: false, new ClipboardRetention());
         Assert.Equal(2, box.Count);
+        Assert.Equal("History is off. Turn it on to keep 50 pieces of text and 50 images on this PC.", box[0].Text);
+        Assert.All(box, line => Assert.True(TextSlot.Measure(line.Text, line.Style, 1000) <= line.Slot.Width, line.Text));
         Assert.All(box, line => Assert.Equal(TextAlign.Center, line.Style.Align));
         Assert.Equal(Clipboard.List.Y + Clipboard.List.Height / 2, (box[0].Slot.Top + box[1].Slot.Bottom) / 2, 0.01);
     }
