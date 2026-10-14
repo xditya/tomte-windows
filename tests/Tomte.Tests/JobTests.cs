@@ -116,6 +116,10 @@ public sealed class JobTests : IDisposable
     private ScheduledJob AddJob(string prompt, params string[] tools) =>
         _store.Add(new JobDraft("Morning notes", prompt, WeekdaysAtNine, tools), Ollama, Monday0800, India);
 
+    /// <summary>Keeps a result for a claimed run, as the run would once it ended.</summary>
+    private void Keep(JobClaim claim) =>
+        _store.Record(new JobRunRecord(claim.Job.Id, claim.Job.Name, claim.Due, claim.Due.AddMinutes(1), true, "Done.", ""));
+
     private static List<string> ToolNames(string body) =>
         [.. JsonNode.Parse(body)!["tools"]!.AsArray().Select(t => t!["function"]!["name"]!.GetValue<string>())];
 
@@ -390,12 +394,14 @@ public sealed class JobTests : IDisposable
         // hours late, is taken once.
         var thursday = new DateTimeOffset(2026, 10, 22, 11, 0, 0, Ist);
 
-        var (claimed, due, missed) = Assert.Single(_store.ClaimDue(thursday, India));
+        var claim = Assert.Single(_store.ClaimDue(thursday, India));
+        var (claimed, due, missed) = claim;
 
         Assert.False(missed);
         Assert.Equal(new DateTimeOffset(2026, 10, 22, 9, 0, 0, Ist), due);
         Assert.Equal(new DateTimeOffset(2026, 10, 23, 9, 0, 0, Ist), claimed.NextDue);
         Assert.Empty(_store.ClaimDue(thursday.AddMinutes(1), India));
+        Keep(claim);
         Assert.Equal(claimed.NextDue, JobStore.ReadMarker(_store.MarkerPath));
     }
 
@@ -416,11 +422,13 @@ public sealed class JobTests : IDisposable
     {
         _store.Add(new JobDraft("Once", "p", new JobSchedule { Time = new TimeOnly(9, 0), Date = new DateOnly(2026, 10, 19) }, []), Ollama, Monday0800, India);
 
-        var (claimed, due, missed) = Assert.Single(_store.ClaimDue(Monday0900.AddHours(20), India));
+        var claim = Assert.Single(_store.ClaimDue(Monday0900.AddHours(20), India));
+        var (claimed, due, missed) = claim;
 
         Assert.False(missed);
         Assert.Equal(Monday0900, due);
         Assert.Null(claimed.NextDue);
+        Keep(claim);
         Assert.Null(_store.NextDue());
         Assert.False(File.Exists(_store.MarkerPath));
         Assert.Single(_store.All());
@@ -456,6 +464,7 @@ public sealed class JobTests : IDisposable
 
         Assert.NotEqual(bad.Id, claim.Job.Id);
         Assert.Contains(_logged, line => line.Contains($"job {bad.Id} cannot be read"));
+        Keep(claim);
         // Switched off, so it never comes due again and the runner never spins on it.
         Assert.Equal(new DateTimeOffset(2026, 10, 20, 9, 0, 0, Ist), _store.NextDue());
     }
@@ -476,24 +485,29 @@ public sealed class JobTests : IDisposable
     [Fact]
     public void ARunWithNoResultByItsLimitIsKeptAsNotFinished()
     {
-        var finished = AddJob("p", "read_shelf_item");
+        AddJob("p", "read_shelf_item");
         var cut = AddJob("q", "read_shelf_item");
-        Assert.Equal(2, _store.ClaimDue(Monday0900, India).Count);
-        _store.Record(new JobRunRecord(finished.Id, finished.Name, Monday0900, Monday0900.AddMinutes(1), true, "Done.", ""));
+        var claims = _store.ClaimDue(Monday0900, India);
+        Keep(claims[0]);
 
-        // Task Scheduler ended the other run at its limit, before it kept a result. A look within the limit leaves it
-        // be; the first look after it keeps it as not finished, unshown, so the next start raises it.
-        _store.ClaimDue(Monday0900 + JobStore.RunLimit, India);
+        // Task Scheduler ended the other run at its limit, before it kept a result. The next-due file wakes a start at
+        // that limit, not at tomorrow's run; a look before it leaves the run be.
+        var limit = Monday0900 + JobStore.RunLimit;
+        Assert.Equal(limit, JobStore.ReadMarker(_store.MarkerPath));
+        _store.ClaimDue(limit.AddSeconds(-1), India);
         Assert.Single(_store.Results());
-        _store.ClaimDue(Monday0900 + JobStore.RunLimit + TimeSpan.FromSeconds(1), India);
+        _store.ClaimDue(limit, India);
 
+        // Kept as not finished and unshown, so the start that looked raises it.
         var run = _store.Results()[0];
         Assert.Equal((cut.Id, false, JobStore.DidNotFinish, Monday0900, false), (run.JobId, run.Ok, run.Text, run.Due, run.Shown));
         Assert.Equal("Job failed: Morning notes", JobRunner.EventText(run));
         Assert.Equal(DateTimeOffset.UnixEpoch, JobStore.ReadMarker(_store.MarkerPath));
-        // Once, and never for the run that kept its result.
+        // Once, and never for the run that kept its result; with no claim left the file holds the next run again.
+        Assert.Single(_store.TakeUnshown());
         _store.ClaimDue(Monday0900.AddHours(1), India);
         Assert.Equal(2, _store.Results().Count);
+        Assert.Equal(new DateTimeOffset(2026, 10, 20, 9, 0, 0, Ist), JobStore.ReadMarker(_store.MarkerPath));
     }
 
     // ---- Running ----

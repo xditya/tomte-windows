@@ -24,8 +24,9 @@ public sealed record JobClaim(ScheduledJob Job, DateTimeOffset Due, bool Missed)
 /// <summary>
 /// The jobs and their results in tomte.db (feature "jobs"). Every method opens, works and closes, and blocks: call it
 /// from a worker thread only. Beside the database a small file holds the next due time over all jobs, rewritten after
-/// every change, so a start can arm the runner without opening the database; it holds 0 while a result waits to be
-/// shown, so the next start looks, and with no jobs it is absent.
+/// every change, so a start can arm the runner without opening the database. A claimed run with no result counts in it
+/// at <see cref="RunLimit"/> after its claim, when it is to be recorded as not finished. It holds 0 while a result
+/// waits to be shown, so the next start looks, and with no jobs it is absent.
 /// </summary>
 public sealed class JobStore(TomteDb db, Action<string>? log = null)
 {
@@ -144,7 +145,8 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
     /// more than <see cref="RecurringGrace"/> ago, when it is skipped. A one-off is then done; one more than
     /// <see cref="OneOffGrace"/> late comes back marked missed, to be recorded and not run. A row that cannot be read is
     /// switched off and logged, so it never comes due again. Each claim is noted until its result is recorded; one
-    /// still without a result <see cref="RunLimit"/> later is recorded here as not finished, unshown, so a start raises it.
+    /// still without a result <see cref="RunLimit"/> later is recorded here as not finished, unshown, so a start raises
+    /// it. That moment is in the next-due file, so a start looks then.
     /// </summary>
     public IReadOnlyList<JobClaim> ClaimDue(DateTimeOffset now, TimeZoneInfo zone)
     {
@@ -152,8 +154,8 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         using var transaction = connection.BeginTransaction();
         Run(connection, $"""
             INSERT INTO jobs_runs({RunColumns})
-            SELECT job, name, due, claimed + $limit, 0, $text, '', 0 FROM jobs_claims WHERE claimed + $limit < $now;
-            DELETE FROM jobs_claims WHERE claimed + $limit < $now;
+            SELECT job, name, due, claimed + $limit, 0, $text, '', 0 FROM jobs_claims WHERE claimed + $limit <= $now;
+            DELETE FROM jobs_claims WHERE claimed + $limit <= $now;
             """,
             ("$limit", (long)RunLimit.TotalMilliseconds), ("$now", now.ToUnixTimeMilliseconds()), ("$text", DidNotFinish));
         var (due, unreadable) = Jobs(connection, $"SELECT {JobColumns} FROM jobs_list WHERE next_due <= $now ORDER BY next_due, id", now);
@@ -227,7 +229,10 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         return Runs(connection, $"SELECT {RunColumns} FROM jobs_runs ORDER BY id DESC LIMIT $limit", limit);
     }
 
-    /// <summary>The earliest next run over all jobs, or null when none will run again.</summary>
+    /// <summary>
+    /// The earliest next run over all jobs, or the moment a claimed run with no result is to be recorded as not finished
+    /// if that comes first; null when neither is ahead.
+    /// </summary>
     public DateTimeOffset? NextDue()
     {
         using var connection = db.Open(Feature, Schema);
@@ -237,7 +242,10 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
     private static object Ms(DateTimeOffset? at) => (object?)at?.ToUnixTimeMilliseconds() ?? DBNull.Value;
 
     private static DateTimeOffset? Earliest(SqliteConnection connection) =>
-        Scalar(connection, "SELECT MIN(next_due) FROM jobs_list") is long ms ? DateTimeOffset.FromUnixTimeMilliseconds(ms) : null;
+        Scalar(connection, "SELECT MIN(at) FROM (SELECT next_due AS at FROM jobs_list UNION ALL SELECT claimed + $limit FROM jobs_claims)",
+            ("$limit", (long)RunLimit.TotalMilliseconds)) is long ms
+            ? DateTimeOffset.FromUnixTimeMilliseconds(ms)
+            : null;
 
     // After the change is committed, and only a hint: a crash in between, or a disk that says no, leaves the file early
     // (the runner looks and finds nothing due) or late, when the Task Scheduler entry still starts the run.
@@ -334,10 +342,15 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         return command.ExecuteNonQuery();
     }
 
-    private static object? Scalar(SqliteConnection connection, string sql)
+    private static object? Scalar(SqliteConnection connection, string sql, params ReadOnlySpan<(string Name, object Value)> parameters)
     {
         using var command = connection.CreateCommand();
         command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
         return command.ExecuteScalar();
     }
 }
