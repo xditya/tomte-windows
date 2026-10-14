@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Data.Sqlite;
 
 namespace Tomte.Core.Storage;
@@ -86,9 +87,6 @@ public sealed class TomteDb(string? path = null)
     private SqliteConnection Connect(string feature, IReadOnlyList<string> steps)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        // from its first connection on, the provider keeps a housekeeping timer that ticks every 30 s, pool or
-        // no pool, and has no switch for it. Nothing here stops it. If that tick matters while the island is hidden,
-        // dispose it or call SQLite without the provider.
         var db = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = FilePath,
@@ -96,6 +94,7 @@ public sealed class TomteDb(string? path = null)
             Pooling = false,
             DefaultTimeout = BusySeconds,
         }.ToString());
+        StopProviderTimer();
         try
         {
             db.Open();
@@ -116,6 +115,22 @@ public sealed class TomteDb(string? path = null)
         {
             db.Dispose();
             throw;
+        }
+    }
+
+    // The moment any connection object exists, the provider starts a timer that tidies its connection pools: one tick
+    // every 30 s for the life of the process, island hidden or not, with no setting that turns it off. Without a pool it
+    // has nothing to tidy, so it is disposed here, found by name because the provider keeps it private. If a later
+    // version renames it, nothing happens here and the tick comes back; StorageTests fails when that is so.
+    // This class must stay the only place that builds a connection string: a pooled connection brings a timer per pool.
+    private static void StopProviderTimer()
+    {
+        const BindingFlags visible = BindingFlags.Public | BindingFlags.NonPublic;
+        var factory = typeof(SqliteConnection).Assembly.GetType("Microsoft.Data.Sqlite.SqliteConnectionFactory");
+        if (factory?.GetField("Instance", visible | BindingFlags.Static)?.GetValue(null) is { } instance
+            && factory.GetField("_pruneTimer", visible | BindingFlags.Instance)?.GetValue(instance) is Timer timer)
+        {
+            timer.Dispose();
         }
     }
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Reflection;
 using Microsoft.Data.Sqlite;
 using Tomte.Core.Storage;
 using Xunit;
@@ -16,6 +17,16 @@ public sealed class StorageTests : IDisposable
     ];
 
     private const string Garbage = "This is a text file that somebody saved over the database. It is not one.";
+
+    // TomteDb stops a private timer inside the provider by name; these say what to do when a new version moves it.
+    private const string FactoryName = "Microsoft.Data.Sqlite.SqliteConnectionFactory";
+    private const string Remedy = "Update TomteDb.StopProviderTimer and these tests, or the provider ticks every 30 s again while the island is hidden.";
+    private const BindingFlags AnyField = BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+    private static readonly Assembly Provider = typeof(SqliteConnection).Assembly;
+
+    private static readonly string ProviderVersion =
+        "Microsoft.Data.Sqlite " + Provider.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 
     private static readonly string[] Shelf =
     [
@@ -186,6 +197,54 @@ public sealed class StorageTests : IDisposable
         Assert.Equal("slow=2", Versions(connection));
     }
 
+    [Fact]
+    public void TheProviderStillHasTheTimerTomteDbLooksFor()
+    {
+        var factory = Provider.GetType(FactoryName);
+        Assert.True(factory is not null, $"{ProviderVersion} has no {FactoryName}. {Remedy}");
+        Assert.True(factory.GetField("Instance", AnyField) is { IsStatic: true }, $"{ProviderVersion} has no static {FactoryName}.Instance. {Remedy}");
+        Assert.True(
+            factory.GetField("_pruneTimer", AnyField) is { IsStatic: false } field && field.FieldType == typeof(Timer),
+            $"{ProviderVersion} has no System.Threading.Timer field {FactoryName}._pruneTimer. {Remedy}");
+    }
+
+    [Fact]
+    public void TheProviderHasNoTimerTomteDbDoesNotKnowAbout()
+    {
+        // The pool's own timer only exists for a pooled connection, and TomteDb never makes one.
+        string[] known = [FactoryName + "._pruneTimer", "Microsoft.Data.Sqlite.SqliteConnectionPool._pruneTimer"];
+        var found = Provider.GetTypes()
+            .SelectMany(type => type.GetFields(AnyField | BindingFlags.DeclaredOnly))
+            .Where(field => field.FieldType.FullName?.Contains("Timer", StringComparison.Ordinal) == true)
+            .Select(field => $"{field.DeclaringType!.FullName}.{field.Name}");
+
+        Assert.True(known.Order().SequenceEqual(found.Order()), $"{ProviderVersion} keeps timers in: {string.Join(", ", found)}. {Remedy}");
+    }
+
+    [Fact]
+    public void OpeningStopsTheProvidersTimer()
+    {
+        new TomteDb(DbPath).Open("shelf", Shelf).Dispose();
+
+        var factory = Provider.GetType(FactoryName)!;
+        var timer = (Timer)factory.GetField("_pruneTimer", AnyField)!.GetValue(factory.GetField("Instance", AnyField)!.GetValue(null))!;
+        // A live timer accepts a change and answers true; a disposed one answers false (it does not throw on .NET 10).
+        Assert.False(timer.Change(Timeout.Infinite, Timeout.Infinite), $"{ProviderVersion}: the timer is still alive after an open. {Remedy}");
+    }
+
+    [Fact]
+    public async Task UsingTheDatabaseLeavesNoTimerBehind()
+    {
+        // Counted in a process of its own: this one runs other tests, and their timers come and go.
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        using var child = new Child("timers", DbPath);
+        string[] counts = (await child.Line(limit.Token)).Split(' ');
+        await child.Finish(limit.Token);
+
+        Assert.Equal(3, counts.Length);
+        Assert.True(counts.Distinct().Count() == 1, $"Active timers before the first open, after one use and after two: {string.Join(", ", counts)}");
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -333,6 +392,15 @@ internal static class SecondProcess
                 }
 
                 new TomteDb(args[1]).Open("slow", StorageTests.Slow).Dispose();
+                return 0;
+            case "timers":
+                // Active timers before the first open, after one use and after two, on one line.
+                var db = new TomteDb(args[1]);
+                long before = Timer.ActiveCount;
+                db.Open("slow", StorageTests.Slow).Dispose();
+                long afterOne = Timer.ActiveCount;
+                db.Open("slow", StorageTests.Slow).Dispose();
+                Console.WriteLine($"{before} {afterOne} {Timer.ActiveCount}");
                 return 0;
             default:
                 return 2;
