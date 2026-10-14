@@ -1,3 +1,6 @@
+using Tomte.AI.Skills;
+using Tomte.Core;
+
 namespace Tomte.AI.Palette;
 
 /// <summary>Where a rambler transcript goes once it is text.</summary>
@@ -23,6 +26,20 @@ public static class VoiceCommand
 
         await keep(transcript);
         return true;
+    }
+
+    /// <summary>
+    /// The session for one transcript, made from <paramref name="configured"/>, the provider set up at the moment the
+    /// command starts, so one set up after Tomte started is used from the next hold on. Null while there is none: the
+    /// transcript is then the raw note, and no skill is read. Voice is offered no skill; the turned-on ones are read,
+    /// off the island's thread, only so open_app keeps refusing the files in their folder.
+    /// </summary>
+    public static async Task<PaletteSession?> StartAsync((IChatProvider Provider, ProviderConfig Config, PaletteOptions Options)? configured, Func<SkillSet> skills, SendLog log, BuiltInTools tools, PermissionGrants grants)
+    {
+        if (configured is not { } now)
+            return null;
+        var loaded = await Task.Run(skills);
+        return new PaletteSession(now.Provider, now.Config, now.Options, log, tools, grants, []) { Voice = true, Skills = loaded };
     }
 
     /// <summary>The reply to read aloud: only with spoken replies on, after a finished answer that has text.</summary>
