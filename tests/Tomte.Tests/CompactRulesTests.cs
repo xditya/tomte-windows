@@ -162,6 +162,18 @@ public class GlanceTests
         Assert.Equal("18:41 · 1 on the shelf", Glance(new GlanceFacts { ShelfCount = 1 }));
     }
 
+    [Fact]
+    public void DuringFocusWaitingEventsAreCountedNeverNamed()
+    {
+        var one = new GlanceFacts { Waiting = [new IslandEvent("Summary ready", Now)], Quiet = true };
+        Assert.Equal("18:41 · 1 event waiting", Glance(one));
+        Assert.Equal("18:41 · 2 events waiting", Glance(one with { Waiting = [new IslandEvent("Summary ready", Now), new IslandEvent("Timer done", Now)] }));
+        Assert.Equal("18:41 · Summary ready", Glance(one with { Quiet = false }));
+        // A job due soon still comes first, and with nothing waiting Focus changes nothing.
+        Assert.Equal("18:41 · Weekly report at 19:00", Glance(All with { Quiet = true }));
+        Assert.Equal("18:41 · 3 on the shelf", Glance(new GlanceFacts { ShelfCount = 3, Quiet = true }));
+    }
+
     [Theory]
     [InlineData("en-GB", "Wed 14 Oct")]
     [InlineData("en-US", "Wed Oct 14")]

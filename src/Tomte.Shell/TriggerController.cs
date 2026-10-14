@@ -175,6 +175,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>Events that wait unseen for the island to be free, oldest first; the push pill's line mentions them.</summary>
     public IReadOnlyCollection<IslandEvent> Waiting => events.Waiting;
 
+    /// <summary>Focus or Do Not Disturb is on, as last read.</summary>
+    public bool Quiet => watch.State.Quiet;
+
     /// <summary>
     /// What the Compact pill is up for, so a feature with Compact content knows whether the pill is its to
     /// fill. Read it once the pill is up (from ContentReady on), not during the state change itself.
