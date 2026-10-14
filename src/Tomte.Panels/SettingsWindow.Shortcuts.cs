@@ -20,8 +20,9 @@ public sealed partial class SettingsWindow
     private readonly TextBox webAddress = new() { PlaceholderText = "https://", MinWidth = 280 };
     private ShortcutStore? shortcuts;
 
-    // Made on first use, so the database opens only once this section loads.
-    private ShortcutStore Shortcuts => shortcuts ??= new(new TomteDb(), () => store.Current.ScriptShortcuts);
+    // Made on first use, so the database opens only once this section loads; tomte.db is the one next to the
+    // settings file, as in the shell that opened this window.
+    private ShortcutStore Shortcuts => shortcuts ??= new(new TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db")), () => store.Current.ScriptShortcuts);
 
     private Border ShortcutsSection()
     {

@@ -28,13 +28,15 @@ internal static class Program
 
     private static Process? settingsProcess;
     private static bool startingSettings;
+    private static string settingsFile = SettingsStore.DefaultPath;
 
     [STAThread]
     private static unsafe int Main(string[] args)
     {
         if (args.Contains("--settings"))
         {
-            RunSettings();
+            // --settings [path]: the shell passes the settings file it uses, so both open the same folder.
+            RunSettings(Arg(args, "--settings"));
             return 0;
         }
 
@@ -103,6 +105,7 @@ internal static class Program
 
         // --debug-settings <path>: a settings file of this run's own, so a test never edits the user's.
         using var store = new SettingsStore(Arg(args, "--debug-settings"));
+        settingsFile = store.FilePath;
         var pause = new PauseState();
         // Beside the settings file, so a run with its own settings keeps its timer to itself too.
         var timer = new IslandTimer(Path.Combine(Path.GetDirectoryName(store.FilePath)!, Path.GetFileName(IslandTimer.DefaultPath)));
@@ -171,7 +174,7 @@ internal static class Program
 
     // Kept out of Main so the WinUI assemblies load only in the settings process.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void RunSettings() => Tomte.Panels.SettingsWindow.Run();
+    private static void RunSettings(string? settingsPath) => Tomte.Panels.SettingsWindow.Run(settingsPath);
 
     // The settings window runs in its own process and exits when closed, so none of its memory stays in the shell.
     // Called on the island's thread after the user's own click (the tray menu, a tile), which is when Windows lets
@@ -200,7 +203,7 @@ internal static class Program
             // gets the foreground right this one has from the click, so its window opens in front.
             settingsProcess = await Task.Run(() =>
             {
-                var started = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
+                var started = Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { ArgumentList = { "--settings", settingsFile } });
                 if (started is not null)
                 {
                     PInvoke.AllowSetForegroundWindow((uint)started.Id);
