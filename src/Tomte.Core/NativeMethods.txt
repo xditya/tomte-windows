@@ -36,3 +36,11 @@ AssocIsDangerous
 ShellLink
 IShellLinkW
 IPersistFile
+SHCreateItemFromParsingName
+IShellItemImageFactory
+GetDIBits
+GetObject
+GetDC
+ReleaseDC
+AssocQueryString
+BITMAP

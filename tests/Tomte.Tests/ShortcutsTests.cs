@@ -368,6 +368,36 @@ public sealed class ShortcutsTests : IDisposable
         static IEnumerable<string> BuiltInTools() => Tomte.AI.Palette.BuiltInTools.Definitions.Select(d => d.Name);
     }
 
+    [Theory]
+    [InlineData(34)]
+    [InlineData(43)]
+    [InlineData(51)]
+    public void TheShellDrawsIconsAtTheTilesPixelSize(int size)
+    {
+        // 34 DIP at 100%, 125% and 150%.
+        foreach (string path in new[] { Path.Combine(Environment.SystemDirectory, "notepad.exe"), dir, Touch("notes.txt"), Touch("build.ps1") })
+        {
+            var icon = ShellIcon.For(path, size);
+            Assert.NotNull(icon);
+            Assert.Equal((size, size), (icon.Width, icon.Height));
+            Assert.Equal(size * size * 4, icon.Pixels.Length);
+
+            // Premultiplied: no colour above its alpha. An icon has see-through corners and a solid middle.
+            var alpha = Enumerable.Range(0, size * size).Select(i => icon.Pixels[i * 4 + 3]).ToArray();
+            Assert.All(Enumerable.Range(0, icon.Pixels.Length), i => Assert.True(icon.Pixels[i] <= icon.Pixels[i | 3]));
+            Assert.Contains(alpha, a => a == 0);
+            Assert.Contains(alpha, a => a == 255);
+        }
+    }
+
+    [Fact]
+    public void AMissingPathHasNoIconAndAWebTileTakesTheBrowsers()
+    {
+        Assert.Null(ShellIcon.For(Path.Combine(dir, "gone.exe"), 34));
+        // A PC with no browser set for https gets a neutral tile instead.
+        Assert.True(ShellIcon.ForWeb(43) is null or { Width: 43, Height: 43 });
+    }
+
     private ShortcutStore Store() => new(new TomteDb(DbPath), () => scriptsOn, Record);
 
     private ActionResult Record(ShortcutTarget target)
