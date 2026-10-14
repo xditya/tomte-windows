@@ -63,3 +63,4 @@ TASK_LOGON_TYPE
 FindWindow
 PostMessage
 WM_APP
+GetCurrentPackageFullName

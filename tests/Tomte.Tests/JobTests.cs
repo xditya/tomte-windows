@@ -707,6 +707,20 @@ public sealed class JobTests : IDisposable
         Assert.Equal(2, _logged.Count(line => line.StartsWith("jobs: could not keep the result of job", StringComparison.Ordinal)));
     }
 
+    [Fact]
+    public void APackagedTomteMakesNoTaskAndSaysTheJobRunsOnlyWhileItRuns()
+    {
+        Assert.False(NoJobTasks.Packaged);
+        Assert.IsType<WindowsTaskScheduler>(NoJobTasks.For(Exe, FakeTasks.Settings));
+        var planner = new JobPlanner(_store, new NoJobTasks()) { Now = () => Monday0800, Zone = India };
+
+        var (job, problem) = planner.Create(new JobDraft("Morning notes", "p", WeekdaysAtNine, []), Ollama);
+
+        Assert.Equal("a packaged Tomte makes no Task Scheduler entries yet", problem);
+        Assert.Single(_store.All());
+        Assert.Null(planner.Remove(job.Id));
+    }
+
     /// <summary>Records what would be registered; the XML is what the real entry would get.</summary>
     private sealed class FakeTasks : IJobTasks
     {

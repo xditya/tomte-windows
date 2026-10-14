@@ -233,7 +233,7 @@ internal static class Jobs
     {
         var http = new HttpClient();
         var tools = new BuiltInTools(shelf, note, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, timer: timer);
-        return new JobRunner(new JobStore(db, log), new WindowsTaskScheduler(Environment.ProcessPath!, settings), config => ProviderSetup.Load(config, http), tools,
+        return new JobRunner(new JobStore(db, log), NoJobTasks.For(Environment.ProcessPath!, settings), config => ProviderSetup.Load(config, http), tools,
             new SendLog(sendLog), new PaletteOptions())
         {
             Resident = resident,
@@ -246,7 +246,7 @@ internal static class Jobs
     /// confirmation is answered after 1.5 s: yes only with --debug-answer yes, which needs --debug-settings so the job
     /// lands in the run's own folder. The answer goes to the placeholder the palette shows while it asks, because the
     /// island cannot draw the confirmation's words yet, which is also why this stays a debug switch. A yes stores the
-    /// job and registers its real Task Scheduler entry. Provider as for --rambler, local
+    /// job and registers its real Task Scheduler entry (none in a packaged build). Provider as for --rambler, local
     /// Ollama by default.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -257,7 +257,7 @@ internal static class Jobs
             : new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", "llama3.2:3b");
         bool yes = Arg(args, "--debug-answer") == "yes";
         using var http = new HttpClient();
-        var planner = new JobPlanner(new JobStore(c.Db, c.Log), new WindowsTaskScheduler(Environment.ProcessPath!, c.Store.FilePath));
+        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
         planner.Scheduled += next => Arm(c, next);
         var host = new PaletteHost(c.Island, c.Triggers.Machine, line => c.Writer?.WriteLine(line));
         var session = new PaletteSession(ProviderSetup.Load(config, http), config, new PaletteOptions(), new SendLog(c.SendLog),
@@ -291,7 +291,7 @@ internal static class Jobs
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task RemoveAsync(JobContext c, long id)
     {
-        var planner = new JobPlanner(new JobStore(c.Db, c.Log), new WindowsTaskScheduler(Environment.ProcessPath!, c.Store.FilePath));
+        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
         string? problem = await Task.Run(() => planner.Remove(id));
         c.Log?.Invoke(problem ?? $"jobs: removed job {id} and its task");
         PInvoke.PostQuitMessage(0);

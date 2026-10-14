@@ -20,6 +20,34 @@ public interface IJobTasks
 }
 
 /// <summary>
+/// No entries: a packaged Tomte, until it is known how a task starts the packaged app with its identity and its data
+/// folder. Jobs then run only while Tomte runs, and the step that made the job says so.
+/// </summary>
+public sealed class NoJobTasks : IJobTasks
+{
+    public void Register(ScheduledJob job) =>
+        throw new NotSupportedException("a packaged Tomte makes no Task Scheduler entries yet");
+
+    public void Remove(long jobId)
+    {
+    }
+
+    /// <summary>The real entries, or none in a packaged process.</summary>
+    public static IJobTasks For(string exe, string settingsPath) =>
+        Packaged ? new NoJobTasks() : new WindowsTaskScheduler(exe, settingsPath);
+
+    /// <summary>True in a process with package identity: GetCurrentPackageFullName answers APPMODEL_ERROR_NO_PACKAGE (15700) without one.</summary>
+    public static unsafe bool Packaged
+    {
+        get
+        {
+            uint length = 0;
+            return PInvoke.GetCurrentPackageFullName(ref length, null) != WIN32_ERROR.APPMODEL_ERROR_NO_PACKAGE;
+        }
+    }
+}
+
+/// <summary>
 /// One job's entry, worked out without touching Task Scheduler: its name, the command line and the task XML. The
 /// entry starts Tomte with --run-job (id), and with the settings file when it is not the default one, so the run
 /// opens the same folder and the same tomte.db as the app that made the job.
