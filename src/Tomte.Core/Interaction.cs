@@ -3,8 +3,11 @@ using System.Numerics;
 
 namespace Tomte.Core.Interaction;
 
-/// <summary>What a clickable part of a view is, which says how the host treats it (a tab, say, switches as focus reaches it).</summary>
-public enum TargetKind { Button, Toggle, Tile, Row, Tab, Link }
+/// <summary>
+/// What a clickable part of a view is, which says how the host treats it (a tab, say, switches as focus reaches it). A
+/// slider draws its own hover (its knob), so the host draws no state layer over it.
+/// </summary>
+public enum TargetKind { Button, Toggle, Tile, Row, Tab, Link, Slider }
 
 /// <summary>How a target was activated, for a view where a click, a double click and a key mean different things.</summary>
 public enum ActivateBy { Click, DoubleClick, Key }
