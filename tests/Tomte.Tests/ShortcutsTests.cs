@@ -83,6 +83,8 @@ public sealed class ShortcutsTests : IDisposable
     [InlineData("app.appinstaller")]
     [InlineData("app.msix")]
     [InlineData("old.com")]
+    [InlineData("search.searchConnector-ms")]
+    [InlineData("pack.themepack")]
     public void FilesThatInstallOrRunSomethingAreBlocked(string name)
     {
         var target = ShortcutTarget.Read(Touch(name));
@@ -104,7 +106,7 @@ public sealed class ShortcutsTests : IDisposable
         Assert.Equal(ShortcutKind.Script, ShortcutTarget.Read(Link("bat.lnk", bat)).Kind);
         Assert.Equal(ShortcutKind.Script, ShortcutTarget.Read(Link("cmd-args.lnk", cmd, "/c echo hi")).Kind);
         Assert.Equal(ShortcutKind.App, ShortcutTarget.Read(Link("cmd.lnk", cmd)).Kind);
-        Assert.Equal(ShortcutKind.App, ShortcutTarget.Read(Link("tool.lnk", Touch("tool.exe"), "--profile two")).Kind);
+        Assert.Equal(ShortcutKind.App, ShortcutTarget.Read(Link("tool.lnk", Touch("tool.exe"))).Kind);
         Assert.Equal(ShortcutKind.Folder, ShortcutTarget.Read(Link("folder.lnk", dir)).Kind);
         Assert.Equal(ShortcutKind.File, ShortcutTarget.Read(Link("notes.lnk", Touch("notes.txt"))).Kind);
         Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.Read(Link("setup.lnk", Touch("setup.msi"))).Kind);
@@ -335,6 +337,99 @@ public sealed class ShortcutsTests : IDisposable
     }
 
     [Fact]
+    public void TrailingDotsAndSpacesReadAsTheFileWindowsOpens()
+    {
+        // Windows drops them from a file name, so these all name the files without them.
+        string bat = Touch("a.bat");
+        foreach (string padded in new[] { bat + ".", bat + " ", bat + ". .", bat + "..." })
+        {
+            var target = ShortcutTarget.Read(padded);
+            Assert.Equal(ShortcutKind.Script, target.Kind);
+            Assert.Equal(bat, target.Open);
+            Assert.Contains($"\"{bat}\"", target.Script!.Arguments);
+        }
+
+        Assert.Equal(ShortcutKind.Script, ShortcutTarget.Read(Link("x.lnk", bat) + ".").Kind);
+        Assert.Equal(ShortcutKind.Url, ShortcutTarget.Read(Write("x.url", "[InternetShortcut]\r\nURL=https://example.com/\r\n") + ".").Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.Read(Write("y.url", "[InternetShortcut]\r\nURL=file:///C:/x.bat\r\n") + " ").Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.Read(Touch("setup.msi") + ".").Kind);
+
+        // Stored the way Windows reads it, and gated as the script it is.
+        var store = Store();
+        Assert.Null(store.Add(bat + "."));
+        var tile = Assert.Single(store.Load());
+        Assert.Equal(bat, tile.Target);
+        Assert.Equal("a.bat", tile.Name);
+        Assert.Equal(ShortcutOutcome.ScriptsOff, store.Launch(tile.Id).Outcome);
+        Assert.Empty(started);
+    }
+
+    [Fact]
+    public void ARowWithATrailingDotIsGatedAtTheClick()
+    {
+        var store = Store();
+        Assert.Empty(store.Load());
+        using (var db = new TomteDb(DbPath).Open("shortcuts", ["unused: the table exists, so no step runs"]))
+        using (var insert = db.CreateCommand())
+        {
+            insert.CommandText = "INSERT INTO shortcuts_tiles(name, target) VALUES ('a', $bat), ('b', $msi)";
+            insert.Parameters.AddWithValue("$bat", Touch("a.bat") + ".");
+            insert.Parameters.AddWithValue("$msi", Touch("setup.msi") + " ");
+            insert.ExecuteNonQuery();
+        }
+
+        var tiles = store.Load();
+        Assert.Equal(ShortcutOutcome.ScriptsOff, store.Launch(tiles[0].Id).Outcome);
+        Assert.Equal(ShortcutOutcome.Blocked, store.Launch(tiles[1].Id).Outcome);
+        Assert.Empty(started);
+    }
+
+    [Fact]
+    public void ALinkThatPassesArgumentsToAnyProgramIsAScript()
+    {
+        // Not only shells: these programs run, open or install what their arguments name.
+        string bat = Touch("a.bat");
+        string system = Environment.SystemDirectory, windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        foreach (var (program, arguments) in new[] { (Path.Combine(system, "pcalua.exe"), $"-a \"{bat}\""), (Path.Combine(system, "control.exe"), "x.cpl"), (Path.Combine(system, "mmc.exe"), "x.msc"), (Path.Combine(windows, "hh.exe"), "x.chm") })
+        {
+            Assert.True(File.Exists(program), program);
+            var target = ShortcutTarget.Read(Link("runner.lnk", program, arguments));
+            Assert.Equal(ShortcutKind.Script, target.Kind);
+            Assert.Equal(arguments, target.Script!.Arguments);
+            // Only the command line is fingerprinted: no file is hashed for these.
+            Assert.Null(target.Script.HashedFile);
+        }
+
+        Assert.Equal(ShortcutKind.Script, ShortcutTarget.Read(Link("profile.lnk", Touch("browser.exe"), "--profile-directory=Work")).Kind);
+        Assert.Equal(bat, ShortcutTarget.Read(Link("bat.lnk", bat)).Script!.HashedFile);
+        Assert.Equal(bat, ShortcutTarget.Read(bat).Script!.HashedFile);
+    }
+
+    [Fact]
+    public void IconsAreReadOnlyFromLocalPathsAndNeverForBlockedOrWebTiles()
+    {
+        string notes = Touch("notes.txt");
+        Assert.Equal(notes, ShortcutTarget.Read(notes).Icon);
+        Assert.Equal(dir, ShortcutTarget.Read(dir).Icon);
+        string link = Link("notes.lnk", notes);
+        Assert.Equal(link, ShortcutTarget.Read(link).Icon);
+
+        Assert.Null(ShortcutTarget.Read(Touch("setup.msi")).Icon);
+        Assert.Null(ShortcutTarget.Read("https://example.com/").Icon);
+        Assert.Null(ShortcutTarget.Read(Write("site.url", "[InternetShortcut]\r\nURL=https://example.com/\r\nIconFile=\\\\server\\share\\site.ico\r\n")).Icon);
+        Assert.Null(ShortcutTarget.Read(Path.Combine(dir, "gone.txt")).Icon);
+
+        // A link whose icon lives on a network path shows its target's icon instead.
+        string remote = Link("remote-icon.lnk", notes, icon: @"\\server\share\x.ico,0");
+        Assert.Equal(notes, ShortcutTarget.Read(remote).Icon);
+    }
+
+    [Fact]
+    public void TheSettingsFileLivesInTheUsersLocalAppData() =>
+        // Nothing in the environment moves the script switch or the confirmed scripts somewhere else.
+        Assert.Equal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "settings.json"), SettingsStore.DefaultPath);
+
+    [Fact]
     public void WhatIsStoredIsCheckedAgainAtTheClick()
     {
         // Rows written behind the store's back (an edited file, an older build): refused when clicked, not started.
@@ -475,13 +570,18 @@ public sealed class ShortcutsTests : IDisposable
         return path;
     }
 
-    private string Link(string name, string target, string arguments = "")
+    private string Link(string name, string target, string arguments = "", string? icon = null)
     {
         string path = Path.Combine(dir, name);
         dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
         dynamic link = shell.CreateShortcut(path);
         link.TargetPath = target;
         link.Arguments = arguments;
+        if (icon is not null)
+        {
+            link.IconLocation = icon;
+        }
+
         link.Save();
         return path;
     }

@@ -82,8 +82,8 @@ public sealed class ShortcutStore(TomteDb db, Func<bool> scriptsOn, Func<Shortcu
             return $"There is nothing at {target}.";
         }
 
-        // A web address is stored the way it opens, so the tile and the settings list show what will load.
-        string stored = read.Kind == ShortcutKind.Url && ShortcutTarget.WebAddress(target) is { } uri ? uri.AbsoluteUri : target;
+        // Stored as it opens: a web address normalised, a path as Windows reads it (no trailing dots or spaces).
+        string stored = ShortcutTarget.Normalize(target);
         using var connection = db.Open(Feature, Schema);
         using var command = Command(connection, "INSERT INTO shortcuts_tiles(name, target) VALUES ($name, $target)", ("$name", ShortcutTarget.NameFor(stored)), ("$target", stored));
         command.ExecuteNonQuery();
