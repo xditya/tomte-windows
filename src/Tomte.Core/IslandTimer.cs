@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -12,6 +13,24 @@ public sealed record TimerRun(DateTimeOffset StartedAt, DateTimeOffset EndsAt)
     public static readonly TimeSpan MinDuration = TimeSpan.FromSeconds(1);
 
     public static TimerRun Starting(DateTimeOffset now, TimeSpan duration) => new(now, now + duration);
+
+    /// <summary>
+    /// Minutes as typed ("25", "0.5"), read with the invariant culture. False when the text is missing, is not
+    /// a number, or is outside the shortest and longest timer.
+    /// </summary>
+    public static bool TryParseMinutes(string? text, out TimeSpan duration)
+    {
+        duration = default;
+        // Written so NaN fails both comparisons.
+        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double minutes)
+            || !(minutes * 60 >= MinDuration.TotalSeconds && minutes <= MaxDuration.TotalMinutes))
+        {
+            return false;
+        }
+
+        duration = TimeSpan.FromMinutes(minutes);
+        return true;
+    }
 
     [JsonIgnore]
     public TimeSpan Duration => EndsAt - StartedAt;
@@ -70,11 +89,14 @@ public sealed class IslandTimer(string path)
 
         try
         {
-            return JsonSerializer.Deserialize<TimerRun>(File.ReadAllText(path));
+            // "{}" parses to a run that ended in year 1 and a hand edit can put the end years away; neither is a
+            // timer this app starts, so neither is resumed.
+            var run = JsonSerializer.Deserialize<TimerRun>(File.ReadAllText(path));
+            return run is not null && run.Duration > TimeSpan.Zero && run.Duration <= TimerRun.MaxDuration ? run : null;
         }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException)
         {
-            // Missing or damaged: no timer. The next start overwrites a damaged file.
+            // Unreadable or damaged: no timer. The next start overwrites a damaged file.
             return null;
         }
     }

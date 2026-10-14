@@ -75,7 +75,53 @@ public sealed class TimerTests : IDisposable
     {
         Assert.Null(new IslandTimer(File).Run);
         Directory.CreateDirectory(dir);
-        System.IO.File.WriteAllText(File, "{not json");
-        Assert.Null(new IslandTimer(File).Run);
+        string[] damaged =
+        [
+            "{not json",
+            "null",
+            "{}", // parses to a run that ended in year 1
+            """{"StartedAt":"2026-10-14T09:00:00+02:00","EndsAt":"2026-10-14T09:00:00+02:00"}""", // no length
+            """{"StartedAt":"2026-10-14T09:10:00+02:00","EndsAt":"2026-10-14T09:00:00+02:00"}""", // ends before it starts
+            """{"StartedAt":"2026-10-14T09:00:00+02:00","EndsAt":"2031-01-01T00:00:00+02:00"}""", // years away
+            """{"StartedAt":"yesterday","EndsAt":"tomorrow"}""",
+        ];
+        foreach (string text in damaged)
+        {
+            System.IO.File.WriteAllText(File, text);
+            var timer = new IslandTimer(File);
+            Assert.Null(timer.Run);
+            Assert.Null(timer.DueIn(T0));
+            Assert.False(timer.TryComplete(T0.AddYears(10)));
+        }
+
+        // The longest timer the app starts is still resumed.
+        new IslandTimer(File).Run = TimerRun.Starting(T0, TimerRun.MaxDuration);
+        Assert.NotNull(new IslandTimer(File).Run);
     }
+
+    [Theory]
+    [InlineData("25", 25 * 60)]
+    [InlineData("0.5", 30)]
+    [InlineData("1440", 24 * 3600)]
+    public void MinutesAreParsedWithinOneSecondToOneDay(string text, double seconds)
+    {
+        Assert.True(TimerRun.TryParseMinutes(text, out var duration));
+        Assert.Equal(seconds, duration.TotalSeconds, 6);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("soon")]
+    [InlineData("--debug-log=x")]
+    [InlineData("0")]
+    [InlineData("-3")]
+    [InlineData("0.01")]
+    [InlineData("1441")]
+    [InlineData("1e400")]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("1,5")]
+    public void MinutesOutsideTheRangeOrNotANumberAreRejected(string? text) =>
+        Assert.False(TimerRun.TryParseMinutes(text, out _));
 }
