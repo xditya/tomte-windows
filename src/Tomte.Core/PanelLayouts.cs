@@ -1,48 +1,59 @@
 using System.Drawing;
 using System.Numerics;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 
 namespace Tomte.Core;
 
-/// <summary>What a press on the clipboard panel hits.</summary>
-public enum ClipboardTarget
-{
-    None,
-    Switch,
-    Row,
-    RemoveRow,
-    ClearAll,
-}
-
 /// <summary>
 /// Where the Clipboard panel's parts sit, in DIPs from the body's top-left corner (the body starts
-/// under the tab strip). The same numbers draw the panel and hit-test presses on it. Rows scroll
+/// under the tab strip). The same numbers draw the panel and place its targets. Rows scroll
 /// inside the list; the scroll is how far the list has moved up.
 /// </summary>
 public sealed class ClipboardPanelLayout(Vector2 body)
 {
     public const float Pad = 14, Top = 12, HeadHeight = 18, RowHeight = 40, RowGap = 6, Corner = 8;
-    public const float Icon = 24, Remove = 18, FootHeight = 14, Gap = 10;
+    public const float Icon = 24, Remove = 24, FootHeight = 28, Gap = 10, ButtonPad = 12;
     public const float RowPitch = RowHeight + RowGap;
+
+    /// <summary>Clear all asks once: a second click within this many seconds clears.</summary>
+    public const int AskSeconds = 3;
+
+    public const string ClearAllText = "Clear all", ClearAllAsk = "Clear all? Click again";
+
+    /// <summary>Clear all's word at rest, and in the warn colour while it asks.</summary>
+    public static readonly TextStyle ButtonStyle = TextStyle.Secondary with { Align = TextAlign.Center };
+    public static readonly TextStyle AskStyle = ButtonStyle with { Color = TextStyle.WarnColor };
 
     public Vector2 Body { get; } = body;
 
     public RectangleF Head => new(Pad, Top, Body.X - 2 * Pad, HeadHeight);
 
+    /// <summary>The switch as drawn.</summary>
     public RectangleF Switch => new(Body.X - Pad - 34, Top, 34, HeadHeight);
+
+    /// <summary>What a click on the switch is tested against: the track and 3 DIP round it, 40 x 24.</summary>
+    public RectangleF SwitchArea => RectangleF.Inflate(Switch, 3, 3);
 
     public RectangleF List => RectangleF.FromLTRB(Pad, Top + HeadHeight + Gap, Body.X - Pad, Body.Y - Top - FootHeight - Gap);
 
     public RectangleF Foot => new(Pad, Body.Y - Top - FootHeight, Body.X - 2 * Pad, FootHeight);
 
-    /// <summary>"Clear all" at the right end of the footer.</summary>
-    public RectangleF ClearAll => new(Body.X - Pad - 64, Foot.Y - 3, 64, FootHeight + 6);
+    /// <summary>The Clear all button at the right end of the footer, as wide as its word (or its question) and the padding.</summary>
+    public RectangleF ClearAll(bool asking)
+    {
+        float width = MathF.Ceiling(TextSlot.Measure(asking ? ClearAllAsk : ClearAllText, ButtonStyle, Foot.Width / 2)) + 2 * ButtonPad;
+        return new(Foot.Right - width, Foot.Y, width, FootHeight);
+    }
 
     /// <summary>Row <paramref name="index"/> in list coordinates (before the scroll moves it).</summary>
     public static RectangleF Row(int index, float width) => new(0, index * RowPitch, width, RowHeight);
 
     /// <summary>The remove button inside a row, in the row's own coordinates.</summary>
     public static RectangleF RemoveIn(float rowWidth) => new(rowWidth - Gap - Remove, (RowHeight - Remove) / 2, Remove, Remove);
+
+    /// <summary>The fixed square at a row's left end for what kind of item it is, in the row's own coordinates.</summary>
+    public static RectangleF IconIn => new(Gap, (RowHeight - Icon) / 2, Icon, Icon);
 
     /// <summary>The heading, what goes beside it, and the switch's label left of the switch.</summary>
     public IReadOnlyList<TextSlot> HeadText(bool on, int keeps)
@@ -57,11 +68,14 @@ public sealed class ClipboardPanelLayout(Vector2 body)
         ];
     }
 
-    /// <summary>Under the rows: what is never kept, and Clear all at the right end.</summary>
-    public IReadOnlyList<TextSlot> FootText() =>
+    /// <summary>
+    /// Under the rows: what is never kept, ending before the button at its widest so it never moves, and Clear all's
+    /// word or question in the button.
+    /// </summary>
+    public IReadOnlyList<TextSlot> FootText(bool asking) =>
     [
-        new(NeverKept, TextStyle.Small, new(Foot.X, Foot.Y, Foot.Width - 90, FootHeight)),
-        new("Clear all", Trailing(TextStyle.Secondary), new(Foot.Right - 64, Foot.Y, 64, FootHeight)),
+        new(NeverKept, TextStyle.Small, new(Foot.X, Foot.Y, ClearAll(true).X - Gap - Foot.X, FootHeight)),
+        new(asking ? ClearAllAsk : ClearAllText, asking ? AskStyle : ButtonStyle, ClearAll(asking)),
     ];
 
     /// <summary>In the list's box while history is off or empty: centred, line under line.</summary>
@@ -98,38 +112,52 @@ public sealed class ClipboardPanelLayout(Vector2 body)
     /// <summary>A wheel delta (120 a notch, positive away from the user) moves the list one row per notch, toward the newest first.</summary>
     public float Scrolled(float scroll, int delta, int rows) => Math.Clamp(scroll - delta / 120f * RowPitch, 0, MaxScroll(rows));
 
-    public (ClipboardTarget Target, int Index) Hit(Vector2 point, int rows, float scroll, bool on)
+    /// <summary>The scroll that shows row <paramref name="index"/> whole, moving the list as little as it can.</summary>
+    public float ScrolledTo(int index, float scroll, int rows)
     {
-        if (Switch.Contains(point.X, point.Y))
+        float top = index * RowPitch, bottom = top + RowHeight;
+        float to = top < scroll ? top : bottom > scroll + List.Height ? bottom - List.Height : scroll;
+        return Math.Clamp(to, 0, MaxScroll(rows));
+    }
+
+    public const string SwitchId = "switch", ClearId = "clear";
+
+    public static string RowId(long id) => $"row:{id}";
+
+    public static string RemoveId(long id) => $"remove:{id}";
+
+    /// <summary>
+    /// The clickable parts in Tab order: the switch, each row with its remove button after it (so the button is on top of
+    /// the row), then Clear all; rows and their buttons are one arrow-key group. In body space, cut to the list where it
+    /// scrolls. A row out of view keeps its place with no height, so nothing hits it but the arrow keys still find it.
+    /// </summary>
+    public IReadOnlyList<Target> Targets(bool on, IReadOnlyList<long> rows, float scroll, bool asking)
+    {
+        var all = new List<Target> { new(SwitchId, SwitchArea, SwitchArea.Height / 2, TargetKind.Toggle, Tip: $"Keep clipboard history: {(on ? "on" : "off")}", Checked: on) };
+        if (!on || rows.Count == 0)
         {
-            return (ClipboardTarget.Switch, -1);
+            return all;
         }
 
-        if (!on || rows == 0)
+        for (int i = 0; i < rows.Count; i++)
         {
-            return (ClipboardTarget.None, -1);
+            var row = Row(i, List.Width);
+            var remove = RemoveIn(List.Width);
+            remove.Offset(row.X, row.Y);
+            all.Add(new(RowId(rows[i]), InList(row, scroll), Corner, TargetKind.Row, Tip: "Copy again", Group: 1));
+            all.Add(new(RemoveId(rows[i]), InList(remove, scroll), Remove / 2, TargetKind.Button, Tip: "Remove", Group: 1));
         }
 
-        if (ClearAll.Contains(point.X, point.Y))
-        {
-            return (ClipboardTarget.ClearAll, -1);
-        }
+        all.Add(new(ClearId, ClearAll(asking), Corner, TargetKind.Button));
+        return all;
+    }
 
-        var list = List;
-        if (!list.Contains(point.X, point.Y))
-        {
-            return (ClipboardTarget.None, -1);
-        }
-
-        float y = point.Y - list.Y + scroll;
-        int index = (int)(y / RowPitch);
-        if (index >= rows || y - index * RowPitch >= RowHeight)
-        {
-            return (ClipboardTarget.None, -1);
-        }
-
-        var remove = RemoveIn(list.Width);
-        return remove.Contains(point.X - list.X, y - index * RowPitch) ? (ClipboardTarget.RemoveRow, index) : (ClipboardTarget.Row, index);
+    // A rectangle in list coordinates to body space, cut to the list; out of view it keeps its place with no height.
+    private RectangleF InList(RectangleF r, float scroll)
+    {
+        r.Offset(List.X, List.Y - scroll);
+        var shown = RectangleF.Intersect(r, List);
+        return shown.IsEmpty ? r with { Height = 0 } : shown;
     }
 }
 
