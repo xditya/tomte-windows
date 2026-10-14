@@ -52,6 +52,18 @@ public class RetractionRulesTests
     }
 
     [Theory]
+    [InlineData(IslandState.Panels, IslandActivity.None, false, true)]
+    [InlineData(IslandState.Palette, IslandActivity.AiTask, false, true)]
+    [InlineData(IslandState.Palette, IslandActivity.Result, true, true)]
+    [InlineData(IslandState.Palette, IslandActivity.Result, false, false)]
+    [InlineData(IslandState.Compact, IslandActivity.None, true, false)]
+    [InlineData(IslandState.Hidden, IslandActivity.None, false, false)]
+    public void EscIsTakenWhileAResultIsUpOnlyWithThePointerOnIt(IslandState state, IslandActivity activity, bool pointerInside, bool expected)
+    {
+        Assert.Equal(expected, RetractionRules.TakesEscape(state, activity, pointerInside));
+    }
+
+    [Theory]
     [InlineData(IslandState.Palette, IslandActivity.Result, true)]
     [InlineData(IslandState.Palette, IslandActivity.Result | IslandActivity.DragInProgress, true)]
     [InlineData(IslandState.Palette, IslandActivity.AiTask, false)]

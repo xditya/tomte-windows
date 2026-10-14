@@ -38,6 +38,14 @@ public static class RetractionRules
     /// </summary>
     public static IslandActivity TakenOver(IslandActivity activity) => activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result);
 
+    /// <summary>
+    /// Whether Esc is taken as a global hotkey: in the states the user opened on purpose, except that a drop zone's
+    /// result, which can stay up a long time, takes it only while the pointer is on the island, so Esc in the user's
+    /// own app after Alt+Tab stays theirs.
+    /// </summary>
+    public static bool TakesEscape(IslandState state, IslandActivity activity, bool pointerInside) =>
+        state is IslandState.Panels or IslandState.Palette && (!activity.HasFlag(IslandActivity.Result) || pointerInside);
+
     /// <summary>A press outside the island dismisses a drop zone's result; anywhere else it is the user's own click.</summary>
     public static bool DismissedByClickOutside(IslandState state, IslandActivity activity) =>
         state == IslandState.Palette && activity.HasFlag(IslandActivity.Result);
