@@ -2,10 +2,10 @@
 // what the island would show: the provider indicator, the streamed answer, tool calls, their
 // permission prompts and the Compact event line after each device action. The shelf holds one
 // seeded item, notes.txt, so a tool round trip can happen.
-//   PaletteHarness "prompt" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--model id] [--cap usd]
+//   PaletteHarness "prompt" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--automation] [--model id] [--cap usd]
 // --yes answers "allow once" to every permission prompt for Tomte's own tools. It never approves a
-// tool of an MCP server: that prompt is answered "no", because nobody read it. Run without --yes to
-// answer such a prompt yourself.
+// tool of an MCP server or a UI Automation request: that prompt is answered "no", because nobody
+// read it. Run without --yes to answer such a prompt yourself.
 // --dry runs device tools in dry-run mode, so they change nothing on the PC. It does not cover
 // open_url and copy_to_clipboard, which still act when allowed, or MCP tools, which have no dry run.
 // An MCP tool runs without a prompt only when the user set it to Read in Settings; always-allow
@@ -16,15 +16,19 @@
 // another window is in front.
 // MCP servers come from the user's settings (Settings > MCP servers); they start on the send
 // and stop when the harness exits.
+// --automation offers the UI Automation tools (list a window's controls, click, type, select), with the allow and
+// deny lists from the user's settings. Every list and every action asks; type y or n (--yes answers them no). The
+// window in front is this console, so name the window in the prompt ("In Calculator, ...").
 using System.Diagnostics;
 using Tomte.AI;
+using Tomte.AI.Automation;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 
 string? prompt = null, model = "llama3.2:3b";
 decimal? cap = 2m;
-bool yes = false, dry = false, undoAll = false;
+bool yes = false, dry = false, undoAll = false, automationOn = false;
 var chipsWanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 for (int i = 0; i < args.Length; i++)
 {
@@ -34,6 +38,7 @@ for (int i = 0; i < args.Length; i++)
         case "--yes": yes = true; break;
         case "--dry": dry = true; break;
         case "--undo": undoAll = true; break;
+        case "--automation": automationOn = true; break;
         case "--model": model = args[++i]; break;
         case "--cap": cap = decimal.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         default: prompt = args[i]; break;
@@ -42,7 +47,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (prompt is null)
 {
-    Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--model id] [--cap usd]");
+    Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--automation] [--model id] [--cap usd]");
     return 1;
 }
 
@@ -54,11 +59,14 @@ shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at
 var scratchpad = new InMemoryScratchpad { Text = "Ideas:\n- a quieter alarm" };
 var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
     dry ? (name, input) => BuiltInTools.RunDevice(name, input, dryRun: true) : null);
-await using var mcp = McpTools.For(SettingsStore.Load(SettingsStore.DefaultPath).McpServers);
+var settings = SettingsStore.Load(SettingsStore.DefaultPath);
+await using var mcp = McpTools.For(settings.McpServers);
 var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
 
 nint foreground = WindowContext.Foreground();
 var (app, title) = WindowContext.Describe(foreground);
+// No desktop watch here: the lock screen and sign-in are refused by their apps, which are on the fixed list.
+using var automation = AutomationTools.For(automationOn, settings.UiAutomation, foreground, () => false);
 var chips = new List<ContextChip>
 {
     chipsWanted.Contains("selection") ? SelectionReader.Chip(foreground) : ContextChips.Selection(null),
@@ -78,6 +86,7 @@ var session = new PaletteSession(provider, config, new PaletteOptions { DailyCap
 {
     Prompt = prompt,
     Mcp = mcp,
+    Automation = automation,
     ConfirmTool = (request, _) =>
     {
         Console.WriteLine();
@@ -86,8 +95,8 @@ var session = new PaletteSession(provider, config, new PaletteOptions { DailyCap
         {
             // As in the shell's driven run: --yes stands in for a person at Tomte's own prompts only.
             // A server's tool would really run, --dry or not, so it is not approved on the user's behalf.
-            bool outside = mcp?.Owns(request.Tool) == true;
-            Console.WriteLine(outside ? "      (auto: no, --yes does not approve an MCP tool; run without --yes to answer it)" : "      (auto: yes)");
+            bool outside = mcp?.Owns(request.Tool) == true || AutomationTools.Owns(request.Tool);
+            Console.WriteLine(outside ? "      (auto: no, --yes does not approve an MCP or UI Automation tool; run without --yes to answer it)" : "      (auto: yes)");
             return Task.FromResult(outside ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
         }
 
