@@ -1,6 +1,9 @@
 using System.Runtime.CompilerServices;
 using Tomte.AI;
+using Tomte.AI.Automation;
+using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
+using Tomte.AI.Skills;
 using Tomte.Core;
 using Tomte.Core.Triggers;
 
@@ -55,16 +58,25 @@ internal static partial class Program
         // Read now, while the island is still not the foreground window.
         nint foreground = WindowContext.Foreground();
         var selection = Task.Run(SelectionReader.Read);
+        // Skills come from beside the settings file on each open, only those turned on, so one added or turned on since
+        // the last open is there; their text goes to the provider only with a send.
+        var skills = Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
         // The Shelf chip names what is on the shelf, which is read on its first use: a few milliseconds, once. The load
         // reports its own failures, so the continuation only waits.
         var shelf = Jobs.Shelf?.Load().ContinueWith(_ => { }, TaskScheduler.Default) ?? Task.CompletedTask;
-        await Task.WhenAll(shelf, Task.WhenAny(selection, Task.Delay(SelectionWait)));
+        await Task.WhenAll(shelf, skills.ContinueWith(_ => { }, TaskScheduler.Default), Task.WhenAny(selection, Task.Delay(SelectionWait)));
         if (triggers.Machine.State != IslandState.Palette)
         {
             return;
         }
 
-        var session = Session(triggers, store, configured, dry: debug, foreground, selection.IsCompletedSuccessfully ? selection.Result : null);
+        if (!skills.IsCompletedSuccessfully)
+        {
+            log?.Invoke($"palette: skills not read: {skills.Exception?.InnerException?.Message}");
+        }
+
+        var session = Session(triggers, store, configured, dry: debug, foreground, selection.IsCompletedSuccessfully ? selection.Result : null,
+            skills.IsCompletedSuccessfully ? skills.Result : null);
         if (!debug)
         {
             _ = DescribeAsync(session, configured.Provider, configured.Config);
@@ -109,7 +121,12 @@ internal static partial class Program
     private static async Task DescribeAsync(PaletteSession session, IChatProvider provider, ProviderConfig config) =>
         session.Model = await ProviderSetup.DescribeAsync(provider, config);
 
-    private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection)
+    /// <summary>
+    /// The hotkey palette's session: the chips, the built-in tools, the skills read at this open, the user's MCP servers
+    /// (started on the first send, stopped when the palette closes) and, when Settings turned it on, UI Automation on the
+    /// window that was in front, every list and action of it asked.
+    /// </summary>
+    private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection, SkillSet? skills)
     {
         var (app, title) = WindowContext.Describe(foreground);
         // The real shelf, so the Shelf chip offers what is on it and a file the AI makes stays there.
@@ -120,7 +137,13 @@ internal static partial class Program
         paletteGrants ??= new PermissionGrants(store);
         var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null);
         var chips = ContextChips.For(null, selection, app, title, ct => WindowCapture.CapturePngAsync(foreground, ct), shelf, Scratchpad);
-        var session = new PaletteSession(configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants, chips);
+        var settings = store.Current;
+        var session = new PaletteSession(configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants, chips)
+        {
+            Skills = skills,
+            Mcp = McpTools.For(settings.McpServers),
+            Automation = AutomationTools.For(settings.UiAutomation.Enabled, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),
+        };
         // The palette is up, so the event waits in the triggers' queue and shows once it hides.
         session.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
         return session;

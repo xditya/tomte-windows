@@ -455,7 +455,7 @@ internal static partial class Program
     /// A request from an MCP server's tool is always denied here, with --dry too: the dry run is Tomte's own, and
     /// a server's tool would really run. Such a tool runs in a driven run only when the user set it to Read or
     /// answered "always allow" for it before. --automation offers the UI Automation tools, and every request of
-    /// theirs is denied here: the island cannot show the prompt yet.
+    /// theirs is denied here, with nobody at the keyboard to read it.
     /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
     private static async Task PaletteRun(IslandWindow island, TriggerController triggers, SettingsStore store, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
@@ -520,7 +520,7 @@ internal static partial class Program
                 {
                     // Nobody is at the keyboard in a driven run: refuse what has no undo and no bound, and
                     // never approve a tool of an outside server on the user's behalf. Nor an automation request:
-                    // until the island draws text, nobody can read what it would send or click.
+                    // nobody reads what it would send or click.
                     bool outside = mcp?.Owns(request.Tool) == true || AutomationTools.Owns(request.Tool);
                     bool deny = outside || (!dry && (request.Tier == ActionTier.Destructive || request.Tool == BuiltInTools.OpenApp));
                     string answer = outside ? "deny, not approved with nobody at the keyboard" : deny ? "deny, needs --dry" : "allow once";
@@ -528,10 +528,10 @@ internal static partial class Program
                     return Task.FromResult(deny ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
                 },
             };
-            // "/name" runs the palette command of the skill called name, as picking it from the command list does.
-            if (session.Commands.FirstOrDefault(c => "/" + c.Skill == prompt) is { } command)
+            // "/name" runs the palette command of the skill called name, as the prompt box does.
+            if (SkillSet.Expand(session.Commands, prompt) is { } command)
             {
-                session.Prompt = command.Text;
+                session.Prompt = command;
             }
 
             int steps = 0;

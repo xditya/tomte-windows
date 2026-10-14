@@ -126,6 +126,10 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public float Height(float answer) =>
         (float)Math.Clamp(AnswerTop + (answer > 0 ? answer + Gap : 0) + AskRoom + FootHeight + Bottom, PanelSize.PaletteMinHeight, PanelSize.PaletteMaxHeight);
 
+    /// <summary>The hint in an empty prompt box. With skill commands it names them: typing one is the only way to find them.</summary>
+    public static string HintFor(IEnumerable<string> commands) =>
+        commands.Any() ? $"Ask about what is in front of you, or type {string.Join(", ", commands.Select(c => "/" + c))}" : Hint;
+
     /// <summary>
     /// The open question's card in a palette of <paramref name="height"/>, above the footer: the summary from its top
     /// left, then a row with why it asks on the left and the buttons on the right, Run last. Null with no question.

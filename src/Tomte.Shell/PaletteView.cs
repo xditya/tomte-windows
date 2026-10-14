@@ -50,6 +50,7 @@ internal sealed class PaletteView : IDisposable
     private readonly EditorView? prompt;
     private readonly ToolQuestion? question;
     private readonly bool typed;
+    private readonly string hint;
     private TextVisual? setup;
     private float answerHeight, scroll;
     private bool pinned = true;
@@ -74,6 +75,7 @@ internal sealed class PaletteView : IDisposable
         this.width = width;
         this.question = question;
         typed = send is not null;
+        hint = PaletteLayout.HintFor(session?.Commands.Select(c => c.Skill) ?? []);
         layout = new PaletteLayout(width, island.Mascot.Enabled);
         var c = island.Compositor;
         root = c.CreateContainerVisual();
@@ -138,6 +140,17 @@ internal sealed class PaletteView : IDisposable
         }
 
         Update();
+    }
+
+    /// <summary>The prompt box's text, set for the user to read before Enter sends it (a skill's command).</summary>
+    public void Fill(string prompted)
+    {
+        if (prompt is not null && !disposed)
+        {
+            prompt.Services.Text = prompted;
+            // The caret after it, where the user would go on typing.
+            prompt.Services.Selection = (prompted.Length, prompted.Length);
+        }
     }
 
     /// <summary>The palette's height for what it shows now, in DIPs.</summary>
@@ -308,7 +321,7 @@ internal sealed class PaletteView : IDisposable
         }
 
         bool empty = prompt is null || prompt.Services.Text.Length == 0;
-        placeholder.Show(empty ? (session is null ? PaletteLayout.Off : PaletteLayout.Hint) : "", PaletteLayout.Placeholder, new RectangleF(editorBox.X, box.Y, editorBox.Width, box.Height));
+        placeholder.Show(empty ? (session is null ? PaletteLayout.Off : hint) : "", PaletteLayout.Placeholder, new RectangleF(editorBox.X, box.Y, editorBox.Width, box.Height));
     }
 
     // A palette with no text box (the voice palette) shows what was said in the box's place, up to four lines; its
@@ -517,10 +530,11 @@ internal sealed partial class PaletteHost
     /// <summary>
     /// The palette hotkey or a click on the tomte, once the triggers have opened the Palette state: the prompt box takes
     /// the keys at once, while that press is the last input, and Enter sends. A tool that asks shows its question with
-    /// Run, Cancel and, where its tier allows, Always allow; Enter and Esc answer it while the box has the keys. Esc and
-    /// focus loss while nothing is being sent hide the island; leaving the palette cancels what is in flight (an open
-    /// question is answered no), then stops the MCP servers and the UI Automation thread the session started. With no
-    /// session, because no provider is set up, the palette says the AI layer is off and takes no keys.
+    /// Run, Cancel and, where its tier allows, Always allow; Enter and Esc answer it while the box has the keys. "/name"
+    /// puts that skill's command in the box, and the next Enter sends it. Esc and focus loss while nothing is being sent
+    /// hide the island; leaving the palette cancels what is in flight (an open question is answered no), then stops the
+    /// MCP servers and the UI Automation thread the session started. With no session, because no provider is set up,
+    /// the palette says the AI layer is off and takes no keys.
     /// </summary>
     public void Type(PaletteSession? session)
     {
@@ -548,7 +562,15 @@ internal sealed partial class PaletteHost
 
         void Entered(string typed)
         {
-            var send = SendAsync(session!, typed);
+            // "/name" puts that skill's command in the box for the user to read; the next Enter sends it. Set on the next
+            // turn: this Enter is still inside the box's key handling.
+            if (Tomte.AI.Skills.SkillSet.Expand(session!.Commands, typed) is { } command)
+            {
+                island.Queue.TryEnqueue(() => view!.Fill(command));
+                return;
+            }
+
+            var send = SendAsync(session, typed);
             if (!send.IsCompleted)
             {
                 sending = send;

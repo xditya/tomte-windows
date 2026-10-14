@@ -634,6 +634,25 @@ public sealed class SkillTests : IDisposable
     }
 
     [Fact]
+    public void ASlashCommandInThePromptBoxBecomesItsSkillsCommand()
+    {
+        SkillCommand[] commands = [new("notes", "Tidy notes", "Tidy the scratchpad."), new("recipes", "Dinner", "What can I cook?")];
+        Assert.Equal("Use the notes skill. Tidy the scratchpad.", SkillSet.Expand(commands, "/notes"));
+        Assert.Equal("Use the notes skill. Tidy the scratchpad.", SkillSet.Expand(commands, "  /Notes \n"));
+        // Words after the name go along on a line of their own.
+        Assert.Equal("Use the recipes skill. What can I cook?\nonly vegetarian, for two", SkillSet.Expand(commands, "/recipes only vegetarian, for two"));
+        // Anything else is sent as typed.
+        Assert.Null(SkillSet.Expand(commands, "/shopping"));
+        Assert.Null(SkillSet.Expand(commands, "/"));
+        Assert.Null(SkillSet.Expand(commands, "tidy my /notes"));
+        Assert.Null(SkillSet.Expand([], "/notes"));
+
+        // The empty prompt box names the commands, since typing one is the only way to find them.
+        Assert.Equal("Ask about what is in front of you, or type /notes, /recipes", PaletteLayout.HintFor(commands.Select(c => c.Skill)));
+        Assert.Equal(PaletteLayout.Hint, PaletteLayout.HintFor([]));
+    }
+
+    [Fact]
     public void TheDropZoneListHasTheZonesOfEnabledSkills()
     {
         Write("bullets", "SKILL.md", Front("bullets", "d"));

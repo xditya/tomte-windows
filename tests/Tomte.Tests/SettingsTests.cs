@@ -42,6 +42,20 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void DesktopAutomationIsOffUntilTurnedOnAndKeepsItsLists()
+    {
+        Assert.False(new TomteSettings().UiAutomation.Enabled);
+        using (var store = new SettingsStore(File))
+        {
+            store.Save(store.Current with { UiAutomation = store.Current.UiAutomation with { Enabled = true } });
+        }
+
+        var loaded = SettingsStore.Load(File).UiAutomation;
+        Assert.True(loaded.Enabled);
+        Assert.Equal(new UiAutomationSettings().DeniedApps, loaded.DeniedApps);
+    }
+
+    [Fact]
     public void SavedSettingsComeBackEqual()
     {
         var changed = new TomteSettings
