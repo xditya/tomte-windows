@@ -473,7 +473,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 Reveal(RevealTrigger.Hotkey, IslandState.Panels);
                 break;
             case HotkeyAction.Scratchpad:
-                // Until the Scratchpad panel registers there is nothing to select and Panels opens on the last-used tab.
+                // Panels opens on the Scratchpad tab; while Panels is open, the same press is a tab switch to it.
                 if (Allowed(RevealTrigger.Hotkey))
                 {
                     Panels?.Select(PanelId.Scratchpad);

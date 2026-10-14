@@ -5,6 +5,7 @@ using Tomte.AI;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Clipboard;
 using Tomte.Core.Device;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
@@ -29,6 +30,9 @@ internal static class Program
     private static Process? settingsProcess;
     private static bool startingSettings;
     private static string settingsFile = SettingsStore.DefaultPath;
+
+    // The one scratchpad note: the rambler, the palette and the Scratchpad panel all use this instance.
+    private static ScratchpadNote Scratchpad = null!;
 
     [STAThread]
     private static unsafe int Main(string[] args)
@@ -116,7 +120,19 @@ internal static class Program
             timer.Run = TimerRun.Starting(DateTimeOffset.Now, length);
         }
 
-        StartPanels(island, triggers, store, logLine, args.Contains("--debug-tabs"));
+        // The note and clipboard history live beside the settings file too. Nothing here opens the database: the note
+        // loads when something first reads it, history on the first copy.
+        string data = Path.GetDirectoryName(store.FilePath)!;
+        var db = new TomteDb(Path.Combine(data, "tomte.db"));
+        Scratchpad = new ScratchpadNote(db, Path.Combine(data, "scratchpad.md"));
+        var history = new ClipboardHistory(db);
+        var clipboard = new ClipboardWatch(history, captured => ClipboardListener.Start(captured, () => pause.IsPaused(DateTimeOffset.Now), () => store.Current.AppRules, history.Retention.MaxChars, logLine), logLine);
+        // Off means no listener at all. Changed arrives on a pool thread and Apply stays there: starting the listener
+        // waits for its window and stopping it waits for its thread, neither of which belongs on the island's thread.
+        clipboard.Apply(store.Current.KeepClipboardHistory);
+        store.Changed += s => clipboard.Apply(s.KeepClipboardHistory);
+        StartPanels(island, triggers, store, db, clipboard, logLine, args.Contains("--debug-tabs"));
+
         if (rambler)
         {
             triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
@@ -165,6 +181,17 @@ internal static class Program
         if (settingsProcess is { HasExited: false } && !settingsProcess.CloseMainWindow())
         {
             settingsProcess.Kill();
+        }
+
+        // Quitting keeps the history; only turning it off clears it. Typing not yet saved is saved now.
+        clipboard.Dispose();
+        try
+        {
+            Scratchpad.FlushAsync().Wait(TimeSpan.FromSeconds(6));
+        }
+        catch (AggregateException e)
+        {
+            log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} scratchpad: not saved at quit ({e.InnerException?.GetType().Name})");
         }
 
         triggers.Dispose();
@@ -228,14 +255,18 @@ internal static class Program
     /// event is the one thing that listens to media while the island is hidden, and only when the user
     /// turned it on in settings.
     /// </summary>
-    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, bool debugTabs)
+    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ClipboardWatch clipboard, Action<string>? log, bool debugTabs)
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
-        panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
-        // tomte.db next to the settings file in use, so a run with its own settings file has its own tiles too.
-        var shortcuts = new ShortcutStore(new TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db")), () => store.Current.ScriptShortcuts);
+        // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
+        // own tiles, note and history too.
+        var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
+        panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
+        panels.Register(new ScratchpadPanel(island, Scratchpad, log));
+        // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
+        panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), log));
         if (debugTabs)
         {
             // --debug-tabs: an empty Shelf-sized tab to switch to, until a second panel exists.
@@ -340,7 +371,7 @@ internal static class Program
 
     /// <summary>
     /// --palette "prompt" [--screenshot] [--dry]: the debug driver. Opens the palette on the island, runs the
-    /// prompt against local Ollama with the window chip on and an in-memory shelf and scratchpad, logs the
+    /// prompt against local Ollama with the window chip on, an in-memory shelf and the real scratchpad note, logs the
     /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
     /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
     /// Destructive requests (lock, sleep, restart, shut down) are denied without --dry: nobody is there to answer.
@@ -365,7 +396,9 @@ internal static class Program
             using var http = new HttpClient();
             var shelf = new InMemoryShelf();
             shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at 10.");
-            var scratchpad = new InMemoryScratchpad();
+            // The one note the rambler and the Scratchpad panel use too; the tools read and write it in memory once loaded.
+            var scratchpad = Scratchpad;
+            await scratchpad.LoadAsync();
             var (app, title) = WindowContext.Describe(foreground);
             var chips = new List<ContextChip>
             {
@@ -492,12 +525,12 @@ internal static class Program
             structure = new RamblerStructure(new ProviderSend(config.Id, model), (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct));
         }
 
-        var scratchpad = new ScratchpadFile(ScratchpadFile.DefaultPath);
+        var scratchpad = Scratchpad;
         var sendLog = new SendLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl"));
         var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
-        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"} scratchpad={scratchpad.FilePath}");
+        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"}");
         return session;
     }
 
