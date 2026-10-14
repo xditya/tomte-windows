@@ -497,8 +497,15 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         (width.Target, depth.Target, corner.Target) = (to.Width, to.Depth, to.Corner);
-        ClearRegion();
-        SizeWindow(System.Drawing.Rectangle.Union(Bounds(Current), Bounds(to)));
+        if (swell)
+        {
+            // The grown pill's region holds the shape on its way up and back down, so the gap above it and the room
+            // beside the shadow keep passing clicks through, as at rest: a pointer that just left may click the app below.
+            // It covers the resting pill too, so it can go on before the window grows.
+            SetRegion(to);
+            SizeWindow(Bounds(to));
+        }
+
         Apply(Current);
         if (!islandMoving)
         {
