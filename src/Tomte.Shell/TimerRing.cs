@@ -48,6 +48,8 @@ internal sealed class TimerRing
     {
         visual.Scale = new Vector3((float)scale, (float)scale, 1);
         visual.StartAnimation("Offset", place);
+        // Stop first, so a fill left from the last show cannot override the value set here.
+        arc.StopAnimation("TrimEnd");
         arc.TrimEnd = (float)run.Progress(now);
         var remaining = run.Remaining(now);
         if (remaining > TimeSpan.Zero)

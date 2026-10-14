@@ -508,6 +508,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
             island.Mascot.Set(MascotState.Result);
             UpdateRing();
         }
+        else
+        {
+            // Paused: the event is dropped, as every event is while the island is paused, and the ring with it.
+            finished = null;
+            UpdateRing();
+        }
     }
 
     /// <summary>
@@ -527,10 +533,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
         UpdateRing();
     }
 
-    /// <summary>The ring shows in Compact while a timer runs, and full while that timer's done event holds the pill.</summary>
+    /// <summary>
+    /// The ring shows in Compact while a timer runs, and full from the moment it ends until its done pill has
+    /// been shown. Not tied to the event pill being up: the done event takes a thread hop to show, and a peek
+    /// pill that is already up at the end would lose the ring for those frames.
+    /// </summary>
     private void UpdateRing()
     {
-        var run = timer.Run ?? (eventShowing ? finished : null);
+        var run = timer.Run ?? finished;
         if (machine.State == IslandState.Compact && run is not null)
         {
             ring.Show(run, DateTimeOffset.Now, island.Scale);
@@ -669,8 +679,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         bool wasPeek = activity.HasFlag(IslandActivity.Peek);
         activity = IslandActivity.None;
+        if (eventShowing)
+        {
+            // The finished timer keeps its full ring until its done pill has been shown. A hide of anything else,
+            // while that event still waits behind Focus, fullscreen or the lock screen, must not take it.
+            finished = null;
+        }
+
         armed = eventShowing = firstRunShowing = dragEntered = false;
-        finished = null;
         InputThread.StopTrackingPointer();
         InputThread.SetEscape(false);
         if (machine.State != IslandState.Hidden)
