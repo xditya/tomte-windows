@@ -85,16 +85,14 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         int shownAs = generation;
         bool on = watch.On;
         IReadOnlyList<ClipboardRow> next = [];
-        if (on)
+        try
         {
-            try
-            {
-                next = await watch.RowsAsync(DateTimeOffset.Now);
-            }
-            catch (Exception e)
-            {
-                log?.Invoke($"clipboard panel: rows could not be read ({e.GetType().Name})");
-            }
+            // Off, this returns none and clears anything left behind.
+            next = await watch.RowsAsync(DateTimeOffset.Now);
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"clipboard panel: rows could not be read ({e.GetType().Name})");
         }
 
         if (view is null || shownAs != generation)

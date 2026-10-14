@@ -208,7 +208,20 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<string,
         }
     }
 
-    public Task<IReadOnlyList<ClipboardRow>> RowsAsync(DateTimeOffset now) => Enqueue(() => history.Rows(now));
+    /// <summary>
+    /// Newest first. Off, there are none, and anything still stored is cleared: history turned off while
+    /// Tomte was not running, or a clear that failed, does not stay behind in the file.
+    /// </summary>
+    public Task<IReadOnlyList<ClipboardRow>> RowsAsync(DateTimeOffset now) => Enqueue<IReadOnlyList<ClipboardRow>>(() =>
+    {
+        if (On)
+        {
+            return history.Rows(now);
+        }
+
+        history.Clear();
+        return [];
+    });
 
     /// <summary>Puts the item back on the clipboard. It does not paste, and it does not come back as a new item.</summary>
     public Task PickAsync(long id) => Enqueue(() =>

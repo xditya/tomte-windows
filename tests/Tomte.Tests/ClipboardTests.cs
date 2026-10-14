@@ -258,6 +258,16 @@ public sealed class ClipboardTests : IDisposable
     }
 
     [Fact]
+    public async Task HistoryLeftBehindWhileOffIsClearedWhenItIsShown()
+    {
+        // Stored by a run with history on; turned off since while Tomte was not running.
+        new ClipboardHistory(new TomteDb(DbPath)).Add(Secret, Now);
+
+        Assert.Empty(await Watch([]).RowsAsync(Now));
+        Assert.False(FileHolds(Secret));
+    }
+
+    [Fact]
     public async Task ACopyThatLandsAfterOffIsDropped()
     {
         var listeners = new List<FakeListener>();

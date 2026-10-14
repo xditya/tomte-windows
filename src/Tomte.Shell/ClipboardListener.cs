@@ -72,19 +72,27 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
 
     private void Loop()
     {
-        // The predefined static class: every message this window cares about is posted, so the loop takes it first.
-        fixed (char* className = "STATIC")
+        try
         {
-            window = PInvoke.CreateWindowEx(0, className, null, 0, 0, 0, 0, 0, MessageOnlyParent, HMENU.Null, HINSTANCE.Null, null);
+            // The predefined static class: every message this window cares about is posted, so the loop takes it first.
+            fixed (char* className = "STATIC")
+            {
+                window = PInvoke.CreateWindowEx(0, className, null, 0, 0, 0, 0, 0, MessageOnlyParent, HMENU.Null, HINSTANCE.Null, null);
+            }
+
+            if (window == HWND.Null || !PInvoke.AddClipboardFormatListener(window))
+            {
+                log?.Invoke($"clipboard: listener could not start ({new Win32Exception().NativeErrorCode})");
+            }
+
+            lastSequence = PInvoke.GetClipboardSequenceNumber();
+        }
+        finally
+        {
+            // Start waits for this; it must come even if the window could not be made.
+            ready.Set();
         }
 
-        if (window == HWND.Null || !PInvoke.AddClipboardFormatListener(window))
-        {
-            log?.Invoke($"clipboard: listener could not start ({new Win32Exception().NativeErrorCode})");
-        }
-
-        lastSequence = PInvoke.GetClipboardSequenceNumber();
-        ready.Set();
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
         {
