@@ -71,9 +71,14 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
         }
     }
 
-    // A click into the card goes to the text box through the typing focus, which takes the keys.
+    // A click into the text box goes to it through the typing focus. The card's padding around the box looks like
+    // part of it, so a click there gives the note the keys too.
     public void Press(Vector2 point)
     {
+        if (editor is not null && layout is not null && layout.Note.Contains(point.X, point.Y) && !editor.Box.Contains(point.X, point.Y))
+        {
+            focus.Take(editor);
+        }
     }
 
     public void Wheel(Vector2 point, int delta)

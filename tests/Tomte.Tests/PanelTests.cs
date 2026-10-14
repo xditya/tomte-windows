@@ -218,4 +218,29 @@ public class PanelTests
         Assert.Equal(MascotArt.InsetX, TabStrip.Labels([PanelId.Media], PanelId.Media, 380, mascot: false)[0].Slot.X);
         Assert.Single(TabStrip.Labels([PanelId.Media], PanelId.Media, 380, mascot: true));
     }
+
+    [Fact]
+    public void APressOnALabelPicksItsTabAndNothingElseDoes()
+    {
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard];
+        var labels = TabStrip.Labels(all, PanelId.Shelf, 560, mascot: true);
+
+        for (int i = 0; i < labels.Count; i++)
+        {
+            Assert.Equal(all[i], TabStrip.At(labels[i].Slot.X + 1, all, PanelId.Shelf, 560, mascot: true));
+            Assert.Equal(all[i], TabStrip.At(labels[i].Slot.Right - 1, all, PanelId.Shelf, 560, mascot: true));
+        }
+
+        // The tomte, the gap between two labels and the room after the last one are no tab.
+        Assert.Null(TabStrip.At(MascotArt.InsetX + 1, all, PanelId.Shelf, 560, mascot: true));
+        Assert.Null(TabStrip.At(labels[0].Slot.Right + TabStrip.Gap / 2, all, PanelId.Shelf, 560, mascot: true));
+        Assert.Null(TabStrip.At(labels[^1].Slot.Right + 1, all, PanelId.Shelf, 560, mascot: true));
+
+        // Anywhere along a narrow strip, only a tab that got a label can be pressed.
+        var shownTabs = all.Take(TabStrip.Labels(all, PanelId.Media, 380, mascot: true).Count).ToHashSet();
+        for (float x = 0; x < 380; x++)
+        {
+            Assert.True(TabStrip.At(x, all, PanelId.Media, 380, mascot: true) is not { } id || shownTabs.Contains(id), $"x {x}");
+        }
+    }
 }

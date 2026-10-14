@@ -106,6 +106,23 @@ public static class TabStrip
 
         return labels;
     }
+
+    /// <summary>The tab whose label is under <paramref name="x"/>, in DIPs from the panel's left edge; null between or past them.</summary>
+    public static PanelId? At(float x, IReadOnlyCollection<PanelId> tabs, PanelId? current, float panelWidth, bool mascot)
+    {
+        var labels = Labels(tabs, current, panelWidth, mascot);
+        int i = 0;
+        foreach (var id in tabs.Take(labels.Count))
+        {
+            var slot = labels[i++].Slot;
+            if (x >= slot.Left && x < slot.Right)
+            {
+                return id;
+            }
+        }
+
+        return null;
+    }
 }
 
 /// <summary>

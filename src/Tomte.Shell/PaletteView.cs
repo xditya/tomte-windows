@@ -348,12 +348,18 @@ internal sealed class PaletteView : IDisposable
             return;
         }
 
-        int i = layout.ChipAt(at - new Vector2(root.Offset.X, root.Offset.Y));
+        var local = at - new Vector2(root.Offset.X, root.Offset.Y);
+        int i = layout.ChipAt(local);
         if (i >= 0)
         {
             var chip = session.Chips[i];
             chip.On = !chip.On;
             Update();
+        }
+        else if (prompt is not null && layout.Prompt.Contains(local.X, local.Y) && !prompt.Contains(at))
+        {
+            // The card's padding around the text box looks like part of it; the box itself takes its own presses.
+            focus?.Take(prompt);
         }
     }
 
