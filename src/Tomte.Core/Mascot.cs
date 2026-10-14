@@ -351,8 +351,12 @@ public sealed class Mascot
     /// </summary>
     public void Hover(bool on)
     {
-        To(lift, on ? -MascotStates.HoverLiftDips * MascotArt.ViewBox / MascotArt.SizeDips : 0, SpringPreset.Snappy);
-        Changed?.Invoke();
+        double target = on ? -MascotStates.HoverLiftDips * MascotArt.ViewBox / MascotArt.SizeDips : 0;
+        if (target != lift.Target)
+        {
+            To(lift, target, SpringPreset.Snappy);
+            Changed?.Invoke();
+        }
     }
 
     /// <summary>The island just hid: drop every animation so nothing wakes the tick while hidden.</summary>

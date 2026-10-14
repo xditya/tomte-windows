@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -32,6 +33,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private readonly Action<string>? log;
     private readonly IslandTimer timer;
     private readonly TimerRing ring;
+    private readonly CompactTargets compact;
     private TimerRun? finished;
     private IReadOnlyList<IslandEvent> showing = [];
     private Rambler? rambler;
@@ -51,6 +53,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         this.timer = timer;
         this.log = log;
         ring = new TimerRing(island.Compositor);
+        compact = new CompactTargets(this);
         island.Content.Children.InsertAtTop(ring.Visual);
         // The timer has no lock and is only touched on this thread. Changed is queued, not run in place, so the
         // caller (the debug switch, a completion inside OnTimer) finishes before the one-shot and the ring re-sync.
@@ -59,10 +62,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         settings = store.Current;
         island.MoveTo(settings.IslandOffset);
         island.Message = HandleMessage;
-        // Hover, a press or a scroll on Compact opens Panels, and a click on the tomte the palette; on the next turn, so
-        // the press or notch that opens them is not also taken by the panel host as a tab switch or a press on the new body.
+        // Hover, a click or a scroll on Compact opens Panels, and a click on the tomte the palette; on the next turn, so
+        // the click or notch that opens them is not also taken by the panel host as a tab switch or a press on the new body.
+        // Compact's clicks come through its targets (CompactTargets).
         island.Wheel += (_, _) => OpenPanelsNextTurn();
-        island.Pressed += OnPressed;
         // A drag on the pill's own surface moves the island along the top edge, and holds it open like any drag.
         island.Grabs = Grabs;
         island.MoveStarted += () =>
@@ -439,21 +442,6 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    /// <summary>
-    /// A click on the tomte asks the AI, as the palette hotkey does, from Compact or peek; in Panels the strip's tomte
-    /// and Ask pill do (<see cref="AskClicked"/>). A press anywhere else on Compact opens Panels.
-    /// </summary>
-    private void OnPressed(System.Numerics.Vector2 at)
-    {
-        if (island.OnMascot(at) && OpensPalette())
-        {
-            AskClicked();
-            return;
-        }
-
-        OpenPanelsNextTurn();
-    }
-
     /// <summary>A click that asks the AI: the palette on the next turn, as the palette hotkey opens it; with no provider set up it says the AI layer is off.</summary>
     internal void AskClicked()
     {
@@ -476,17 +464,65 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private bool OpensPalette() => machine.State is IslandState.Compact or IslandState.Panels && !activity.HasFlag(IslandActivity.Rambling);
 
     /// <summary>
-    /// The pill's own surface, which a drag moves along the top edge: all of Compact, the tab strip's row outside its
-    /// targets (the tabs, the tomte and the Ask pill take their presses first), and the tomte over the palette. Panel
-    /// bodies and the palette's controls keep their presses, and shelf and result tiles their drag out.
+    /// The pill's own surface, which a drag moves along the top edge: the rambler's pill, the tab strip's row outside its
+    /// targets (the tabs, the tomte and the Ask pill take their presses first), and the tomte over the palette. Compact's
+    /// targets and the strip's tomte move it through their own drag. Panel bodies and the palette's controls keep their
+    /// presses, and shelf and result tiles their drag out.
     /// </summary>
     private bool Grabs(System.Numerics.Vector2 at) => machine.State switch
     {
-        IslandState.Compact => true,
+        IslandState.Compact => activity.HasFlag(IslandActivity.Rambling),
         IslandState.Panels => at.Y < PanelSpace.TabStripHeight,
         IslandState.Palette => island.OnMascot(at),
         _ => false,
     };
+
+    /// <summary>
+    /// The Compact pill and the peek badge for the interaction host, in island space: a click on the pill opens Panels,
+    /// one on the tomte asks Tomte, a drag on either moves the island, and the tomte lifts while the pointer is on it.
+    /// An event pill has no action of its own, so it is the pill. None on the rambler's pill, where a click does nothing.
+    /// </summary>
+    private sealed class CompactTargets(TriggerController owner) : IInteractive
+    {
+        public event Action? TargetsChanged;
+
+        public IReadOnlyList<Target> Targets =>
+            owner.machine.State == IslandState.Compact && !owner.activity.HasFlag(IslandActivity.Rambling)
+                ? CompactLayout.Targets(owner.island.Heading, owner.island.Mascot.Enabled)
+                : [];
+
+        /// <summary>The state, the shape or the rambling changed: register while in Compact, and say so.</summary>
+        public void Changed()
+        {
+            if (owner.machine.State == IslandState.Compact)
+            {
+                owner.island.Interaction.Register(this, p => p, p => p);
+            }
+            else
+            {
+                owner.island.Interaction.Unregister(this);
+                owner.island.Mascot.Hover(false);
+            }
+
+            TargetsChanged?.Invoke();
+        }
+
+        public void Activate(string id)
+        {
+            if (id == CompactLayout.TomteId)
+            {
+                owner.AskClicked();
+            }
+            else
+            {
+                owner.OpenPanelsNextTurn();
+            }
+        }
+
+        public bool TryDrag(string id, System.Numerics.Vector2 at) => owner.island.Drag(at);
+
+        public void Hovered(string? id) => owner.island.Mascot.Hover(id == CompactLayout.TomteId);
+    }
 
     /// <summary>
     /// A drag on the pill let go, or a double click sent the island back to the middle: the place is kept for the next
@@ -780,8 +816,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
                     // A hold started on the peek pill is no longer peek: an event, a window under the zone or an edge
                     // push would otherwise take the pill away mid-recording.
                     activity = (activity & ~IslandActivity.Peek) | IslandActivity.Rambling;
-                    // The rambler's pill has no room for the ring, and it changes state without Go.
+                    // The rambler's pill has no room for the ring, and it changes state without Go; nor does a click on it do anything.
                     UpdateRing();
+                    compact.Changed();
                     pointerInside = pointerOn = false;
                     InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
                 }
@@ -1071,6 +1108,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.
         UpdateRing();
+        // The pill's targets follow the shape it is heading for.
+        compact.Changed();
         if (log is not null)
         {
             morph.ContinueWith(_ => log($"{from}->{state} settled in {island.LastMorphMs:F0}ms, {island.LastMorphTicks} ticks"), TaskScheduler.FromCurrentSynchronizationContext());

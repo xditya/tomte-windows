@@ -317,6 +317,30 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     public IslandGeometry Current => new(width.Value, depth.Value, corner.Value, rampW.Value, rampH.Value);
 
+    /// <summary>The shape the current morph is heading for, as drawn (the notch when attached), without the swell.</summary>
+    public IslandGeometry Heading => targetGeometry;
+
+    /// <summary>
+    /// A press at this island point on a target that moves the island: true once the pointer has gone the system's drag
+    /// distance (Win32 runs that loop), and the island then follows it along the top edge until the button comes up, as
+    /// for a press <see cref="Grabs"/> holds; false when the button came up first, which is a click.
+    /// </summary>
+    public bool Drag(Vector2 at)
+    {
+        var from = IslandToScreen(at);
+        if (!PInvoke.DragDetect(Hwnd, from))
+        {
+            return false;
+        }
+
+        double offset = IslandPlace.Clamp(place.Value, targetGeometry, scale, screenWidth, attached);
+        (grabbing, grabMoved, grabPill, grabFrom, grabAt, grabOffset) = (true, false, false, from, at, offset);
+        PInvoke.SetCapture(Hwnd);
+        // The pointer is past the drag distance already: the island catches up with it now.
+        Grab(PInvoke.WM_MOUSEMOVE);
+        return true;
+    }
+
     /// <summary>Primary monitor in DIPs at the window's DPI, for the 60% x 50% panel cap.</summary>
     public (double Width, double Height) MonitorSize =>
         (PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN) / scale, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYSCREEN) / scale);
