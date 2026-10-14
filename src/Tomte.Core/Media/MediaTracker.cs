@@ -348,7 +348,10 @@ public sealed class MediaTracker
         ReadTrack();
     }
 
-    /// <summary>The first view came or the last one went: the followed session's position reports are wanted, or not.</summary>
+    /// <summary>
+    /// The first view came or the last one went: the followed session's position reports and its art are
+    /// wanted, or not.
+    /// </summary>
     private void HookTimeline(bool on)
     {
         if (picked is not { } session)
@@ -370,6 +373,7 @@ public sealed class MediaTracker
         if (on)
         {
             ReadTimeline();
+            ReadTrack();
         }
     }
 
@@ -434,10 +438,11 @@ public sealed class MediaTracker
         }
 
         trackReading = true;
-        _ = ReadTrackAsync(session, current.SessionId, current.Thumbnail);
+        // Art is for a view. The track-change event alone decodes nothing while the island is hidden.
+        _ = ReadTrackAsync(session, current.SessionId, current.Thumbnail, withArt: viewers > 0);
     }
 
-    private async Task ReadTrackAsync(Session session, string? id, MediaThumbnail? cached)
+    private async Task ReadTrackAsync(Session session, string? id, MediaThumbnail? cached, bool withArt)
     {
         (string Title, string Artist, MediaThumbnail? Art)? track = null;
         try
@@ -445,7 +450,8 @@ public sealed class MediaTracker
             var properties = await session.TryGetMediaPropertiesAsync().AsTask().ConfigureAwait(false);
             if (properties is not null)
             {
-                track = (properties.Title ?? "", properties.Artist ?? "", await DecodeAsync(properties.Thumbnail, cached).ConfigureAwait(false));
+                var art = withArt ? await DecodeAsync(properties.Thumbnail, cached).ConfigureAwait(false) : null;
+                track = (properties.Title ?? "", properties.Artist ?? "", art);
             }
         }
         catch (Exception e)
@@ -460,7 +466,9 @@ public sealed class MediaTracker
             bool followed = picked is not null && current.SessionId == id;
             if (followed && track is { } read)
             {
-                Set(current.WithTrack(read.Title, read.Artist) with { Thumbnail = read.Art });
+                // WithTrack drops the art of another track; a read without art leaves the rest as it is.
+                var next = current.WithTrack(read.Title, read.Artist);
+                Set(withArt ? next with { Thumbnail = read.Art } : next);
                 if (!trackKnown)
                 {
                     trackKnown = true;
