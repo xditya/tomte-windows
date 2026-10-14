@@ -26,14 +26,22 @@ public sealed class TomteDb(string? path = null)
     /// Opens the database for one piece of work and first brings the feature's tables up to date:
     /// <paramref name="steps"/> is that feature's whole schema history in order, each entry one or
     /// more SQL statements. Steps this file has not seen run in one transaction, the rest are
-    /// skipped. Only ever add to the end of the list. Prefix table names with the feature name.
+    /// skipped. Only ever add to the end of the list. A feature name is lowercase letters and digits,
+    /// and every table, index, view and trigger its steps make is named (feature)_ and then its own name.
     /// A step cannot switch foreign keys off (that setting is fixed while a transaction is open).
     /// Dispose the connection when the work is done; never keep one in a field.
+    /// This call and every statement on the connection block the calling thread: milliseconds as a
+    /// rule, about a tenth of a second for the first open in a process, seconds behind a stuck lock.
+    /// Call it only from a worker thread, never from the island's thread, the hook thread, or inside
+    /// a drop or clipboard callback.
     /// A file that is not a database, or whose schema is damaged, is renamed to tomte.db.bad-(time)
     /// and an empty one takes its place, so everything stored so far is gone from the app.
     /// </summary>
     /// <exception cref="SqliteException">Locked for longer than the wait, disk full, access denied, or a step that is not valid SQL.</exception>
     /// <exception cref="IOException">A damaged file could not be renamed because something else kept it open.</exception>
+    /// <exception cref="UnauthorizedAccessException">The folder, the file or the lock around a set-aside is not this user's to touch.</exception>
+    /// <exception cref="ArgumentException">The feature name is not lowercase letters and digits.</exception>
+    /// <exception cref="InvalidOperationException">A step made an object whose name does not start with the feature name.</exception>
     public SqliteConnection Open(string feature, IReadOnlyList<string> steps)
     {
         // SQLite compares object names without case, so "Shelf" and "shelf" would be two version rows for one set of
