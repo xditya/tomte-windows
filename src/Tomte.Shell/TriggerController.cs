@@ -41,6 +41,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
+    private Task saving = Task.CompletedTask;
 
     public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
     {
@@ -452,11 +453,24 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private void OnMoved(double offset)
     {
-        if (settings.IslandOffset != offset)
-        {
-            settings = settings with { IslandOffset = offset };
-            store.Save(settings);
-        }
+        // Off this thread, on the store's latest settings so a newer save from the settings window is kept, and one
+        // after the other so the last place moved to is the one in the file.
+        saving = saving.ContinueWith(
+            _ =>
+            {
+                try
+                {
+                    if (store.Current.IslandOffset != offset)
+                    {
+                        store.Save(store.Current with { IslandOffset = offset });
+                    }
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    log?.Invoke($"settings: the island's place was not saved: {e.Message}");
+                }
+            },
+            TaskScheduler.Default);
 
         var b = island.TargetBounds;
         int margin = (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale);
