@@ -476,9 +476,12 @@ public sealed class ShelfStore : IShelf
 
     /// <summary>
     /// A folder's files and subfolders. Links (symbolic links and junctions) are skipped, not followed, so a junction
-    /// loop cannot fill the disk; other reparse points, OneDrive's online-only files among them, are copied.
+    /// loop cannot fill the disk; other reparse points, OneDrive's online-only files among them, are copied. With
+    /// <paramref name="link"/>, a file becomes a hard link where it can. A file that is copied costs its size from
+    /// <paramref name="budget"/>, and the copy stops, part done, before the budget would go below 0. Returns what is
+    /// left of the budget, negative when it stopped.
     /// </summary>
-    private static void CopyTree(string from, string to, bool link)
+    private static long CopyTree(string from, string to, bool link, long budget)
     {
         Directory.CreateDirectory(to);
         foreach (var entry in new DirectoryInfo(from).EnumerateFileSystemInfos())
@@ -491,13 +494,24 @@ public sealed class ShelfStore : IShelf
             string target = Path.Combine(to, entry.Name);
             if (entry is DirectoryInfo)
             {
-                CopyTree(entry.FullName, target, link);
+                budget = CopyTree(entry.FullName, target, link, budget);
             }
             else if (!link || !HardLink(target, entry.FullName))
             {
-                File.Copy(entry.FullName, target);
+                budget -= ((FileInfo)entry).Length;
+                if (budget >= 0)
+                {
+                    File.Copy(entry.FullName, target);
+                }
+            }
+
+            if (budget < 0)
+            {
+                return budget;
             }
         }
+
+        return budget;
     }
 
     private static void TryDelete(string slot)
@@ -726,7 +740,8 @@ public sealed class ShelfStore : IShelf
     /// <summary>
     /// A temporary file or folder taken in inside the drop, or null when it is too large to copy here. A file on the
     /// shelf's volume becomes a hard link, which is instant and keeps the data when the source deletes its name; a
-    /// folder on that volume becomes a tree of hard links.
+    /// folder on that volume becomes a tree of hard links. What cannot be linked is copied, up to
+    /// <see cref="InDropCopyBytes"/> in all.
     /// </summary>
     private ShelfEntry? TakeTemporary(string path, string name)
     {
@@ -757,9 +772,9 @@ public sealed class ShelfStore : IShelf
         }
 
         // sizing a folder walks the whole tree inside the drop.
-        if ((LinkTemporaryFiles && sameVolume) || TreeSize(path) <= InDropCopyBytes)
+        bool link = LinkTemporaryFiles && sameVolume;
+        if ((link || TreeSize(path) <= InDropCopyBytes) && CopyTree(path, target, link, InDropCopyBytes) >= 0)
         {
-            CopyTree(path, target, link: LinkTemporaryFiles && sameVolume);
             return new ShelfEntry(ShelfKind.Copy, name, target);
         }
 
@@ -792,7 +807,7 @@ public sealed class ShelfStore : IShelf
                 {
                     // a large folder is copied after the drop returns, and a source that deletes it at once
                     // wins; IDataObjectAsyncCapability would let it wait.
-                    CopyTree(path, target, link: false);
+                    CopyTree(path, target, link: false, long.MaxValue);
                 }
 
                 return Run(() => AddAll([new ShelfEntry(ShelfKind.Copy, name, target)]));
@@ -815,7 +830,7 @@ public sealed class ShelfStore : IShelf
         }
         else if (Directory.Exists(source))
         {
-            CopyTree(source, target, link: false);
+            CopyTree(source, target, link: false, long.MaxValue);
         }
         else
         {

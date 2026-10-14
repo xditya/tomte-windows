@@ -1,4 +1,6 @@
 using System.Buffers.Binary;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using Tomte.Core;
 using Tomte.Core.Storage;
@@ -314,6 +316,30 @@ public sealed class ShelfTests : IDisposable
         // The row was kept, so the process after that one deletes the folder.
         await Store().Load();
         Assert.False(Directory.Exists(Path.GetDirectoryName(item.Path)));
+    }
+
+    [Fact]
+    public async Task AFolderWhoseFilesCannotBeLinkedIsCopiedInTheDropOnlyUpToTheCap()
+    {
+        string pack = Directory.CreateDirectory(Path.Combine(temp, "pack")).FullName;
+        string small = Write(pack, "small.txt", "small");
+        Deny(Write(pack, "big.bin", new string('b', 3000)), FileSystemRights.WriteAttributes);
+
+        // Under the cap the drop links what it can and copies the rest.
+        var roomy = Store();
+        await roomy.Accept(new DroppedItems([pack], [], null, KeepCopy: false));
+        string linked = roomy.Items.Single().Path;
+
+        // Over it the whole folder is copied after the drop, without links.
+        var tight = Store(inDrop: 1000);
+        await tight.Accept(new DroppedItems([pack], [], null, KeepCopy: false));
+        string copied = tight.Items.First().Path;
+
+        File.AppendAllText(small, " changed");
+        Assert.Equal("small changed", File.ReadAllText(Path.Combine(linked, "small.txt")));
+        Assert.Equal("small", File.ReadAllText(Path.Combine(copied, "small.txt")));
+        Assert.Equal(3000, new FileInfo(Path.Combine(linked, "big.bin")).Length);
+        Assert.Equal(3000, new FileInfo(Path.Combine(copied, "big.bin")).Length);
     }
 
     [Fact]
@@ -708,6 +734,15 @@ public sealed class ShelfTests : IDisposable
 
     // A virtual file as a drop hands it to Accept: already written into the shelf folder.
     private static (string, string) Received(ShelfStore shelf, string name, byte[] content) => (name, shelf.Receive(name, Reader(content))!);
+
+    // This user keeps the right to list and delete the file. A hard link needs the right to write its attributes.
+    private static void Deny(string path, FileSystemRights rights)
+    {
+        var file = new FileInfo(path);
+        var acl = file.GetAccessControl();
+        acl.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User!, rights, AccessControlType.Deny));
+        file.SetAccessControl(acl);
+    }
 
     // A directory junction, which needs no privilege to make.
     private static void Junction(string link, string target)
