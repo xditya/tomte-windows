@@ -150,6 +150,11 @@ internal sealed class PanelHost
         {
             // The panel is released by a one-shot timer, not when the fade completes: with the display
             // asleep the compositor finishes no animation, and the panel would keep working while hidden.
+            if (shown is IInteractive gone)
+            {
+                island.Interaction.Unregister(gone);
+            }
+
             (leaving, leavingBody, shown, body) = (shown, body, null, null);
             leavingBody!.StartAnimation("Opacity", fadeOut);
             release.Start();
@@ -228,6 +233,13 @@ internal sealed class PanelHost
         {
             fadeInPending = false;
             body.StartAnimation("Opacity", fadeIn);
+            // Its targets go live as it starts to show, as presses on the body do, in body space.
+            if (shown is IInteractive view)
+            {
+                float width = bodySize.X;
+                island.Interaction.Register(view, p => PanelSpace.ToBody(p, width), p => new(p.X - (width / 2), p.Y + PanelSpace.TabStripHeight));
+            }
+
             if (stripFadePending && strip is not null)
             {
                 stripFadePending = false;
