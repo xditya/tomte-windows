@@ -10,17 +10,23 @@ namespace Tomte.AI.Files;
 public sealed record ModelFacts(ProviderKind Kind, string Model, int ContextTokens, bool Vision, bool NativePdf)
 {
     /// <summary>
-    /// The model list's context size and vision flag when it gives them. Otherwise: Claude models take at least
-    /// 200,000 tokens and every current one reads images; Gemini models take about a million and read images; an
-    /// OpenAI-compatible endpoint (often a small local model) is taken to have 8,192 tokens and no vision, since its
-    /// API does not say.
+    /// The model list's (or a local Ollama's) context size and vision flag when it gives them. Otherwise: Claude models
+    /// take at least 200,000 tokens and every current one reads images; Gemini models take about a million and read
+    /// images; OpenAI's own API is taken as gpt-4o, 128,000 tokens and images (its list says neither, and its current
+    /// chat models read images and take at least that); any other OpenAI-compatible endpoint, often a small local model,
+    /// is taken to have 8,192 tokens and no vision.
     /// </summary>
-    public static ModelFacts For(ProviderConfig config, ProviderCapabilities capabilities, ModelInfo? listed) => new(
-        config.Kind,
-        config.DefaultModel ?? "",
-        listed?.ContextTokens ?? config.Kind switch { ProviderKind.Anthropic => 200_000, ProviderKind.Gemini => 1_048_576, _ => 8_192 },
-        capabilities.HasFlag(ProviderCapabilities.Vision) && (listed?.Vision ?? config.Kind != ProviderKind.OpenAICompatible),
-        capabilities.HasFlag(ProviderCapabilities.Pdf));
+    public static ModelFacts For(ProviderConfig config, ProviderCapabilities capabilities, ModelInfo? listed)
+    {
+        bool openAI = config.Kind == ProviderKind.OpenAICompatible
+            && Uri.TryCreate(config.BaseUrl, UriKind.Absolute, out var uri) && uri.Host.Equals("api.openai.com", StringComparison.OrdinalIgnoreCase);
+        return new(
+            config.Kind,
+            config.DefaultModel ?? "",
+            listed?.ContextTokens ?? config.Kind switch { ProviderKind.Anthropic => 200_000, ProviderKind.Gemini => 1_048_576, _ => openAI ? 128_000 : 8_192 },
+            capabilities.HasFlag(ProviderCapabilities.Vision) && (listed?.Vision ?? (config.Kind != ProviderKind.OpenAICompatible || openAI)),
+            capabilities.HasFlag(ProviderCapabilities.Pdf));
+    }
 
     /// <summary>
     /// Characters per token for Latin text. Google documents about 4 for Gemini and OpenAI about 4 for English.
