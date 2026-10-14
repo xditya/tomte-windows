@@ -40,8 +40,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     // The item whose actions the band shows, and the one it changes to once the grace is over.
     private long? shown, pending;
 
-    // Remove was clicked once and waits three seconds for the second click.
-    private bool confirming;
+    private readonly RemoveQuestion question = new();
 
     public event Action? TargetsChanged;
 
@@ -67,14 +66,20 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         (parts, band, body) = (null, null, null);
         selected.Clear();
         bandWait?.Stop();
-        Show(null);
+        shown = null;
+        Drop();
         first = wheel = 0;
         targets = [];
     }
 
-    /// <summary>A press on none of the targets: the selection goes.</summary>
+    /// <summary>A press on none of the targets: the selection goes. The host runs the presses on targets.</summary>
     public void Press(Vector2 point)
     {
+        if (targets.Any(t => t.Bounds.Contains(point.X, point.Y)))
+        {
+            return;
+        }
+
         if (selected.Count > 0)
         {
             selected.Clear();
@@ -107,9 +112,10 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     {
         if (ActionOf(id) is { } action)
         {
-            if (Owner() is { } owner)
+            // The first click of a double click already acted.
+            if (by != ActivateBy.DoubleClick && Owner() is { } owner)
             {
-                Act(action, Acting(owner), ShelfLayout.ActionId(action));
+                Act(action, owner);
             }
 
             return;
@@ -123,7 +129,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         // A double click or a key opens, as in File Explorer; a click selects.
         if (by != ActivateBy.Click)
         {
-            Act(ShelfAction.Open, Acting(item), id);
+            Act(ShelfAction.Open, item);
             return;
         }
 
@@ -141,8 +147,14 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         Rebuild();
     }
 
-    /// <summary>Delete on a focused tile or on the band asks to remove, as the Remove button does; a second Delete removes.</summary>
-    public bool KeyDown(string id, int virtualKey)
+    /// <summary>
+    /// A caller that cannot say whether the key repeats: a Delete while the question shows counts as one held down, so
+    /// Delete only asks, and a click or Enter on the question removes. The host calls the one below.
+    /// </summary>
+    public bool KeyDown(string id, int virtualKey) => KeyDown(id, virtualKey, repeat: question.Asks(Item(id)?.Id ?? shown, Environment.TickCount64));
+
+    /// <summary>Delete on a focused tile or on the band asks to remove, as the Remove button does; a second Delete, not a repeat, removes.</summary>
+    public bool KeyDown(string id, int virtualKey, bool repeat)
     {
         if (virtualKey != (int)VIRTUAL_KEY.VK_DELETE || (Item(id) is null && ActionOf(id) is null))
         {
@@ -155,7 +167,11 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             Show(item.Id);
         }
 
-        Activate(ShelfLayout.ActionId(ShelfAction.Remove));
+        if (Owner() is { } owner)
+        {
+            Act(ShelfAction.Remove, owner, repeat);
+        }
+
         return true;
     }
 
@@ -173,7 +189,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             return false;
         }
 
-        ShelfDrag.Run(island, triggers, shelf, Acting(item), log);
+        _ = ShelfDrag.Run(island, triggers, shelf, Acting(item), log);
         return true;
     }
 
@@ -245,42 +261,50 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         if (id != shown)
         {
             shown = id;
-            Disarm();
+            Drop();
         }
     }
 
-    private void Disarm()
+    private void Drop()
     {
-        confirming = false;
+        question.Drop();
         confirmWait?.Stop();
     }
 
-    private void Act(ShelfAction action, List<ShelfItem> items, string at)
+    /// <summary>An action for the owner's tile, on the items it acts on. Remove asks first; a repeat of a held key never removes.</summary>
+    private void Act(ShelfAction action, ShelfItem owner, bool repeat = false)
     {
-        if (action == ShelfAction.Remove && !confirming)
+        var items = Acting(owner);
+        if (action != ShelfAction.Remove)
         {
-            confirming = true;
-            if (confirmWait is null)
+            Drop();
+        }
+        else if (question.Click(owner.Id, Environment.TickCount64, PInvoke.GetDoubleClickTime(), repeat) is var step && step != RemoveStep.Remove)
+        {
+            if (step == RemoveStep.Ask)
             {
-                confirmWait = island.Queue.CreateTimer();
-                confirmWait.Interval = TimeSpan.FromSeconds(3);
-                confirmWait.IsRepeating = false;
-                confirmWait.Tick += (_, _) =>
+                if (confirmWait is null)
                 {
-                    confirming = false;
-                    Band();
-                };
+                    confirmWait = island.Queue.CreateTimer();
+                    confirmWait.Interval = TimeSpan.FromMilliseconds(RemoveQuestion.AskMs);
+                    confirmWait.IsRepeating = false;
+                    confirmWait.Tick += (_, _) =>
+                    {
+                        question.Drop();
+                        Band();
+                    };
+                }
+
+                confirmWait.Start();
+                Band();
             }
 
-            confirmWait.Start();
-            Band();
             return;
         }
 
-        Disarm();
-        var targets = items.Where(i => ShelfStore.Allows(action, i)).ToList();
-        log?.Invoke($"shelf: {action} on {targets.Count} of {items.Count}");
-        if (targets.Count == 0)
+        var allowed = items.Where(i => ShelfStore.Allows(action, i)).ToList();
+        log?.Invoke($"shelf: {action} on {allowed.Count} of {items.Count}");
+        if (allowed.Count == 0)
         {
             return;
         }
@@ -290,26 +314,26 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             switch (action)
             {
                 case ShelfAction.Open:
-                    foreach (var item in targets)
+                    foreach (var item in allowed)
                     {
                         Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true })?.Dispose();
                     }
 
                     break;
                 case ShelfAction.Reveal:
-                    Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{targets[0].Path}\"") { UseShellExecute = true })?.Dispose();
+                    Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{allowed[0].Path}\"") { UseShellExecute = true })?.Dispose();
                     break;
                 case ShelfAction.CopyPath:
-                    CopyText(ShelfStore.PathsText(targets));
-                    island.Interaction.Acknowledge(this, at);
+                    CopyText(ShelfStore.PathsText(allowed));
+                    island.Interaction.Acknowledge(this, ShelfLayout.ActionId(action));
                     break;
                 case ShelfAction.Share:
-                    Share(targets);
+                    Share(allowed);
                     break;
                 default:
-                    selected.ExceptWith(targets.Select(i => i.Id));
+                    selected.ExceptWith(allowed.Select(i => i.Id));
                     Show(null);
-                    _ = shelf.Remove(targets);
+                    _ = shelf.Remove(allowed);
                     Band();
                     break;
             }
@@ -436,6 +460,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var items = shelf.Items;
         var owner = Owner();
         var acting = owner is null ? [] : Acting(owner);
+        bool confirming = question.Asks(owner?.Id, Environment.TickCount64);
         targets = ShelfLayout.Targets(size, first, items, owner, acting, confirming);
         if (owner is null)
         {

@@ -771,6 +771,35 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    public void RemoveAsksOnceAndADoubledClickOrAHeldKeyIsNoSecondDecision()
+    {
+        var q = new RemoveQuestion();
+        const long dbl = 500;
+        Assert.Equal(RemoveStep.Ask, q.Click(7, 1000, dbl));
+        Assert.True(q.Asks(7, 1000) && !q.Asks(8, 1000));
+        // The second click of a double click, and a key held down, do not answer it.
+        Assert.Equal(RemoveStep.Ignored, q.Click(7, 1300, dbl));
+        Assert.Equal(RemoveStep.Ignored, q.Click(7, 2000, dbl, repeat: true));
+        Assert.Equal(RemoveStep.Remove, q.Click(7, 2000, dbl));
+        Assert.Null(q.Item);
+
+        // Three seconds on, the question is over and a click asks again.
+        Assert.Equal(RemoveStep.Ask, q.Click(7, 10_000, dbl));
+        Assert.False(q.Asks(7, 10_000 + RemoveQuestion.AskMs));
+        Assert.Equal(RemoveStep.Ask, q.Click(7, 10_000 + RemoveQuestion.AskMs, dbl));
+
+        // Another tile's Remove asks about that one; the band moving on drops the question.
+        Assert.Equal(RemoveStep.Ask, q.Click(8, 20_000, dbl));
+        Assert.False(q.Asks(7, 20_000));
+        q.Drop();
+        Assert.False(q.Asks(8, 20_001));
+        Assert.Equal(RemoveStep.Ask, q.Click(8, 20_600, dbl));
+
+        // A repeat never asks either: only a real press starts the question.
+        Assert.Equal(RemoveStep.Ignored, new RemoveQuestion().Click(7, 0, dbl, repeat: true));
+    }
+
+    [Fact]
     public void ItemActions()
     {
         var present = Item(ShelfKind.Reference, @"C:\a\one.txt");

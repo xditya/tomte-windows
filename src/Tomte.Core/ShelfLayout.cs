@@ -251,6 +251,56 @@ public static class ShelfLayout
     };
 }
 
+/// <summary>
+/// Remove's question on the shelf's band. The first click asks about the item the band is for; a second within
+/// <see cref="AskMs"/> removes it. A second click sooner than the double-click time is the first one doubled, and a
+/// key held down repeats; neither counts, as neither is a second decision. The question goes when the band moves to
+/// another item or its time is up. Times are milliseconds on one clock.
+/// </summary>
+public sealed class RemoveQuestion
+{
+    public const int AskMs = 3000;
+    private long askedAt;
+
+    /// <summary>The item it asks about, or null; the caller drops it when its time is up.</summary>
+    public long? Item { get; private set; }
+
+    public RemoveStep Click(long item, long now, long doubleClickMs, bool repeat = false)
+    {
+        if (repeat)
+        {
+            return RemoveStep.Ignored;
+        }
+
+        if (Asks(item, now))
+        {
+            if (now - askedAt < doubleClickMs)
+            {
+                return RemoveStep.Ignored;
+            }
+
+            Item = null;
+            return RemoveStep.Remove;
+        }
+
+        (Item, askedAt) = (item, now);
+        return RemoveStep.Ask;
+    }
+
+    /// <summary>Whether it asks about <paramref name="item"/> at <paramref name="now"/>.</summary>
+    public bool Asks(long? item, long now) => item is not null && Item == item && now - askedAt < AskMs;
+
+    public void Drop() => Item = null;
+}
+
+/// <summary>What a click on Remove did; see <see cref="RemoveQuestion.Click"/>.</summary>
+public enum RemoveStep
+{
+    Ask,
+    Remove,
+    Ignored,
+}
+
 /// <summary>What a change of the hovered target does to the shelf's band; see <see cref="ShelfLayout.Hover"/>.</summary>
 public enum BandChange
 {
