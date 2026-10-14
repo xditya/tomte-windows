@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 using Tomte.AI.Mcp;
@@ -19,9 +20,11 @@ internal static class SkillFile
     /// <summary>
     /// The text of <paramref name="relative"/> inside the skill's folder, cleaned like every outside text
     /// (control characters and the characters that reorder text removed, line breaks kept) and cut at
-    /// <paramref name="max"/> characters; Longer says it was cut. Error says why nothing was read.
+    /// <paramref name="max"/> characters; Longer says it was cut. Raw is the bytes read: every byte the
+    /// text can come from, so a change to what can reach the model changes them. Error says why nothing
+    /// was read; it names the path as the caller gave it, never the folder on disk.
     /// </summary>
-    public static (string Text, bool Longer, string? Error) Read(string skillsFolder, string skill, string relative, int max)
+    public static (string Text, bool Longer, byte[] Raw, string? Error) Read(string skillsFolder, string skill, string relative, int max)
     {
         string shown = McpTools.Clean(relative.Replace('\\', '/'), 200);
         string folder = Path.GetFullPath(Path.Combine(skillsFolder, skill)) + Path.DirectorySeparatorChar;
@@ -29,7 +32,7 @@ internal static class SkillFile
         bool plain = !relative.Any(char.IsControl) && !Path.IsPathRooted(relative) && !relative.Contains(':');
         string path = plain ? Path.GetFullPath(Path.Combine(folder, relative.Replace('/', '\\'))) : "";
         if (!path.StartsWith(folder, StringComparison.OrdinalIgnoreCase))
-            return ("", false, $"{shown} is not a path inside the {skill} skill's folder. Give one like SKILL.md or references/guide.md.");
+            return ("", false, [], $"{shown} is not a path inside the {skill} skill's folder. Give one like SKILL.md or references/guide.md.");
 
         SafeFileHandle handle;
         try
@@ -39,41 +42,63 @@ internal static class SkillFile
         }
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
         {
-            return ("", false, $"There is no file {shown} in the {skill} skill's folder.");
+            return ("", false, [], $"There is no file {shown} in the {skill} skill's folder.");
         }
         catch (UnauthorizedAccessException)
         {
-            return ("", false, Directory.Exists(path) ? $"{shown} is a folder, not a file." : $"Windows did not allow reading {shown}.");
+            return ("", false, [], Directory.Exists(path) ? $"{shown} is a folder, not a file." : $"Windows did not allow reading {shown}.");
         }
-        catch (IOException e)
+        catch (IOException)
         {
-            return ("", false, $"Could not read {shown}: {e.Message}");
+            // The exception's text holds the whole path, the Windows user name in it; the model gets the short name only.
+            return ("", false, [], $"Could not read {shown}; another program may be holding it.");
         }
 
         using (handle)
         {
             string inside = FinalPath(skillsFolder) + Path.DirectorySeparatorChar + skill + Path.DirectorySeparatorChar;
             if (!FinalPath(handle).StartsWith(inside, StringComparison.OrdinalIgnoreCase))
-                return ("", false, $"{shown} leads outside the {skill} skill's folder through a link or a junction, so Tomte did not read it.");
+                return ("", false, [], $"{shown} leads outside the {skill} skill's folder through a link or a junction, so Tomte did not read it.");
             // A hard link is the same file under a second name, which can be anywhere on the drive.
             if (!PInvoke.GetFileInformationByHandle(handle, out var info))
                 throw new Win32Exception(Marshal.GetLastPInvokeError());
             if (info.nNumberOfLinks > 1)
-                return ("", false, $"{shown} also exists under another name elsewhere on the drive (a hard link), so Tomte did not read it.");
+                return ("", false, [], $"{shown} also exists under another name elsewhere on the drive (a hard link), so Tomte did not read it.");
 
-            using var reader = new StreamReader(new FileStream(handle, FileAccess.Read, 1), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            // At most four bytes per character (UTF-32) and a byte order mark: enough for max + 1 characters in any encoding.
+            var raw = new byte[(4 * (max + 1)) + 4];
+            int bytes = RandomAccess.Read(handle, raw, 0);
+            raw = raw[..bytes];
+            using var reader = new StreamReader(new MemoryStream(raw), Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             var buffer = new char[max + 1];
             int read = reader.ReadBlock(buffer);
             var text = new string(buffer, 0, Math.Min(read, max));
             if (text.Contains('\0'))
-                return ("", false, $"{shown} is not a text file.");
-            return (McpTools.Bound(text, max, lines: true).Text, read > max, null);
+                return ("", false, raw, $"{shown} is not a text file.");
+            return (McpTools.Bound(text, max, lines: true).Text, read > max || RandomAccess.GetLength(handle) > bytes, raw, null);
         }
+    }
+
+    /// <summary>
+    /// What a skill's "on" switch is stored under: its name, #, and the first 8 bytes of SHA-256 over the bytes of
+    /// SKILL.md and of tomte.json (each with its length in front, so the two cannot run into each other; an
+    /// absent tomte.json counts as none). Other files in the folder are not covered.
+    /// </summary>
+    public static string Key(string skill, byte[] skillMd, byte[]? manifest)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        foreach (var part in (byte[]?[])[skillMd, manifest])
+        {
+            hash.AppendData(BitConverter.GetBytes(part?.LongLength ?? -1));
+            hash.AppendData(part ?? []);
+        }
+
+        return skill + "#" + Convert.ToHexStringLower(hash.GetHashAndReset(), 0, 8);
     }
 
     /// <summary>The line that ends a text cut at <paramref name="max"/> characters. It names Tomte, so a model does not take it for the file.</summary>
     public static string CutNote(string relative, int max) =>
-        $"[Cut by Tomte: {relative.Replace('\\', '/')} is longer; only its first {max} characters were passed on]";
+        $"[Cut by Tomte: {McpTools.Clean(relative.Replace('\\', '/'), 200)} is longer; only its first {max} characters were passed on]";
 
     /// <summary>
     /// Whether <paramref name="path"/>, a file or a folder, is inside <paramref name="folder"/>, by its text or

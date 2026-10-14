@@ -46,12 +46,17 @@ public sealed partial class SettingsWindow
 
             foreach (var skill in skills)
             {
-                var enabled = new ToggleSwitch { IsOn = store.Current.EnabledSkills.Contains(skill.Name), OnContent = "On", OffContent = "Off" };
-                enabled.Toggled += (_, _) => Save(s => s with
-                {
-                    EnabledSkills = enabled.IsOn ? [.. s.EnabledSkills.Append(skill.Name).Distinct()] : [.. s.EnabledSkills.Where(n => n != skill.Name)],
-                });
+                // "On" holds for the skill as it was when the user turned it on; an edit since turns it off until confirmed.
+                var enabled = new ToggleSwitch { IsOn = SkillSet.IsOn(store.Current.EnabledSkills, skill), OnContent = "On", OffContent = "Off" };
+                enabled.Toggled += (_, _) => Save(s => s with { EnabledSkills = SkillSet.Turn(s.EnabledSkills, skill, enabled.IsOn) });
                 var details = new StackPanel { Spacing = 4, Margin = new Thickness(16, 0, 0, 0) };
+                if (SkillSet.ChangedSinceOn(store.Current.EnabledSkills, skill))
+                {
+                    var changed = Note();
+                    Show(changed, "Changed since you turned it on. Read it again, then turn it on to use it.");
+                    details.Children.Add(changed);
+                }
+
                 foreach (string line in Details(skill))
                 {
                     details.Children.Add(Note(line));
@@ -84,7 +89,7 @@ public sealed partial class SettingsWindow
         if (skill.DropZone is { } zone)
             yield return $"Adds the drop zone \"{zone.Label}\" for {string.Join(", ", zone.Accepts)}. Drop zones are not built yet, so it does not show while you drag.";
         if (skill.Scripts.Count > 0)
-            yield return $"Ships scripts ({string.Join(", ", skill.Scripts.Take(3).Select(s => McpTools.Clean(s, 80)))}{(skill.Scripts.Count > 3 ? $" and {skill.Scripts.Count - 3} more" : "")}). Tomte never runs them: none of its tools runs code, and it refuses to open a file from the skills folder.";
+            yield return $"Ships scripts ({string.Join(", ", skill.Scripts.Take(3).Select(s => McpTools.Clean(s, 80)))}{(skill.Scripts.Count > 3 ? $" and {skill.Scripts.Count - 3} more" : "")}). Tomte never runs them: it refuses to open a file from the skills folder.";
         if (skill.IgnoredKeys.Count > 0)
             yield return $"Tomte does not use these SKILL.md keys: {string.Join(", ", skill.IgnoredKeys)}.{(skill.IgnoredKeys.Contains("allowed-tools") ? " A skill cannot approve tools in advance." : "")}";
         if (skill.License is { Length: > 0 } license)

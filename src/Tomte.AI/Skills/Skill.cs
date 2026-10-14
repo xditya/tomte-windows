@@ -21,6 +21,7 @@ public sealed record SkillDropZone(string Skill, string Label, IReadOnlyList<str
 /// </summary>
 public sealed record Skill(
     string Name,
+    string Key,
     string Description,
     string? License,
     SkillCommand? Command,
@@ -49,12 +50,15 @@ public sealed record Skill(
         [".py", ".sh", ".bash", ".zsh", ".ps1", ".psm1", ".bat", ".cmd", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".php", ".lua", ".exe", ".dll", ".com", ".vbs", ".wsf", ".jar", ".msi"],
         StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Reads the skill in <paramref name="name"/>, a folder of <paramref name="skillsFolder"/>. Never throws.</summary>
-    public static Skill Read(string skillsFolder, string name)
+    /// <summary>
+    /// Reads the skill in <paramref name="name"/>, a folder of <paramref name="skillsFolder"/>. Never throws.
+    /// Only Settings needs the scripts, which take a walk of the whole folder, so a palette passes false.
+    /// </summary>
+    public static Skill Read(string skillsFolder, string name, bool listScripts)
     {
         try
         {
-            var (text, _, error) = SkillFile.Read(skillsFolder, name, "SKILL.md", MaxFile);
+            var (text, _, skillMd, error) = SkillFile.Read(skillsFolder, name, "SKILL.md", MaxFile);
             if (error is not null)
                 return Broken(name, "SKILL.md: " + error);
             var (values, ignored, problem) = FrontMatter(text);
@@ -64,16 +68,18 @@ public sealed record Skill(
 
             SkillCommand? command = null;
             SkillDropZone? zone = null;
+            byte[]? manifest = null;
             if (File.Exists(Path.Combine(skillsFolder, name, "tomte.json")))
             {
-                var (json, longer, manifestError) = SkillFile.Read(skillsFolder, name, "tomte.json", MaxManifest);
+                (var json, bool longer, manifest, var manifestError) = SkillFile.Read(skillsFolder, name, "tomte.json", MaxManifest);
                 (command, zone, problem) = manifestError is not null ? (null, null, manifestError)
                     : longer ? (null, null, $"it is longer than {MaxManifest} characters.")
                     : Manifest(name, json);
             }
 
-            return new Skill(name, McpTools.Clean(values["description"], MaxDescription), values.TryGetValue("license", out var license) ? McpTools.Clean(license, 100) : null,
-                problem is null ? command : null, problem is null ? zone : null, FindScripts(Path.Combine(skillsFolder, name)), ignored, problem is null ? null : "tomte.json: " + problem);
+            return new Skill(name, SkillFile.Key(name, skillMd, manifest), McpTools.Clean(values["description"], MaxDescription),
+                values.TryGetValue("license", out var license) ? McpTools.Clean(license, 100) : null, problem is null ? command : null, problem is null ? zone : null,
+                listScripts ? FindScripts(Path.Combine(skillsFolder, name)) : [], ignored, problem is null ? null : "tomte.json: " + problem);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
@@ -81,8 +87,9 @@ public sealed record Skill(
         }
     }
 
+    // A skill that does not load has no key: there is nothing it could be turned on as.
     private static Skill Broken(string name, string problem, IReadOnlyList<string>? ignored = null) =>
-        new(name, "", null, null, null, [], ignored ?? [], problem);
+        new(name, name, "", null, null, null, [], ignored ?? [], problem);
 
     /// <summary>
     /// The front matter of a SKILL.md: the YAML between a first line of --- and the next ---. Only the part
@@ -182,7 +189,7 @@ public sealed record Skill(
             var (quoted, after) = Quoted(text);
             return quoted is not null && WithoutComment(after).Length == 0
                 ? (quoted, null)
-                : ("", $"line {number}: the quoted value is not closed, or text follows the closing quote.");
+                : ("", $"line {number}: the quoted value is not closed, holds an escape Tomte does not read, or has text after its closing quote.");
         }
 
         // These start something other than text in YAML (a list, a map, an anchor, a tag).
@@ -219,7 +226,7 @@ public sealed record Skill(
             }
 
             if (quote == '"' && c == '"')
-                return (value.ToString(), text[(i + 1)..]);
+                return WellFormed(value.ToString()) ? (value.ToString(), text[(i + 1)..]) : (null, "");
             if (quote == '"' && c == '\\')
             {
                 if (++i == text.Length)
@@ -250,6 +257,18 @@ public sealed record Skill(
         }
 
         return (null, "");
+    }
+
+    /// <summary>False for half of a surrogate pair standing alone, which an escape such as \uD800 can make and which is not text.</summary>
+    internal static bool WellFormed(string text)
+    {
+        for (int i = 0; i < text.Length; i++)
+        {
+            if (char.IsSurrogate(text[i]) && !(char.IsHighSurrogate(text[i]) && i + 1 < text.Length && char.IsLowSurrogate(text[++i])))
+                return false;
+        }
+
+        return true;
     }
 
     /// <summary>The format's rule for a name: 1 to 64 of a-z, 0-9 and single hyphens, no hyphen at either end.</summary>
@@ -346,8 +365,19 @@ public sealed record Skill(
     // The text must already be clean: what Settings shows and the model gets is exactly what the author wrote.
     private static string? Text(Dictionary<string, JsonElement> fields, string key, int max, bool lines, out string? problem)
     {
-        string? text = fields.TryGetValue(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        string? text = null;
+        try
+        {
+            text = fields.TryGetValue(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        }
+        catch (InvalidOperationException)
+        {
+            // An escape for half a surrogate pair cannot be turned into text.
+            text = "\uD800";
+        }
+
         problem = text is null || text.Trim().Length == 0 ? $"{key} must be text."
+            : !WellFormed(text) ? $"{key} holds half of a surrogate pair, which is not text."
             : text.Length > max ? $"{key} is longer than {max} characters."
             : McpTools.Bound(text, text.Length, lines).Text != text
                 ? lines ? $"{key} holds control characters." : $"{key} must be one line of text with single spaces and no control characters."
