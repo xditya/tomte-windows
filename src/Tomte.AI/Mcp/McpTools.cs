@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using ModelContextProtocol;
 using ModelContextProtocol.Client;
@@ -8,16 +9,33 @@ using Tomte.Core.Device;
 
 namespace Tomte.AI.Mcp;
 
+/// <summary>One tool as Settings lists it: the key its tier is stored under, and its name and description cleaned for display.</summary>
+public sealed record McpToolInfo(string Key, string Name, string Description);
+
 /// <summary>
 /// The MCP servers one palette uses. Nothing starts until the first <see cref="ListAsync"/>: a stdio
 /// server is started as a child process then, an HTTP server is connected then. Every server stops
 /// when this object is disposed (the palette closed) or after <see cref="IdleTimeout"/> without a
 /// list or a call, and starts again on the next one. Tool names reach the model as
-/// "prefix__tool", so two servers can both have a tool called "search".
+/// "prefix__tool", so two servers can both have a tool called "search". Everything a server writes
+/// (names, descriptions, results, errors) is cleaned and cut to a fixed length before it is shown,
+/// logged or given to the model.
 /// </summary>
 public sealed class McpTools : IAsyncDisposable
 {
     public const string Separator = "__";
+
+    /// <summary>Longest server or tool name shown in a prompt or in Settings.</summary>
+    public const int MaxName = 64;
+
+    /// <summary>Longest tool description given to the model.</summary>
+    public const int MaxDescription = 1000;
+
+    /// <summary>Longest tool result given to the model, the answer and the log.</summary>
+    public const int MaxResult = 20_000;
+
+    /// <summary>Longest error text taken from a server or from the SDK.</summary>
+    public const int MaxError = 300;
 
     private readonly McpServerSettings[] _servers;
     private readonly string? _invalid;
@@ -41,7 +59,7 @@ public sealed class McpTools : IAsyncDisposable
         foreach (var server in servers.Where(s => s.Enabled))
         {
             if (McpServerSettings.Validate(usable, server) is { } problem)
-                _invalid ??= $"MCP server \"{server.Name}\" cannot be used: {problem} Fix or remove it in Settings.";
+                _invalid ??= Clean($"MCP server \"{server.Name}\" cannot be used: {problem}", MaxError) + " Fix or remove it in Settings.";
             else
                 usable.Add(server);
         }
@@ -57,6 +75,10 @@ public sealed class McpTools : IAsyncDisposable
     /// <summary>How many servers are started or connected right now.</summary>
     public int Running => _clients.Count;
 
+    /// <summary>Every tool listed so far, for Settings.</summary>
+    public IReadOnlyList<McpToolInfo> Tools =>
+        [.. _tools.Values.Select(t => new McpToolInfo(t.Tool.Name, Clean(t.Tool.Name, MaxName), Clean(t.Tool.Description, MaxDescription)))];
+
     public bool Owns(string tool) => _tools.ContainsKey(tool);
 
     public ActionTier TierOf(string tool) => _tools[tool].Server.TierFor(_tools[tool].Tool.Name);
@@ -65,8 +87,8 @@ public sealed class McpTools : IAsyncDisposable
     public string Describe(string tool, JsonElement input)
     {
         var (server, mcpTool) = _tools[tool];
-        string args = input.ValueKind == JsonValueKind.Object && input.EnumerateObject().Any() ? input.GetRawText() : "";
-        return $"{server.Name}: {mcpTool.Name}{(args.Length == 0 ? "" : " " + (args.Length > 120 ? args[..120] + "..." : args))}";
+        string args = input.ValueKind == JsonValueKind.Object && input.EnumerateObject().Any() ? " " + Clean(input.GetRawText(), 120) : "";
+        return $"{Clean(server.Name, MaxName)}: {Clean(mcpTool.Name, MaxName)}{args}";
     }
 
     /// <summary>Starts the servers that are not running and returns every tool, prefixed. A server that fails throws, naming it.</summary>
@@ -121,7 +143,7 @@ public sealed class McpTools : IAsyncDisposable
             }
             catch (McpException e)
             {
-                return new ToolResultPart(call.Id, call.Name, $"{server.Name}: {tool.Name} failed: {e.Message}", IsError: true);
+                return new ToolResultPart(call.Id, call.Name, $"{Clean(server.Name, MaxName)}: {Clean(tool.Name, MaxName)} failed: {Explain(server, e)}", IsError: true);
             }
             catch (Exception e) when (e is not OperationCanceledException || !ct.IsCancellationRequested)
             {
@@ -148,17 +170,60 @@ public sealed class McpTools : IAsyncDisposable
         }
     }
 
-    /// <summary>The tool names and descriptions of one server, for the settings window. Starts the server and stops it again.</summary>
-    public static async Task<IReadOnlyList<(string Name, string Description)>> ProbeAsync(McpServerSettings server, CancellationToken ct)
+    /// <summary>The tools of one server, for the settings window. Starts the server and stops it again.</summary>
+    public static async Task<IReadOnlyList<McpToolInfo>> ProbeAsync(McpServerSettings server, CancellationToken ct)
     {
-        await using var client = await ConnectAsync(server, ct);
-        return [.. (await client.ListToolsAsync(cancellationToken: ct)).Select(t => (t.Name, t.Description ?? ""))];
+        await using var tools = new McpTools([server with { Enabled = true }]);
+        await tools.ListAsync(ct);
+        return tools.Tools;
     }
 
     public static string ModelName(McpServerSettings server, string tool)
     {
         string name = server.Prefix + Separator + new string([.. tool.Select(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' ? c : '_')]);
         return name.Length > 64 ? name[..64] : name;
+    }
+
+    /// <summary>
+    /// Text a server wrote, made safe to show and cut to about <paramref name="max"/> characters. Control
+    /// characters go, and so do the characters that reorder text, so a name cannot read as something else
+    /// in a prompt. Whitespace runs become one space unless <paramref name="lines"/> keeps line breaks
+    /// and tabs. What is cut is replaced by a count.
+    /// </summary>
+    public static string Clean(string? text, int max, bool lines = false)
+    {
+        text ??= "";
+        var clean = new StringBuilder(Math.Min(text.Length, max));
+        bool gap = false;
+        int i = 0;
+        for (; i < text.Length && clean.Length < max; i++)
+        {
+            char c = text[i];
+            if (c is '\u061C' or '\u200E' or '\u200F' or (>= '\u202A' and <= '\u202E') or (>= '\u2066' and <= '\u2069'))
+                continue;
+            if (lines ? char.IsControl(c) && c is not ('\n' or '\t') : char.IsControl(c) || char.IsWhiteSpace(c))
+            {
+                gap = !lines;
+                continue;
+            }
+
+            if (gap && clean.Length > 0)
+                clean.Append(' ');
+            gap = false;
+            clean.Append(c);
+        }
+
+        if (i == text.Length)
+            return clean.ToString();
+
+        // Half of a surrogate pair is not text.
+        if (char.IsHighSurrogate(clean[^1]))
+        {
+            clean.Length--;
+            i--;
+        }
+
+        return clean.Append(lines ? '\n' : ' ').Append($"[{text.Length - i} more characters]").ToString();
     }
 
     /// <summary>Text blocks as they are; other content as a short marker, since tool results reach the model as text.</summary>
@@ -177,7 +242,19 @@ public sealed class McpTools : IAsyncDisposable
         string text = string.Join("\n", parts);
         if (text.Length == 0 && result.StructuredContent is { } structured)
             text = structured.ToString();
+        text = Clean(text, MaxResult, lines: true);
         return text.Length == 0 ? "(no output)" : text;
+    }
+
+    /// <summary>
+    /// Replaces a secret wherever it appears in <paramref name="text"/>: the whole value, and each long
+    /// part of it, since "Bearer abc" can be quoted back without the scheme.
+    /// </summary>
+    internal static string Hide(string text, string secret)
+    {
+        foreach (string part in secret.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Where(p => p.Length >= 8).Prepend(secret))
+            text = text.Replace(part, "[hidden]", StringComparison.Ordinal);
+        return text;
     }
 
     public async ValueTask DisposeAsync()
@@ -212,8 +289,32 @@ public sealed class McpTools : IAsyncDisposable
         return McpClient.CreateAsync(transport, cancellationToken: ct);
     }
 
+    // The exception itself is not kept as the inner one: it and the errors inside it can hold the header
+    // value, and whoever logs this error logs those too.
     private static InvalidOperationException Failure(McpServerSettings server, string what, Exception e) =>
-        new($"MCP server \"{server.Name}\" {what}: {e.Message} Turn it off in Settings to send without it.", e);
+        new($"MCP server \"{Clean(server.Name, MaxName)}\" {what}: {Explain(server, e)} Turn it off in Settings to send without it.");
+
+    /// <summary>An error's text for the user and the model: the header value hidden, then cleaned and cut like all server text.</summary>
+    private static string Explain(McpServerSettings server, Exception e)
+    {
+        string text = e.Message;
+        if (server.HeaderName.Length > 0)
+        {
+            // The SDK quotes a header value it could not add, and a server can echo one back.
+            try
+            {
+                if (CredentialStore.Read(server.CredentialId) is { Length: > 0 } secret)
+                    text = Hide(text, secret);
+            }
+            catch (InvalidOperationException)
+            {
+                text = "The details are not shown, because the saved header value could not be read to hide it.";
+            }
+        }
+
+        text = Clean(text, MaxError);
+        return text.Length == 0 || text[^1] is '.' or '!' or '?' or ']' ? text : text + ".";
+    }
 
     /// <summary>
     /// Starts those of <paramref name="servers"/> that are not running. The caller holds the gate. Every
@@ -242,7 +343,7 @@ public sealed class McpTools : IAsyncDisposable
             {
                 string name = ModelName(server, tool.Name);
                 if (_tools.TryAdd(name, (server, tool)))
-                    _definitions.Add(new ToolDefinition(name, $"[{server.Name}] {tool.Description}".TrimEnd(), tool.InputSchema));
+                    _definitions.Add(new ToolDefinition(name, Clean($"[{server.Name}] {tool.Description}", MaxDescription), tool.InputSchema));
             }
         }
 

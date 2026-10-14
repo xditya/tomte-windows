@@ -110,22 +110,23 @@ public sealed partial class SettingsWindow
                 panel.Children.Add(Note("This server has no tools."));
             }
 
-            foreach (var (tool, description) in tools)
+            foreach (var tool in tools)
             {
                 var tiers = server.AllowedTiers;
-                var box = new ComboBox { ItemsSource = tiers.Select(TierName).ToArray(), SelectedIndex = IndexOf(tiers, server.TierFor(tool)), MinWidth = 200 };
+                var box = new ComboBox { ItemsSource = tiers.Select(TierName).ToArray(), SelectedIndex = IndexOf(tiers, server.TierFor(tool.Key)), MinWidth = 200 };
                 box.SelectionChanged += (_, _) => SaveMcp(s => s.Name == name
-                    ? s with { ToolTiers = new Dictionary<string, ActionTier>(s.ToolTiers) { [tool] = tiers[box.SelectedIndex] } }
+                    ? s with { ToolTiers = new Dictionary<string, ActionTier>(s.ToolTiers) { [tool.Key] = tiers[box.SelectedIndex] } }
                     : s);
-                panel.Children.Add(Row(tool, description.Length == 0 ? null : Note(FirstSentence(description)), box));
+                panel.Children.Add(Row(tool.Name, tool.Description.Length == 0 ? null : Note(FirstSentence(tool.Description)), box));
             }
         }
         catch (Exception e)
         {
             // Called from an async void handler: an exception leaving here would end the settings process.
+            // McpTools already hid the header value in its message and cut it to a fixed length.
             panel.Children.Clear();
             var note = Note();
-            Show(note, $"Could not list the tools: {e.Message}");
+            Show(note, e is OperationCanceledException ? "Could not list the tools: the server did not answer within 60 seconds." : $"Could not list the tools: {e.Message}");
             panel.Children.Add(note);
         }
         finally
@@ -135,10 +136,12 @@ public sealed partial class SettingsWindow
     }
 
     // Server descriptions are written for the model and run long; the first sentence is enough to recognise a tool.
+    // A description with no sentence end is cut instead, so one row never fills the window.
     private static string FirstSentence(string text)
     {
         int end = text.IndexOf(". ", StringComparison.Ordinal);
-        return end > 0 ? text[..(end + 1)] : text;
+        string first = end > 0 ? text[..(end + 1)] : text;
+        return first.Length > 160 ? first[..157] + "..." : first;
     }
 
     private static string TierName(ActionTier tier) => tier switch
