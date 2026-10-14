@@ -362,6 +362,23 @@ internal static unsafe class Typing
         Check("nothing is restyled while composing, a key after it restyles", s.Text.EndsWith(" **y**", StringComparison.Ordinal) && unstyled && !s.Composing && Look(s, s.Text.Length - 3).Weight == 700,
             $"\"{Esc(s.Text[^8..])}\" unstyled while composing {unstyled}, composing {s.Composing}, {Look(s, s.Text.Length - 3)}");
 
+        // Rich text set through the services' own calls is read as RTF when it starts with {\rtf; the note's never is,
+        // and a change made for it is no undo step either.
+        using (var other = Box(queue, graphics, new RectangleF(0, 0, 468, 220), 1.5))
+        {
+            other.Services.Rich = true;
+            other.Services.Text = "{\\rtf1 hi}";
+            other.Focus();
+            other.Services.Selection = (other.Services.Text.Length, other.Services.Text.Length);
+            new Keys(other).Type(" typed");
+            other.Services.Replace(new Splice(other.Services.Text.Length, 0, "{\\rtf1 there}"));
+            Check("text that looks like RTF stays as typed, set whole or changed for the note", other.Services.Text == "{\\rtf1 hi} typed{\\rtf1 there}", Esc(other.Services.Text));
+            new Keys(other).Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+            Check("Ctrl+Z after a change made for a rich note never takes it out", other.Services.Text == "{\\rtf1 hi} typed{\\rtf1 there}", Esc(other.Services.Text));
+            new Keys(other).Press(VIRTUAL_KEY.VK_A, ctrl: true);
+            Log($"Ctrl+A in a rich box selects {other.Services.Selection} of {other.Services.Text.Length} characters: its last paragraph mark too");
+        }
+
         // The services zoom the text for the monitor's scale but not the indents: on a 100% monitor they are set again.
         box.Place(box.Box, 1);
         Pump();
@@ -407,9 +424,12 @@ internal static unsafe class Typing
         small.Dispose();
         smallBox.Dispose();
         string text = string.Join("\n", lines);
+        GC.Collect();
+        Log(Memory("before the 2,000-line note"));
         var (box, binding, times) = Opened(text, "times.db");
         using var disposeBox = box;
         using var disposeBinding = binding;
+        Log(Memory("the 2,000-line note open and styled"));
         int middle = text.IndexOf("Plain line 1002", StringComparison.Ordinal) + "Plain line 1002".Length;
         box.Services.Selection = (middle, middle);
         var keys = new Keys(box);
@@ -428,6 +448,14 @@ internal static unsafe class Typing
         keys.Type("\n```");
         Pump();
         Log($"styling: a fence typed in the middle, which restyles the 1,000 lines after it: {times.Max():F1} ms");
+        Log(Memory("after typing in it"));
+        binding.Dispose();
+        box.Dispose();
+        Pump();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        Rest(2000);
+        Log(Memory("after hide (the note's box disposed, 2 s later, after a GC)"));
     }
 
     // COLORREF, as the note's styling sets them.
