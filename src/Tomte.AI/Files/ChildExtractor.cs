@@ -68,16 +68,17 @@ public static class ChildExtractor
 
             using var time = CancellationTokenSource.CreateLinkedTokenSource(ct);
             time.CancelAfter(limits.TimeLimit);
-            // Escaped control characters take six bytes; nothing the child may send is longer than this.
-            var output = ReadAllAsync(process.StandardOutput.BaseStream, limits.MaxChars * 6L + 65_536, time.Token);
             try
             {
+                // Escaped control characters take six bytes; nothing the child may send is longer than this.
+                byte[] bytes = await ReadAllAsync(process, limits.MaxChars * 6L + 65_536, time.Token);
                 await process.WaitForExitAsync(time.Token);
-                byte[] bytes = await output;
                 long peak = PeakBytes(job);
                 return process.ExitCode switch
                 {
-                    Ok when JsonSerializer.Deserialize<Reply>(bytes, Json) is { Text: { } text } r => (new Extracted(text, r.Cut, r.Pages, r.PagesRead, r.Encrypted), peak),
+                    // No text from a reader that came near its limit is a parser that gave up for memory, not a scan.
+                    Ok when JsonSerializer.Deserialize<Reply>(bytes, Json) is { Text: { } text } r
+                        => text.Length == 0 && peak >= limits.ChildMemoryBytes / 10 * 9 ? throw TooMuchMemory(limits) : (new Extracted(text, r.Cut, r.Pages, r.PagesRead, r.Encrypted), peak),
                     Unreadable when JsonSerializer.Deserialize<Reply>(bytes, Json) is { Error: { } error } => throw new FileReadException(error),
                     // An exit at the memory limit can be the runtime's own fail-fast rather than the child's code.
                     _ when process.ExitCode == TooLarge || peak >= limits.ChildMemoryBytes / 10 * 9 => throw TooMuchMemory(limits),
@@ -105,6 +106,10 @@ public static class ChildExtractor
     public static int Run()
     {
         using var stdout = Console.OpenStandardOutput();
+        // PdfPig catches what goes wrong inside a stream, out of memory included, and carries on with less text; a read
+        // that ran out of memory anywhere is reported as too large instead of as whatever text was left.
+        bool outOfMemory = false;
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) => outOfMemory |= e.Exception is OutOfMemoryException;
         try
         {
             Request request;
@@ -114,6 +119,8 @@ public static class ChildExtractor
             Extracted text;
             using (var file = FileAttachments.Open(request.Path))
                 text = request.Kind == FileKind.Pdf ? PdfExtraction.Read(file, limits, CancellationToken.None) : TextExtraction.ReadDocx(file, limits, CancellationToken.None);
+            if (outOfMemory)
+                return TooLarge;
             JsonSerializer.Serialize(stdout, new Reply(text.Text, text.Cut, text.Pages, text.PagesRead, text.Encrypted, null), Json);
             return Ok;
         }
@@ -141,15 +148,21 @@ public static class ChildExtractor
     private static FileReadException TooMuchMemory(FileLimits limits) =>
         new($"needs more than {limits.ChildMemoryBytes >> 20} MB to read, which can mean a damaged or hostile file, so it was not read.");
 
-    private static async Task<byte[]> ReadAllAsync(Stream stream, long cap, CancellationToken ct)
+    /// <summary>The child's whole stdout. A child that sends more than <paramref name="cap"/> is killed there and then.</summary>
+    private static async Task<byte[]> ReadAllAsync(Process process, long cap, CancellationToken ct)
     {
         var all = new MemoryStream();
         var buffer = new byte[64 * 1024];
+        var stream = process.StandardOutput.BaseStream;
         int n;
         while ((n = await stream.ReadAsync(buffer, ct)) > 0)
         {
             if (all.Length + n > cap)
+            {
+                process.Kill();
                 throw new FileReadException("could not be read: the reader sent more than it may.");
+            }
+
             all.Write(buffer, 0, n);
         }
 

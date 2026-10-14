@@ -906,25 +906,16 @@ public sealed class FileTests : IDisposable
         Assert.True(new FileInfo(path).Length < 1 << 20);
         var limits = Limits with { ChildMemoryBytes = 128L << 20 };
         var clock = Stopwatch.StartNew();
-        try
-        {
-            // PdfPig gives up on a stream it cannot unpack within the limit and reads the page as empty.
-            var (text, peak) = await ChildExtractor.RunAsync(path, FileKind.Pdf, limits, CancellationToken.None);
-            Assert.Equal("", text.Text);
-            Assert.InRange(peak, 1, limits.ChildMemoryBytes);
-        }
-        catch (FileReadException e)
-        {
-            // Or the runtime stops at the limit, and the parent says so.
-            Assert.Equal("needs more than 128 MB to read, which can mean a damaged or hostile file, so it was not read.", e.Message);
-        }
-
+        // PdfPig gives up on a stream it cannot unpack within the limit and would read the page as empty; that is the
+        // memory limit speaking, not a scan.
+        var e = await Assert.ThrowsAsync<FileReadException>(() => ChildExtractor.RunAsync(path, FileKind.Pdf, limits, CancellationToken.None));
+        Assert.Equal("needs more than 128 MB to read, which can mean a damaged or hostile file, so it was not read.", e.Message);
         Assert.True(clock.Elapsed < TimeSpan.FromSeconds(15), $"{clock.Elapsed}");
 
-        // Through the palette's reader the file is one sentence and nothing is sent.
-        var (file, problem) = await FileAttachments.PrepareOneAsync(_shelf, "bomb.pdf", Facts(ProviderKind.OpenAICompatible, pdf: false), limits, CancellationToken.None);
+        // A provider that takes PDFs does not get it as a scan either: one sentence and nothing is sent.
+        var (file, problem) = await FileAttachments.PrepareOneAsync(_shelf, "bomb.pdf", Facts(ProviderKind.Anthropic), limits, CancellationToken.None);
         Assert.Null(file);
-        Assert.StartsWith("bomb.pdf ", problem);
+        Assert.StartsWith("bomb.pdf needs more than 128 MB to read", problem);
     }
 
     [Fact]
@@ -954,6 +945,17 @@ public sealed class FileTests : IDisposable
         Assert.StartsWith("took longer than ", e.Message);
         var (_, problem) = await FileAttachments.PrepareOneAsync(_shelf, "report.pdf", Facts(ProviderKind.OpenAICompatible), limits, CancellationToken.None);
         Assert.StartsWith("report.pdf took longer than ", problem);
+    }
+
+    [Fact]
+    public async Task TheReaderProcessIsKilledAtItsOutputCap()
+    {
+        // A reader that sends without end is stopped at the cap, not left on a full pipe until the time limit.
+        var limits = Limits with { Extractor = new("dotnet", [typeof(FileTests).Assembly.Location, "spew"]) };
+        var clock = Stopwatch.StartNew();
+        var e = await Assert.ThrowsAsync<FileReadException>(() => ChildExtractor.RunAsync(Put("report.pdf", Pdf("Quarterly report")), FileKind.Pdf, limits, CancellationToken.None));
+        Assert.Equal("could not be read: the reader sent more than it may.", e.Message);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(10), $"{clock.Elapsed}");
     }
 
     [Fact]

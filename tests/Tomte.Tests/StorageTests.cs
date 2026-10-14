@@ -647,6 +647,14 @@ internal static class SecondProcess
             case "--extract":
                 // The reader process, as the shell runs it, for the tests that read PDF and Word files.
                 return ChildExtractor.Run();
+            case "spew":
+                // A reader that sends without end, for the test that the parent stops it at the output cap.
+                using (var stdout = Console.OpenStandardOutput())
+                {
+                    var chunk = new byte[1 << 16];
+                    while (true)
+                        stdout.Write(chunk);
+                }
             case "prepare":
                 return FileTests.PrepareInAnotherProcess(args[1]).GetAwaiter().GetResult();
             case "measure-child":
