@@ -124,24 +124,13 @@ public class RamblerTests
     }
 
     [Fact]
-    public void ScratchpadFileAppendsNotesUnderTimeHeadings()
+    public void NotesAppendUnderTimeHeadings()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "tomte-test-" + Guid.NewGuid());
-        var file = new ScratchpadFile(Path.Combine(dir, "scratchpad.md"));
-        try
-        {
-            Assert.Equal("", file.Text);
-            file.AppendNote("### First\n- one\n", new DateTime(2026, 10, 14, 9, 5, 0));
-            file.Text += "typed by hand"; // the user's own text, with no blank line after it
-            file.AppendNote("  second  ", new DateTime(2026, 10, 14, 9, 7, 0));
+        var text = RamblerNotes.Append("", "### First\n- one\n", new DateTime(2026, 10, 14, 9, 5, 0));
+        text += "typed by hand"; // the user's own text, with no blank line after it
+        text = RamblerNotes.Append(text, "  second  ", new DateTime(2026, 10, 14, 9, 7, 0));
 
-            Assert.Equal("## 2026-10-14 09:05\n\n### First\n- one\n\ntyped by hand\n\n## 2026-10-14 09:07\n\nsecond\n\n", file.Text);
-            Assert.Equal(file.Text, File.ReadAllText(file.FilePath));
-        }
-        finally
-        {
-            Directory.Delete(dir, true);
-        }
+        Assert.Equal("## 2026-10-14 09:05\n\n### First\n- one\n\ntyped by hand\n\n## 2026-10-14 09:07\n\nsecond\n\n", text);
     }
 
     [WhisperFact]

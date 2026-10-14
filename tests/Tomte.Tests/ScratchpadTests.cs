@@ -1,0 +1,245 @@
+using Tomte.Core;
+using Tomte.Core.Storage;
+using Xunit;
+
+namespace Tomte.Tests;
+
+public sealed class ScratchpadTests : IDisposable
+{
+    private static readonly DateTime At = new(2026, 10, 14, 9, 5, 0);
+
+    private readonly string dir = Path.Combine(Path.GetTempPath(), "tomte-tests-" + Guid.NewGuid().ToString("N"));
+
+    private string OldFile => Path.Combine(dir, "scratchpad.md");
+
+    private TomteDb Db => new(Path.Combine(dir, "tomte.db"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(dir))
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task TheNoteSurvivesARestart()
+    {
+        var note = await Loaded();
+        note.Edit("Call the dentist", 4);
+        await note.FlushAsync();
+
+        var restarted = await Loaded();
+        Assert.Equal("Call the dentist", restarted.Text);
+        // After a restart the caret starts at the end, ready for the next line.
+        Assert.Equal("Call the dentist".Length, restarted.Caret);
+    }
+
+    [Fact]
+    public async Task TheEarlierBuildsFileIsCarriedOverOnce()
+    {
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(OldFile, "## 2026-10-13 18:00\n\nbuy milk\n\n");
+
+        var note = await Loaded();
+        Assert.Equal("## 2026-10-13 18:00\n\nbuy milk\n\n", note.Text);
+        Assert.False(File.Exists(OldFile));
+        Assert.True(File.Exists(OldFile + ".imported"));
+
+        // A file that turns up again later is not read: the database has the note now.
+        File.WriteAllText(OldFile, "something else");
+        Assert.Equal("## 2026-10-13 18:00\n\nbuy milk\n\n", (await Loaded()).Text);
+    }
+
+    [Fact]
+    public void NothingReadsOrWritesBeforeTheFirstLoad()
+    {
+        var note = new ScratchpadNote(Db, OldFile);
+        Assert.Throws<InvalidOperationException>(() => note.Text);
+        Assert.Throws<InvalidOperationException>(() => note.Text = "lost");
+        Assert.Throws<InvalidOperationException>(() => note.Edit("lost", 0));
+        Assert.False(Directory.Exists(dir));
+    }
+
+    [Fact]
+    public async Task TypingIsSavedOnceAfterThePause()
+    {
+        var time = new FakeTime();
+        var note = new ScratchpadNote(Db, OldFile, time);
+        await note.LoadAsync();
+
+        note.Edit("a", 1);
+        note.Edit("ab", 2);
+        note.Edit("abc", 3);
+        var timer = Assert.Single(time.Timers);
+        Assert.Equal(ScratchpadNote.SaveDelay, timer.Due);
+        Assert.Equal(2, timer.Changes);
+        Assert.Equal("", await Stored());
+
+        timer.Fire();
+        await WaitFor(async () => await Stored() == "abc");
+        Assert.True(timer.Disposed);
+    }
+
+    [Fact]
+    public async Task AFlushSavesAtOnce()
+    {
+        var time = new FakeTime();
+        var note = new ScratchpadNote(Db, OldFile, time);
+        await note.LoadAsync();
+        note.Edit("hide now", 8);
+
+        await note.FlushAsync();
+
+        Assert.Equal("hide now", await Stored());
+        Assert.True(Assert.Single(time.Timers).Disposed);
+    }
+
+    [Fact]
+    public async Task ARamblerNoteLandsWhileThePanelHoldsAnEdit()
+    {
+        var note = await Loaded();
+        note.Edit("typed but not saved", 5);
+        int changes = 0;
+        note.Changed += () => changes++;
+
+        await note.AppendAsync("spoken", At);
+
+        const string both = "typed but not saved\n\n## 2026-10-14 09:05\n\nspoken\n\n";
+        Assert.Equal(both, note.Text);
+        Assert.Equal(5, note.Caret);
+        Assert.Equal(1, changes);
+        Assert.Equal(both, await Stored());
+    }
+
+    [Fact]
+    public async Task WhatAnotherProcessAddedIsKeptAfterUnsavedEdits()
+    {
+        var shell = await Loaded();
+        shell.Edit("base", 4);
+        await shell.FlushAsync();
+        var job = await Loaded();
+
+        shell.Edit("base, typed", 11);
+        await job.AppendAsync("job result", At);
+        int changes = 0;
+        shell.Changed += () => changes++;
+        await shell.FlushAsync();
+
+        const string merged = "base, typed\n\n## 2026-10-14 09:05\n\njob result\n\n";
+        Assert.Equal(merged, shell.Text);
+        Assert.Equal(merged, await Stored());
+        Assert.Equal(1, changes);
+    }
+
+    [Fact]
+    public async Task ARewriteByAnotherProcessIsKeptBelowUnsavedEdits()
+    {
+        var shell = await Loaded();
+        shell.Edit("base", 4);
+        await shell.FlushAsync();
+        var other = await Loaded();
+        other.Text = "rewritten elsewhere";
+        await other.FlushAsync();
+
+        shell.Edit("base, typed here", 16);
+        await shell.FlushAsync();
+
+        Assert.Equal("base, typed here\n\nrewritten elsewhere", shell.Text);
+        Assert.Equal(shell.Text, await Stored());
+    }
+
+    [Fact]
+    public async Task ALoadPicksUpAChangeSavedElsewhere()
+    {
+        var shell = await Loaded();
+        var other = await Loaded();
+        other.Text = "from the other process";
+        await other.FlushAsync();
+        int changes = 0;
+        shell.Changed += () => changes++;
+
+        await shell.LoadAsync();
+
+        Assert.Equal("from the other process", shell.Text);
+        Assert.Equal(1, changes);
+    }
+
+    [Fact]
+    public async Task AReplacementMovesTheCaretInsideTheNewText()
+    {
+        var note = await Loaded();
+        note.Edit("hello world", 11);
+        int changes = 0;
+        note.Changed += () => changes++;
+
+        note.Text = "hi";
+
+        Assert.Equal(2, note.Caret);
+        Assert.Equal(1, changes);
+    }
+
+    private async Task<ScratchpadNote> Loaded()
+    {
+        var note = new ScratchpadNote(Db, OldFile);
+        await note.LoadAsync();
+        return note;
+    }
+
+    // What the database holds now, read through an instance of its own as another process would.
+    private async Task<string> Stored()
+    {
+        var reader = new ScratchpadNote(Db);
+        await reader.LoadAsync();
+        return reader.Text;
+    }
+
+    private static async Task WaitFor(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!await condition())
+        {
+            Assert.True(DateTime.UtcNow < deadline, "timed out");
+            await Task.Delay(10);
+        }
+    }
+
+    /// <summary>Timers that fire only when the test says so.</summary>
+    private sealed class FakeTime : TimeProvider
+    {
+        public List<FakeTimer> Timers { get; } = [];
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new FakeTimer(() => callback(state)) { Due = dueTime };
+            Timers.Add(timer);
+            return timer;
+        }
+    }
+
+    private sealed class FakeTimer(Action fire) : ITimer
+    {
+        public TimeSpan Due { get; set; }
+
+        public int Changes { get; private set; }
+
+        public bool Disposed { get; private set; }
+
+        public void Fire() => fire();
+
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            Due = dueTime;
+            Changes++;
+            return true;
+        }
+
+        public void Dispose() => Disposed = true;
+
+        public ValueTask DisposeAsync()
+        {
+            Dispose();
+            return ValueTask.CompletedTask;
+        }
+    }
+}

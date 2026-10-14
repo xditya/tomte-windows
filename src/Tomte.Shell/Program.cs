@@ -30,6 +30,9 @@ internal static class Program
     private static bool startingSettings;
     private static string settingsFile = SettingsStore.DefaultPath;
 
+    // The one scratchpad note: the rambler, the palette and the Scratchpad panel all use this instance.
+    private static ScratchpadNote Scratchpad = null!;
+
     [STAThread]
     private static unsafe int Main(string[] args)
     {
@@ -116,7 +119,13 @@ internal static class Program
             timer.Run = TimerRun.Starting(DateTimeOffset.Now, length);
         }
 
+        // The note lives beside the settings file too. Nothing here opens the database: the note loads when something
+        // first reads it.
+        string data = Path.GetDirectoryName(store.FilePath)!;
+        var db = new TomteDb(Path.Combine(data, "tomte.db"));
+        Scratchpad = new ScratchpadNote(db, Path.Combine(data, "scratchpad.md"));
         StartPanels(island, triggers, store, logLine, args.Contains("--debug-tabs"));
+
         if (rambler)
         {
             triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
@@ -165,6 +174,16 @@ internal static class Program
         if (settingsProcess is { HasExited: false } && !settingsProcess.CloseMainWindow())
         {
             settingsProcess.Kill();
+        }
+
+        // Typing not yet saved is saved now.
+        try
+        {
+            Scratchpad.FlushAsync().Wait(TimeSpan.FromSeconds(6));
+        }
+        catch (AggregateException e)
+        {
+            log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} scratchpad: not saved at quit ({e.InnerException?.GetType().Name})");
         }
 
         triggers.Dispose();
@@ -340,7 +359,7 @@ internal static class Program
 
     /// <summary>
     /// --palette "prompt" [--screenshot] [--dry]: the debug driver. Opens the palette on the island, runs the
-    /// prompt against local Ollama with the window chip on and an in-memory shelf and scratchpad, logs the
+    /// prompt against local Ollama with the window chip on, an in-memory shelf and the real scratchpad note, logs the
     /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
     /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
     /// Destructive requests (lock, sleep, restart, shut down) are denied without --dry: nobody is there to answer.
@@ -365,7 +384,9 @@ internal static class Program
             using var http = new HttpClient();
             var shelf = new InMemoryShelf();
             shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at 10.");
-            var scratchpad = new InMemoryScratchpad();
+            // The one note the rambler and the Scratchpad panel use too; the tools read and write it in memory once loaded.
+            var scratchpad = Scratchpad;
+            await scratchpad.LoadAsync();
             var (app, title) = WindowContext.Describe(foreground);
             var chips = new List<ContextChip>
             {
@@ -492,12 +513,12 @@ internal static class Program
             structure = new RamblerStructure(new ProviderSend(config.Id, model), (transcript, ct) => RamblerNote.StructureAsync(provider, model, transcript, ct));
         }
 
-        var scratchpad = new ScratchpadFile(ScratchpadFile.DefaultPath);
+        var scratchpad = Scratchpad;
         var sendLog = new SendLog(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl"));
         var session = new Rambler(island, machine, speech, speechSend, structure, scratchpad, sendLog, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
-        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"} scratchpad={scratchpad.FilePath}");
+        log.WriteLine($"rambler: speech={speech.GetType().Name} structure={config?.Id ?? "none, raw transcript"}");
         return session;
     }
 

@@ -21,7 +21,7 @@ internal sealed class Rambler(
     ISpeechToText speech,
     ProviderSend? speechSend,
     RamblerStructure? structure,
-    IScratchpad scratchpad,
+    ScratchpadNote scratchpad,
     SendLog sendLog,
     Action<string> log)
 {
@@ -130,7 +130,7 @@ internal sealed class Rambler(
                 }
             }
 
-            scratchpad.AppendNote(note, DateTime.Now);
+            await scratchpad.AppendAsync(note, DateTime.Now);
             log($"{DateTime.Now:HH:mm:ss.fff} rambler: note appended ({note.Length} chars)");
         }
         catch (Exception e)
