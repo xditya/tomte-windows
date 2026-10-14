@@ -5,7 +5,11 @@ using Xunit;
 
 namespace Tomte.Tests;
 
-/// <summary>Runs only when Ollama is listening on 127.0.0.1:11434 with the model pulled; skipped otherwise.</summary>
+/// <summary>
+/// Runs only when TOMTE_OLLAMA_TESTS=1 and Ollama is listening on 127.0.0.1:11434 with the model pulled; skipped
+/// otherwise. Opt-in because a small local model does not always call the tool, and a live model must not decide
+/// whether the ordinary test run passes.
+/// </summary>
 public sealed class OllamaFactAttribute : FactAttribute
 {
     public const string Model = "llama3.2:3b";
@@ -13,6 +17,11 @@ public sealed class OllamaFactAttribute : FactAttribute
     // One probe per test run, not one per test.
     private static readonly Lazy<string?> SkipReason = new(() =>
     {
+        if (Environment.GetEnvironmentVariable("TOMTE_OLLAMA_TESTS") != "1")
+        {
+            return "Set TOMTE_OLLAMA_TESTS=1 to run the live Ollama tests.";
+        }
+
         try
         {
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
