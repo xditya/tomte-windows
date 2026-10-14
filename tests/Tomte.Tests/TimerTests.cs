@@ -59,6 +59,18 @@ public sealed class TimerTests : IDisposable
     }
 
     [Fact]
+    public void ANewTimerReplacesTheOldOneAndCancellingRemovesTheFile()
+    {
+        var timer = new IslandTimer(File);
+        timer.Run = TimerRun.Starting(T0, TimeSpan.FromMinutes(25));
+        timer.Run = TimerRun.Starting(T0, TimeSpan.FromMinutes(5));
+        Assert.Equal(T0.AddMinutes(5), new IslandTimer(File).Run!.EndsAt);
+        timer.Run = null;
+        Assert.False(System.IO.File.Exists(File));
+        Assert.Null(new IslandTimer(File).Run);
+    }
+
+    [Fact]
     public void NoFileOrADamagedFileMeansNoTimer()
     {
         Assert.Null(new IslandTimer(File).Run);

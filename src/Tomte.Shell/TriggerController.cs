@@ -49,7 +49,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         this.log = log;
         ring = new TimerRing(island.Compositor, island.Content);
         island.Content.Children.InsertAtTop(ring.Visual);
-        // The palette's tool may start or cancel it from another thread; the one-shot lives on this one.
+        // The timer has no lock and is only touched on this thread. Changed is queued, not run in place, so the
+        // caller (the debug switch, a completion inside OnTimer) finishes before the one-shot and the ring re-sync.
         timer.Changed += () => island.Queue.TryEnqueue(ArmTimer);
         ArmTimer();
         settings = store.Current;

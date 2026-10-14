@@ -39,7 +39,7 @@ internal static class Program
         bool rambler = args.Contains("--rambler");
         // No prompt box renders yet, so circle-to-ask takes its typed question from here.
         string? captureQuestion = Arg(args, "--debug-capture");
-        // --debug-timer <minutes>: starts the timer until the island takes input.
+        // --debug-timer <minutes>: the only way to start the timer until the island takes input.
         double? debugTimer = Arg(args, "--debug-timer") is { } minutes ? double.Parse(minutes, System.Globalization.CultureInfo.InvariantCulture) : null;
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null;
