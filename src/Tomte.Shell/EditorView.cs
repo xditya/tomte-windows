@@ -114,6 +114,9 @@ internal sealed unsafe class EditorView : IDisposable
     /// <summary>Esc while this box has the keys: true when something on the island used it (the palette's open question), so the island stays.</summary>
     public Func<bool>? Escape { get; set; }
 
+    /// <summary>Runs first in each paint; what it changes in the services is drawn by that same paint (the note's styling).</summary>
+    public Action? BeforePaint { get; set; }
+
     /// <summary>The graphics device the surface comes from, once there is one; the whole box is drawn then.</summary>
     public void Use(CompositionGraphicsDevice? device)
     {
@@ -263,12 +266,23 @@ internal sealed unsafe class EditorView : IDisposable
 
     private void Paint()
     {
-        queued = false;
         if (disposed)
         {
+            queued = false;
             return;
         }
 
+        // Before the paint is no longer queued, so what this invalidates joins this paint instead of queueing another.
+        try
+        {
+            BeforePaint?.Invoke();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Failed?.Invoke(e);
+        }
+
+        queued = false;
         if (caretMoved)
         {
             caretMoved = false;
