@@ -27,6 +27,8 @@ public sealed class VoiceTests : IDisposable
     private PermissionAnswer _answer = PermissionAnswer.AllowOnce;
     private int _undone;
 
+    public VoiceTests() => Timer = new IslandTimer(Path.Combine(_dir, "timer.json"));
+
     public void Dispose()
     {
         if (Directory.Exists(_dir))
@@ -35,7 +37,7 @@ public sealed class VoiceTests : IDisposable
 
     private string LogPath => Path.Combine(_dir, "send-log.jsonl");
 
-    private IslandTimer Timer { get; } = new(Path.Combine(Path.GetTempPath(), $"tomte-voice-timer-{Guid.NewGuid():N}.json"));
+    private IslandTimer Timer { get; }
 
     private ActionResult FakeDevice(string tool, JsonElement input)
     {
@@ -421,9 +423,12 @@ public sealed class VoiceTests : IDisposable
         Assert.DoesNotContain(Tools().VoiceDefinitions, d => d.Name == BuiltInTools.OpenShortcut);
 
         int caller = Environment.CurrentManagedThreadId, launchedOn = -1;
+        using var launched = new ManualResetEventSlim();
         var tools = Tools(name =>
         {
-            launchedOn = Environment.CurrentManagedThreadId;
+            if (launchedOn < 0)
+                launchedOn = Environment.CurrentManagedThreadId;
+            launched.Set();
             return name == "Spotify";
         });
         Assert.Contains(tools.VoiceDefinitions, d => d.Name == BuiltInTools.OpenShortcut);
@@ -433,7 +438,10 @@ public sealed class VoiceTests : IDisposable
         provider.Turns.Add(ScriptedProvider.Text(1, 1, "ok"));
 
         var session = Session(provider, tools: tools);
-        await session.SendAsync();
+        // Waiting here keeps this thread busy, so the pool cannot hand the launch back to it and the thread check means something.
+        var send = session.SendAsync();
+        Assert.True(launched.Wait(TimeSpan.FromSeconds(5)), "the launcher never ran");
+        await send;
 
         Assert.Equal(["Open the shortcut \"Spotify\"", "Open the shortcut \"Nope\""], _asked.Select(a => a.Summary));
         Assert.Equal(ActionTier.ExternalEffect, _asked[0].Tier);
