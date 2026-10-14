@@ -619,7 +619,8 @@ internal static class Program
 
             await Task.Delay(1500);
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: answers {(yes ? "yes" : "no")}");
-            rambler.Answer(yes);
+            // Only to the question it was decided for: by now the user may have answered and another may be up.
+            rambler.Answer(yes, to: request);
         };
         rambler.Retracted += async () =>
         {

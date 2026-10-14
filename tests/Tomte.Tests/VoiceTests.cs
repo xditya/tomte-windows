@@ -336,6 +336,36 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AnAnswerReachesOnlyTheQuestionItWasGivenFor()
+    {
+        var question = new VoiceQuestion();
+        var first = new ToolRequest(BuiltInTools.SetVolume, "Set volume to 20%", ActionTier.ExternalEffect, false);
+        var second = new ToolRequest(BuiltInTools.SetVolume, "Set volume to 20%", ActionTier.ExternalEffect, false);
+        Assert.False(question.Answer(allow: true));
+
+        var a = question.AskAsync(first, CancellationToken.None);
+        Assert.Same(first, question.Asked);
+        Assert.True(question.Answer(allow: true, to: first));
+        Assert.Equal(PermissionAnswer.AllowOnce, await a);
+        Assert.Null(question.Asked);
+
+        // A yes decided for the first question, arriving while the second (with the same text) is up, does nothing.
+        var b = question.AskAsync(second, CancellationToken.None);
+        Assert.False(question.Answer(allow: true, to: first));
+        Assert.False(b.IsCompleted);
+        // The answer the triggers give when Win+Alt+Enter cannot be registered: no, to whatever is asked.
+        Assert.True(question.Answer(allow: false));
+        Assert.Equal(PermissionAnswer.Deny, await b);
+
+        // Hiding the palette cancels the session, which answers no.
+        using var hidden = new CancellationTokenSource();
+        var c = question.AskAsync(first, hidden.Token);
+        hidden.Cancel();
+        Assert.Equal(PermissionAnswer.Deny, await c);
+        Assert.False(question.Answer(allow: true));
+    }
+
+    [Fact]
     public async Task ShortcutsAreOfferedOnlyOnceALauncherIsWiredAndRunOffTheCallingThread()
     {
         Assert.DoesNotContain(Tools().VoiceDefinitions, d => d.Name == BuiltInTools.OpenShortcut);

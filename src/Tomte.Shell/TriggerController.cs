@@ -312,6 +312,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 // The session retracts itself once the note is written; Retracted then releases the rest.
                 rambler?.End(keep: wParam == 1);
                 return true;
+            case InputThread.MsgConfirmUnavailable:
+                log?.Invoke($"hotkey conflict: Win+Alt+Enter could not be registered (error {wParam})");
+                rambler?.Answer(allow: false);
+                return true;
             case InputThread.MsgHotkeysRegistered:
                 Conflicts = InputThread.Registrations
                     .Where(r => r.Error != 0)

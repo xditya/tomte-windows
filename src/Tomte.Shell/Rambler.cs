@@ -45,7 +45,7 @@ internal sealed class Rambler(
     private bool transcribing;
     private PaletteSession? command;
     private PaletteHost? palette;
-    private TaskCompletionSource<PermissionAnswer>? answer;
+    private readonly VoiceQuestion question = new();
 
     /// <summary>Microphone level 0..1, once per capture packet while recording, on the UI thread. The mascot bounces to it.</summary>
     public event Action<double>? Bounce;
@@ -59,14 +59,17 @@ internal sealed class Rambler(
     /// <summary>A voice command's session has finished, before the island retracts.</summary>
     public event Action<PaletteSession>? CommandDone;
 
-    /// <summary>The user's answer to the palette's question (Win+Alt+Enter is yes, Esc no). False when nothing is asked.</summary>
-    public bool Answer(bool allow) => answer?.TrySetResult(allow ? PermissionAnswer.AllowOnce : PermissionAnswer.Deny) == true;
+    /// <summary>
+    /// The answer to the palette's question (Win+Alt+Enter is yes, Esc no); with <paramref name="to"/>, only while that
+    /// is still the question. False when nothing was answered.
+    /// </summary>
+    public bool Answer(bool allow, ToolRequest? to = null) => question.Answer(allow, to);
 
     /// <summary>The palette is going away under a voice command: what it was about to ask or run never runs.</summary>
     public void Cancel()
     {
         command?.Cancel();
-        answer?.TrySetResult(PermissionAnswer.Deny);
+        question.Answer(allow: false);
     }
 
     public void Begin()
@@ -190,21 +193,20 @@ internal sealed class Rambler(
     /// <summary>Waits for the user's answer while the palette shows where the confirmation goes. A hide answers no.</summary>
     private async Task<PermissionAnswer> ConfirmAsync(ToolRequest request, CancellationToken ct)
     {
-        var asked = answer = new TaskCompletionSource<PermissionAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var cancel = ct.Register(() => asked.TrySetResult(PermissionAnswer.Deny));
+        var asked = question.AskAsync(request, ct);
+        // A chord that cannot be registered comes back as a no from the triggers.
         InputThread.SetConfirm(true);
         log($"{DateTime.Now:HH:mm:ss.fff} voice: asks {request.Tier}: {request.Summary} (Win+Alt+Enter runs it, Esc cancels)");
         Asking?.Invoke(request);
         try
         {
-            var given = await palette!.AskAsync(asked.Task);
+            var given = await palette!.AskAsync(asked);
             log($"{DateTime.Now:HH:mm:ss.fff} voice: answer {given}");
             return given;
         }
         finally
         {
             InputThread.SetConfirm(false);
-            answer = null;
         }
     }
 

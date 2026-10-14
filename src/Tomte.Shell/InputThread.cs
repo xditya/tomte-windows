@@ -32,6 +32,7 @@ internal static unsafe class InputThread
     public const uint MsgHotkey = PInvoke.WM_APP + 6;           // wParam = hotkey id
     public const uint MsgHotkeyReleased = PInvoke.WM_APP + 7;   // the Rambler chord came up; wParam 1 = held long enough to keep
     public const uint MsgHotkeysRegistered = PInvoke.WM_APP + 8; // Registrations holds a new snapshot
+    public const uint MsgConfirmUnavailable = PInvoke.WM_APP + 9; // Win+Alt+Enter could not be registered; wParam = the error
 
     public const int EscapeHotkeyId = 100;
 
@@ -303,11 +304,12 @@ internal static unsafe class InputThread
 
                     return new LRESULT(0);
                 case MsgSetConfirm:
-                    if (wParam.Value == 1)
+                    if (wParam.Value == 1 && !PInvoke.RegisterHotKey(hwnd, ConfirmHotkeyId, HOT_KEY_MODIFIERS.MOD_WIN | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkReturn))
                     {
-                        PInvoke.RegisterHotKey(hwnd, ConfirmHotkeyId, HOT_KEY_MODIFIERS.MOD_WIN | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkReturn);
+                        // Nothing else can say yes, so the island must hear it and end the question.
+                        PInvoke.PostMessage(island, MsgConfirmUnavailable, (nuint)Marshal.GetLastPInvokeError(), 0);
                     }
-                    else
+                    else if (wParam.Value == 0)
                     {
                         PInvoke.UnregisterHotKey(hwnd, ConfirmHotkeyId);
                     }
