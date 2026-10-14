@@ -597,4 +597,21 @@ public class SelectionRuleTests
         none.On = true;
         Assert.False(none.On);
     }
+
+    [Fact]
+    public void WithNoWindowInFrontTheWindowAndScreenshotChipsCannotBeTurnedOn()
+    {
+        // The tray's "Ask AI" with no window the user worked in: no window is described, not the idle process.
+        var (app, title) = WindowContext.Describe(0);
+        Assert.Equal(("", ""), (app, title));
+        var chips = ContextChips.For(null, null, app, title, _ => Task.FromResult(Array.Empty<byte>()), new InMemoryShelf(), new InMemoryScratchpad());
+        var window = chips.Where(c => c.Kind is ContextKind.Window or ContextKind.Screenshot).ToList();
+        Assert.Equal(2, window.Count);
+        foreach (var chip in window)
+        {
+            Assert.False(chip.Available);
+            chip.On = true;
+            Assert.False(chip.On);
+        }
+    }
 }

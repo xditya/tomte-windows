@@ -119,11 +119,12 @@ public static class ContextChips
         _ => Task.FromResult<IReadOnlyList<ContentPart>>([ContextAssembly.Block("active_window", title, $"app=\"{app}\"")]),
         available: title.Length > 0 || app.Length > 0);
 
-    /// <summary>The screenshot is taken at send time; <paramref name="capture"/> returns PNG bytes.</summary>
+    /// <summary>The screenshot is taken at send time; <paramref name="capture"/> returns PNG bytes. With no app there is no window to take.</summary>
     public static ContextChip Screenshot(string app, Func<CancellationToken, Task<byte[]>> capture) => new(ContextKind.Screenshot,
         "Screenshot of window",
         $"screenshot:{app}",
-        async ct => [new ImagePart("image/png", await capture(ct))]);
+        async ct => [new ImagePart("image/png", await capture(ct))],
+        available: app.Length > 0);
 
     /// <summary>
     /// The circled region from circle-to-ask, captured when the lasso was released. Drawing the lasso is the
