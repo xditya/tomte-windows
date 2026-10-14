@@ -567,4 +567,34 @@ public class SelectionRuleTests
     [Fact]
     public void NormalizeMakesBothPathsAgree() =>
         Assert.Equal("a\n\nb", SelectionRule.Normalize("a\r\n\r\nb \r\n"));
+
+    [Theory]
+    [InlineData("Tomte is a Windows utility\r\n", null, null, null, "Tomte is a Windows utility")]
+    [InlineData("", null, null, null, null)]
+    [InlineData("   ", null, null, null, null)]
+    // Where only the Ctrl+C fallback could tell, the hotkey palette offers nothing rather than a wrong "none".
+    [InlineData("", "The editor is not accessible at this time.", "native-edit-context", null, null)]
+    [InlineData(null, "Pane", null, "no TextPattern", null)]
+    public void TheHotkeyPaletteTakesOnlyWhatUiAutomationSaysIsSelected(string? text, string? name, string? className, string? error, string? expected) =>
+        Assert.Equal(expected, SelectionRule.Text(new UiaSelection(text, name, className, error)));
+
+    [Fact]
+    public void TheSelectionChipOffersWhatIsSelectedAndStaysOffUntilTurnedOn()
+    {
+        var shelf = new InMemoryShelf();
+        var chips = ContextChips.For(null, "Meet at 10, not 9", "notepad", "notes.txt - Notepad", _ => Task.FromResult(Array.Empty<byte>()), shelf, new InMemoryScratchpad());
+        Assert.Equal([ContextKind.Selection, ContextKind.Window, ContextKind.Screenshot, ContextKind.ShelfItem, ContextKind.Scratchpad], chips.Select(c => c.Kind));
+        var selection = chips[0];
+        Assert.Equal("Selection · \"Meet at 10, not 9\"", selection.Label);
+        Assert.True(selection.Available);
+        Assert.All(chips, chip => Assert.False(chip.On));
+        selection.On = true;
+        Assert.True(selection.On);
+
+        // Nothing selected: the chip says so and cannot be turned on.
+        var none = ContextChips.For(null, null, "notepad", "notes.txt - Notepad", _ => Task.FromResult(Array.Empty<byte>()), shelf, new InMemoryScratchpad())[0];
+        Assert.Equal("Selection · none", none.Label);
+        none.On = true;
+        Assert.False(none.On);
+    }
 }
