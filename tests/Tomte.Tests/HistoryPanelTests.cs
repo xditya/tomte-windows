@@ -18,7 +18,7 @@ public class HistoryPanelTests
         [.. Enumerable.Range(0, count).Select(i => Talk($"k{i}", Morning.AddMinutes(-i), $"Question {i}"))];
 
     [Fact]
-    public void RowsStackNewestFirstAndOnlyThoseInViewAreTargets()
+    public void RowsStackNewestFirstAndThoseOutOfViewKeepTheirPlaceWithNoHeight()
     {
         var layout = new HistoryPanelLayout(Body, Rows(20), opened: null);
 
@@ -28,16 +28,23 @@ public class HistoryPanelTests
             Assert.Equal(layout.Rows[i - 1].Bottom + HistoryPanelLayout.RowGap, layout.Rows[i].Y, 0.01);
         }
 
+        // Every row is a target, in order, so the arrow keys reach all of them; those in view are cut to the list, the
+        // rest sit where they are with no height, so no press lands on them.
         var targets = layout.Targets(0);
+        Assert.Equal(Enumerable.Range(0, 20).Select(i => $"row:k{i}"), targets.Select(t => t.Id));
         Assert.All(targets, t => Assert.Equal((TargetKind.Row, 1), (t.Kind, t.Group)));
-        Assert.All(targets, t => Assert.True(layout.List.Contains(t.Bounds), $"{t.Id} at {t.Bounds}"));
-        Assert.True(targets.Count < 20);
-        Assert.Equal("row:k0", targets[0].Id);
+        var shown = targets.Where(t => t.Bounds.Height > 0).ToList();
+        Assert.All(shown, t => Assert.True(layout.List.Contains(t.Bounds), $"{t.Id} at {t.Bounds}"));
+        Assert.InRange(shown.Count, 5, 7);
+        var hidden = targets[19];
+        Assert.Equal((0f, layout.List.Y + layout.Rows[19].Y), (hidden.Bounds.Height, hidden.Bounds.Y));
 
-        // Scrolled to the end, the last row is in view and the first is not.
+        // Scrolled to the end, the last row is in view and the first is not; focus on the first scrolls back to it.
         var end = layout.Targets(layout.MaxScroll);
-        Assert.Equal("row:k19", end[^1].Id);
-        Assert.DoesNotContain(end, t => t.Id == "row:k0");
+        Assert.True(end[^1].Bounds.Height > 0);
+        Assert.Equal(0, end[0].Bounds.Height);
+        Assert.Equal(0, layout.Reveal(layout.MaxScroll, layout.Place("row:k0")));
+        Assert.Equal(layout.MaxScroll, layout.Reveal(0, layout.Place("row:k19")), 0.01);
         Assert.Equal(layout.MaxScroll, layout.Scrolled(layout.MaxScroll, -120 * 50));
         Assert.Equal(0, layout.Scrolled(0, 120));
         Assert.Equal("row:k1", layout.At(new Vector2(layout.List.X + 50, layout.List.Y + layout.Rows[1].Y + 10), 0)?.Id);
@@ -55,17 +62,21 @@ public class HistoryPanelTests
         Assert.True(card.Height > HistoryPanelLayout.RowHeight + 100);
         Assert.All(layout.Conversation, run => Assert.True(run.At.Y >= card.Y + HistoryPanelLayout.RowHeight && run.At.Y < card.Bottom));
         Assert.Contains(layout.Conversation, run => run.Run.Text == "With lasso");
+        // The first question shows once: in full at the top of the conversation, and the row's own line has the facts only.
+        Assert.Equal("First", layout.Conversation[0].Run.Text);
+        Assert.Equal(HistoryPanelLayout.Facts(rows[1]), Assert.Single(HistoryPanelLayout.RowText(rows[1], card.Width, opened: true)).Text);
         Assert.Contains(layout.Conversation, run => run.Run.Text == "Timed out after 120 s." && run.Run.Style == HistoryPanelLayout.ErrorStyle);
         Assert.True(layout.ContinueButton.Y > layout.Conversation.Max(r => r.At.Y));
         Assert.Equal(layout.ContinueButton.Right + HistoryPanelLayout.ButtonGap, layout.CopyButton.X, 0.01);
         Assert.Equal(StateLook.ActionHeight, layout.ContinueButton.Height);
 
-        // Tab order: the rows that show, as one group, then Continue, then Copy answer, which is off when the last turn has
-        // no answer. Opening scrolled the row into view with its buttons.
+        // Tab order: the rows as one group, then Continue, then Copy answer, which is off when the last turn has no
+        // answer. Opening scrolled the row into view with its buttons.
         var targets = layout.Targets(layout.Reveal(0, 1));
         var ids = targets.Select(t => t.Id).ToList();
-        Assert.Equal([HistoryPanelLayout.ContinueId, HistoryPanelLayout.CopyId], ids.Skip(ids.Count - 2));
-        Assert.All(targets.Take(targets.Count - 2), t => Assert.Equal((TargetKind.Row, 1), (t.Kind, t.Group)));
+        Assert.Equal(["row:k0", "row:k1", "row:k2", "row:k3", "row:k4", HistoryPanelLayout.ContinueId, HistoryPanelLayout.CopyId], ids);
+        Assert.All(targets.Take(5), t => Assert.Equal((TargetKind.Row, 1), (t.Kind, t.Group)));
+        Assert.All(targets.Skip(5), t => Assert.True(t.Bounds.Height > 0));
         Assert.True(targets.Single(t => t.Id == "row:k1").Checked);
         Assert.False(targets.Single(t => t.Id == HistoryPanelLayout.CopyId).Enabled);
         Assert.Equal("", rows[1].LastAnswer);

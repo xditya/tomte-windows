@@ -110,11 +110,10 @@ public sealed class HistoryPanelLayout
     public float Scrolled(float scroll, int delta) => Math.Clamp(scroll - delta / 120f * WheelStep, 0, MaxScroll);
 
     /// <summary>The scroll that shows as much of row <paramref name="index"/> as fits, its top first.</summary>
-    public float Reveal(float scroll, int index)
-    {
-        var row = rows[index];
-        return Math.Clamp(Math.Min(Math.Max(scroll, row.Bottom - List.Height), row.Y), 0, MaxScroll);
-    }
+    public float Reveal(float scroll, int index) => Reveal(scroll, rows[index]);
+
+    /// <summary>The same for any rectangle in list coordinates; one already in view leaves the scroll as it is.</summary>
+    public float Reveal(float scroll, RectangleF r) => Math.Clamp(Math.Min(Math.Max(scroll, r.Bottom - List.Height), r.Y), 0, MaxScroll);
 
     /// <summary>The heading and what goes beside it.</summary>
     public IReadOnlyList<TextSlot> HeadText(bool on)
@@ -141,15 +140,20 @@ public sealed class HistoryPanelLayout
         return [.. lines.Select((line, i) => new TextSlot(line, (i == 0 ? TextStyle.Secondary : TextStyle.Small) with { Align = TextAlign.Center }, new(List.X + 20, y + i * BoxLineHeight, List.Width - 40, BoxLineHeight)))];
     }
 
-    /// <summary>A row's question on its first line and its facts on the second, after the icon, in the row's own coordinates.</summary>
-    public static IReadOnlyList<TextSlot> RowText(AiExchange item, float rowWidth, IFormatProvider? culture = null)
+    /// <summary>
+    /// A row's question on its first line and its facts on the second, after the icon, in the row's own coordinates.
+    /// Opened, the question is the conversation's first line, in full, so the row's own line says only the facts.
+    /// </summary>
+    public static IReadOnlyList<TextSlot> RowText(AiExchange item, float rowWidth, IFormatProvider? culture = null, bool opened = false)
     {
         float x = Gap + Icon + Gap, width = rowWidth - x - Gap;
-        return
-        [
-            new(OneLine(item.Question), TextStyle.Primary, new(x, 6, width, 18)),
-            new(Facts(item, culture), TextStyle.Small, new(x, 24, width, 14)),
-        ];
+        return opened
+            ? [new(Facts(item, culture), TextStyle.Small, new(x, 0, width, RowHeight))]
+            :
+            [
+                new(OneLine(item.Question), TextStyle.Primary, new(x, 6, width, 18)),
+                new(Facts(item, culture), TextStyle.Small, new(x, 24, width, 14)),
+            ];
     }
 
     /// <summary>"3 turns · 14 Oct, 09:42 · claude-haiku-4-5 · $0.0031", the time in this PC's zone and culture.</summary>
@@ -166,41 +170,43 @@ public sealed class HistoryPanelLayout
         Opened < 0 ? [] : [new(Continue, ButtonText, ContinueButton), new(Copy, ButtonText, CopyButton)];
 
     /// <summary>
-    /// The targets in body coordinates for the list scrolled by <paramref name="scroll"/>, in Tab order: each row that
-    /// shows, by its first 44 DIP and cut to the list, then the opened row's two buttons. Rows are one group, one Tab
-    /// stop with the arrow keys moving between them. Copy answer is off when the last turn has no answer.
+    /// The targets in body coordinates for the list scrolled by <paramref name="scroll"/>, in Tab order: every row, by
+    /// its first 44 DIP cut to the list, then the opened row's two buttons. A part out of view keeps its place with no
+    /// height, so nothing hits it but the arrow keys still find it. Rows are one group, one Tab stop with the arrow keys
+    /// moving between them. Copy answer is off when the last turn has no answer.
     /// </summary>
     public IReadOnlyList<Target> Targets(float scroll)
     {
-        var list = List;
         var targets = new List<Target>();
-        RectangleF? Shown(RectangleF r)
-        {
-            var at = new RectangleF(list.X + r.X, list.Y + r.Y - scroll, r.Width, r.Height);
-            var cut = RectangleF.Intersect(at, list);
-            return cut.Height >= 1 ? cut : null;
-        }
-
         for (int i = 0; i < rows.Count; i++)
         {
-            if (Shown(rows[i] with { Height = RowHeight }) is { } row)
-            {
-                targets.Add(new Target(RowId(Items[i]), row, Corner, TargetKind.Row, Group: 1, Checked: i == Opened));
-            }
+            targets.Add(new Target(RowId(Items[i]), InList(rows[i] with { Height = RowHeight }, scroll), Corner, TargetKind.Row, Group: 1, Checked: i == Opened));
         }
 
         // The group of rows is one Tab stop; the opened row's buttons come after it.
-        if (Opened >= 0 && Shown(ContinueButton) is { } go)
+        if (Opened >= 0)
         {
-            targets.Add(new Target(ContinueId, go, Corner, TargetKind.Button));
-        }
-
-        if (Opened >= 0 && Shown(CopyButton) is { } copy)
-        {
-            targets.Add(new Target(CopyId, copy, Corner, TargetKind.Button, Enabled: Items[Opened].LastAnswer.Length > 0));
+            targets.Add(new Target(ContinueId, InList(ContinueButton, scroll), Corner, TargetKind.Button));
+            targets.Add(new Target(CopyId, InList(CopyButton, scroll), Corner, TargetKind.Button, Enabled: Items[Opened].LastAnswer.Length > 0));
         }
 
         return targets;
+    }
+
+    /// <summary>A target's rectangle in list coordinates, before the scroll: where focus on it scrolls the list to.</summary>
+    public RectangleF Place(string id) => id switch
+    {
+        ContinueId => ContinueButton,
+        CopyId => CopyButton,
+        _ => rows.Where((_, i) => RowId(Items[i]) == id).Select(r => r with { Height = RowHeight }).FirstOrDefault(),
+    };
+
+    // A rectangle in list coordinates to body space, cut to the list; out of view it keeps its place with no height.
+    private RectangleF InList(RectangleF r, float scroll)
+    {
+        r.Offset(List.X, List.Y - scroll);
+        var shown = RectangleF.Intersect(r, List);
+        return shown.IsEmpty ? r with { Height = 0 } : shown;
     }
 
     /// <summary>The target under a point of the body, or null.</summary>

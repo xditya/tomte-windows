@@ -92,7 +92,7 @@ internal static partial class Program
                 c.Figures(HistoryPanelLayout.Glyph(rows[i].Source), at, HistoryPanelLayout.IconGlyph / 16, 0x99FFFFFF);
             }
 
-            foreach (var line in HistoryPanelLayout.RowText(rows[i], card.Width))
+            foreach (var line in HistoryPanelLayout.RowText(rows[i], card.Width, opened: i == layout.Opened))
             {
                 c.Text(line, rowAt);
             }

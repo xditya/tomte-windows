@@ -63,6 +63,19 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
         }
     }
 
+    /// <summary>Focus that reaches a row or button out of view (only the arrow keys and Tab can) scrolls the list to show it.</summary>
+    public void Hovered(string? id)
+    {
+        if (view is null || layout is null || id is null || Targets.FirstOrDefault(t => t.Id == id).Bounds.Height > 0 || layout.Place(id) is not { IsEmpty: false } place)
+        {
+            return;
+        }
+
+        scroll = layout.Reveal(scroll, place);
+        view.Scroll(layout, scroll);
+        TargetsChanged?.Invoke();
+    }
+
     public void Activate(string id)
     {
         if (layout is null || view is null)
@@ -285,7 +298,7 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
 
             shapes.Shapes.Add(glyph);
             var row = new Row(shapes);
-            foreach (var line in HistoryPanelLayout.RowText(item, at.Width))
+            foreach (var line in HistoryPanelLayout.RowText(item, at.Width, opened: i == layout.Opened))
             {
                 row.Text(text, shapes).Show(line);
             }
