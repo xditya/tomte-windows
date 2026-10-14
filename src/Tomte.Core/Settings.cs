@@ -38,6 +38,12 @@ public sealed record TomteSettings
 
     /// <summary>MCP servers whose tools the AI palette may use; see <see cref="McpServerSettings"/>.</summary>
     public IReadOnlyList<McpServerSettings> McpServers { get; init; } = [];
+
+    /// <summary>
+    /// Show the pill for a few seconds when another track starts playing. Off by default; on, Tomte
+    /// listens for media changes while the island is hidden.
+    /// </summary>
+    public bool MediaTrackChangeEvent { get; init; }
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>
