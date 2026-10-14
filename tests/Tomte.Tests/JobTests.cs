@@ -623,6 +623,22 @@ public sealed class JobTests : IDisposable
         Assert.Equal(new DateTimeOffset(2026, 10, 21, 9, 0, 0, TimeSpan.FromHours(9)), await runner.RunDueAsync());
     }
 
+    [Fact]
+    public async Task AOneOffsTaskIsRemovedOnlyOnceItsResultIsKept()
+    {
+        var once = _store.Add(new JobDraft("Once", "Read the shelf item notes.txt and summarise it in one sentence.",
+            new JobSchedule { Time = new TimeOnly(9, 0), Date = new DateOnly(2026, 10, 19) }, ["read_shelf_item"]), Ollama, Monday0800, India);
+        var runner = Runner("runshelf", 2, out var handler);
+        (int Sent, int Kept)? atRemoval = null;
+        _tasks.Removing = _ => atRemoval = (handler.Bodies.Count, _store.Results().Count);
+
+        await runner.RunDueAsync();
+
+        // In a --run-job start the entry is the one that started the process, so it goes only after the run is kept.
+        Assert.Equal((2, 1), atRemoval);
+        Assert.Equal([once.Id], _tasks.Removed);
+    }
+
     // ---- The clock that arms the next run, and the hand-off ----
 
     [Fact]
@@ -752,6 +768,8 @@ public sealed class JobTests : IDisposable
 
         public bool Fail { get; set; }
 
+        public Action<long>? Removing { get; set; }
+
         public string Xml(ScheduledJob job) => JobTask.Xml(job, Exe, JobTask.Arguments(job.Id, Settings));
 
         public void Register(ScheduledJob job)
@@ -761,7 +779,11 @@ public sealed class JobTests : IDisposable
             Registered.Add(job);
         }
 
-        public void Remove(long jobId) => Removed.Add(jobId);
+        public void Remove(long jobId)
+        {
+            Removing?.Invoke(jobId);
+            Removed.Add(jobId);
+        }
     }
 
     /// <summary>A hidden top-level window tagged with a data folder, on a thread of its own, standing in for the island window.</summary>

@@ -50,12 +50,6 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
 
         foreach (var (job, due, missed) in claims)
         {
-            // A one-off has had its turn: its entry would only start Tomte for nothing.
-            if (job.Schedule.Date is not null)
-            {
-                await Try(() => tasks.Remove(job.Id), $"remove the task of job {job.Id}");
-            }
-
             JobRunRecord run;
             if (missed)
             {
@@ -68,6 +62,13 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
             }
 
             await Try(() => store.Record(run), $"keep the result of job {job.Id}");
+            // A one-off has had its turn: its entry would only start Tomte for nothing. Removed only once the result is
+            // kept, because in a --run-job start it is the entry that started this very process.
+            if (job.Schedule.Date is not null)
+            {
+                await Try(() => tasks.Remove(job.Id), $"remove the task of job {job.Id}");
+            }
+
             if (Resident)
             {
                 Raised?.Invoke(new IslandEvent(EventText(run), Now()));
