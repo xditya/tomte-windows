@@ -93,7 +93,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     private bool contentPending;
 
     // A press on the pill's own surface, held until it is a click or a drag; and the last such click, for a double click.
-    private bool grabbing, grabMoved;
+    private bool grabbing, grabMoved, grabPill;
     private System.Drawing.Point grabFrom, lastClickAt;
     private Vector2 grabAt;
     private double grabOffset;
@@ -268,7 +268,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     public event Action<double>? Moved;
 
     /// <summary>The pixel column the Compact pill's centre rests on, which the reveal zone is centred under.</summary>
-    public int CenterX => IslandPlace.Center(place.Target, IslandGeometry.Compact, scale, screenWidth);
+    public int CenterX => IslandPlace.Center(place.Target, attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact, scale, screenWidth, attached);
 
     /// <summary>The wheel turned over the island, at a point in island space: the raw delta, 120 a notch, positive away from the user.</summary>
     public event Action<Vector2, int>? Wheel;
@@ -466,12 +466,12 @@ internal sealed unsafe class IslandWindow : IDisposable
     {
         Rescale(MonitorScale());
         var shape = attached ? g.Attached() : g;
-        return IslandOutline.WindowBounds(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth), attached);
+        return IslandOutline.WindowBounds(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth, attached), attached);
     }
 
     /// <summary>Window rectangle for a geometry in physical pixels, at its place along the primary monitor's top edge.</summary>
     private System.Drawing.Rectangle Bounds(in IslandGeometry g) =>
-        IslandOutline.WindowBounds(g, scale, IslandPlace.Center(place.Value, g, scale, screenWidth), attached);
+        IslandOutline.WindowBounds(g, scale, IslandPlace.Center(place.Value, g, scale, screenWidth, attached), attached);
 
     /// <summary>The place moved: the window and the bounds the pointer is tracked against follow it.</summary>
     private void Follow()
@@ -540,7 +540,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         (windowX, windowWidth, windowHeight) = (r.X, r.Width, r.Height);
-        PInvoke.SetWindowPos(Hwnd, HWND.HWND_TOPMOST, r.X, 0, r.Width, r.Height, SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
+        // Size and place only: a drag and the slide back call this per move and per frame, and the show re-asserts topmost.
+        PInvoke.SetWindowPos(Hwnd, HWND.HWND_TOPMOST, r.X, 0, r.Width, r.Height, SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
     }
 
     private void CompositorClockLoop()
@@ -971,8 +972,9 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         var screen = new System.Drawing.Point(x, y);
         PInvoke.ClientToScreen(Hwnd, &screen);
-        long now = Environment.TickCount64;
-        if (IslandPlace.IsDoubleClick(screen.X - lastClickAt.X, screen.Y - lastClickAt.Y, now - lastClick,
+        bool grabs = Grabs?.Invoke(at) == true;
+        bool pill = grabs && !OnMascot(at);
+        if (IslandPlace.IsDoubleClick(pill, screen.X - lastClickAt.X, screen.Y - lastClickAt.Y, Environment.TickCount64 - lastClick,
             PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXDOUBLECLK), PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYDOUBLECLK), PInvoke.GetDoubleClickTime()))
         {
             // The second click of a double click on the pill: back to the middle, and the press is used up.
@@ -982,9 +984,12 @@ internal sealed unsafe class IslandWindow : IDisposable
             return;
         }
 
-        if (Grabs?.Invoke(at) == true)
+        if (grabs)
         {
-            (grabbing, grabMoved, grabFrom, grabAt, grabOffset) = (true, false, screen, at, place.Value);
+            // From where the shape it rests in may be, so an inward drag moves it at once after an earlier one pushed a
+            // narrower shape further out.
+            double from = IslandPlace.Clamp(place.Value, targetGeometry, scale, screenWidth, attached);
+            (grabbing, grabMoved, grabPill, grabFrom, grabAt, grabOffset) = (true, false, pill, screen, at, from);
             PInvoke.SetCapture(Hwnd);
             return;
         }
@@ -1014,7 +1019,7 @@ internal sealed unsafe class IslandWindow : IDisposable
                 MoveStarted?.Invoke();
             }
 
-            place.Jump(IslandPlace.Clamp(grabOffset + dx / scale, targetGeometry, scale, screenWidth));
+            place.Jump(IslandPlace.Clamp(grabOffset + dx / scale, targetGeometry, scale, screenWidth, attached));
             Follow();
             return;
         }
@@ -1034,7 +1039,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
         else if (message == PInvoke.WM_LBUTTONUP)
         {
-            (lastClick, lastClickAt) = (Environment.TickCount64, grabFrom);
+            (lastClick, lastClickAt) = (grabPill ? Environment.TickCount64 : 0, grabFrom);
             Pressed?.Invoke(grabAt);
         }
     }
