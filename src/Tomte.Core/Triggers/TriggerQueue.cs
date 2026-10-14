@@ -18,6 +18,9 @@ public sealed class TriggerQueue
 
     public int Count => waiting.Count;
 
+    /// <summary>What waits, oldest first, still in the queue.</summary>
+    public IReadOnlyCollection<IslandEvent> Waiting => waiting;
+
     /// <summary>
     /// The island is showing something an event pill must not replace: anything but Hidden, except the desktop
     /// peek pill, which is ambient and gives way. An event that arrives now waits until the island hides.
