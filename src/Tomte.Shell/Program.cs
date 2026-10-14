@@ -274,18 +274,20 @@ internal static class Program
     private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ShortcutStore shortcuts, ClipboardWatch clipboard, Action<string>? log)
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
-        var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
+        var text = new TextRenderer(island, log);
+        var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
-        panels.Register(StartShelf(island, triggers, store, db, log));
-        panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
-        panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
-        panels.Register(new ScratchpadPanel(island, Scratchpad, log));
+        panels.Register(StartShelf(island, triggers, store, db, text, log));
+        panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, text, log));
+        panels.Register(new MediaPanel(island, media, text, () => DateTimeOffset.UtcNow, log));
+        panels.Register(new ScratchpadPanel(island, Scratchpad, text, log));
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
-        panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), log));
+        panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), text, log));
         triggers.Panels = panels;
-        // The row lives on the state changes and ContentReady it listens to.
-        _ = new NowPlayingRow(island, triggers, media, log);
+        // The row and the line live on the state changes and ContentReady they listen to.
+        _ = new NowPlayingRow(island, triggers, media, text, log);
+        _ = new CompactLine(island, triggers, text);
 
         bool announcing = false;
         media.TrackChanged += playing =>
@@ -324,15 +326,15 @@ internal static class Program
     /// The shelf takes what is dropped on the island and is the Shelf tab. Its database and its folder sit next to
     /// the settings file, and neither is opened before the first drop or the first time the shelf shows.
     /// </summary>
-    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, Action<string>? log)
+    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, TextRenderer text, Action<string>? log)
     {
         string dir = Path.GetDirectoryName(store.FilePath)!;
         var shelf = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log);
         // Virtual files are written into the shelf folder as the drop reads them; the drop then goes to the shelf.
         triggers.Drops.Receive = shelf.Receive;
         triggers.Dropped += drop => shelf.Accept(drop);
-        _ = new ShelfDropSurface(island, triggers.Machine, triggers.Drops);
-        return new ShelfPanel(island, triggers, shelf, log);
+        _ = new ShelfDropSurface(island, triggers.Machine, triggers.Drops, text);
+        return new ShelfPanel(island, triggers, shelf, text, log);
     }
 
     /// <summary>Debug stand-ins for the drag and the microphone: lean toward the cursor, and a synthetic level at 20 Hz.</summary>

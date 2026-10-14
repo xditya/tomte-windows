@@ -1,4 +1,5 @@
 using System.Numerics;
+using Tomte.Core.Text;
 
 namespace Tomte.Core;
 
@@ -59,6 +60,51 @@ public sealed class PanelTabs
         int i = Array.IndexOf(order, Current!.Value) + Math.Sign(direction);
         selected = order[(i + order.Length) % order.Length];
         return true;
+    }
+}
+
+/// <summary>
+/// The tab labels in the 42 DIP strip, in DIPs from the panel's left edge and top: after the tomte, each label
+/// centred in a pill 10 DIP wider than its text on each side, 2 DIP apart, the current one white, the others at 60%.
+/// A label that would run past the right padding is cut to the room left; one with almost no room is left out.
+/// </summary>
+public static class TabStrip
+{
+    public const float PadX = 10, Gap = 2, Height = 28, Corner = 8, AfterMascot = 6, RightPad = 10, MinWidth = 32;
+
+    public static readonly TextStyle Label = new(12.5f, Color: TextStyle.SecondaryColor, Align: TextAlign.Center);
+    public static readonly TextStyle Current = Label with { Color = TextStyle.WhiteColor };
+
+    public static string Name(PanelId id) => id switch
+    {
+        PanelId.Shelf => "Shelf",
+        PanelId.Shortcuts => "Shortcuts",
+        PanelId.Media => "Media",
+        PanelId.Scratchpad => "Scratchpad",
+        _ => "Clipboard",
+    };
+
+    /// <summary>One label per tab, in tab order; the current one's slot is also where its pill goes.</summary>
+    public static IReadOnlyList<TextSlot> Labels(IEnumerable<PanelId> tabs, PanelId? current, float panelWidth, bool mascot)
+    {
+        float x = mascot ? MascotArt.InsetX + MascotArt.SizeDips + AfterMascot : MascotArt.InsetX;
+        float y = (PanelSpace.TabStripHeight - Height) / 2;
+        var labels = new List<TextSlot>();
+        foreach (var id in tabs)
+        {
+            float room = panelWidth - RightPad - x;
+            if (room < MinWidth)
+            {
+                break;
+            }
+
+            var style = id == current ? Current : Label;
+            float width = TextSlot.Measure(Name(id), style, panelWidth) + 2 * PadX;
+            labels.Add(new(Name(id), style, new(x, y, Math.Min(width, room), Height)));
+            x += width + Gap;
+        }
+
+        return labels;
     }
 }
 

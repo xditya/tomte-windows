@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Text;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -112,12 +113,88 @@ public sealed class PanelLayoutTests
     }
 
     [Fact]
-    public void NoteLinesBreakAtTheWidthAndStopAtTheCard()
+    public void OnlyTheNotesStartGoesToTheLayout()
     {
-        Assert.Equal(["abc", "de", "", "xyz"], ScratchpadPanelLayout.Lines("abcde\r\n\nxyz", 3, 10));
-        Assert.Equal(["abc", "de"], ScratchpadPanelLayout.Lines("abcde\nmore", 3, 2));
-        Assert.Equal([""], ScratchpadPanelLayout.Lines("", 3, 10));
+        Assert.Equal("abcde\n\nxyz", ScratchpadPanelLayout.Opening("abcde\r\n\nxyz", 10));
+        Assert.Equal("abcde\nmore", ScratchpadPanelLayout.Opening("abcde\nmore\nand more", 2));
+        Assert.Equal("", ScratchpadPanelLayout.Opening("", 10));
+        // A long note is cut long before the card's lines could hold it.
+        Assert.Equal(400, ScratchpadPanelLayout.Opening(new string('x', 100_000), 2).Length);
         // 320 tall less the strip: a 202 DIP card, 10 DIP of padding at either end, 19.5 a line.
-        Assert.Equal(9, new ScratchpadPanelLayout(new Vector2(520, 278)).VisibleLines);
+        var layout = new ScratchpadPanelLayout(new Vector2(520, 278));
+        Assert.Equal(9, layout.VisibleLines);
+        Assert.Equal(9 * ScratchpadPanelLayout.LineHeight, layout.NoteText.Height);
+    }
+
+    [Fact]
+    public void ClipboardWordsStayClearOfTheSwitchAndTheButtons()
+    {
+        var head = Clipboard.HeadText(on: true, keeps: 50);
+        float title = TextSlot.Measure("Clipboard history", TextStyle.Title, 500);
+
+        Assert.Equal("last 50 items, this PC only", head[1].Text);
+        Assert.Equal(Clipboard.Head.X + title + ClipboardPanelLayout.Gap, head[1].Slot.X, 0.01);
+        Assert.True(head[1].Slot.Right <= head[2].Slot.Left, "the note runs into the switch's label");
+        Assert.Equal(Clipboard.Switch.X - ClipboardPanelLayout.Gap, head[2].Slot.Right, 0.01);
+        Assert.Equal(TextAlign.Trailing, head[2].Style.Align);
+
+        // A row: the age ends before the remove button, the text ends before the age's measured width.
+        float width = Clipboard.List.Width;
+        var row = ClipboardPanelLayout.RowText("Meet at 10, not 9", "14 min", width);
+        var remove = ClipboardPanelLayout.RemoveIn(width);
+        Assert.Equal(remove.X - ClipboardPanelLayout.Gap, row[0].Slot.Right, 0.01);
+        float age = TextSlot.Measure("14 min", TextStyle.Small, 48);
+        Assert.Equal(row[0].Slot.Right - age - ClipboardPanelLayout.Gap, row[1].Slot.Right, 0.01);
+        Assert.Equal(ClipboardPanelLayout.Gap + ClipboardPanelLayout.Icon + ClipboardPanelLayout.Gap, row[1].Slot.X);
+
+        // Off: two centred lines in the middle of the list's box.
+        var box = Clipboard.BoxText(on: false, keeps: 50);
+        Assert.Equal(2, box.Count);
+        Assert.All(box, line => Assert.Equal(TextAlign.Center, line.Style.Align));
+        Assert.Equal(Clipboard.List.Y + Clipboard.List.Height / 2, (box[0].Slot.Top + box[1].Slot.Bottom) / 2, 0.01);
+    }
+
+    [Fact]
+    public void ShelfWordsFitTheirPlaces()
+    {
+        var body = new Vector2(560, 260 - PanelSpace.TabStripHeight);
+        var head = ShelfLayout.HeadText(body, 12);
+
+        // The count runs up to the hint, which ends at the right padding; neither is cut.
+        Assert.True(head[1].Slot.Right <= head[2].Slot.Left);
+        Assert.Equal(body.X - ShelfLayout.PadX, head[2].Slot.Right, 0.01);
+        foreach (var line in head.Skip(1))
+        {
+            using var laid = TextLayout.Of(new TextRun(line.Text, line.Style, line.Slot.Width));
+            Assert.False(laid.Trimmed, line.Text);
+        }
+
+        // The drop target's glyph and word are centred together, and the word is whole.
+        var target = ShelfLayout.DropTarget(IslandGeometry.ShelfDrop.Width, IslandGeometry.ShelfDrop.Depth);
+        var (x, label) = ShelfLayout.DropLabel(target.Size);
+        Assert.Equal(target.Width - label.Slot.Right, x, 0.5);
+        using var word = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
+        Assert.False(word.Trimmed);
+
+        // A missing item's meta line is in the warn colour; the lines stay inside the tile.
+        var tile = ShelfLayout.Tile(0, body);
+        var item = new ShelfItem(1, "Q3-report.pdf", @"C:\Users\me\Q3-report.pdf", ShelfKind.Reference, DateTimeOffset.Now) { Missing = true };
+        var lines = ShelfLayout.TileText(item, tile.Size);
+        Assert.Equal(TextStyle.WarnColor, lines[1].Style.Color);
+        Assert.All(lines, line => Assert.True(line.Slot.Right <= tile.Width && line.Slot.Bottom <= tile.Height, line.Text));
+    }
+
+    [Fact]
+    public void ScratchpadWordsFollowTheTitle()
+    {
+        var layout = new ScratchpadPanelLayout(new Vector2(520, 278));
+        var frame = layout.FrameText();
+        float title = TextSlot.Measure("Scratchpad", TextStyle.Title, 500);
+
+        Assert.Equal(layout.Head.X + title + 10, frame[1].Slot.X, 0.01);
+        Assert.Equal(layout.Foot.Right, frame[3].Slot.Right, 0.01);
+        var (run, at) = layout.NoteRun("Call Mom\nGym 6:00 PM");
+        Assert.Equal(layout.VisibleLines, run.Lines);
+        Assert.Equal(new Vector2(layout.NoteText.X, layout.NoteText.Y), at);
     }
 }

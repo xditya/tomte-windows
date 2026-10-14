@@ -46,3 +46,10 @@ AssocQueryString
 BITMAP
 GetLongPathName
 CreateHardLink
+DWriteCreateFactory
+IDWriteFactory
+IDWriteTextLayout
+IDWriteTypography
+DWRITE_TEXT_METRICS
+DWRITE_LINE_METRICS
+DWRITE_FONT_FEATURE_TAG

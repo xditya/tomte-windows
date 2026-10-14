@@ -20,7 +20,7 @@ namespace Tomte.Shell;
 /// wheel scrolling a row a notch. A press selects (Ctrl adds or takes away), a press and drag drags the selection out,
 /// and a selected tile shows its five action buttons. Missing items are dimmed, with their own meta line.
 /// </summary>
-internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, Action<string>? log) : IPanel
+internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log) : IPanel
 {
     private readonly HashSet<long> selected = [];
     private ContainerVisual? body;
@@ -215,25 +215,27 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
 
         parts?.Dispose();
-        var p = parts = new Parts(island.Compositor);
+        var p = parts = new Parts(island.Compositor, text);
         var items = shelf.Items;
         selected.RemoveWhere(id => !items.Any(i => i.Id == id));
         first = ShelfLayout.Scroll(first, 0, items.Count, size);
 
         var head = p.Shapes(body, new RectangleF(0, 0, size.X, ShelfLayout.GridTop));
-        float y = ShelfLayout.PadY;
-        p.TextSlot(head, ShelfLayout.Title, new RectangleF(ShelfLayout.PadX, y, 36, ShelfLayout.HeadHeight), ShelfColors.Ink);
-        p.TextSlot(head, ShelfLayout.Head(items.Count), new RectangleF(ShelfLayout.PadX + 46, y + 2, 150, 12), ShelfColors.Ink2);
-        p.TextSlot(head, ShelfLayout.Hint, new RectangleF(size.X - ShelfLayout.PadX - 104, y + 2, 104, 12), ShelfColors.Ink2);
+        foreach (var line in ShelfLayout.HeadText(size, items.Count))
+        {
+            p.Text(head, line);
+        }
 
         if (items.Count == 0)
         {
             var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadY);
             var box = p.Shapes(body, empty);
             p.Box(box, new RectangleF(0, 0, empty.Width, empty.Height), 8, null, p.Brush(Color.FromArgb(46, 255, 255, 255)), 1).StrokeDashArray.Add(3);
-            var lines = ShelfLayout.Empty.Split('\n');
-            p.TextSlot(box, lines[0], new RectangleF(empty.Width / 2 - 140, empty.Height / 2 - 14, 280, 12), ShelfColors.Ink3);
-            p.TextSlot(box, lines[1], new RectangleF(empty.Width / 2 - 120, empty.Height / 2 + 4, 240, 12), ShelfColors.Ink3);
+            foreach (var line in ShelfLayout.EmptyText(empty.Size))
+            {
+                p.Text(box, line);
+            }
+
             return;
         }
 
@@ -254,8 +256,11 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         // a coloured square by kind stands in for the file's own icon and thumbnail, which go on image
         // surfaces through the panel host's art device once it merges.
         p.Box(v, new RectangleF(pad, pad, icon, icon), 7, p.Brush(ShelfColors.Rgb(ShelfLayout.KindColor(item))));
-        p.TextSlot(v, item.Name, new RectangleF(pad, pad + icon + 6, r.Width - 2 * pad, 14), ShelfColors.Ink);
-        p.TextSlot(v, ShelfLayout.Meta(item), new RectangleF(pad, pad + icon + 24, 54, 12), item.Missing ? ShelfColors.Warn : ShelfColors.Ink3);
+        foreach (var line in ShelfLayout.TileText(item, r.Size))
+        {
+            p.Text(v, line);
+        }
+
         if (isSelected)
         {
             foreach (var action in Enum.GetValues<ShelfAction>())

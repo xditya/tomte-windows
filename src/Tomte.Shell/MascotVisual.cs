@@ -12,10 +12,7 @@ namespace Tomte.Shell;
 internal sealed class MascotVisual
 {
     /// <summary>Rendered size of the 64-unit viewBox and its inset from the island's top-left, in DIPs.</summary>
-    public const float SizeDips = 26;
-    public const float InsetX = 8;
-    // Low enough that the reveal start pose (PeekFromY) is fully above the island's top edge on the first frame.
-    public const float InsetY = 3.5f;
+    public const float SizeDips = MascotArt.SizeDips, InsetX = MascotArt.InsetX, InsetY = MascotArt.InsetY;
 
     private readonly ContainerVisual place;
     private readonly ContainerVisual root;

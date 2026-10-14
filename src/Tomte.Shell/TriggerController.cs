@@ -18,9 +18,6 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
 
-    // The timer's done event; the finished ring belongs to it and to no other event's pill.
-    private const string TimerDoneText = "Timer done";
-
     // Timings that are fixed rather than exposed: Compact opens Panels after a hover dwell, an event shows for
     // four seconds, window changes are debounced before peek re-checks, the first-run hint stays ten seconds.
     private const uint HoverDwellMs = 350, EventHoldMs = 4000, PeekDebounceMs = 500, FirstRunHintMs = 10000;
@@ -74,7 +71,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 });
             }
         };
-        island.LayoutChanged = () =>
+        island.LayoutChanged += () =>
         {
             PushZone();
             // A scale change while the pill rests; the ring is sized in DIPs times the scale.
@@ -171,6 +168,23 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public CompactContent CompactShows(bool playing) =>
         CompactRules.Content(Compact, eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other, (timer.Run ?? finished) is not null, playing);
+
+    /// <summary>
+    /// The words the Compact pill shows now, by <see cref="CompactRules.Line"/>, and the time left when they are
+    /// the running timer's, which changes every second. Read it once the pill is up, like <see cref="Compact"/>.
+    /// </summary>
+    public (string? Text, TimeSpan? TimerLeft) CompactLine(DateTimeOffset now)
+    {
+        var left = (timer.Run ?? finished)?.Remaining(now);
+        var text = CompactRules.Line(Compact, eventShowing ? showing : [], left);
+        return (text, Compact == CompactReason.Summary ? left : null);
+    }
+
+    /// <summary>
+    /// What the Compact pill shows may have changed without a state change: the reason for the pill was
+    /// settled, or the timer started or ended. Raised wherever the ring is brought up to date.
+    /// </summary>
+    public event Action? CompactChanged;
 
     /// <summary>
     /// An internal event: shows Compact for the hold time. It waits while the tray pause, Focus, DND or fullscreen
@@ -398,7 +412,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     finished = run;
                     log?.Invoke($"timer: done, ended {run!.EndsAt:O}");
-                    Raise(new IslandEvent(TimerDoneText, DateTimeOffset.Now) { Source = IslandEventSource.Timer });
+                    Raise(new IslandEvent(CompactRules.TimerDone(run!.Duration), DateTimeOffset.Now) { Source = IslandEventSource.Timer });
                 }
                 else
                 {
@@ -716,6 +730,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             ring.Hide();
         }
+
+        CompactChanged?.Invoke();
     }
 
     private static bool IsTimerDone(IslandEvent e) => e.Source == IslandEventSource.Timer;

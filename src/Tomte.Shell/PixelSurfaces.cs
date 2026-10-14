@@ -81,7 +81,8 @@ internal sealed unsafe class PixelSurfaces : IDisposable
         device = null;
     }
 
-    private static CompositionGraphicsDevice CreateGraphicsDevice(Compositor compositor, ID3D11Device* device)
+    /// <summary>A composition graphics device over a Direct3D 11 or a Direct2D device; text draws through the second kind.</summary>
+    internal static CompositionGraphicsDevice CreateGraphicsDevice(Compositor compositor, void* device)
     {
         nint unknown = WinRT.MarshalInspectable<object>.FromManaged(compositor);
         try

@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Numerics;
+using Tomte.Core.Text;
 
 namespace Tomte.Core.Media;
 
@@ -230,18 +231,28 @@ public sealed class MediaWatchers
 
 /// <summary>
 /// Where things sit in the Media panel's body (380 x 98 DIPs under the tab strip): art on the left,
-/// then title, artist, the progress row and the transport row. The text slots are where a text
-/// renderer draws; the buttons are what a press is tested against.
+/// then title, artist, the progress row and the transport row. The text slots are where the text is
+/// drawn, each run as wide as its slot; the clocks have room for "99:59:59" either side of the
+/// bar. The buttons are what a press is tested against.
+/// a clock of 100 hours or more is cut with an ellipsis; measure it and move the bar if one shows up.
 /// </summary>
 public static class MediaPanelLayout
 {
     public const float ArtCorner = 8;
+
+    // How each run looks: the title, the artist (or the app, or a command that just failed), the two clocks.
+    public static readonly TextStyle TitleStyle = new(14, 600);
+    public static readonly TextStyle ArtistStyle = TextStyle.Secondary;
+    public static readonly TextStyle FailedStyle = ArtistStyle with { Color = TextStyle.WarnColor };
+    public static readonly TextStyle ElapsedStyle = TextStyle.Small with { Tabular = true };
+    public static readonly TextStyle TotalStyle = ElapsedStyle with { Align = TextAlign.Trailing };
+
     public static readonly RectangleF Art = new(14, 16, 66, 66);
     public static readonly RectangleF Title = new(94, 9, 272, 19);
     public static readonly RectangleF Artist = new(94, 29, 272, 16);
-    public static readonly RectangleF Elapsed = new(94, 49, 34, 14);
-    public static readonly RectangleF Bar = new(136, 54, 188, 4);
-    public static readonly RectangleF Total = new(332, 49, 34, 14);
+    public static readonly RectangleF Elapsed = new(94, 49, 44, 14);
+    public static readonly RectangleF Bar = new(140, 54, 180, 4);
+    public static readonly RectangleF Total = new(322, 49, 44, 14);
     public static readonly RectangleF Previous = new(94, 66, 28, 28);
     public static readonly RectangleF PlayPause = new(128, 66, 28, 28);
     public static readonly RectangleF Next = new(162, 66, 28, 28);

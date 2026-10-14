@@ -1,5 +1,6 @@
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Text;
 using Windows.System;
 using Windows.UI.Composition;
 
@@ -41,7 +42,8 @@ internal interface IPanel
 /// Says which panel the Panels state shows. Panels register once at start-up; the current one is built
 /// when Panels opens and released when the island leaves Panels. Picking another tab while Panels is
 /// open is the state table's Panels to Panels transition: the old body fades out, the shape morphs to
-/// the new panel's size and the new body fades in once the shape is 60% of the way there.
+/// the new panel's size and the new body fades in once the shape is 60% of the way there. The strip row
+/// carries the tabs' labels, which stay through a tab switch and fade with the body when Panels closes.
 /// </summary>
 internal sealed class PanelHost
 {
@@ -55,16 +57,19 @@ internal sealed class PanelHost
     private readonly Dictionary<PanelId, IPanel> panels = [];
     private readonly ScalarKeyFrameAnimation fadeIn, fadeOut;
     private readonly DispatcherQueueTimer release;
+    private readonly TextRenderer text;
     private IPanel? shown, leaving;
     private ContainerVisual? body, leavingBody;
+    private Strip? strip, leavingStrip;
     private Vector2 bodySize;
-    private bool fadeInPending;
+    private bool fadeInPending, stripFadePending;
     private int wheel;
 
-    public PanelHost(IslandWindow island, IslandStateMachine machine, Action<string>? log = null)
+    public PanelHost(IslandWindow island, IslandStateMachine machine, TextRenderer text, Action<string>? log = null)
     {
         this.island = island;
         this.machine = machine;
+        this.text = text;
         this.log = log;
         fadeIn = Fade(island.Compositor, 1, FadeInMs);
         fadeOut = Fade(island.Compositor, 0, FadeOutMs);
@@ -152,10 +157,26 @@ internal sealed class PanelHost
 
         if (next is null)
         {
+            if (strip is not null)
+            {
+                // The labels fade and go with the body.
+                (leavingStrip, strip) = (strip, null);
+                leavingStrip.Visual.StartAnimation("Opacity", fadeOut);
+            }
+
             return;
         }
 
         var (width, height) = PanelSize.Fit(Size, island.MonitorSize);
+        if (strip is null)
+        {
+            strip = new Strip(island, text);
+            strip.Visual.Opacity = 0;
+            stripFadePending = true;
+        }
+
+        // On a tab switch the strip stays and the highlight moves; the labels are set for the new width.
+        strip.Show(tabs.Order, tabs.Current, (float)width, island.Mascot.Enabled);
         bodySize = new Vector2((float)width, (float)height - PanelSpace.TabStripHeight);
         body = island.Compositor.CreateContainerVisual();
         body.Offset = new Vector3(-bodySize.X / 2, PanelSpace.TabStripHeight, 0);
@@ -179,6 +200,8 @@ internal sealed class PanelHost
     private void FinishLeaving()
     {
         release.Stop();
+        leavingStrip?.Dispose();
+        leavingStrip = null;
         if (leaving is null)
         {
             return;
@@ -205,6 +228,11 @@ internal sealed class PanelHost
         {
             fadeInPending = false;
             body.StartAnimation("Opacity", fadeIn);
+            if (stripFadePending && strip is not null)
+            {
+                stripFadePending = false;
+                strip.Visual.StartAnimation("Opacity", fadeIn);
+            }
         }
     }
 
@@ -246,5 +274,65 @@ internal sealed class PanelHost
     {
         at = PanelSpace.ToBody(island, bodySize.X);
         return at.X >= 0 && at.Y >= 0 && at.X < bodySize.X && at.Y < bodySize.Y;
+    }
+
+    /// <summary>
+    /// The tab labels in the strip row, with a card behind the current one. The container sits on the pill's live left
+    /// edge in every frame of a morph (island space's origin less its own offset, a whole pixel), so the labels move
+    /// with the edge they are laid out from. Labels only: presses and the wheel are the host's as before.
+    /// </summary>
+    private sealed class Strip : IDisposable
+    {
+        private readonly TextRenderer text;
+        private readonly CompositionRoundedRectangleGeometry pill;
+        private readonly List<TextVisual> labels = [];
+
+        public Strip(IslandWindow island, TextRenderer text)
+        {
+            this.text = text;
+            var compositor = island.Compositor;
+            Visual = compositor.CreateShapeVisual();
+            var edge = compositor.CreateExpressionAnimation("Vector3(-dips.Offset.X / dips.Scale.X, 0, 0)");
+            edge.SetReferenceParameter("dips", island.Dips);
+            Visual.StartAnimation("Offset", edge);
+            pill = compositor.CreateRoundedRectangleGeometry();
+            pill.CornerRadius = new Vector2(TabStrip.Corner);
+            var shape = compositor.CreateSpriteShape(pill);
+            shape.FillBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(28, 255, 255, 255));
+            Visual.Shapes.Add(shape);
+            island.Dips.Children.InsertAtTop(Visual);
+        }
+
+        public ShapeVisual Visual { get; }
+
+        public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot)
+        {
+            var lines = TabStrip.Labels(tabs, current, width, mascot);
+            Visual.Size = new Vector2(width, PanelSpace.TabStripHeight);
+            while (labels.Count < lines.Count)
+            {
+                labels.Add(text.Create(Visual));
+            }
+
+            for (int i = 0; i < labels.Count; i++)
+            {
+                labels[i].Show(i < lines.Count ? lines[i] : new TextSlot("", TabStrip.Label, default));
+            }
+
+            var on = lines.FirstOrDefault(line => line.Style == TabStrip.Current).Slot;
+            pill.Offset = new Vector2(on.X, on.Y);
+            pill.Size = new Vector2(on.Width, on.Height);
+        }
+
+        public void Dispose()
+        {
+            foreach (var label in labels)
+            {
+                label.Dispose();
+            }
+
+            Visual.Parent?.Children.Remove(Visual);
+            Visual.Dispose();
+        }
     }
 }
