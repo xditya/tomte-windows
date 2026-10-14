@@ -32,6 +32,13 @@ public static class RetractionRules
         state == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling) && !activity.HasFlag(IslandActivity.DragInProgress);
 
     /// <summary>
+    /// An event pill or the first-run hint stays past its time while the pointer is on it or a drag is moving it, and
+    /// is looked at again a little later.
+    /// </summary>
+    public static bool HoldsPastItsTime(bool pointerInside, IslandActivity activity) =>
+        pointerInside || activity.HasFlag(IslandActivity.DragInProgress);
+
+    /// <summary>
     /// What is left when a state the user asked for takes the island over: the peek pill's "retract when a window
     /// comes under" rule and the rambler's hold on the pill end, so a hold that ends later cannot retract it, and a
     /// drop zone's result, which the new state replaces, no longer holds the island.

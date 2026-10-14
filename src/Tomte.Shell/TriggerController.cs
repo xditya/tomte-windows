@@ -477,19 +477,18 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case HoverTimer when pointerInside && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
                 break;
-            case EventTimer when eventShowing && machine.State == IslandState.Compact:
-                if (pointerInside)
+            case EventTimer or FirstRunTimer when (id == EventTimer ? eventShowing : firstRunShowing) && machine.State == IslandState.Compact:
+                // The pointer on the pill, or a drag moving it (the pointer tracking still has the bounds from before
+                // the drag), holds it for another while.
+                if (RetractionRules.HoldsPastItsTime(pointerInside, activity))
                 {
-                    PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
+                    PInvoke.SetTimer(island.Hwnd, id, EventHoldMs, null);
                 }
                 else
                 {
                     Hide();
                 }
 
-                break;
-            case FirstRunTimer when firstRunShowing && machine.State == IslandState.Compact:
-                Hide();
                 break;
             case DragTimer when machine.State == IslandState.ShelfDrop && !dragEntered:
                 // A window move, a tab drag or a text selection: nothing OLE ever arrived.

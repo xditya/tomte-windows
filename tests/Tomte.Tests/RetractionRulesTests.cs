@@ -76,6 +76,16 @@ public class RetractionRulesTests
         Assert.Equal(expected, RetractionRules.DismissedByClickOutside(state, activity));
     }
 
+    // An event pill or the hint is held past its time while the pointer is on it, or while a drag moves it and the
+    // pointer tracking still has the bounds from before the drag.
+    [Theory]
+    [InlineData(true, IslandActivity.None, true)]
+    [InlineData(false, IslandActivity.DragInProgress, true)]
+    [InlineData(false, IslandActivity.Peek, false)]
+    [InlineData(false, IslandActivity.None, false)]
+    public void APillIsHeldPastItsTimeByThePointerOrADrag(bool pointerInside, IslandActivity activity, bool held) =>
+        Assert.Equal(held, RetractionRules.HoldsPastItsTime(pointerInside, activity));
+
     [Fact]
     public void InsideIncludesTheMargin()
     {
