@@ -30,9 +30,9 @@ public sealed partial class SettingsWindow
 
     private Border McpSection()
     {
-        mcpArgumentsRow = Row("Arguments", Note("Separated by spaces. Put an argument with spaces in double quotes."), mcpArguments);
-        mcpHeaderNameRow = Row("Header name", Note("Optional. Sent with every request, for example Authorization."), mcpHeaderName);
-        mcpHeaderValueRow = Row("Header value", Note("Kept in Windows Credential Manager, not in the settings file. Leave empty to keep the saved value."), mcpHeaderValue);
+        mcpArgumentsRow = Row("Arguments", Note("Separated by spaces. Put an argument with spaces in double quotes. Arguments are stored as plain text in the settings file and shown in this window."), mcpArguments);
+        mcpHeaderNameRow = Row("Header name", Note("Optional. Sent with every request, for example Authorization. Needs an https URL."), mcpHeaderName);
+        mcpHeaderValueRow = Row("Header value", Note("Kept in Windows Credential Manager, not in the settings file. Leave empty to keep the saved value. Enter it again after changing the URL."), mcpHeaderValue);
         mcpKind.SelectionChanged += (_, _) => ShowMcpKind();
         mcpSave.Click += (_, _) => SaveMcpServer();
         mcpCancel.Click += (_, _) => ResetMcpForm();
