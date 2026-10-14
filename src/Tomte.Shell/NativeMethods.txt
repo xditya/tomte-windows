@@ -19,6 +19,9 @@ MonitorFromWindow
 GetDpiForMonitor
 RegisterHotKey
 DwmSetWindowAttribute
+GetCurrentProcess
+K32GetProcessMemoryInfo
+PROCESS_MEMORY_COUNTERS_EX2
 CreateDispatcherQueueController
 DCompositionWaitForCompositorClock
 ICompositorDesktopInterop

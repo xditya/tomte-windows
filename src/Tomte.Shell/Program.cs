@@ -87,6 +87,11 @@ internal static partial class Program
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null || args.Contains("--debug-job");
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
+        if (args.Contains("--debug-cloak"))
+        {
+            // A driven run that must not show: before the island is ever shown, so nothing of it reaches the screen.
+            island.Cloak();
+        }
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
         // Stand-ins for the settings until they exist: the off switch and a cap colour as RRGGBB hex.
         island.Mascot.Enabled = !args.Contains("--debug-mascot-off");
@@ -382,11 +387,12 @@ internal static partial class Program
         timer.Start();
     }
 
-    private static string Memory()
+    // Task Manager's Memory column is the private working set; the working set adds the shared pages of system DLLs.
+    private static unsafe string Memory()
     {
-        using var process = Process.GetCurrentProcess();
-        process.Refresh();
-        return $"ws={process.WorkingSet64 / 1048576.0:F1}MB private={process.PrivateMemorySize64 / 1048576.0:F1}MB";
+        var counters = new Windows.Win32.System.ProcessStatus.PROCESS_MEMORY_COUNTERS_EX2 { cb = (uint)sizeof(Windows.Win32.System.ProcessStatus.PROCESS_MEMORY_COUNTERS_EX2) };
+        PInvoke.K32GetProcessMemoryInfo(PInvoke.GetCurrentProcess(), (Windows.Win32.System.ProcessStatus.PROCESS_MEMORY_COUNTERS*)&counters, counters.cb);
+        return $"ws={counters.WorkingSetSize / 1048576.0:F1}MB private-ws={counters.PrivateWorkingSetSize / 1048576.0:F1}MB private={counters.PrivateUsage / 1048576.0:F1}MB";
     }
 
     /// <summary>Shared with other debug runs; when one holds the file without sharing, this run gets its own.</summary>
@@ -449,7 +455,8 @@ internal static partial class Program
     /// --palette "prompt" [--screenshot] [--shelf] [--dry]: the debug driver. Opens the palette on the island, runs the
     /// prompt against local Ollama with the window chip on, an in-memory shelf and the real scratchpad note, logs the
     /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
-    /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
+    /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools, the clipboard and the
+    /// browser from changing anything. --debug-cloak keeps the island off the screen for a measurement.
     /// Destructive requests (lock, sleep, restart, shut down) are denied without --dry: nobody is there to answer.
     /// A request from an MCP server's tool is always denied here, with --dry too: the dry run is Tomte's own, and
     /// a server's tool would really run. Such a tool runs in a driven run only when the user set it to Read or
@@ -499,9 +506,13 @@ internal static partial class Program
             // Skills come from beside the settings file when the palette opens, never at start, and only those turned on.
             var skills = await Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette skills: [{string.Join(", ", skills.Skills.Select(s => s.Name))}] from {skills.Folder}");
-            // --dry keeps device tools from changing anything; the grants come from settings.json as they will for the real palette.
+            // --dry keeps device tools, the clipboard and the browser from changing anything; nobody is at the keyboard
+            // to read what a driven run copies or opens. The grants come from settings.json as they will for the real palette.
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
-            var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, triggers.Timer);
+            var tools = dry
+                ? new BuiltInTools(shelf, scratchpad, text => log.WriteLine($"palette dry: would copy {text.Length} characters"), url => log.WriteLine($"palette dry: would open {url}"),
+                    (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true), triggers.Timer)
+                : new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, null, triggers.Timer);
             // Servers start on the send; disposing at the end of the run stops them, as closing the palette does.
             await using var mcp = McpTools.For(store.Current.McpServers);
             // --automation offers the UI Automation tools in this run; without it nothing of them is made.

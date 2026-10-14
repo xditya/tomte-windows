@@ -471,6 +471,16 @@ internal sealed unsafe class IslandWindow : IDisposable
         Wake();
     }
 
+    /// <summary>
+    /// DWM still composes the window but draws none of it, and it takes no clicks: for driven runs and measurements
+    /// that must leave the screen alone. Throws when DWM refuses, so such a run never shows by accident.
+    /// </summary>
+    public void Cloak()
+    {
+        BOOL on = true;
+        PInvoke.DwmSetWindowAttribute(Hwnd, DWMWINDOWATTRIBUTE.DWMWA_CLOAK, &on, (uint)sizeof(BOOL)).ThrowOnFailure();
+    }
+
     public void Dispose()
     {
         ticking.Reset();
