@@ -313,15 +313,9 @@ public class InteractionTests
     /// The tooltip's card drawn by the compositor, offscreen in tools/TextCaptures: one card shows a tip and then a
     /// "Copied", as the island reuses it, and the acknowledgement's mark must be drawn. Nothing is shown on screen.
     /// </summary>
-    [Fact]
+    [GraphicsCaptureFact]
     public void AnAcknowledgementAfterATipDrawsItsTick()
     {
-        // A machine without Windows.Graphics.Capture cannot draw a visual offscreen.
-        if (!Windows.Graphics.Capture.GraphicsCaptureSession.IsSupported())
-        {
-            return;
-        }
-
         string dir = Path.Combine(Path.GetTempPath(), "tomte-composition-" + Guid.NewGuid().ToString("N"));
         try
         {
@@ -343,5 +337,15 @@ public class InteractionTests
                 Directory.Delete(dir, recursive: true);
             }
         }
+    }
+}
+
+/// <summary>Runs only where Windows.Graphics.Capture can draw a visual offscreen (not on some server images).</summary>
+public sealed class GraphicsCaptureFactAttribute : FactAttribute
+{
+    public GraphicsCaptureFactAttribute()
+    {
+        if (!Windows.Graphics.Capture.GraphicsCaptureSession.IsSupported())
+            Skip = "Windows.Graphics.Capture is not supported here, so a visual cannot be drawn offscreen.";
     }
 }
