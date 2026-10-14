@@ -8,8 +8,9 @@ namespace Tomte.AI.Files;
 /// <summary>
 /// A PDF's text layer through PdfPig, a managed parser: a PDF is untrusted input, and a bug in managed code is an
 /// exception, not memory corruption. The file is read through its stream, one page at a time, and reading stops at the
-/// character cap. A PDF without text (a scan) gives empty text and its page count; Tomte does not run OCR. Kept in its
-/// own class so PdfPig's assemblies load only when a PDF is read.
+/// character cap. A PDF without text (a scan) gives empty text and its page count; Tomte does not run OCR. Called only
+/// in the reader process, so PdfPig never loads in the shell; that process's memory and time limits bound what one
+/// stream can unpack to.
 /// </summary>
 public static class PdfExtraction
 {

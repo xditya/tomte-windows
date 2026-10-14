@@ -75,3 +75,4 @@ QueryFullProcessImageName
 DwmGetWindowAttribute
 DWMWINDOWATTRIBUTE
 GetACP
+QueryInformationJobObject

@@ -40,6 +40,9 @@ internal static class Program
     [STAThread]
     private static unsafe int Main(string[] args)
     {
+        if (args is ["--extract"])
+            return RunExtractor();
+
         if (args.Contains("--settings"))
         {
             // --settings [path]: the shell passes the settings file it uses, so both open the same folder.
@@ -215,6 +218,11 @@ internal static class Program
         log?.Dispose();
         return 0;
     }
+
+    // The PDF and Word reader the palette starts: no window, one file from stdin, then exit. Kept out of Main so Tomte.AI
+    // and PdfPig load only in that process.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int RunExtractor() => Tomte.AI.Files.ChildExtractor.Run();
 
     // Kept out of Main so the WinUI assemblies load only in the settings process.
     [MethodImpl(MethodImplOptions.NoInlining)]

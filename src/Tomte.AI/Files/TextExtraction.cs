@@ -27,6 +27,12 @@ public sealed record FileLimits
     public long MaxImagePixels { get; init; } = 200_000_000;
 
     public TimeSpan TimeLimit { get; init; } = TimeSpan.FromSeconds(20);
+
+    /// <summary>The most memory the PDF and Word reader process may commit before it is stopped.</summary>
+    public long ChildMemoryBytes { get; init; } = 256L << 20;
+
+    /// <summary>The program that reads PDF and Word files in a process of its own; tests point it at themselves.</summary>
+    public ExtractorCommand Extractor { get; init; } = ExtractorCommand.ThisProgram;
 }
 
 /// <summary>

@@ -132,7 +132,8 @@ internal static class FileAttachments
                     How = image.Width == image.SourceWidth ? ", metadata removed" : $", downscaled to {image.Width}x{image.Height}, metadata removed",
                 };
             case FileKind.Pdf:
-                var pdf = await OffThread(c => Task.FromResult(Use(path, s => PdfExtraction.Read(s, limits, c))), limits, ct);
+                // PDF and Word go to the reader process; plain text and images stay here.
+                var pdf = await OffThread(c => ChildExtractor.ReadAsync(path, FileKind.Pdf, limits, c), limits, ct);
                 long size = new FileInfo(path).Length;
                 // An encrypted PDF opens here with its empty password, but the providers take only unencrypted ones.
                 if (facts.NativePdf && size <= facts.MaxPdfBytes && pdf.Pages <= facts.MaxPdfPages && !pdf.Encrypted)
@@ -158,10 +159,10 @@ internal static class FileAttachments
 
                 var extracted = Text(name, "pdf", pdf, facts);
                 return extracted with { How = Invariant($", {pdf.PagesRead:N0} of {pdf.Pages:N0} pages") + extracted.How };
+            case FileKind.Docx:
+                return Text(name, "docx", await OffThread(c => ChildExtractor.ReadAsync(path, FileKind.Docx, limits, c), limits, ct), facts);
             default:
-                bool docx = kind == FileKind.Docx;
-                var text = await OffThread(c => Task.FromResult(Use(path, s => docx ? TextExtraction.ReadDocx(s, limits, c) : TextExtraction.ReadText(s, limits))), limits, ct);
-                return Text(name, docx ? "docx" : "text", text, facts);
+                return Text(name, "text", await OffThread(c => Task.FromResult(Use(path, s => TextExtraction.ReadText(s, limits))), limits, ct), facts);
         }
     }
 
@@ -201,7 +202,7 @@ internal static class FileAttachments
     }
 
     // Shared for writing and deleting, so a file the user has open in an editor still reads.
-    private static FileStream Open(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 64 * 1024);
+    internal static FileStream Open(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 64 * 1024);
 
     private static string Attribute(string name) =>
         new([.. PreparedFile.Clean(name).Select(c => c is '"' or '<' or '>' or '&' ? '_' : c)]);
