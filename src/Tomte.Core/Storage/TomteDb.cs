@@ -86,6 +86,9 @@ public sealed class TomteDb(string? path = null)
     private SqliteConnection Connect(string feature, IReadOnlyList<string> steps)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+        // from its first connection on, the provider keeps a housekeeping timer that ticks every 30 s, pool or
+        // no pool, and has no switch for it. Nothing here stops it. If that tick matters while the island is hidden,
+        // dispose it or call SQLite without the provider.
         var db = new SqliteConnection(new SqliteConnectionStringBuilder
         {
             DataSource = FilePath,
