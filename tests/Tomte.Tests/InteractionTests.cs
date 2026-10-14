@@ -308,4 +308,40 @@ public class InteractionTests
         Assert.Equal(StateLook.TickSize, ack.Tick.Width);
         Assert.Equal(ack.Tick.Right + StateLook.TickGap, ack.Label.Slot.X, 3);
     }
+
+    /// <summary>
+    /// The tooltip's card drawn by the compositor, offscreen in tools/TextCaptures: one card shows a tip and then a
+    /// "Copied", as the island reuses it, and the acknowledgement's mark must be drawn. Nothing is shown on screen.
+    /// </summary>
+    [Fact]
+    public void AnAcknowledgementAfterATipDrawsItsTick()
+    {
+        // A machine without Windows.Graphics.Capture cannot draw a visual offscreen.
+        if (!Windows.Graphics.Capture.GraphicsCaptureSession.IsSupported())
+        {
+            return;
+        }
+
+        string dir = Path.Combine(Path.GetTempPath(), "tomte-composition-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "TextCaptures.exe"), ["--composition", dir])
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var check = System.Diagnostics.Process.Start(start)!;
+            string output = check.StandardOutput.ReadToEnd();
+            Assert.True(check.WaitForExit(60_000));
+            Assert.True(check.ExitCode == 0, output);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
 }

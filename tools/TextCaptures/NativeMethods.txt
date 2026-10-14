@@ -119,3 +119,4 @@ IDXGISurface
 ID3D11Resource
 D3D11_BOX
 ID3D11DeviceContext
+CreateDirect3D11DeviceFromDXGIDevice

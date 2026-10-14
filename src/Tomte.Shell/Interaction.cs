@@ -827,10 +827,10 @@ internal sealed class InteractionHost
     private sealed class Overlay
     {
         private readonly ContainerVisual root;
-        private readonly ShapeVisual layer, ring, card;
-        private readonly CompositionRoundedRectangleGeometry layerBox, ringBox, cardBox;
+        private readonly ShapeVisual layer, ring;
+        private readonly CompositionRoundedRectangleGeometry layerBox, ringBox;
         private readonly CompositionColorBrush layerFill, accent;
-        private readonly CompositionSpriteShape cardShape, tick;
+        private readonly TipCard card;
         private readonly ScalarKeyFrameAnimation fade;
         private TextVisual? label;
 
@@ -844,16 +844,11 @@ internal sealed class InteractionHost
             (ring, ringBox) = Box(compositor, out var ringShape);
             ringShape.StrokeBrush = accent;
             ringShape.StrokeThickness = StateLook.FocusWidth;
-            (card, cardBox) = Box(compositor, out cardShape);
-            cardBox.CornerRadius = new Vector2(StateLook.TipCorner);
-            cardShape.FillBrush = compositor.CreateColorBrush(Argb(StateLook.TipFill));
-            cardShape.StrokeBrush = compositor.CreateColorBrush(Argb(StateLook.TipLine));
-            tick = compositor.CreateSpriteShape(compositor.CreatePathGeometry(IslandWindow.BuildPath(StateLook.Tick, 1)));
-            card.Shapes.Add(tick);
+            card = new TipCard(compositor, accent, compositor.CreatePathGeometry(IslandWindow.BuildPath(StateLook.Tick, 1)));
             fade = PanelHost.Fade(compositor, 1, StateLook.FadeMs);
             root.Children.InsertAtTop(layer);
             root.Children.InsertAtTop(ring);
-            root.Children.InsertAtTop(card);
+            root.Children.InsertAtTop(card.Visual);
         }
 
         /// <summary>Moves the layer and the ring; true when either shows.</summary>
@@ -895,22 +890,17 @@ internal sealed class InteractionHost
         public void ShowCard(TextRenderer text, (RectangleF Card, RectangleF Tick, TextSlot Label) parts, double scale)
         {
             var (at, mark, line) = parts;
-            Place(card, cardBox, at, 0);
-            // A one-pixel hairline at any scale.
-            cardShape.StrokeThickness = (float)(1 / scale);
-            tick.Offset = new Vector2(mark.X - at.X, mark.Y - at.Y);
-            tick.FillBrush = mark.Width > 0 ? accent : null;
-            label ??= text.Create(card);
+            card.Show(at, mark, scale);
+            label ??= text.Create(card.Visual);
             label.Show(line.Text, line.Style, new RectangleF(line.Slot.X - at.X, line.Slot.Y - at.Y, line.Slot.Width, line.Slot.Height));
-            card.IsVisible = true;
         }
 
-        public void HideCard() => card.IsVisible = false;
+        public void HideCard() => card.Visual.IsVisible = false;
 
         public void HideAll()
         {
             layer.StopAnimation("Opacity");
-            layer.IsVisible = ring.IsVisible = card.IsVisible = false;
+            layer.IsVisible = ring.IsVisible = card.Visual.IsVisible = false;
         }
 
         /// <summary>Above whatever views put on top of island space since.</summary>

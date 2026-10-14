@@ -50,6 +50,11 @@ internal static unsafe partial class Program
             return Typing.Run(where, measure: !args.Contains("--no-measure"));
         }
 
+        if (args is ["--composition", var into])
+        {
+            return CompositionCaptures(into);
+        }
+
         string dir = args.Length > 0 ? args[0] : "captures";
         Directory.CreateDirectory(dir);
         var report = new List<string> { $"machine {Environment.MachineName}, {Environment.OSVersion}" };
@@ -1517,7 +1522,7 @@ internal static unsafe partial class Program
             return pixels;
         }
 
-        private static void Png(string file, byte[] pixels, int width, int height)
+        internal static void Png(string file, byte[] pixels, int width, int height)
         {
             using var stream = new InMemoryRandomAccessStream();
             var encoder = BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream).AsTask().GetAwaiter().GetResult();
