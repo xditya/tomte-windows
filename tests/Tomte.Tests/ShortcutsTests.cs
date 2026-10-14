@@ -398,6 +398,45 @@ public sealed class ShortcutsTests : IDisposable
         Assert.True(ShellIcon.ForWeb(43) is null or { Width: 43, Height: 43 });
     }
 
+    [Fact]
+    public void TheGridHoldsTwoRowsOfFourAtTheSpecSizeAndKeepsClearOfTheCorners()
+    {
+        var (width, height) = PanelSize.Shortcuts;
+        var body = new System.Numerics.Vector2((float)width, (float)height - 42);
+        Assert.Equal(2, ShortcutGrid.Rows(body));
+        Assert.Equal(7, ShortcutGrid.Shown(12, body));
+        Assert.Equal(3, ShortcutGrid.Shown(3, body));
+
+        Assert.Equal(new System.Drawing.RectangleF(14, 39, 117, 80), ShortcutGrid.Cell(0, body));
+        Assert.Equal(new System.Drawing.RectangleF(139, 127, 117, 80), ShortcutGrid.Cell(5, body));
+        // The rounded corners reach 22 DIP in from every edge of the island; the last row ends well above them.
+        float corner = (float)IslandGeometry.Panel(width, height).Corner;
+        Assert.True(ShortcutGrid.Cell(7, body).Bottom <= body.Y - corner);
+        Assert.True(ShortcutGrid.Cell(7, body).Right <= body.X - ShortcutGrid.Inset);
+
+        Assert.Equal(3, ShortcutGrid.At(new(ShortcutGrid.Cell(3, body).X + 50, 60), body, 4));
+        Assert.Null(ShortcutGrid.At(new(135, 60), body, 8));
+        Assert.Null(ShortcutGrid.At(new(150, 150), body, 5));
+        Assert.Null(ShortcutGrid.At(new(10, 10), body, 8));
+    }
+
+    [Theory]
+    [InlineData(1.0, 34)]
+    [InlineData(1.25, 43)]
+    [InlineData(1.5, 51)]
+    public void IconsSitOnWholePixels(double scale, int pixels)
+    {
+        Assert.Equal(pixels, ShortcutGrid.IconPixels(scale));
+        var body = new System.Numerics.Vector2(520, 258);
+        for (int i = 0; i < 8; i++)
+        {
+            var icon = ShortcutGrid.Icon(ShortcutGrid.Cell(i, body), scale);
+            Assert.Equal(pixels, icon.Width * scale, 3);
+            Assert.Equal(Math.Round(icon.X * scale), icon.X * scale, 3);
+            Assert.Equal(Math.Round(icon.Y * scale), icon.Y * scale, 3);
+        }
+    }
+
     private ShortcutStore Store() => new(new TomteDb(DbPath), () => scriptsOn, Record);
 
     private ActionResult Record(ShortcutTarget target)
