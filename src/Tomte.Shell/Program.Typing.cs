@@ -11,6 +11,9 @@ internal static partial class Program
 {
     private static TextRenderer? text;
     private static TypingFocus? focus;
+
+    /// <summary>The island's text renderer, made with the panels at start.</summary>
+    internal static TextRenderer? Text => text;
     private static PaletteHost? hotkeyPalette;
     private static HttpClient? paletteHttp;
     private static PermissionGrants? paletteGrants;
@@ -37,7 +40,7 @@ internal static partial class Program
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async void OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log)
     {
-        hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text, focus, triggers.Hide);
+        hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide);
         if (Jobs.Shelf is { } shelf)
         {
             // The Shelf chip names what is on the shelf, which is read on its first use: a few milliseconds, once. The

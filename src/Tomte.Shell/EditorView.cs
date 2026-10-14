@@ -111,6 +111,9 @@ internal sealed unsafe class EditorView : IDisposable
     /// <summary>Sees every key, character and input method message first; true swallows it (the palette's Enter).</summary>
     public Func<uint, nuint, nint, bool>? BeforeKey { get; set; }
 
+    /// <summary>Esc while this box has the keys: true when something on the island used it (the palette's open question), so the island stays.</summary>
+    public Func<bool>? Escape { get; set; }
+
     /// <summary>The graphics device the surface comes from, once there is one; the whole box is drawn then.</summary>
     public void Use(CompositionGraphicsDevice? device)
     {

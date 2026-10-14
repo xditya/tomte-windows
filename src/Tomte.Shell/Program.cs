@@ -543,7 +543,7 @@ internal static partial class Program
                     log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette tool {step.Tool}: {step.Summary} -> {(step.IsError ? "error: " : "")}{step.Result.ReplaceLineEndings(" | ")}");
                 }
             };
-            var host = new PaletteHost(island, triggers.Machine, log.WriteLine, text, focus);
+            var host = new PaletteHost(island, triggers.Machine, log.WriteLine, text!, focus);
             await host.RunAsync(session);
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette answer: {session.AnswerText.ReplaceLineEndings(" | ")}");
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory after answer: {Memory()}");
@@ -634,7 +634,7 @@ internal static partial class Program
         // The one note the palette and the Scratchpad panel use too.
         var scratchpad = Scratchpad;
         var sendLog = new SendLog(SendLogPath);
-        Func<Task<PaletteSession>>? voice = null;
+        Func<Task<PaletteSession?>>? voice = null;
         if (config is { DefaultModel: not null })
         {
             var provider = configured?.Provider ?? ProviderSetup.Load(config, http!);
@@ -655,7 +655,7 @@ internal static partial class Program
             };
         }
 
-        var session = new Rambler(island, triggers.Machine, speech, speechSend, voice, scratchpad, sendLog, options, log.WriteLine);
+        var session = new Rambler(island, triggers.Machine, speech, speechSend, voice, scratchpad, sendLog, options, text!, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
         session.CommandDone += command =>

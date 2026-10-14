@@ -30,7 +30,7 @@ internal static partial class Program
         // The palette is up, so the event waits in the triggers' queue and shows once it hides.
         session.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
         _ = DescribeAsync(session, configured.Provider, configured.Config);
-        hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text, focus, triggers.Hide);
+        hotkeyPalette ??= new PaletteHost(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide);
         hotkeyPalette.Type(session);
         return true;
     }

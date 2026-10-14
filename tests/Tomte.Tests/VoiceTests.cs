@@ -421,7 +421,7 @@ public sealed class VoiceTests : IDisposable
     [Fact]
     public async Task AnAnswerReachesOnlyTheQuestionItWasGivenFor()
     {
-        var question = new VoiceQuestion();
+        var question = new ToolQuestion();
         var first = new ToolRequest(BuiltInTools.SetVolume, "Set volume to 20%", ActionTier.ExternalEffect, false);
         var second = new ToolRequest(BuiltInTools.SetVolume, "Set volume to 20%", ActionTier.ExternalEffect, false);
         Assert.False(question.Answer(allow: true));

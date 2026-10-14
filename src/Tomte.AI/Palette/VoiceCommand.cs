@@ -29,39 +29,3 @@ public static class VoiceCommand
     public static string? ReplyToSpeak(IPaletteSession session, bool spokenReplies) =>
         spokenReplies && session.Status == PaletteStatus.Done && session.AnswerText.Trim() is { Length: > 0 } reply ? reply : null;
 }
-
-/// <summary>
-/// The one question a voice palette has open. The user's yes or no answers it, and so does anything that ends the
-/// session (its cancel answers no). An answer given for one question never lands on a later one. One thread.
-/// </summary>
-public sealed class VoiceQuestion
-{
-    private TaskCompletionSource<PermissionAnswer>? _answer;
-
-    /// <summary>What is being asked now, or null.</summary>
-    public ToolRequest? Asked { get; private set; }
-
-    /// <summary>Opens the question; <see cref="Asked"/> is set before this returns.</summary>
-    public async Task<PermissionAnswer> AskAsync(ToolRequest request, CancellationToken ct)
-    {
-        var answer = _answer = new TaskCompletionSource<PermissionAnswer>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Asked = request;
-        using var cancel = ct.Register(() => answer.TrySetResult(PermissionAnswer.Deny));
-        try
-        {
-            return await answer.Task;
-        }
-        finally
-        {
-            if (_answer == answer)
-                (_answer, Asked) = (null, null);
-        }
-    }
-
-    /// <summary>
-    /// Answers the open question. With <paramref name="to"/>, only while that request is still the one asked. False
-    /// when nothing was answered.
-    /// </summary>
-    public bool Answer(bool allow, ToolRequest? to = null) =>
-        _answer is { } open && (to is null || ReferenceEquals(to, Asked)) && open.TrySetResult(allow ? PermissionAnswer.AllowOnce : PermissionAnswer.Deny);
-}
