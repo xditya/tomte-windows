@@ -221,6 +221,9 @@ internal static unsafe class Program
             new("compact-device-event", IslandGeometry.Compact, c => CompactLine(c, "Volume 40%.", ring: null)),
             new("compact-digest", IslandGeometry.Compact, c => CompactLine(c, CompactRules.EventLine([new IslandEvent(CompactRules.TimerDone(TimeSpan.FromMinutes(25)), default), new IslandEvent("Opened Spotify.", default)]), ring: null)),
             new("compact-first-run-hint", IslandGeometry.Compact, c => CompactLine(c, CompactRules.Hint, ring: null)),
+            new("shelf", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems)),
+            new("shelf-empty", Panel(PanelSize.Shelf), c => Shelf(c, [])),
+            new("shelf-drop", IslandGeometry.ShelfDrop, ShelfDrop),
             new("shortcuts", Panel(PanelSize.Shortcuts), Shortcuts),
             new("scratchpad", Panel(PanelSize.Scratchpad), c => Scratchpad(c, "Call Mom\nSubscribe to the newsletter about small tools, the one with the long name that wraps over two lines\nGym 6:00 PM")),
             new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
@@ -314,6 +317,80 @@ internal static unsafe class Program
     private static Vector2 Body((double W, double H) size) => new((float)size.W, (float)size.H - PanelSpace.TabStripHeight);
 
     private static Vector2 BodyOrigin((double W, double H) size) => new((float)(-size.W / 2), PanelSpace.TabStripHeight);
+
+    private static readonly ShelfItem[] ShelfItems =
+    [
+        new(1, "Q3-report.pdf", @"C:\q\Q3-report.pdf", ShelfKind.Reference, default) { Size = 2_400_000 },
+        new(2, "IMG_0412.jpg", @"C:\q\IMG_0412.jpg", ShelfKind.Reference, default) { Size = 3_100_000 },
+        new(3, "Assets", @"C:\q\Assets", ShelfKind.Reference, default) { IsFolder = true },
+        new(4, "design-notes.txt", @"C:\q\design-notes.txt", ShelfKind.Reference, default) { Missing = true },
+        new(5, "a-long-name-for-the-invoice-of-october.docx", @"C:\q\invoice.docx", ShelfKind.Copy, default) { Size = 88_000 },
+    ];
+
+    // The Shelf: head row, a page of tiles (the second one selected, with its buttons as dark squares), or the empty box.
+    private static void Shelf(Canvas c, ShelfItem[] items)
+    {
+        var size = Body(PanelSize.Shelf);
+        var body = BodyOrigin(PanelSize.Shelf);
+        c.Pill();
+        c.Mascot();
+        foreach (var line in ShelfLayout.HeadText(size, items.Length))
+        {
+            c.Text(line, body);
+        }
+
+        if (items.Length == 0)
+        {
+            var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadY);
+            c.StrokeRect(Offset(empty, body), 8, 0x2EFFFFFF);
+            foreach (var line in ShelfLayout.EmptyText(empty.Size))
+            {
+                c.Text(line, body + new Vector2(empty.X, empty.Y));
+            }
+
+            return;
+        }
+
+        int visible = ShelfLayout.Rows(size) * ShelfLayout.Columns;
+        for (int slot = 0; slot < visible && slot < items.Length; slot++)
+        {
+            var item = items[slot];
+            var tile = ShelfLayout.Tile(slot, size);
+            var origin = body + new Vector2(tile.X, tile.Y);
+            var local = new RectangleF(0, 0, tile.Width, tile.Height);
+            c.RoundRect(Offset(local, origin), 8, slot == 1 ? 0x1CFFFFFFu : 0x0FFFFFFFu, item.Missing ? 0.55f : 1);
+            c.RoundRect(Offset(new RectangleF(ShelfLayout.TilePad, ShelfLayout.TilePad, ShelfLayout.Icon, ShelfLayout.Icon), origin), 7, 0xFF000000 | ShelfLayout.KindColor(item), item.Missing ? 0.55f : 1);
+            if (slot == 1)
+            {
+                c.StrokeRect(Offset(local, origin), 8, 0xFF6FA8FF);
+                foreach (var action in Enum.GetValues<ShelfAction>())
+                {
+                    c.RoundRect(Offset(ShelfLayout.ActionButton(action, local), origin), 5, 0x73000000);
+                }
+            }
+
+            foreach (var line in ShelfLayout.TileText(item, tile.Size))
+            {
+                c.Text(line, origin, item.Missing ? 0.55f : 1);
+            }
+        }
+    }
+
+    // The Shelf-drop surface: the dashed target right of the tomte with the folder glyph and its word.
+    private static void ShelfDrop(Canvas c)
+    {
+        var g = IslandGeometry.ShelfDrop;
+        c.Pill();
+        c.Mascot();
+        var target = ShelfLayout.DropTarget(g.Width, g.Depth);
+        c.StrokeRect(target, 8, 0x59FFFFFF);
+        var (x, label) = ShelfLayout.DropLabel(target.Size);
+        float y = target.Height / 2;
+        var origin = new Vector2(target.X, target.Y);
+        c.StrokeRect(Offset(new RectangleF(x, y - 7, 7, 4), origin), 1.5f, 0x99FFFFFF);
+        c.StrokeRect(Offset(new RectangleF(x, y - 5, 16, 12), origin), 2, 0x99FFFFFF);
+        c.Text(label, origin);
+    }
 
     // The Shortcuts grid with a script tile that may not run, a long name and the add tile; grey squares for icons.
     private static void Shortcuts(Canvas c)
@@ -446,7 +523,7 @@ internal static unsafe class Program
         private readonly double scale;
         private readonly int width, height;
         private readonly Vector2 origin;
-        private readonly List<(byte[] Pixels, int Width, int Height, Vector2 At)> runs = [];
+        private readonly List<(byte[] Pixels, int Width, int Height, Vector2 At, float Opacity)> runs = [];
 
         public Canvas(ID2D1DeviceContext* dc, IslandGeometry g, double scale)
         {
@@ -508,9 +585,10 @@ internal static unsafe class Program
             Fill(MascotArt.Brim, at, k, shade);
         }
 
-        public void RoundRect(RectangleF r, float radius, uint argb)
+        public void RoundRect(RectangleF r, float radius, uint argb, float opacity = 1)
         {
             var brush = Brush(argb);
+            brush->SetOpacity(opacity);
             var round = new D2D1_ROUNDED_RECT { rect = Rect(r), radiusX = radius, radiusY = radius };
             dc->FillRoundedRectangle(&round, (ID2D1Brush*)brush);
             brush->Release();
@@ -599,12 +677,12 @@ internal static unsafe class Program
         /// One line in a slot of a host, as the island's text visual places it: as wide as the slot, centred in its
         /// height, snapped to the pixel grid, on a surface the text's size plus the pad.
         /// </summary>
-        public void Text(string text, TextStyle style, RectangleF slot, Vector2 host) => Text(new TextRun(text, style, slot.Width), slot, host, centred: true);
+        public void Text(string text, TextStyle style, RectangleF slot, Vector2 host, float opacity = 1) => Text(new TextRun(text, style, slot.Width), slot, host, centred: true, opacity);
 
-        public void Text(TextSlot line, Vector2 host) => Text(line.Text, line.Style, line.Slot, host);
+        public void Text(TextSlot line, Vector2 host, float opacity = 1) => Text(line.Text, line.Style, line.Slot, host, opacity);
 
         /// <summary>A run of any number of lines with its box's top-left corner at a point of the host.</summary>
-        public void Text(TextRun run, Vector2 at, Vector2 host) => Text(run, new RectangleF(at.X, at.Y, run.MaxWidth, 0), host, centred: false);
+        public void Text(TextRun run, Vector2 at, Vector2 host) => Text(run, new RectangleF(at.X, at.Y, run.MaxWidth, 0), host, centred: false, 1);
 
         public double Scale => scale;
 
@@ -618,7 +696,7 @@ internal static unsafe class Program
             brush->Release();
         }
 
-        private void Text(TextRun run, RectangleF slot, Vector2 host, bool centred)
+        private void Text(TextRun run, RectangleF slot, Vector2 host, bool centred, float opacity)
         {
             var watch = Stopwatch.StartNew();
             using var block = new TextBlock();
@@ -643,7 +721,7 @@ internal static unsafe class Program
                 OffGrid++;
             }
 
-            runs.Add((pixels, w, h, at));
+            runs.Add((pixels, w, h, at, opacity));
         }
 
         /// <summary>A run alone on a transparent surface of its own, as the island draws it, read back as pixels.</summary>
@@ -685,7 +763,7 @@ internal static unsafe class Program
         public void Save(string file)
         {
             // The runs go over everything else, as the island's text sprites sit on top in their hosts.
-            foreach (var (pixels, w, h, at) in runs)
+            foreach (var (pixels, w, h, at, opacity) in runs)
             {
                 var props = new D2D1_BITMAP_PROPERTIES1 { pixelFormat = Format, dpiX = (float)(96 * scale), dpiY = (float)(96 * scale) };
                 ID2D1Bitmap1* run;
@@ -695,7 +773,7 @@ internal static unsafe class Program
                 }
 
                 var dest = new D2D_RECT_F { left = at.X, top = at.Y, right = at.X + (float)(w / scale), bottom = at.Y + (float)(h / scale) };
-                dc->DrawBitmap((ID2D1Bitmap*)run, &dest, 1, D2D1_INTERPOLATION_MODE.D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, null, null);
+                dc->DrawBitmap((ID2D1Bitmap*)run, &dest, opacity, D2D1_INTERPOLATION_MODE.D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, null, null);
                 run->Release();
             }
 
