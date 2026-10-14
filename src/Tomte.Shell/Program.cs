@@ -565,7 +565,7 @@ internal static class Program
         // The one note the palette and the Scratchpad panel use too.
         var scratchpad = Scratchpad;
         var sendLog = new SendLog(SendLogPath);
-        Func<PaletteSession>? voice = null;
+        Func<Task<PaletteSession>>? voice = null;
         if (config is { DefaultModel: not null })
         {
             var provider = ProviderSetup.Load(config, http!);
@@ -574,9 +574,11 @@ internal static class Program
             // An in-memory shelf until the shelf store lands. The tiles open by name; that way never runs a script tile.
             var tools = new BuiltInTools(new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
                 args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
-            voice = () =>
+            voice = async () =>
             {
-                var command = new PaletteSession(provider, config, new PaletteOptions(), sendLog, tools, grants, []) { Voice = true };
+                // Voice is offered no skill. The turned-on ones are still read, so open_app keeps refusing their scripts.
+                var skills = await Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
+                var command = new PaletteSession(provider, config, new PaletteOptions(), sendLog, tools, grants, []) { Voice = true, Skills = skills };
                 // Raised while the palette is up, the event waits in the triggers' queue and shows once the palette hides.
                 command.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
                 return command;

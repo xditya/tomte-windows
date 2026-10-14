@@ -16,13 +16,13 @@ namespace Tomte.Shell;
 /// between the press and the release, and the hold is the visible user action that lets audio (to a speech-to-text
 /// provider) or the transcript (to the AI provider) leave the PC.
 /// </summary>
-/// <param name="voice">A new voice session per transcript; null with the AI layer off or no provider.</param>
+/// <param name="voice">A new voice session per transcript, made off the island's thread; null with the AI layer off or no provider.</param>
 internal sealed class Rambler(
     IslandWindow island,
     IslandStateMachine machine,
     ISpeechToText speech,
     ProviderSend? speechSend,
-    Func<PaletteSession>? voice,
+    Func<Task<PaletteSession>>? voice,
     ScratchpadNote scratchpad,
     SendLog sendLog,
     Action<string> log)
@@ -133,23 +133,24 @@ internal sealed class Rambler(
                 return;
             }
 
-            // Only while the rambler's pill is still up: a hold that the lock screen or a fullscreen app took down
-            // keeps the words as a note and opens nothing.
-            command = machine.State == IslandState.Compact ? voice?.Invoke() : null;
-            if (command is not null)
+            if (voice is not null && machine.State == IslandState.Compact)
             {
                 try
                 {
                     // The note tool reads and writes the loaded note; if it cannot be read, the words go in as the raw note.
                     await scratchpad.LoadAsync();
+                    command = await voice();
                 }
                 catch (Exception e)
                 {
-                    log($"{DateTime.Now:HH:mm:ss.fff} voice: the scratchpad could not be read, keeping the words as a note: {e.Message}");
-                    command = null;
+                    log($"{DateTime.Now:HH:mm:ss.fff} voice: not started, keeping the words as a note: {e.Message}");
                 }
             }
 
+            // Only while the rambler's pill is still up: a hold that the lock screen or a fullscreen app took down,
+            // before or while the note loaded, keeps the words as a note and opens nothing.
+            if (machine.State != IslandState.Compact)
+                command = null;
             if (command is not null)
             {
                 RemoveView();

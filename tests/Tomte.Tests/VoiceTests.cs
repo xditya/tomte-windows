@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Tomte.AI;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
+using Tomte.AI.Skills;
 using Tomte.Core;
 using Tomte.Core.Device;
 using Tomte.Core.Rambler;
@@ -52,13 +53,14 @@ public sealed class VoiceTests : IDisposable
     private BuiltInTools Tools(Func<string, bool>? launchShortcut = null) =>
         new(_shelf, _pad, _ => _ran.Add("clipboard"), u => _ran.Add("open " + u), FakeDevice, Timer, launchShortcut);
 
-    private PaletteSession Session(IChatProvider provider, bool voice = true, PermissionGrants? grants = null, BuiltInTools? tools = null, McpTools? mcp = null)
+    private PaletteSession Session(IChatProvider provider, bool voice = true, PermissionGrants? grants = null, BuiltInTools? tools = null, McpTools? mcp = null, SkillSet? skills = null)
     {
         var config = new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", OllamaFactAttribute.Model);
         var session = new PaletteSession(provider, config, new PaletteOptions(), new SendLog(LogPath), tools ?? Tools(), grants ?? new PermissionGrants(), [])
         {
             Voice = voice,
             Mcp = mcp,
+            Skills = skills,
             Prompt = "do it",
             ConfirmTool = (request, _) =>
             {
@@ -373,6 +375,35 @@ public sealed class VoiceTests : IDisposable
         public bool Disposed { get; private set; }
 
         public void Dispose() => Disposed = true;
+    }
+
+    [Fact]
+    public async Task VoiceIsOfferedNoSkillButTheirScriptsStayShut()
+    {
+        string folder = Path.Combine(_dir, "skills");
+        Directory.CreateDirectory(Path.Combine(folder, "notes"));
+        File.WriteAllText(Path.Combine(folder, "notes", "SKILL.md"), "---\nname: notes\ndescription: Keep tidy notes.\n---\nBody.\n");
+        string script = Path.Combine(folder, "notes", "tidy.cmd");
+        File.WriteAllText(script, "echo tidy");
+        var skills = SkillSet.Load(folder, [Skill.Read(folder, "notes", listScripts: false).Key]);
+        Assert.NotNull(skills.Tool);
+        var provider = new ScriptedProvider();
+        provider.Turns.Add([
+            .. ScriptedProvider.Call(BuiltInTools.OpenApp, JsonSerializer.Serialize(new { name = script }), "c1")[..^1],
+            .. ScriptedProvider.Call(SkillSet.ReadTool, """{"skill":"notes"}""", "c2")]);
+        provider.Turns.Add(ScriptedProvider.Text(1, 1, "ok"));
+
+        var session = Session(provider, skills: skills);
+        await session.SendAsync();
+
+        var request = provider.Requests[0];
+        Assert.Equal(PaletteSession.VoicePrompt, request.System);
+        Assert.DoesNotContain(request.Tools!, t => t.Name == SkillSet.ReadTool);
+        Assert.Equal(["transcript"], Assert.Single(new SendLog(LogPath).ReadAll()).Attached);
+        Assert.Empty(_asked);
+        Assert.Empty(_ran);
+        Assert.Equal(["Tomte does not open files from the skills folder: a skill's scripts never run.", "There is no tool named read_skill_file."],
+            session.Answer.OfType<ToolStepSegment>().Select(s => s.Result));
     }
 
     [Fact]
