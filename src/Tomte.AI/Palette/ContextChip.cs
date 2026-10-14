@@ -136,7 +136,9 @@ public static class ContextChips
     {
         var name = shelf.ItemNames.Count > 0 ? shelf.ItemNames[0] : null;
         return new(ContextKind.ShelfItem,
-            name is null ? "Shelf · empty" : $"Shelf · {name}",
+            // The label says that the other items' names go along too.
+            name is null ? "Shelf · empty"
+                : shelf.ItemNames.Count switch { 1 => $"Shelf · {name}", 2 => $"Shelf · {name} and the name of 1 other", var n => $"Shelf · {name} and the names of {n - 1} others" },
             // The other items' names go to the provider too, so the send log names them.
             name is null ? "shelf" : $"shelf:{name}" + (shelf.ItemNames.Count > 1 ? $", names: {string.Join(", ", shelf.ItemNames.Skip(1).Select(PreparedFile.Clean))}" : ""),
             _ => Task.FromResult<IReadOnlyList<ContentPart>>(shelf.ItemNames.Count > 1
