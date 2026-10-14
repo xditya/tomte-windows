@@ -282,9 +282,15 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
 
         var byId = new ShortcutTarget(ShortcutKind.App, target, Icon: target);
         // A packaged app, a shell object or a game's scheme has no file behind it.
-        if (Refuse(raw) is not null || !Path.IsPathFullyQualified(raw))
+        if (!Path.IsPathFullyQualified(raw))
         {
             return byId;
+        }
+
+        // A path no tile may hold (a hidden stream, too long) stays refused behind an entry too.
+        if (Refuse(raw) is { } why)
+        {
+            return new(ShortcutKind.Blocked, target, Problem: $"This app points at {raw}. {why}");
         }
 
         string path = LongName(Path.GetFullPath(raw));

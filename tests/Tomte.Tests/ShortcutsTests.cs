@@ -649,6 +649,9 @@ public sealed class ShortcutsTests : IDisposable
         Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (Touch("page.hta"), "")).Kind);
         Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (Touch("console.msc"), "")).Kind);
         Assert.Equal(ShortcutKind.File, ShortcutTarget.ReadApp(app, (Touch("notes.txt"), "")).Kind);
+        // A path no tile may hold is refused, not opened by ID: a hidden stream, or one past the length limit.
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (@"C:\x\a.txt:b.bat", "")).Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (@"C:\" + new string('a', 2100) + ".exe", "")).Kind);
 
         // A network path stays refused; an app that is gone is missing, never thrown.
         Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (@"\\server\share\app.exe", "")).Kind);
