@@ -99,6 +99,12 @@ public class DeviceActionsTests
     [InlineData("https://example.com", false)]
     [InlineData("ms-settings:display", false)]
     [InlineData("cmd\" /c del", false)]
+    [InlineData(@"C:\Tools\obs64.exe", true)]
+    [InlineData("mailto:a@b.c", false)]
+    [InlineData("calculator:", false)]
+    [InlineData("someapp:open?x=1&y=2", false)]
+    [InlineData("shell:startup", false)]
+    [InlineData(@"\\host\share\tool.exe", false)]
     public void AppTargetValidation(string target, bool valid) =>
         Assert.Equal(valid, Apps.ValidateAppTarget(target) is null);
 

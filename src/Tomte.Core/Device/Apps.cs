@@ -61,6 +61,11 @@ public static class Apps
         if (string.IsNullOrWhiteSpace(target)) return "Name an app to open.";
         if (target.Contains("://", StringComparison.Ordinal)) return "That is a URL, not an app.";
         if (target.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase)) return "Use OpenSettingsPage for settings pages.";
+        // A scheme such as mailto: or calculator: hands whatever follows it to a protocol handler,
+        // which is a command line by another name. Only a drive letter and shell:AppsFolder may hold a colon.
+        int colon = target.IndexOf(':');
+        if (colon >= 0 && colon != 1 && !target.StartsWith(@"shell:AppsFolder\", StringComparison.OrdinalIgnoreCase)) return "That is a link, not an app.";
+        if (target.StartsWith(@"\\", StringComparison.Ordinal)) return "Apps on a network path are not opened.";
         if (target.IndexOfAny(['"', '\r', '\n']) >= 0) return "App names cannot contain quotes or line breaks.";
         return null;
     }
