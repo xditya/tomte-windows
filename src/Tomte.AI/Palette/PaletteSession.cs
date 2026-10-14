@@ -315,7 +315,8 @@ public sealed class PaletteSession : IPaletteSession
         }
 
         // Device actions block on WinRT, COM and WMI; the pool runs them so the island's thread keeps animating.
-        var (result, undo) = await Task.Run(() => _tools.Run(call), ct);
+        // Every other tool stays on the calling thread: the clipboard's owner window belongs to the thread that first used it.
+        var (result, undo) = BuiltInTools.IsDeviceTool(call.Name) ? await Task.Run(() => _tools.Run(call), ct) : _tools.Run(call);
         if (!result.IsError && tier != ActionTier.Read && BuiltInTools.IsDeviceTool(call.Name))
             DeviceActionExecuted?.Invoke(new DeviceEvent(result.Content, undo));
         return Step(call, summary, result.Content, result.IsError, undo);

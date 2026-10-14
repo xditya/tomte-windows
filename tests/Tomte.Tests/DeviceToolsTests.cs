@@ -14,10 +14,13 @@ public sealed class DeviceToolsTests : IDisposable
     private readonly ScriptedProvider _provider = new();
     private readonly PermissionGrants _grants = new();
     private readonly List<(string Tool, JsonElement Input, int Thread)> _ran = [];
+    private readonly ManualResetEventSlim _deviceRan = new();
     private int _undone;
+    private int _copiedOn;
 
     public void Dispose()
     {
+        _deviceRan.Dispose();
         // A store's watcher may still be reading settings.json; a leaked temp folder is better than a failed test.
         for (int attempt = 0; attempt < 5 && Directory.Exists(_dir); attempt++)
         {
@@ -40,6 +43,7 @@ public sealed class DeviceToolsTests : IDisposable
     private ActionResult FakeDevice(string tool, JsonElement input)
     {
         _ran.Add((tool, input, Environment.CurrentManagedThreadId));
+        _deviceRan.Set();
         return ActionResult.Done($"{tool} done.", () =>
         {
             _undone++;
@@ -47,7 +51,7 @@ public sealed class DeviceToolsTests : IDisposable
         });
     }
 
-    private BuiltInTools Tools => new(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { }, FakeDevice);
+    private BuiltInTools Tools => new(new InMemoryShelf(), new InMemoryScratchpad(), _ => _copiedOn = Environment.CurrentManagedThreadId, _ => { }, FakeDevice);
 
     private PaletteSession Session(PermissionGrants? grants = null)
     {
@@ -196,7 +200,11 @@ public sealed class DeviceToolsTests : IDisposable
         session.DeviceActionExecuted += events.Add;
         int caller = Environment.CurrentManagedThreadId;
 
-        await session.SendAsync();
+        // The send returns where the device call hops to the pool. Waiting here keeps this thread busy, so the
+        // pool cannot hand the call back to it and the thread check below means something.
+        var send = session.SendAsync();
+        Assert.True(_deviceRan.Wait(TimeSpan.FromSeconds(5)), "the device call never ran");
+        await send;
 
         Assert.Equal(PaletteStatus.Done, session.Status);
         var request = Assert.Single(asked);
@@ -293,6 +301,24 @@ public sealed class DeviceToolsTests : IDisposable
         Assert.Single(_ran);
         Assert.Empty(events);
         Assert.Equal("list_output_devices done.", ((ToolResultPart)_provider.Requests[1].Messages[2].Parts[0]).Content);
+    }
+
+    // The clipboard's owner window belongs to the thread that first used it, so only device tools may leave the calling thread.
+    [Fact]
+    public async Task ANonDeviceToolRunsOnTheCallingThread()
+    {
+        _provider.Turns.Add(ScriptedProvider.Call(BuiltInTools.CopyToClipboard, """{"text":"hi"}"""));
+        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "Copied."));
+        var session = Session();
+        session.ConfirmTool = (_, _) => Task.FromResult(PermissionAnswer.AllowOnce);
+
+        // Nothing in a scripted send waits, so a tool that stays on this thread has run by the time SendAsync returns.
+        var send = session.SendAsync();
+
+        Assert.Equal(Environment.CurrentManagedThreadId, _copiedOn);
+        Assert.True(send.IsCompleted);
+        await send;
+        Assert.Equal(PaletteStatus.Done, session.Status);
     }
 
     [Fact]
