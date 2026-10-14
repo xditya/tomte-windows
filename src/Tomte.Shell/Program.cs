@@ -315,7 +315,7 @@ internal static partial class Program
         panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), text, log));
         triggers.Panels = panels;
         // The row and the line live on the state changes and ContentReady they listen to.
-        _ = new CompactLine(island, triggers, text, new NowPlayingRow(island, triggers, media, text, log));
+        _ = new CompactLine(island, triggers, text, new NowPlayingRow(island, triggers, media, text, log), log);
 
         bool announcing = false;
         media.TrackChanged += playing =>

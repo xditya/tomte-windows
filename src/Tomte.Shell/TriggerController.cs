@@ -172,6 +172,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>Which panel the Panels state shows and how large it is. Without one, Panels is an empty Shelf-sized shape.</summary>
     public PanelHost? Panels { get; set; }
 
+    /// <summary>Events that wait unseen for the island to be free, oldest first; the push pill's line mentions them.</summary>
+    public IReadOnlyCollection<IslandEvent> Waiting => events.Waiting;
+
     /// <summary>
     /// What the Compact pill is up for, so a feature with Compact content knows whether the pill is its to
     /// fill. Read it once the pill is up (from ContentReady on), not during the state change itself.
@@ -225,6 +228,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             else
             {
                 log?.Invoke($"events: \"{e.Text}\" waits, {events.Count} queued (island {machine.State}{(pause.IsPaused(DateTimeOffset.Now) ? ", paused" : "")})");
+                // The push pill up now may mention it.
+                CompactChanged?.Invoke();
             }
         });
     }
