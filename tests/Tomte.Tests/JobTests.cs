@@ -97,7 +97,7 @@ public sealed class JobTests : IDisposable
         return new JobRunner(_store, _tasks, _ => new OpenAICompatibleProvider(new HttpClient(recorded), Ollama.BaseUrl!, null), Tools(), new SendLog(LogPath), options ?? new PaletteOptions())
         {
             Now = () => now ?? Monday0900.AddSeconds(30),
-            Zone = India,
+            Zone = () => India,
             Resident = resident,
             Log = _logged.Add,
         };
@@ -601,6 +601,26 @@ public sealed class JobTests : IDisposable
 
         Assert.Equal(new DateTimeOffset(2026, 10, 20, 9, 0, 0, Ist), await runner.RunDueAsync());
         Assert.Empty(handler.Bodies);
+    }
+
+    [Fact]
+    public async Task TheRunnerReadsTheTimeZoneAtEveryLook()
+    {
+        _store.Add(new JobDraft("Morning notes", "p", WeekdaysAtNine, []), Ollama, Monday0800, India);
+        // Each look comes seven hours late, so the run is skipped and only its next one is worked out: nothing is sent.
+        var now = Monday0900.AddHours(7);
+        var zone = India;
+        var runner = new JobRunner(_store, _tasks, _ => throw new InvalidOperationException("nothing runs"), Tools(), new SendLog(LogPath), new PaletteOptions())
+        {
+            Now = () => now,
+            Zone = () => zone,
+        };
+        Assert.Equal(new DateTimeOffset(2026, 10, 20, 9, 0, 0, Ist), await runner.RunDueAsync());
+
+        // The PC moved to Tokyo and the cached zone was dropped: the same runner works the next run out there.
+        zone = TimeZoneInfo.FindSystemTimeZoneById("Tokyo Standard Time");
+        now = now.AddDays(1);
+        Assert.Equal(new DateTimeOffset(2026, 10, 21, 9, 0, 0, TimeSpan.FromHours(9)), await runner.RunDueAsync());
     }
 
     // ---- The clock that arms the next run, and the hand-off ----

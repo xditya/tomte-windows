@@ -17,7 +17,9 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
 {
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.Now;
 
-    public TimeZoneInfo Zone { get; init; } = TimeZoneInfo.Local;
+    // Asked at every look, not kept: the resident runner lives as long as the process, and a new time zone reaches
+    // TimeZoneInfo.Local only through a fresh read after ClearCachedData.
+    public Func<TimeZoneInfo> Zone { get; init; } = () => TimeZoneInfo.Local;
 
     /// <summary>
     /// False for a --run-job start with no Tomte running: nobody sees its events, so its results are kept unshown and
@@ -37,7 +39,7 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
     /// <summary>Claims and runs every job due now, then returns the earliest next run over all jobs (null for none).</summary>
     public async Task<DateTimeOffset?> RunDueAsync()
     {
-        var claims = await Task.Run(() => store.ClaimDue(Now(), Zone));
+        var claims = await Task.Run(() => store.ClaimDue(Now(), Zone()));
         if (Resident)
         {
             foreach (var kept in await Task.Run(store.TakeUnshown))
