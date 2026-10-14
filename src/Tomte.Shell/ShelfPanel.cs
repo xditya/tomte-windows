@@ -40,6 +40,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     // The item whose actions the band shows, and the one it changes to once the grace is over.
     private long? shown, pending;
 
+    // Where the pointer was last seen on a tile or a button, in body DIPs: the point it heads for the band from.
+    private Vector2? last;
+
     private readonly RemoveQuestion question = new();
 
     public event Action? TargetsChanged;
@@ -66,7 +69,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         (parts, band, body) = (null, null, null);
         selected.Clear();
         bandWait?.Stop();
-        shown = null;
+        (shown, last) = (null, null);
         Drop();
         first = wheel = 0;
         targets = [];
@@ -193,9 +196,23 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         return true;
     }
 
+    public void PointerMoved(string id, Vector2 at)
+    {
+        last = at;
+        // Moving on the tile the band waits to go to starts the wait over: the band follows a pointer that rests there.
+        if (bandWait is { IsRunning: true } && pending is long next && id == ShelfLayout.TileId(next))
+        {
+            bandWait.Stop();
+            bandWait.Start();
+        }
+    }
+
     public void Hovered(string? id)
     {
-        var (change, owner) = ShelfLayout.Hover(shown, id);
+        // Off every target, onto empty grid: the band stays while the pointer is on its way to the buttons.
+        bool aiming = id is null && last is { } from && PInvoke.GetCursorPos(out var cursor)
+            && ShelfLayout.Aiming(from, PanelSpace.ToBody(island.ScreenToIsland(cursor.X, cursor.Y), size.X), ShelfLayout.BandRow(size));
+        var (change, owner) = ShelfLayout.Hover(shown, id, aiming);
         switch (change)
         {
             case BandChange.Now:

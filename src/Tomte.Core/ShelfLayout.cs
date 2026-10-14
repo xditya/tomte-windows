@@ -46,7 +46,9 @@ public static class ShelfLayout
     /// <summary>How many tiles show from <paramref name="first"/> on.</summary>
     public static int Visible(Vector2 body, int first, int count) => Math.Clamp(count - first, 0, Rows(body) * Columns);
 
-    public static string TileId(ShelfItem item) => FormattableString.Invariant($"tile:{item.Id}");
+    public static string TileId(ShelfItem item) => TileId(item.Id);
+
+    public static string TileId(long id) => FormattableString.Invariant($"tile:{id}");
 
     public static string ActionId(ShelfAction action) => $"act:{action}";
 
@@ -117,23 +119,50 @@ public static class ShelfLayout
         return slots;
     }
 
-    /// <summary>How long the band waits before it follows the pointer to another tile, or goes once the pointer left.</summary>
+    /// <summary>
+    /// How long the band waits before it goes once the pointer left, and how long the pointer must rest on another tile
+    /// before the band follows it there.
+    /// </summary>
     public const int BandGraceMs = 300;
 
     /// <summary>
     /// What the hovered target (or the focused one) changing does to the band showing <paramref name="shown"/>'s actions:
-    /// a first tile shows at once; another tile or nothing takes over after <see cref="BandGraceMs"/>, so the pointer can
-    /// cross other tiles or the gap on its way to the band; the band's own buttons or the tile it is for keep it, and
-    /// cancel what was waiting. The owner is an item id.
+    /// a first tile shows at once; another tile takes over after <see cref="BandGraceMs"/> (the panel starts that wait over
+    /// while the pointer moves on the tile, so only a rest there takes the band); the band's own buttons or the tile it is
+    /// for keep it, and cancel what was waiting. Leaving the targets for empty grid keeps the band too while the pointer
+    /// is <paramref name="aiming"/> at it (<see cref="Aiming"/>), and otherwise takes it after the wait. The owner is an
+    /// item id.
     /// </summary>
-    public static (BandChange Change, long? Owner) Hover(long? shown, string? hovered)
+    public static (BandChange Change, long? Owner) Hover(long? shown, string? hovered, bool aiming = false)
     {
         if (hovered?.StartsWith("tile:", StringComparison.Ordinal) == true && long.TryParse(hovered.AsSpan(5), System.Globalization.CultureInfo.InvariantCulture, out long id))
         {
             return shown is null ? (BandChange.Now, id) : shown == id ? (BandChange.Keep, id) : (BandChange.Later, id);
         }
 
-        return hovered is null ? (BandChange.Later, null) : (BandChange.Keep, shown);
+        return hovered is null && !aiming ? (BandChange.Later, null) : (BandChange.Keep, shown);
+    }
+
+    /// <summary>The band's row, in body DIPs: where its buttons sit, with the gaps between them.</summary>
+    public static RectangleF BandRow(Vector2 body) => new(PadX, BandTop, body.X - 2 * PadX, ActionHeight);
+
+    /// <summary>
+    /// Whether a pointer at <paramref name="at"/> is on its way to the band's buttons from <paramref name="from"/>, where it
+    /// was last seen on a tile or a button: on the band's row, or inside the triangle from <paramref name="from"/> to the
+    /// row's two bottom corners. A pointer heading straight for a button stays inside it, across tiles and empty grid alike.
+    /// </summary>
+    public static bool Aiming(Vector2 from, Vector2 at, RectangleF band)
+    {
+        if (band.Contains(at.X, at.Y))
+        {
+            return true;
+        }
+
+        Vector2 left = new(band.Left, band.Bottom), right = new(band.Right, band.Bottom);
+        static float Side(Vector2 a, Vector2 b, Vector2 p) => ((b.X - a.X) * (p.Y - a.Y)) - ((b.Y - a.Y) * (p.X - a.X));
+        float d1 = Side(from, left, at), d2 = Side(left, right, at), d3 = Side(right, from, at);
+        bool negative = d1 < 0 || d2 < 0 || d3 < 0, positive = d1 > 0 || d2 > 0 || d3 > 0;
+        return !(negative && positive);
     }
 
     /// <summary>A tile's tooltip: the item's full name, and the folder it is in or that the shelf keeps it itself.</summary>

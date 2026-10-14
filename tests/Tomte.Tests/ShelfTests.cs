@@ -966,6 +966,84 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal((BandChange.Later, 9L), ShelfLayout.Hover(4, "tile:9"));
         Assert.Equal((BandChange.Later, (long?)null), ShelfLayout.Hover(4, null));
         Assert.Equal((BandChange.Later, (long?)null), ShelfLayout.Hover(null, null));
+        // Empty grid on the way to the band keeps it; another tile still waits for a rest there.
+        Assert.Equal((BandChange.Keep, 4L), ShelfLayout.Hover(4, null, aiming: true));
+        Assert.Equal((BandChange.Later, 9L), ShelfLayout.Hover(4, "tile:9", aiming: true));
+    }
+
+    [Fact]
+    public void ThePointerAimsAtTheBandInsideTheTriangleToItsRow()
+    {
+        var band = ShelfLayout.BandRow(Body);
+        Assert.Equal(new System.Drawing.RectangleF(14, 6, 532, 28), band);
+        // Left the first tile at (60, 90): up and to the right, toward Remove at the far end, is on the way.
+        var from = new System.Numerics.Vector2(60, 90);
+        Assert.True(ShelfLayout.Aiming(from, new(300, 60), band));
+        Assert.True(ShelfLayout.Aiming(from, new(40, 50), band));
+        Assert.True(ShelfLayout.Aiming(from, new(500, 20), band));
+        // Down, along the row of tiles, or past the band's row: not.
+        Assert.False(ShelfLayout.Aiming(from, new(60, 120), band));
+        Assert.False(ShelfLayout.Aiming(from, new(200, 90), band));
+        Assert.False(ShelfLayout.Aiming(from, new(300, 66), band));
+        Assert.False(ShelfLayout.Aiming(from, new(300, 2), band));
+        // Last seen on a button: going back down into the grid is leaving the band.
+        Assert.False(ShelfLayout.Aiming(new(300, 20), new(300, 50), band));
+    }
+
+    [Fact]
+    public void TheBandStaysOnItsTileWhileThePointerHeadsForItsButtons()
+    {
+        // The report's path: from the only tile straight up and right to Remove, across empty grid the whole way.
+        var diagonal = Band(450, (0, "tile:1", new(60, 90)), (20, "tile:1", new(130, 79)), (30, null, new(150, 76)), (450, "act:Remove", new(520, 20)));
+        Assert.Equal(1L, diagonal);
+        // Down off the tile instead: the band goes after the grace.
+        Assert.Null(Band(400, (0, "tile:1", new(60, 90)), (20, null, new(60, 130))));
+        // Across another tile it stays while the pointer moves, and follows once it has rested there.
+        (double, string?, System.Numerics.Vector2)[] across = [(0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (100, "tile:2", new(180, 85)), (200, "tile:2", new(200, 80)), (300, "tile:2", new(220, 75))];
+        Assert.Equal(1L, Band(550, across));
+        Assert.Equal(2L, Band(650, across));
+    }
+
+    // The band's owner at time `at`, driven as the shelf panel drives it: a change of hovered target asks Hover (aiming
+    // from where the pointer was last seen on a target), Later shows its owner after the grace, a move on the tile it
+    // waits for starts the grace over, and anything Keep or Now cancels what waited.
+    private static long? Band(double at, params (double At, string? Id, System.Numerics.Vector2 Where)[] reports)
+    {
+        long? shown = null, pending = null;
+        double? due = null;
+        string? hovered = "";
+        System.Numerics.Vector2? last = null;
+        foreach (var (time, id, where) in reports)
+        {
+            if (due <= time)
+            {
+                (shown, due) = (pending, null);
+            }
+
+            if (id != hovered)
+            {
+                bool aiming = id is null && last is { } from && ShelfLayout.Aiming(from, where, ShelfLayout.BandRow(Body));
+                var (change, owner) = ShelfLayout.Hover(shown, id, aiming);
+                (shown, pending, due) = change switch
+                {
+                    BandChange.Now => (owner, pending, (double?)null),
+                    BandChange.Later => (shown, owner, time + ShelfLayout.BandGraceMs),
+                    _ => (shown, pending, null),
+                };
+                hovered = id;
+            }
+            else if (due is not null && pending is long next && id == ShelfLayout.TileId(next))
+            {
+                due = time + ShelfLayout.BandGraceMs;
+            }
+
+            if (id is not null)
+            {
+                last = where;
+            }
+        }
+
+        return due <= at ? pending : shown;
     }
 
     [Fact]
