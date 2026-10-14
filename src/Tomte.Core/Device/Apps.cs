@@ -17,7 +17,7 @@ public static class Apps
     {
         if (ValidateAppTarget(target) is { } error) return ActionResult.Fail(error);
         // Read from the shell, which open_app does off the island's thread.
-        if (ShortcutTarget.IsApp(target) && !ShortcutTarget.InStartList(target)) return ActionResult.Fail("That app is not in Start's list.");
+        if (ShortcutTarget.IsApp(target) && !ShortcutTarget.IsInstalledApp(target)) return ActionResult.Fail("That is not an installed app.");
         if (dryRun) return ActionResult.DryRun($"open or focus {target}.");
         if (ProcessNameFor(target) is { } exe && MainWindowOf(exe) is { } window) return Focus(target, window);
         return Launch(target);
@@ -63,8 +63,8 @@ public static class Apps
     {
         if (string.IsNullOrWhiteSpace(target)) return "Name an app to open.";
         if (target.IndexOfAny(['"', '\r', '\n']) >= 0) return "App names cannot contain quotes or line breaks.";
-        // An app from Start's list by its AppUserModelID, which can itself hold a scheme (steam://...);
-        // OpenApp checks that it is in the list.
+        // An installed app by its AppUserModelID, which can itself hold a scheme (steam://...);
+        // OpenApp checks that the shell resolves it.
         if (ShortcutTarget.IsApp(target)) return null;
         if (target.Contains("://", StringComparison.Ordinal)) return "That is a URL, not an app.";
         if (target.StartsWith("ms-settings:", StringComparison.OrdinalIgnoreCase)) return "Use OpenSettingsPage for settings pages.";

@@ -620,20 +620,35 @@ public sealed class ShortcutsTests : IDisposable
     {
         const string app = @"shell:AppsFolder\Vendor.App_0000000000000!App";
         var byShell = new ShortcutTarget(ShortcutKind.App, app, Icon: app);
-        // Opened as Start opens it, by its ID: a packaged app, a shell object such as File Explorer, an entry with
-        // arguments (Task Manager, a browser web app), a game through its launcher's scheme, a script or a page.
+        // Opened as Start opens it, by its ID: a packaged app, a shell object such as File Explorer, a program with
+        // arguments (Task Manager, a browser web app), a game through its launcher's scheme, a page, a folder, and
+        // Windows' own consoles.
         string exe = Touch("tool.exe"), bat = Touch("build.bat");
         Assert.Equal(byShell, ShortcutTarget.ReadApp(app, ("", "")));
         Assert.Equal(byShell, ShortcutTarget.ReadApp(app, ("::{52205FD8-5DFB-447D-801A-D0B52F2E83E1}", "")));
         Assert.Equal(byShell, ShortcutTarget.ReadApp(app, (exe, "--profile 2")));
         Assert.Equal(byShell, ShortcutTarget.ReadApp(app, ("steam://rungameid/431960", "")));
-        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, (bat, "release")));
         Assert.Equal(byShell, ShortcutTarget.ReadApp(app, ("https://example.com/", "")));
+        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, (dir, "")));
+        Assert.Equal(byShell, ShortcutTarget.ReadApp(app, (Path.Combine(Environment.SystemDirectory, "services.msc"), "")));
         Assert.Null(ShortcutStore.Gate(new Shortcut(1, "tool", app, null), ShortcutTarget.ReadApp(app, (exe, "--profile 2")), scriptsOn: false));
 
         // A desktop app with no arguments is its exe, read now: open or focus it, as an .exe tile does.
         Assert.Equal(new ShortcutTarget(ShortcutKind.App, exe, Icon: exe), ShortcutTarget.ReadApp(app, (exe, "")));
         Assert.True(ShortcutTarget.ReadApp(app, (Path.Combine(dir, "gone.exe"), "")).Missing);
+
+        // Any other file behind an entry reads as it would if browsed to: anyone running as the user can write a
+        // Start menu link, so a script stays gated and an installer, a console elsewhere or a .hta stays refused.
+        var script = ShortcutTarget.ReadApp(app, (bat, "release"));
+        Assert.Equal(ShortcutKind.Script, script.Kind);
+        Assert.Equal($"/d /s /c \"\"{bat}\" release\"", script.Script!.Arguments);
+        Assert.Equal(ShortcutOutcome.ScriptsOff, ShortcutStore.Gate(new Shortcut(1, "build", app, null), script, scriptsOn: false));
+        Assert.Equal(ShortcutKind.Script, ShortcutTarget.ReadApp(app, (Touch("tidy.ps1"), "")).Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (Touch("setup.msi"), "")).Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (Touch("tweak.reg"), "/s")).Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (Touch("page.hta"), "")).Kind);
+        Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (Touch("console.msc"), "")).Kind);
+        Assert.Equal(ShortcutKind.File, ShortcutTarget.ReadApp(app, (Touch("notes.txt"), "")).Kind);
 
         // A network path stays refused; an app that is gone is missing, never thrown.
         Assert.Equal(ShortcutKind.Blocked, ShortcutTarget.ReadApp(app, (@"\\server\share\app.exe", "")).Kind);
@@ -669,9 +684,9 @@ public sealed class ShortcutsTests : IDisposable
     }
 
     [Fact]
-    public void OpenAppTakesOnlyAnIdThatIsInStartsList()
+    public void OpenAppTakesOnlyAnInstalledAppsId()
     {
-        Assert.Equal("That app is not in Start's list.", Apps.OpenApp(@"shell:AppsFolder\Vendor.Gone_0000000000000!App", dryRun: true).Message);
+        Assert.Equal("That is not an installed app.", Apps.OpenApp(@"shell:AppsFolder\Vendor.Gone_0000000000000!App", dryRun: true).Message);
         Assert.False(Apps.OpenApp(@"shell:AppsFolder\::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", dryRun: true).Ok);
         Assert.NotNull(Apps.ValidateAppTarget(@"shell:AppsFolder\..\Startup"));
         Assert.NotNull(Apps.ValidateAppTarget(@"shell:AppsFolder\"));

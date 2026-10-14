@@ -262,7 +262,8 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
     /// An app from Start's list opens as Start opens it: the shell starts its entry by ID, with whatever arguments
     /// or scheme its installer gave it (Task Manager, browser web apps, Steam games). The user picked it by name from
     /// Start's list, so it is an app, not a script. A desktop app with no arguments opens or comes to the front by
-    /// the exe its entry names today, so an app that moved on an update is followed.
+    /// the exe its entry names today, so an app that moved on an update is followed. An entry whose target is a
+    /// file other than a program reads as that file, so a script or an installer is gated or refused as ever.
     /// <paramref name="entry"/> is the entry's target and arguments as the shell reports them, null for no such app.
     /// </summary>
     internal static ShortcutTarget ReadApp(string target, (string Target, string Arguments)? entry)
@@ -279,13 +280,43 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
             return new(ShortcutKind.Blocked, target, Problem: $"This app is on a network path, {raw}, which Tomte does not open.");
         }
 
-        return arguments.Length == 0 && Path.GetExtension(raw).Equals(".exe", StringComparison.OrdinalIgnoreCase) && Refuse(raw) is null
-            ? Read(raw)
-            : new(ShortcutKind.App, target, Icon: target);
+        var byId = new ShortcutTarget(ShortcutKind.App, target, Icon: target);
+        // A packaged app, a shell object or a game's scheme has no file behind it.
+        if (Refuse(raw) is not null || !Path.IsPathFullyQualified(raw))
+        {
+            return byId;
+        }
+
+        string path = LongName(Path.GetFullPath(raw));
+        string type = Path.GetExtension(path);
+        // Windows' own consoles (Services, Device Manager) open as Start opens them.
+        if (type.Equals(".msc", StringComparison.OrdinalIgnoreCase) && string.Equals(Path.GetDirectoryName(path), Environment.SystemDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            return byId;
+        }
+
+        if (Directory.Exists(path))
+        {
+            return byId;
+        }
+
+        if (!File.Exists(path))
+        {
+            return new(Guess(path), target, Missing: true);
+        }
+
+        if (type.Equals(".exe", StringComparison.OrdinalIgnoreCase))
+        {
+            return arguments.Length == 0 ? ByType(path, path, "", null, path) : byId;
+        }
+
+        // Any other file reads as it would if the user browsed to it: anyone running as the user can put a link in
+        // the Start menu, so a script behind one is gated and an installer refused like any other.
+        return arguments.Length == 0 ? Read(path) : ByType(path, target, arguments, null, target);
     }
 
-    /// <summary>The app is in Start's list now. Reads the shell, so call it from a worker thread.</summary>
-    internal static bool InStartList(string target) => IsApp(target) && AppEntry(target) is not null;
+    /// <summary>The shell resolves this as an installed app now. Reads the shell, so call it from a worker thread.</summary>
+    internal static bool IsInstalledApp(string target) => IsApp(target) && AppEntry(target) is not null;
 
     /// <summary>A .lnk is what it points at. The link itself is what starts, unless it is a script, which runs as the command shown.</summary>
     private static ShortcutTarget ReadLink(string link)
