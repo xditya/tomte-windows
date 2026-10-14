@@ -74,7 +74,3 @@ WM_TIMECHANGE
 WM_POWERBROADCAST
 PBT_APMRESUMEAUTOMATIC
 WM_APP
-GetMessage
-TranslateMessage
-DispatchMessage
-PostQuitMessage
