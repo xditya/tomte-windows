@@ -67,7 +67,6 @@ IsWindowVisible
 IsWindow
 OpenProcess
 OpenProcessToken
-GetCurrentProcess
 GetTokenInformation
 GetSidSubAuthority
 GetSidSubAuthorityCount
