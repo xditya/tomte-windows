@@ -1,4 +1,5 @@
 using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -39,8 +40,13 @@ public sealed partial class SettingsWindow : Window
         Title = "Tomte settings";
         SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "tomte.ico"));
+        // Light or dark with Windows' app mode, and again when that changes; the window's content already follows it.
+        AppWindow.TitleBar.PreferredTheme = TitleBarTheme.UseDefaultAppMode;
         double scale = PInvoke.GetDpiForWindow(new HWND(WinRT.Interop.WindowNative.GetWindowHandle(this))) / 96.0;
-        AppWindow.Resize(new SizeInt32((int)(720 * scale), (int)(820 * scale)));
+        // 720 x 820 DIPs where that fits, never taller or wider than the monitor's work area; the page scrolls inside.
+        var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+        int width = Math.Min((int)(720 * scale), work.Width), height = Math.Min((int)(820 * scale), work.Height);
+        AppWindow.MoveAndResize(new RectInt32(work.X + (work.Width - width) / 2, work.Y + (work.Height - height) / 2, width, height));
 
         var page = new StackPanel { Spacing = 8, MaxWidth = 760, Padding = new Thickness(24, 16, 24, 32) };
         page.Children.Add(Header("General"));
