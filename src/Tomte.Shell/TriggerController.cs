@@ -527,8 +527,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
             showing = shown;
             // Not armed. Pointer tracking reports "outside" on its first sample, and an armed pill would take that
             // as the pointer leaving and retract 400 ms later, well inside the hold. Only a pointer that has been
-            // on this pill may retract it early; a peek pill the pointer brushed before may have left the flag set.
+            // on this pill may retract it early; a peek pill the pointer brushed before may have left the flag set,
+            // and a retract it started in its last 400 ms would fire into this pill. The event timer owns the end.
             armed = false;
+            PInvoke.KillTimer(island.Hwnd, RetractTimer);
             PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
             island.Mascot.Set(MascotState.Result);
             UpdateRing();
