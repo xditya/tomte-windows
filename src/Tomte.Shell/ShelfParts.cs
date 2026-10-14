@@ -15,6 +15,7 @@ internal static class ShelfColors
     public static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
     public static readonly Color CardSelected = Color.FromArgb(28, 255, 255, 255);
     public static readonly Color Dash = Color.FromArgb(89, 255, 255, 255);
+    public static readonly Color Line = Color.FromArgb(26, 255, 255, 255);
     public static readonly Color Info = Color.FromArgb(255, 0x6F, 0xA8, 0xFF);
     public static readonly Color HotFill = Color.FromArgb(41, 0x6F, 0xA8, 0xFF);
     public static readonly Color Ink = Color.FromArgb(230, 255, 255, 255);
@@ -126,22 +127,27 @@ internal static class Fades
 
 /// <summary>
 /// The Shelf-drop state's content: the dashed target to the right of the mascot, lit while a drag the island takes
-/// is over it. Built when the state is entered and released 0.1 s after it is left.
+/// is over it. With a provider set up, the AI zones sit in a row beside a narrower target; the one under the cursor
+/// is lit instead, and a line under the row says what a drop there does. Built when the state is entered and
+/// released 0.1 s after it is left.
 /// </summary>
 internal sealed class ShelfDropSurface
 {
     private readonly IslandWindow island;
     private readonly TextRenderer text;
+    private readonly Func<DropZoneLayout?> zones;
     private readonly DispatcherQueueTimer release;
+    private readonly Dictionary<DropZone, (CompositionColorBrush Fill, CompositionColorBrush Stroke, Windows.UI.Color Normal)> lit = [];
     private Parts? parts, leaving;
     private ContainerVisual? space;
-    private CompositionColorBrush? fill, stroke;
-    private bool fadeInPending;
+    private TextVisual? line;
+    private bool fadeInPending, accepting;
 
-    public ShelfDropSurface(IslandWindow island, IslandStateMachine machine, DropTarget drops, TextRenderer text)
+    public ShelfDropSurface(IslandWindow island, IslandStateMachine machine, DropTarget drops, TextRenderer text, Func<DropZoneLayout?>? zones = null)
     {
         this.island = island;
         this.text = text;
+        this.zones = zones ?? (() => null);
         release = island.Queue.CreateTimer();
         release.IsRepeating = false;
         release.Interval = TimeSpan.FromMilliseconds(100);
@@ -158,8 +164,19 @@ internal sealed class ShelfDropSurface
             }
         };
         // A drag the island refuses (its own drag out, a format it does not take) does not light the target.
-        drops.Entered += () => Hot(drops.Accepting);
-        drops.Left += () => Hot(false);
+        drops.Entered += () =>
+        {
+            accepting = drops.Accepting;
+            Light(Layout is null && accepting ? DropZone.Shelf : null);
+        };
+        drops.Left += () => Light(null);
+        drops.Over += (x, y) =>
+        {
+            if (Layout is { } layout && accepting && space is not null)
+            {
+                Light(layout.At(island.ScreenToIsland(x, y)));
+            }
+        };
         island.ContentReady += () =>
         {
             if (fadeInPending && space is not null)
@@ -170,6 +187,12 @@ internal sealed class ShelfDropSurface
         };
     }
 
+    /// <summary>The zones drawn now; null while the surface is the shelf's alone.</summary>
+    public DropZoneLayout? Layout { get; private set; }
+
+    /// <summary>Where a drop now would go: the zone lit under the cursor, null while nothing the island takes is over it.</summary>
+    public DropZone? Hot { get; private set; }
+
     private void Show()
     {
         Release();
@@ -178,31 +201,80 @@ internal sealed class ShelfDropSurface
         space = p.Attach(island.Dips, island.Compositor.CreateContainerVisual());
         space.Opacity = 0;
         fadeInPending = true;
+        Hot = null;
         var g = IslandGeometry.ShelfDrop;
-        var r = ShelfLayout.DropTarget(g.Width, g.Depth);
+        var layout = Layout = zones();
+        var r = layout?.Target ?? ShelfLayout.DropTarget(g.Width, g.Depth);
         var shapes = p.Shapes(space, r);
-        fill = p.Brush(ShelfColors.Clear);
-        stroke = p.Brush(ShelfColors.Dash);
-        var target = p.Box(shapes, new RectangleF(0, 0, r.Width, r.Height), 8, fill, stroke, 1.5f);
+        var target = Card(p, shapes, DropZone.Shelf, new RectangleF(0, 0, r.Width, r.Height), ShelfColors.Dash, 1.5f);
         target.StrokeDashArray.Add(3);
         target.StrokeDashArray.Add(2);
-
-        // A folder and the label, centred together.
-        var (x, label) = ShelfLayout.DropLabel(new SizeF(r.Width, r.Height));
-        float y = r.Height / 2;
         var ink = p.Brush(ShelfColors.Ink2);
-        p.Box(shapes, new RectangleF(x, y - 7, 7, 4), 1.5f, null, ink, 1.4f);
-        p.Box(shapes, new RectangleF(x, y - 5, 16, 12), 2, null, ink, 1.4f);
-        p.Text(shapes, label);
+        if (layout is null)
+        {
+            // A folder and the label, centred together.
+            var (x, label) = ShelfLayout.DropLabel(new SizeF(r.Width, r.Height));
+            float y = r.Height / 2;
+            p.Box(shapes, new RectangleF(x, y - 7, 7, 4), 1.5f, null, ink, 1.4f);
+            p.Box(shapes, new RectangleF(x, y - 5, 16, 12), 2, null, ink, 1.4f);
+            p.Text(shapes, label);
+            return;
+        }
+
+        // The folder over the word, both centred, then each zone with its words, then the line under the row.
+        var (word, glyph) = layout.TargetText();
+        if (glyph is { } folder)
+        {
+            var at = folder - new Vector2(r.X, r.Y);
+            p.Box(shapes, new RectangleF(at.X, at.Y, 7, 4), 1.5f, null, ink, 1.4f);
+            p.Box(shapes, new RectangleF(at.X, at.Y + 2, 16, 12), 2, null, ink, 1.4f);
+        }
+
+        p.Keep(text.Create(shapes)).Show(word.Run, word.At - new Vector2(r.X, r.Y));
+        foreach (var (zone, rect) in layout.Zones)
+        {
+            var card = p.Shapes(space, rect);
+            var box = Card(p, card, zone, new RectangleF(0, 0, rect.Width, rect.Height), zone == DropZone.Skill ? ShelfColors.Dash : ShelfColors.Line, 1);
+            if (zone == DropZone.Skill)
+            {
+                box.StrokeDashArray.Add(3);
+                box.StrokeDashArray.Add(2);
+            }
+
+            var words = layout.ZoneText(zone, rect);
+            p.Keep(text.Create(card)).Show(words.Run, words.At - new Vector2(rect.X, rect.Y));
+        }
+
+        line = p.Keep(text.Create(space));
     }
 
-    private void Hot(bool on)
+    /// <summary>A target or zone card whose colours <see cref="Light"/> changes in place.</summary>
+    private CompositionSpriteShape Card(Parts p, ShapeVisual into, DropZone zone, RectangleF r, Windows.UI.Color rest, float thickness)
     {
-        if (fill is not null && stroke is not null)
+        var fill = p.Brush(ShelfColors.Clear);
+        var stroke = p.Brush(rest);
+        lit[zone] = (fill, stroke, rest);
+        return p.Box(into, r, 8, fill, stroke, thickness);
+    }
+
+    private void Light(DropZone? hot)
+    {
+        if (hot == Hot || space is null)
         {
-            // Colours change in place: a brush moved off its shape and back does not draw again.
-            fill.Color = on ? ShelfColors.HotFill : ShelfColors.Clear;
-            stroke.Color = on ? ShelfColors.Info : ShelfColors.Dash;
+            return;
+        }
+
+        Hot = hot;
+        // Colours change in place: a brush moved off its shape and back does not draw again.
+        foreach (var (zone, (fill, stroke, normal)) in lit)
+        {
+            fill.Color = zone == hot ? ShelfColors.HotFill : ShelfColors.Clear;
+            stroke.Color = zone == hot ? ShelfColors.Info : normal;
+        }
+
+        if (Layout is { } layout && line is not null)
+        {
+            line.Show(hot is { } zone ? layout.LineText(zone) : new TextSlot("", DropZoneLayout.LineStyle, layout.Line));
         }
     }
 
@@ -216,7 +288,8 @@ internal sealed class ShelfDropSurface
         Release();
         leaving = parts;
         Fades.Run(space!, leaving, show: false);
-        (parts, space, fill, stroke) = (null, null, null, null);
+        (parts, space, line, Layout, Hot) = (null, null, null, null, null);
+        lit.Clear();
 
         // A one-shot timer, not the fade's end: with the display asleep the compositor finishes no animation.
         release.Start();

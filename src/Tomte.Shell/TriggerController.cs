@@ -37,6 +37,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private Rambler? rambler;
     private CaptureOverlay? overlay;
     private bool capturing, holdEvents;
+    private double zoneHeight;
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
@@ -84,7 +85,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         watch.WindowsChanged += OnWindowsChanged;
         dropTarget = new DropTarget(island.Hwnd, () => island.Moving, log);
         dropTarget.Entered += OnDragEnter;
-        dropTarget.Over += x => island.Mascot.Lean(x - island.MascotScreenX);
+        dropTarget.Over += (x, _) => island.Mascot.Lean(x - island.MascotScreenX);
         dropTarget.Dropped += OnDropped;
 
         InputThread.Start(island.Hwnd, store);
@@ -122,6 +123,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>A drop on the island, raised inside the drop and before the island morphs to Panels.</summary>
     public event Action<DroppedItems>? Dropped;
+
+    /// <summary>An AI drop zone under the drop takes it instead: true when it did, and the palette shows it then, not the Shelf tab.</summary>
+    public Func<DroppedItems, bool>? DropOnZone { get; set; }
 
     /// <summary>The one state machine; the palette host and the rambler drive their states on it.</summary>
     internal IslandStateMachine Machine => machine;
@@ -514,6 +518,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>A drop morphs the drop surface (or an open island) to Panels on the Shelf tab; the mascot nods on the way.</summary>
     private void OnDropped(DroppedItems drop)
     {
+        if (machine.State == IslandState.ShelfDrop && DropOnZone?.Invoke(drop) == true)
+        {
+            return;
+        }
+
         // The shelf takes the drop first: a temporary file's copy then runs before the morph, not during its first frames.
         Dropped?.Invoke(drop);
         if (machine.State is IslandState.ShelfDrop or IslandState.Compact or IslandState.Panels)
@@ -898,6 +907,32 @@ internal sealed unsafe partial class TriggerController : IDisposable
         activity = on ? activity | IslandActivity.Typing : activity & ~IslandActivity.Typing;
         if (!on && armed && !pointerInside && machine.State != IslandState.Hidden)
         {
+            PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
+        }
+    }
+
+    /// <summary>
+    /// A drop zone's panel: the Palette state at this height, held open while its request runs. Once it is done the
+    /// island retracts as usual; when the pointer is away by then, <paramref name="done"/> is raised as an event, which
+    /// shows once the island has retracted.
+    /// </summary>
+    internal void ZonePalette(double height, bool busy, string? done = null)
+    {
+        bool away = !pointerInside;
+        activity = busy ? activity | IslandActivity.AiTask : activity & ~IslandActivity.AiTask;
+        if (machine.State == IslandState.ShelfDrop || (machine.State == IslandState.Palette && height != zoneHeight))
+        {
+            zoneHeight = height;
+            Go(IslandState.Palette, (PanelSize.PaletteWidth, height));
+        }
+
+        if (!busy && away && machine.State == IslandState.Palette)
+        {
+            if (done is not null)
+            {
+                Raise(new IslandEvent(done, DateTimeOffset.Now));
+            }
+
             PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
         }
     }

@@ -152,6 +152,7 @@ internal static partial class Program
         store.Changed += s => clipboard.Apply(s.KeepClipboardHistory);
         // One store of tiles for the Shortcuts panel and for voice; nothing opens the database until a tile is wanted.
         var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
+        ZoneProvider = CommandLineProvider(args);
         StartPanels(island, triggers, store, db, shortcuts, clipboard, logLine);
         _ = Jobs.StartAsync(new JobContext(island, triggers, store, db, timer, Scratchpad, SendLogPath, log, logLine), args);
 
@@ -353,7 +354,7 @@ internal static partial class Program
         // Virtual files are written into the shelf folder as the drop reads them; the drop then goes to the shelf.
         triggers.Drops.Receive = shelf.Receive;
         triggers.Dropped += drop => shelf.Accept(drop);
-        _ = new ShelfDropSurface(island, triggers.Machine, triggers.Drops, text);
+        _ = new DropZones(island, triggers, shelf, text, store, () => ZoneProvider, log);
         return new ShelfPanel(island, triggers, shelf, text, log);
     }
 
