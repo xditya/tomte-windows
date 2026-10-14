@@ -100,6 +100,19 @@ public sealed class PaintGate
 }
 
 /// <summary>
+/// Keys the island takes for itself. Alt+F4 always hides it, whatever has the keys: the island's window would close
+/// and Tomte with it. Esc hides it only while a text box has the keys; otherwise it is a hotkey, or not the island's.
+/// </summary>
+public static class IslandKeys
+{
+    public const uint KeyDown = 0x0100, SysKeyDown = 0x0104;
+    private const int Escape = 0x1B, F4 = 0x73;
+
+    public static bool Hides(uint message, nuint wParam, bool boxHasKeys) =>
+        (message == SysKeyDown && (int)(wParam & 0xFFFF) == F4) || (boxHasKeys && message == KeyDown && (int)(wParam & 0xFFFF) == Escape);
+}
+
+/// <summary>
 /// The palette's prompt keys: Enter sends, Shift+Enter is a new line. A send swallows the Enter key and the carriage
 /// return the message loop makes from it, so the prompt never gets the line break. Keys an input method is composing
 /// with arrive as VK_PROCESSKEY, never as Enter, so committing a composition never sends.

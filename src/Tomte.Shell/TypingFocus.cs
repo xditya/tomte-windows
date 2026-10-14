@@ -1,9 +1,9 @@
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Windows.Win32;
 using Windows.Win32.Foundation;
-using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
@@ -235,17 +235,17 @@ internal sealed class TypingFocus
                 return null;
         }
 
+        // Alt+F4 whenever the island has the keys, a box or not (the turn before the hand-back, a previous window that is
+        // gone, a tab switch away from the note): it would close the island's window, and Tomte with it.
+        if (IslandKeys.Hides(message, wParam, focused is not null))
+        {
+            Escape?.Invoke();
+            return new LRESULT(0);
+        }
+
         if (focused is not { } editor)
         {
             return null;
-        }
-
-        var key = (VIRTUAL_KEY)(wParam & 0xFFFF);
-        if ((message == PInvoke.WM_KEYDOWN && key == VIRTUAL_KEY.VK_ESCAPE) || (message == PInvoke.WM_SYSKEYDOWN && key == VIRTUAL_KEY.VK_F4))
-        {
-            // Alt+F4 would otherwise close the island's window, and with it Tomte.
-            Escape?.Invoke();
-            return new LRESULT(0);
         }
 
         if (editor.BeforeKey?.Invoke(message, wParam, lParam) == true)
