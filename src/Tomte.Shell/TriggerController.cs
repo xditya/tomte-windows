@@ -36,7 +36,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private IReadOnlyList<IslandEvent> showing = [];
     private Rambler? rambler;
     private CaptureOverlay? overlay;
-    private bool capturing;
+    private bool capturing, holdEvents;
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
@@ -501,6 +501,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void ReleaseEvents()
     {
         if (events.Count == 0
+            || holdEvents
             || TriggerQueue.IslandBusy(machine.State, activity)
             || !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules))
         {
@@ -759,7 +760,18 @@ internal sealed partial class TriggerController
         try
         {
             nint foreground = (nint)PInvoke.GetForegroundWindow();
-            Hide();
+            // This hide must not show a waiting event: the overlay comes next, and Compact cannot go to Capture.
+            // The capture's own exits release the queue.
+            holdEvents = true;
+            try
+            {
+                Hide();
+            }
+            finally
+            {
+                holdEvents = false;
+            }
+
             PInvoke.GetCursorPos(out var cursor);
             machine.TransitionTo(IslandState.Capture);
             island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);

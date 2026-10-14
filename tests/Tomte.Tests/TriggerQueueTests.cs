@@ -40,6 +40,7 @@ public class TriggerQueueTests
     [InlineData(IslandState.ShelfDrop, IslandActivity.DragInProgress, true)]
     [InlineData(IslandState.Panels, IslandActivity.None, true)]
     [InlineData(IslandState.Palette, IslandActivity.AiTask, true)]
+    [InlineData(IslandState.Capture, IslandActivity.None, true)] // the island is hidden under the overlay, but an event waits
     public void AnIslandThatIsShowingSomethingIsBusyExceptForThePeekPill(IslandState state, IslandActivity activity, bool busy) =>
         Assert.Equal(busy, TriggerQueue.IslandBusy(state, activity));
 
