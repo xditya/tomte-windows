@@ -1,10 +1,13 @@
 // Runs one palette prompt end to end against local Ollama (ollama serve, llama3.2:3b) and prints
-// what the island would show: the provider indicator, the streamed answer, tool calls and their
-// permission prompts. The shelf holds one seeded item, notes.txt, so a tool round trip can happen.
-//   PaletteHarness "prompt" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--model id] [--cap usd]
-// --yes answers every permission prompt with "allow once". --chip selection reads the selection of
-// the foreground window, which from a console is the console itself; use it from a script that
-// launches the harness while another window is in front.
+// what the island would show: the provider indicator, the streamed answer, tool calls, their
+// permission prompts and the Compact event line after each device action. The shelf holds one
+// seeded item, notes.txt, so a tool round trip can happen.
+//   PaletteHarness "prompt" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--model id] [--cap usd]
+// --yes answers every permission prompt with "allow once". --dry runs device tools in dry-run
+// mode, so nothing on the PC changes. --undo runs the undo of every device action at the end, so
+// a run that changed dark mode or the volume leaves them as they were. --chip selection reads the
+// selection of the foreground window, which from a console is the console itself; use it from a
+// script that launches the harness while another window is in front.
 using System.Diagnostics;
 using Tomte.AI;
 using Tomte.AI.Palette;
@@ -12,7 +15,7 @@ using Tomte.Core;
 
 string? prompt = null, model = "llama3.2:3b";
 decimal? cap = 2m;
-bool yes = false;
+bool yes = false, dry = false, undoAll = false;
 var chipsWanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 for (int i = 0; i < args.Length; i++)
 {
@@ -20,6 +23,8 @@ for (int i = 0; i < args.Length; i++)
     {
         case "--chip": chipsWanted.Add(args[++i]); break;
         case "--yes": yes = true; break;
+        case "--dry": dry = true; break;
+        case "--undo": undoAll = true; break;
         case "--model": model = args[++i]; break;
         case "--cap": cap = decimal.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         default: prompt = args[i]; break;
@@ -28,7 +33,7 @@ for (int i = 0; i < args.Length; i++)
 
 if (prompt is null)
 {
-    Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--model id] [--cap usd]");
+    Console.WriteLine("usage: PaletteHarness \"prompt\" [--chip window|screenshot|shelf|scratchpad|selection]... [--yes] [--dry] [--undo] [--model id] [--cap usd]");
     return 1;
 }
 
@@ -38,7 +43,8 @@ var provider = ProviderSetup.Create(config, http, null);
 var shelf = new InMemoryShelf();
 shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at 10.\nRenew the library card.");
 var scratchpad = new InMemoryScratchpad { Text = "Ideas:\n- a quieter alarm" };
-var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);
+var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
+    dry ? (name, input) => BuiltInTools.RunDevice(name, input, dryRun: true) : null);
 var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
 
 nint foreground = WindowContext.Foreground();
@@ -57,6 +63,7 @@ foreach (var chip in chips)
     Console.WriteLine($"chip  {(chip.On ? "[x]" : "[ ]")} {chip.Label}{(chip.Available ? "" : " (unavailable)")}");
 }
 
+// Grants stay in memory here: the harness must not write the user's settings.json.
 var session = new PaletteSession(provider, config, new PaletteOptions { DailyCapUsd = cap }, new SendLog(logPath), tools, new PermissionGrants(), chips)
 {
     Prompt = prompt,
@@ -70,7 +77,10 @@ var session = new PaletteSession(provider, config, new PaletteOptions { DailyCap
             return Task.FromResult(PermissionAnswer.AllowOnce);
         }
 
-        return Task.FromResult(Console.ReadLine()?.Trim().ToLowerInvariant() switch
+        // A PowerShell pipe prefixes the line with a byte order mark; Trim does not count it as whitespace.
+        var answer = Console.ReadLine()?.Trim().Trim('﻿').ToLowerInvariant();
+        Console.WriteLine($"      (stdin: {answer ?? "<closed>"})");
+        return Task.FromResult(answer switch
         {
             "y" or "yes" => PermissionAnswer.AllowOnce,
             "a" or "always" => PermissionAnswer.AlwaysAllow,
@@ -81,7 +91,13 @@ var session = new PaletteSession(provider, config, new PaletteOptions { DailyCap
 
 int printed = 0, steps = 0;
 string indicator = "";
+var events = new List<DeviceEvent>();
 var clock = Stopwatch.StartNew();
+session.DeviceActionExecuted += e =>
+{
+    events.Add(e);
+    Console.WriteLine($"\n[{clock.ElapsedMilliseconds,6} ms] compact event (4 s): {e.Line}{(e.Undo is null ? "" : "  [undo]")}");
+};
 session.Changed += () =>
 {
     if (session.ProviderIndicator != indicator)
@@ -109,6 +125,17 @@ Console.WriteLine($"\nprompt: {prompt}");
 await session.SendAsync();
 Console.WriteLine();
 Console.WriteLine($"\n[{clock.ElapsedMilliseconds,6} ms] status {session.Status}{(session.Error is null ? "" : ": " + session.Error)}; {session.ToolSteps} tool steps; ${session.SpentTodayUsd:0.00} today of {(session.DailyCapUsd is { } c ? $"${c:0.00}" : "no")} cap");
+if (undoAll)
+{
+    foreach (var e in events.Where(e => e.Undo is not null))
+    {
+        await Task.Delay(1000);
+        Console.WriteLine($"[{clock.ElapsedMilliseconds,6} ms] undo \"{e.Line}\" -> {e.Undo!().Message}");
+    }
+
+    await Task.Delay(3000); // let a dark mode broadcast finish before the process exits
+}
+
 Console.WriteLine($"scratchpad now: {scratchpad.Text.ReplaceLineEndings(" | ")}");
 Console.WriteLine($"shelf now: {string.Join(", ", shelf.ItemNames)}");
 Console.WriteLine($"send log: {logPath}");
