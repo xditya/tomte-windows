@@ -67,7 +67,7 @@ public static class PdfExtraction
             if (failed == read)
                 throw new FileReadException("could not be read: it is damaged or not a PDF.");
             bool cut = text.Length >= limits.MaxChars || read < pages;
-            string result = text.Length > limits.MaxChars ? text.ToString(0, limits.MaxChars) : text.ToString();
+            string result = TextExtraction.Start(text.ToString(), limits.MaxChars);
             return new Extracted(string.IsNullOrWhiteSpace(result) ? "" : result, cut && result.Length > 0, pages, read);
         }
     }

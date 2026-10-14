@@ -94,7 +94,7 @@ public static class TextExtraction
         var chars = new char[encoding.GetMaxCharCount(read - preamble)];
         int count = decoder.GetChars(bytes, preamble, read - preamble, chars, 0, flush: !more);
         bool cut = more || count > limits.MaxChars;
-        return new Extracted(new string(chars, 0, Math.Min(count, limits.MaxChars)), cut);
+        return new Extracted(Start(new string(chars, 0, count), limits.MaxChars), cut);
     }
 
     /// <summary>
@@ -152,7 +152,7 @@ public static class TextExtraction
             }
 
             bool cut = text.Length >= limits.MaxChars;
-            return new Extracted(cut ? text.ToString(0, limits.MaxChars) : text.ToString().TrimEnd('\n'), cut);
+            return new Extracted(cut ? Start(text.ToString(), limits.MaxChars) : text.ToString().TrimEnd('\n'), cut);
         }
         catch (CappedStream.TooLargeException)
         {
@@ -163,6 +163,10 @@ public static class TextExtraction
             throw new FileReadException("could not be read: it is damaged or not a Word document.");
         }
     }
+
+    /// <summary>The first <paramref name="length"/> characters, one fewer where the cut would split a surrogate pair.</summary>
+    internal static string Start(string text, int length) =>
+        length >= text.Length ? text : text[..(length > 0 && char.IsHighSurrogate(text[length - 1]) ? length - 1 : length)];
 
     // HEIF and AVIF photos; other ftyp files (MP4 video) are not images.
     private static bool IsImageBrand(ReadOnlySpan<byte> brand) =>

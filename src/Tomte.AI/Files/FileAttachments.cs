@@ -281,8 +281,9 @@ internal sealed class SendPlan
         double share = (double)room / _cuttable.Sum(TextTokens);
         Replace(file =>
         {
-            int keep = (int)(file.Text!.Length * share);
-            var text = file.Text[..keep] + "\n" + FileAttachments.CutNote(Invariant($"{file.Text.Length - keep:N0} more characters were left out to fit the request"));
+            string kept = TextExtraction.Start(file.Text!, (int)(file.Text!.Length * share));
+            int keep = kept.Length;
+            var text = kept + "\n" + FileAttachments.CutNote(Invariant($"{file.Text.Length - keep:N0} more characters were left out to fit the request"));
             var block = FileAttachments.Block(file.Name, file.Kind, text);
             return file with { Native = false, Tokens = _facts.TextTokens(block), Parts = [new TextPart(block)], How = Invariant($", truncated to {keep:N0} of {file.Text.Length:N0} characters") };
         });
@@ -373,8 +374,16 @@ internal sealed class SendPlan
         {
             int end = text.IndexOf('\n', start);
             end = end < 0 ? text.Length : end + 1;
-            for (int at = start; at < end; at += max)
-                yield return text[at..Math.Min(end, at + max)];
+            for (int at = start; at < end;)
+            {
+                // A cut inside a line never splits a surrogate pair.
+                int stop = Math.Min(end, at + max);
+                if (stop < end && stop - at > 1 && char.IsHighSurrogate(text[stop - 1]))
+                    stop--;
+                yield return text[at..stop];
+                at = stop;
+            }
+
             start = end;
         }
     }

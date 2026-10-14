@@ -118,6 +118,8 @@ public sealed class FileTests : IDisposable
         Assert.Equal(new string('é', 10), read.Text);
         // The buffer for a cap of 10 ends inside a two-byte character; it must not turn into junk or into "not UTF-8".
         Assert.Equal(new string('a', 10), Text(Encoding.UTF8.GetBytes(new string('a', 43) + "é"), limits).Text);
+        // Nine characters would end in the first half of the fifth emoji; the cut keeps four whole ones.
+        Assert.Equal(string.Concat(Enumerable.Repeat("😀", 4)), Text(Encoding.UTF8.GetBytes(string.Concat(Enumerable.Repeat("😀", 20)) + "x"), new FileLimits { MaxChars = 9 }).Text);
     }
 
     // Word
