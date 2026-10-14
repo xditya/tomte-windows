@@ -473,6 +473,29 @@ public sealed class JobTests : IDisposable
         Assert.Equal(1, claims.Sum(c => c.Count));
     }
 
+    [Fact]
+    public void ARunWithNoResultByItsLimitIsKeptAsNotFinished()
+    {
+        var finished = AddJob("p", "read_shelf_item");
+        var cut = AddJob("q", "read_shelf_item");
+        Assert.Equal(2, _store.ClaimDue(Monday0900, India).Count);
+        _store.Record(new JobRunRecord(finished.Id, finished.Name, Monday0900, Monday0900.AddMinutes(1), true, "Done.", ""));
+
+        // Task Scheduler ended the other run at its limit, before it kept a result. A look within the limit leaves it
+        // be; the first look after it keeps it as not finished, unshown, so the next start raises it.
+        _store.ClaimDue(Monday0900 + JobStore.RunLimit, India);
+        Assert.Single(_store.Results());
+        _store.ClaimDue(Monday0900 + JobStore.RunLimit + TimeSpan.FromSeconds(1), India);
+
+        var run = _store.Results()[0];
+        Assert.Equal((cut.Id, false, JobStore.DidNotFinish, Monday0900, false), (run.JobId, run.Ok, run.Text, run.Due, run.Shown));
+        Assert.Equal("Job failed: Morning notes", JobRunner.EventText(run));
+        Assert.Equal(DateTimeOffset.UnixEpoch, JobStore.ReadMarker(_store.MarkerPath));
+        // Once, and never for the run that kept its result.
+        _store.ClaimDue(Monday0900.AddHours(1), India);
+        Assert.Equal(2, _store.Results().Count);
+    }
+
     // ---- Running ----
 
     [Fact]

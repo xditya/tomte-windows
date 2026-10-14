@@ -38,6 +38,14 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
     /// <summary>A one-off later than this is not run but recorded as missed.</summary>
     public static readonly TimeSpan OneOffGrace = TimeSpan.FromHours(24);
 
+    /// <summary>The text of a run that was claimed and had no result <see cref="RunLimit"/> later.</summary>
+    public const string DidNotFinish = "Did not finish";
+
+    /// <summary>
+    /// The longest a run may take: Task Scheduler ends a --run-job start after this, before it can keep a result.
+    /// </summary>
+    public static readonly TimeSpan RunLimit = TimeSpan.FromMinutes(10);
+
     private const string Feature = "jobs";
 
     // The whole history, oldest first. Never edit or reorder a step that has merged; add at the end.
@@ -49,6 +57,10 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         CREATE TABLE jobs_runs(id INTEGER PRIMARY KEY, job INTEGER NOT NULL REFERENCES jobs_list(id) ON DELETE CASCADE,
             name TEXT NOT NULL, due INTEGER NOT NULL, finished INTEGER NOT NULL, ok INTEGER NOT NULL, text TEXT NOT NULL,
             details TEXT NOT NULL, shown INTEGER NOT NULL);
+        """,
+        """
+        CREATE TABLE jobs_claims(job INTEGER NOT NULL REFERENCES jobs_list(id) ON DELETE CASCADE, name TEXT NOT NULL,
+            due INTEGER NOT NULL, claimed INTEGER NOT NULL);
         """,
     ];
 
@@ -131,12 +143,19 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
     /// while the PC slept or Tomte was closed is taken once, at the latest time it should have run, unless that is
     /// more than <see cref="RecurringGrace"/> ago, when it is skipped. A one-off is then done; one more than
     /// <see cref="OneOffGrace"/> late comes back marked missed, to be recorded and not run. A row that cannot be read is
-    /// switched off and logged, so it never comes due again.
+    /// switched off and logged, so it never comes due again. Each claim is noted until its result is recorded; one
+    /// still without a result <see cref="RunLimit"/> later is recorded here as not finished, unshown, so a start raises it.
     /// </summary>
     public IReadOnlyList<JobClaim> ClaimDue(DateTimeOffset now, TimeZoneInfo zone)
     {
         using var connection = db.Open(Feature, Schema);
         using var transaction = connection.BeginTransaction();
+        Run(connection, $"""
+            INSERT INTO jobs_runs({RunColumns})
+            SELECT job, name, due, claimed + $limit, 0, $text, '', 0 FROM jobs_claims WHERE claimed + $limit < $now;
+            DELETE FROM jobs_claims WHERE claimed + $limit < $now;
+            """,
+            ("$limit", (long)RunLimit.TotalMilliseconds), ("$now", now.ToUnixTimeMilliseconds()), ("$text", DidNotFinish));
         var (due, unreadable) = Jobs(connection, $"SELECT {JobColumns} FROM jobs_list WHERE next_due <= $now ORDER BY next_due, id", now);
         foreach (long id in unreadable)
         {
@@ -164,6 +183,8 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
             }
 
             claimed.Add(new JobClaim(job with { NextDue = next }, latest, Missed: job.Schedule.Date is not null && late > OneOffGrace));
+            Run(connection, "INSERT INTO jobs_claims(job, name, due, claimed) VALUES ($id, $name, $due, $now)",
+                ("$id", job.Id), ("$name", job.Name), ("$due", latest.ToUnixTimeMilliseconds()), ("$now", now.ToUnixTimeMilliseconds()));
         }
 
         transaction.Commit();
@@ -171,16 +192,19 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         return claimed;
     }
 
-    /// <summary>Keeps a finished run. A run of a job removed meanwhile is dropped with it.</summary>
+    /// <summary>Keeps a finished run and lets go of its claim. A run of a job removed meanwhile is dropped with it.</summary>
     public void Record(JobRunRecord run)
     {
         using var connection = db.Open(Feature, Schema);
+        using var transaction = connection.BeginTransaction();
         Run(connection, $"""
             INSERT INTO jobs_runs({RunColumns})
-            SELECT $job, $name, $due, $finished, $ok, $text, $details, $shown WHERE EXISTS (SELECT 1 FROM jobs_list WHERE id = $job)
+            SELECT $job, $name, $due, $finished, $ok, $text, $details, $shown WHERE EXISTS (SELECT 1 FROM jobs_list WHERE id = $job);
+            DELETE FROM jobs_claims WHERE job = $job AND due = $due;
             """,
             ("$job", run.JobId), ("$name", run.JobName), ("$due", run.Due.ToUnixTimeMilliseconds()), ("$finished", run.Finished.ToUnixTimeMilliseconds()),
             ("$ok", run.Ok), ("$text", run.Text), ("$details", run.Details), ("$shown", run.Shown));
+        transaction.Commit();
         WriteMarker(connection);
     }
 

@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Xml;
 using System.Xml.Linq;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -123,8 +124,8 @@ public static class JobTask
     /// <summary>
     /// The task: a calendar trigger in local time from the job's next run (Task Scheduler follows daylight saving the
     /// same way), for the signed-in user only, no elevation, never waking the PC, started late when the time was missed.
-    /// Ten minutes at most: the start hands the job to a running Tomte or runs it with no island and exits, and a run
-    /// times out after two. Normal priority instead of Task Scheduler's below-normal default.
+    /// <see cref="JobStore.RunLimit"/> at most: the start hands the job to a running Tomte or runs it with no island and
+    /// exits, and a run times out after two minutes. Normal priority instead of Task Scheduler's below-normal default.
     /// </summary>
     public static string Xml(ScheduledJob job, string exe, string arguments)
     {
@@ -152,7 +153,7 @@ public static class JobTask
                 new XElement(Ns + "StopIfGoingOnBatteries", false),
                 new XElement(Ns + "StartWhenAvailable", true),
                 new XElement(Ns + "WakeToRun", false),
-                new XElement(Ns + "ExecutionTimeLimit", "PT10M"),
+                new XElement(Ns + "ExecutionTimeLimit", XmlConvert.ToString(JobStore.RunLimit)),
                 new XElement(Ns + "Priority", 4)),
             new XElement(Ns + "Actions", new XAttribute("Context", "Author"),
                 new XElement(Ns + "Exec",
