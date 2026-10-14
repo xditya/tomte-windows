@@ -181,8 +181,9 @@ internal static class Jobs
 
     /// <summary>
     /// The --run-job start with no Tomte to hand it to: the note, the shelf and the runner on one thread with a message
-    /// loop (the clipboard's owner window must stay on the thread that made it), no island and no timer. Results are
-    /// kept unshown and the next-due file says 0, so the next start raises their events. --debug-log=path logs it.
+    /// loop (the clipboard's owner window must stay on the thread that made it), no island and no timer. That thread is
+    /// STA already (CreateOnDedicatedThread makes it so), so nothing sets an apartment here. Results are kept unshown
+    /// and the next-due file says 0, so the next start raises their events. --debug-log=path logs it.
     /// </summary>
     private static int RunHeadless(string settings, long id, string[] args)
     {
