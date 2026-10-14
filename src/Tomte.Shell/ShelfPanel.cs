@@ -183,16 +183,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     /// </summary>
     private void Share(List<ShelfItem> items)
     {
-        nint hwnd = Handle(island.Hwnd);
-        if (shareManager is null)
-        {
-            shareManager = DataTransferManagerInterop.GetForWindow(hwnd);
-            shareManager.DataRequested += OnShareRequested;
-        }
-
         sharing = items;
         Volatile.Write(ref shareAsked, 0);
-        DataTransferManagerInterop.ShowShareUIForWindow(hwnd);
+        // Started first, so a refusal thrown below (which Act only logs) still ends in the line for the user.
         if (shareWait is null)
         {
             shareWait = island.Queue.CreateTimer();
@@ -209,6 +202,14 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
 
         shareWait.Start();
+        nint hwnd = Handle(island.Hwnd);
+        if (shareManager is null)
+        {
+            shareManager = DataTransferManagerInterop.GetForWindow(hwnd);
+            shareManager.DataRequested += OnShareRequested;
+        }
+
+        DataTransferManagerInterop.ShowShareUIForWindow(hwnd);
     }
 
     // Possibly on another thread than the island's; it reads only the list Share set and writes only the log.
