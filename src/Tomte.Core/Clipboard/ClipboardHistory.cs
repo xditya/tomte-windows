@@ -257,7 +257,9 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<string,
     {
         try
         {
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
             work();
+            log?.Invoke($"clipboard: {what} took {System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds:F1} ms");
             Changed?.Invoke();
         }
         catch (Exception e) when (e is SqliteException or IOException or UnauthorizedAccessException)
