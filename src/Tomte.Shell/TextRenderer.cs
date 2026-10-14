@@ -281,10 +281,13 @@ internal sealed unsafe class TextVisual : IDisposable
         }
         catch (Exception e)
         {
-            // A surface that cannot be drawn leaves this run blank; it must not take the island down with it.
+            // A surface that cannot be drawn leaves this run blank, not showing whatever a resize left in it,
+            // and it must not take the island down with it.
+            Visual.IsVisible = false;
             renderer.Failed(e);
             return;
         }
+
         drawn = true;
         Visual.IsVisible = true;
         Place();
