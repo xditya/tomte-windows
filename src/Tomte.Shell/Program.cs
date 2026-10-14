@@ -140,11 +140,13 @@ internal static class Program
         // waits for its window and stopping it waits for its thread, neither of which belongs on the island's thread.
         clipboard.Apply(store.Current.KeepClipboardHistory);
         store.Changed += s => clipboard.Apply(s.KeepClipboardHistory);
-        StartPanels(island, triggers, store, db, clipboard, logLine);
+        // One store of tiles for the Shortcuts panel and for voice; nothing opens the database until a tile is wanted.
+        var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
+        StartPanels(island, triggers, store, db, shortcuts, clipboard, logLine);
 
         if (rambler)
         {
-            triggers.Rambler = CreateRambler(args, island, triggers, store, timer, log!);
+            triggers.Rambler = CreateRambler(args, island, triggers, store, timer, shortcuts, log!);
             if (triggers.Rambler is { } hold && int.TryParse(Arg(args, "--debug-hold"), out int holdMs))
             {
                 DebugHold(island, hold, holdMs, Arg(args, "--debug-answer"), args.Contains("--dry"), log!);
@@ -268,14 +270,13 @@ internal static class Program
     /// The event is the one thing that listens to media while the island is hidden, and only when the user
     /// turned it on in settings.
     /// </summary>
-    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ClipboardWatch clipboard, Action<string>? log)
+    private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ShortcutStore shortcuts, ClipboardWatch clipboard, Action<string>? log)
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, log));
-        var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
         panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
         panels.Register(new ScratchpadPanel(island, Scratchpad, log));
@@ -527,7 +528,7 @@ internal static class Program
     /// device tools from changing anything. Kept out of Main so Tomte.AI loads only for this switch.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, TextWriter log)
+    private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, ShortcutStore shortcuts, TextWriter log)
     {
         ProviderConfig? config = Arg(args, "--provider-id") is { } id
             ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
@@ -570,10 +571,9 @@ internal static class Program
             var provider = ProviderSetup.Load(config, http!);
             // One per store, kept as long as the store. A voice command asks every time, so the grants change nothing for it.
             var grants = new PermissionGrants(store);
-            // An in-memory shelf until the shelf store lands, and no launcher until the shortcut tiles land: until then
-            // open_shortcut is not offered. That seam is the last argument.
+            // An in-memory shelf until the shelf store lands. The tiles open by name; that way never runs a script tile.
             var tools = new BuiltInTools(new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
-                args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: null);
+                args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
             voice = () =>
             {
                 var command = new PaletteSession(provider, config, new PaletteOptions(), sendLog, tools, grants, []) { Voice = true };
