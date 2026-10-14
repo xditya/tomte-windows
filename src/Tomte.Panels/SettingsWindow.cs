@@ -94,10 +94,14 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("MCP servers"));
         page.Children.Add(McpSection());
 
+        page.Children.Add(Header("Skills"));
+        page.Children.Add(SkillsSection());
+
         Content = new ScrollViewer { Content = page };
         RenderRules();
         RenderGrants();
         RenderMcpServers();
+        _ = RenderSkillsAsync();
         _ = LoadStartupAsync();
         startup.Toggled += async (_, _) => await SetStartupAsync(startup.IsOn);
         Closed += (_, _) => store.Dispose();

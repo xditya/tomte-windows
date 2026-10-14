@@ -1,0 +1,106 @@
+using System.Diagnostics;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Tomte.AI.Mcp;
+using Tomte.AI.Skills;
+
+namespace Tomte.Panels;
+
+/// <summary>
+/// The skills section: every folder in the skills folder with its description, whether it is on, what
+/// it registers, any problem, and a note when it ships scripts. The folder is read when the window
+/// opens and when "Look again" is clicked; nothing watches it.
+/// </summary>
+public sealed partial class SettingsWindow
+{
+    private readonly StackPanel skillsList = new() { Spacing = 12 };
+    private readonly TextBlock skillsNote = Note();
+
+    private string SkillsFolder => SkillSet.FolderFor(store.FilePath);
+
+    private Border SkillsSection()
+    {
+        var open = new Button { Content = "Open folder" };
+        open.Click += (_, _) => OpenSkillsFolder();
+        var refresh = new Button { Content = "Look again" };
+        refresh.Click += async (_, _) => await RenderSkillsAsync();
+        return Card(
+            Note($"A skill is a folder with a SKILL.md file in {SkillsFolder}. A new skill starts off. When it is on, every AI palette request carries its name and description, and the model reads the rest of its folder with read_skill_file, which runs without asking, only when the skill fits what you asked. A skill's text goes to your provider only with a request you send. Skills cannot allow or approve tools: every tool still asks as set above."),
+            skillsList,
+            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { open, refresh } },
+            skillsNote);
+    }
+
+    private async Task RenderSkillsAsync()
+    {
+        try
+        {
+            string folder = SkillsFolder;
+            var skills = await Task.Run(() => SkillSet.List(folder));
+            skillsList.Children.Clear();
+            Show(skillsNote, null);
+            if (skills.Count == 0)
+            {
+                skillsList.Children.Add(Note("No skills yet. Put a skill's folder in the skills folder, then click Look again."));
+            }
+
+            foreach (var skill in skills)
+            {
+                var enabled = new ToggleSwitch { IsOn = store.Current.EnabledSkills.Contains(skill.Name), OnContent = "On", OffContent = "Off" };
+                enabled.Toggled += (_, _) => Save(s => s with
+                {
+                    EnabledSkills = enabled.IsOn ? [.. s.EnabledSkills.Append(skill.Name).Distinct()] : [.. s.EnabledSkills.Where(n => n != skill.Name)],
+                });
+                var details = new StackPanel { Spacing = 4, Margin = new Thickness(16, 0, 0, 0) };
+                foreach (string line in Details(skill))
+                {
+                    details.Children.Add(Note(line));
+                }
+
+                if (skill.Problem is not null)
+                {
+                    var problem = Note();
+                    Show(problem, "Not loaded. " + skill.Problem);
+                    details.Children.Add(problem);
+                }
+
+                string name = McpTools.Clean(skill.Name, McpTools.MaxName);
+                // The whole description: it is exactly what every request carries while the skill is on.
+                var row = Row(name, skill.Description.Length == 0 ? null : Note(skill.Description), enabled);
+                skillsList.Children.Add(new StackPanel { Spacing = 8, Children = { row, details } });
+            }
+        }
+        catch (Exception e)
+        {
+            // Called from an async void handler: an exception leaving here would end the settings process.
+            Show(skillsNote, $"Could not read the skills folder: {e.Message}");
+        }
+    }
+
+    private static IEnumerable<string> Details(Skill skill)
+    {
+        if (skill.Command is { } command)
+            yield return $"Adds the palette command \"{command.Name}\", which asks: {command.Text}";
+        if (skill.DropZone is { } zone)
+            yield return $"Adds the drop zone \"{zone.Label}\" for {string.Join(", ", zone.Accepts)}. Drop zones are not built yet, so it does not show while you drag.";
+        if (skill.Scripts.Count > 0)
+            yield return $"Ships scripts ({string.Join(", ", skill.Scripts.Take(3).Select(s => McpTools.Clean(s, 80)))}{(skill.Scripts.Count > 3 ? $" and {skill.Scripts.Count - 3} more" : "")}). Tomte never runs them: none of its tools runs code, and it refuses to open a file from the skills folder.";
+        if (skill.IgnoredKeys.Count > 0)
+            yield return $"Tomte does not use these SKILL.md keys: {string.Join(", ", skill.IgnoredKeys)}.{(skill.IgnoredKeys.Contains("allowed-tools") ? " A skill cannot approve tools in advance." : "")}";
+        if (skill.License is { Length: > 0 } license)
+            yield return $"License: {license}";
+    }
+
+    private void OpenSkillsFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(SkillsFolder);
+            Process.Start(new ProcessStartInfo(SkillsFolder) { UseShellExecute = true })?.Dispose();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            Show(skillsNote, $"Could not open the skills folder: {e.Message}");
+        }
+    }
+}
