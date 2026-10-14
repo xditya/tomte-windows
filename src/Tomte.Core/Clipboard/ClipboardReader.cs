@@ -156,15 +156,25 @@ public static class ClipboardReader
 
 /// <summary>
 /// Raised while Tomte itself drives the clipboard through another app: the selection fallback's
-/// Ctrl+C and the put-back after it. History keeps nothing that happens meanwhile.
+/// Ctrl+C and the put-back after it, and for <see cref="Grace"/> after the last one ends, because an
+/// app can write its copy after the fallback has stopped waiting for it. History keeps nothing that
+/// happens meanwhile.
 /// </summary>
 public static class OwnClipboardUse
 {
-    private static int depth;
+    public static readonly TimeSpan Grace = TimeSpan.FromSeconds(1);
 
-    public static bool Active => Volatile.Read(ref depth) > 0;
+    private static int depth;
+    private static long graceEnds;
+
+    public static bool Active => Volatile.Read(ref depth) > 0 || Environment.TickCount64 < Volatile.Read(ref graceEnds);
 
     public static void Begin() => Interlocked.Increment(ref depth);
 
-    public static void End() => Interlocked.Decrement(ref depth);
+    // The deadline goes first, so there is no moment between the two in which nothing holds.
+    public static void End()
+    {
+        Volatile.Write(ref graceEnds, Environment.TickCount64 + (long)Grace.TotalMilliseconds);
+        Interlocked.Decrement(ref depth);
+    }
 }

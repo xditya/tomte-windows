@@ -84,6 +84,16 @@ public sealed class ClipboardTests : IDisposable
         }
 
         Assert.False(copied.TextTouched);
+
+        // The app's copy can land after the fallback has given up on it: for a second after the end it is still Tomte's.
+        Assert.Equal("skipped: Tomte's own write", Read(copied).Outcome);
+        var lapsed = DateTime.UtcNow + OwnClipboardUse.Grace + TimeSpan.FromSeconds(2);
+        while (OwnClipboardUse.Active)
+        {
+            Assert.True(DateTime.UtcNow < lapsed, "the grace never ended");
+            Thread.Sleep(20);
+        }
+
         Assert.Equal(Secret, Read(copied).Text);
     }
 

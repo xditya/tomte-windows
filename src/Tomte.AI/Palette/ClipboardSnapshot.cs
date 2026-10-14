@@ -72,7 +72,8 @@ internal static unsafe class ClipboardSnapshot
     /// </summary>
     public static (string? Text, string? ChromiumMime)? CopySelection(nint expectedForeground, int timeoutMs = 250)
     {
-        // The copy and the put-back are Tomte's, not the user's: clipboard history keeps neither.
+        // The copy and the put-back are Tomte's, not the user's: clipboard history keeps neither, nor a copy the app
+        // writes after this has stopped waiting for it (the mark outlasts the end by a second).
         OwnClipboardUse.Begin();
         try
         {
