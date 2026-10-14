@@ -28,7 +28,12 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
         island.Mascot.Follow(from, IslandState.Palette);
         island.Mascot.Set(MascotState.Thinking);
         island.PanelLook = true;
-        var placeholder = Placeholder(24 + 14, 12, PanelSize.PaletteWidth - 28, 36);
+        var placeholder = island.Compositor.CreateSpriteVisual();
+        placeholder.Brush = island.Compositor.CreateColorBrush(Color.FromArgb(28, 255, 255, 255));
+        float s = (float)island.Scale;
+        placeholder.Offset = new Vector3((24 + 14) * s, 12 * s, 0);
+        placeholder.Size = new Vector2((float)(PanelSize.PaletteWidth - 28) * s, 36 * s);
+        island.Content.Children.InsertAtTop(placeholder);
         try
         {
             _targetHeight = PanelSize.PaletteMinHeight;
@@ -59,18 +64,6 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
         {
             island.Content.Children.Remove(placeholder);
         }
-    }
-
-    /// <summary>A faint bar on the Content seam, in DIPs, standing in for text until the renderer lands.</summary>
-    private SpriteVisual Placeholder(double x, double y, double width, double height)
-    {
-        var visual = island.Compositor.CreateSpriteVisual();
-        visual.Brush = island.Compositor.CreateColorBrush(Color.FromArgb(28, 255, 255, 255));
-        float s = (float)island.Scale;
-        visual.Offset = new Vector3((float)x * s, (float)y * s, 0);
-        visual.Size = new Vector2((float)width * s, (float)height * s);
-        island.Content.Children.InsertAtTop(visual);
-        return visual;
     }
 
     /// <summary>Text segments as their lines, a tool step as one line; the estimate itself lives in Tomte.Core.</summary>
