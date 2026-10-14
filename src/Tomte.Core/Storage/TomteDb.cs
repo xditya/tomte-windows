@@ -31,14 +31,14 @@ public sealed class TomteDb(string? path = null)
     /// A step cannot switch foreign keys off (that setting is fixed while a transaction is open).
     /// Dispose the connection when the work is done; never keep one in a field.
     /// This call and every statement on the connection block the calling thread: milliseconds as a
-    /// rule, about a tenth of a second for the first open in a process, seconds behind a stuck lock.
-    /// Call it only from a worker thread, never from the island's thread, the hook thread, or inside
-    /// a drop or clipboard callback.
+    /// rule, a tenth of a second or more for the first open in a process (over a second has been
+    /// seen), seconds behind a stuck lock. Call it only from a worker thread, never from the island's
+    /// thread, the hook thread, or inside a drop or clipboard callback.
     /// A file that is not a database, or whose schema is damaged, is renamed to tomte.db.bad-(time)
     /// and an empty one takes its place, so everything stored so far is gone from the app.
     /// </summary>
     /// <exception cref="SqliteException">Locked for longer than the wait, disk full, access denied, or a step that is not valid SQL.</exception>
-    /// <exception cref="IOException">A damaged file could not be renamed because something else kept it open.</exception>
+    /// <exception cref="IOException">The folder could not be made, or a damaged file could not be renamed because something else kept it open.</exception>
     /// <exception cref="UnauthorizedAccessException">The folder, the file or the lock around a set-aside is not this user's to touch.</exception>
     /// <exception cref="ArgumentException">The feature name is missing, is not lowercase letters and digits, or is "schema".</exception>
     /// <exception cref="InvalidOperationException">A step made an object whose name does not start with the feature name.</exception>
@@ -121,8 +121,8 @@ public sealed class TomteDb(string? path = null)
             // Write-ahead log: the shell, the settings window and a job run read while one of them writes, and the last
             // connection to close folds the log back into the file. NORMAL: no flush per commit; a power cut can drop the
             // commits made since the log was last folded back, but cannot damage the file. secure_delete: a deleted row is
-            // overwritten with zeros, so clipboard history or a send log the user cleared is gone from the file as well; it
-            // can only be set here, for every feature, and costs extra page writes on delete.
+            // overwritten with zeros, so clipboard history or a send log the user cleared is gone from the file as well,
+            // once the log is folded back; it can only be set here, for every feature, and costs extra page writes on delete.
             Run(db, """
                 PRAGMA journal_mode = WAL;
                 PRAGMA synchronous = NORMAL;
@@ -140,9 +140,10 @@ public sealed class TomteDb(string? path = null)
     }
 
     // The moment any connection object exists, the provider starts a timer that tidies its connection pools: one tick
-    // every 30 s for the life of the process, island hidden or not, with no setting that turns it off. Without a pool it
-    // has nothing to tidy, so it is disposed here, found by name because the provider keeps it private. If a later
-    // version renames it, nothing happens here and the tick comes back; StorageTests fails when that is so.
+    // every 30 s for the life of the process, island hidden or not, with no setting that turns it off. Without a pool
+    // all it would tidy is a list with one entry per connection string, and there is one. So it is disposed here, found
+    // by name because the provider keeps it private. If a later version renames it, nothing happens here and the tick
+    // comes back; StorageTests fails when that is so.
     // This class must stay the only place that builds a connection string: a pooled connection brings a timer per pool.
     private static void StopProviderTimer()
     {
