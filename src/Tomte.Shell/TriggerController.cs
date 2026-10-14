@@ -56,11 +56,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
         timer.Changed += () => island.Queue.TryEnqueue(ArmTimer);
         ArmTimer();
         settings = store.Current;
+        island.MoveTo(settings.IslandOffset);
         island.Message = HandleMessage;
         // Hover, a press or a scroll on Compact opens Panels; on the next turn, so the press or notch that opens
         // them is not also taken by the panel host as a tab switch or a press on the new body.
         island.Wheel += (_, _) => OpenPanelsNextTurn();
         island.Pressed += _ => OpenPanelsNextTurn();
+        // A drag on the pill's own surface moves the island along the top edge, and holds it open like any drag.
+        island.Grabs = Grabs;
+        island.MoveStarted += () =>
+        {
+            activity |= IslandActivity.DragInProgress;
+            PInvoke.KillTimer(island.Hwnd, HoverTimer);
+        };
+        island.Moved += OnMoved;
         island.LayoutChanged += () =>
         {
             PushZone();
@@ -264,7 +273,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var reveal = settings.Reveal;
         // The silhouette is a setting too; the window takes it up with its next morph.
         island.Attached = settings.AttachToTopEdge;
-        InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), reveal.ZoneFraction, reveal.DragApproachDip, island.Scale));
+        // Centred under the island, wherever along the edge it has been moved.
+        InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), island.CenterX, reveal.ZoneFraction, reveal.DragApproachDip, island.Scale));
         if (machine.State != IslandState.Hidden)
         {
             InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(reveal.RetractMarginDip * island.Scale));
@@ -284,6 +294,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             PushZone();
         }
+
+        // "Reset position" in the settings window; the island's own drags are already in the settings here.
+        island.MoveTo(next.IslandOffset);
 
         watch.Refresh();
         if (!settings.DesktopPeek && activity.HasFlag(IslandActivity.Peek))
@@ -395,6 +408,39 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
+    /// <summary>
+    /// The pill's own surface, which a drag moves along the top edge: all of Compact, the tab strip's row outside its
+    /// labels, and the tomte wherever it sits. Labels, panel bodies and the palette's controls keep their presses, and
+    /// shelf and result tiles their drag out.
+    /// </summary>
+    private bool Grabs(System.Numerics.Vector2 at) => machine.State switch
+    {
+        IslandState.Compact => true,
+        IslandState.Panels => at.Y < PanelSpace.TabStripHeight && Panels?.OnLabel(at) != true,
+        IslandState.Palette => island.OnMascot(at),
+        _ => false,
+    };
+
+    /// <summary>
+    /// A drag on the pill let go, or a double click sent the island back to the middle: the place is kept for the next
+    /// start, and the pointer counts from where it is now, since the island moved under it.
+    /// </summary>
+    private void OnMoved(double offset)
+    {
+        if (settings.IslandOffset != offset)
+        {
+            settings = settings with { IslandOffset = offset };
+            store.Save(settings);
+        }
+
+        var b = island.TargetBounds;
+        int margin = (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale);
+        pointerInside = PInvoke.GetCursorPos(out var cursor) && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, margin);
+        EndDrag();
+        // A window may be under the island's new place.
+        SchedulePeek();
+    }
+
     private void OnTimer(nuint id)
     {
         PInvoke.KillTimer(island.Hwnd, id);
@@ -403,7 +449,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case RetractTimer when !pointerInside && RetractionRules.ShouldRetract(machine.State, activity):
                 Hide();
                 break;
-            case HoverTimer when pointerInside && RetractionRules.OpensPanels(machine.State, activity):
+            case HoverTimer when pointerInside && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
                 break;
             case EventTimer when eventShowing && machine.State == IslandState.Compact:
@@ -453,12 +499,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void OnPointer(bool inside)
     {
+        bool entered = inside && !pointerInside;
         pointerInside = inside;
         if (inside)
         {
             PInvoke.KillTimer(island.Hwnd, RetractTimer);
             armed = true;
-            if (machine.State == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling))
+            // Only a pointer coming onto the pill dwells; one that was on it already has just dragged it there.
+            if (entered && RetractionRules.OpensPanels(machine.State, activity))
             {
                 PInvoke.SetTimer(island.Hwnd, HoverTimer, HoverDwellMs, null);
             }

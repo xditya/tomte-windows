@@ -43,6 +43,7 @@ public class RetractionRulesTests
     [InlineData(IslandState.Compact, IslandActivity.None, true)]
     [InlineData(IslandState.Compact, IslandActivity.Peek, true)]
     [InlineData(IslandState.Compact, IslandActivity.Rambling, false)]
+    [InlineData(IslandState.Compact, IslandActivity.DragInProgress, false)]
     [InlineData(IslandState.Panels, IslandActivity.None, false)]
     [InlineData(IslandState.Hidden, IslandActivity.None, false)]
     [InlineData(IslandState.Palette, IslandActivity.None, false)]
@@ -90,7 +91,7 @@ public class RetractionRulesTests
     public void RevealZoneIsTheMiddleThirtyPercentScaledByDpi()
     {
         var settings = new RevealSettings();
-        var zone = RevealZone.For(0, 0, 2560, settings.ZoneFraction, settings.DragApproachDip, 1.5);
+        var zone = RevealZone.For(0, 0, 2560, 1280, settings.ZoneFraction, settings.DragApproachDip, 1.5);
 
         Assert.Equal(896, zone.Left);
         Assert.Equal(1664, zone.Right);
@@ -100,5 +101,18 @@ public class RetractionRulesTests
         Assert.True(zone.InDragBand(1280, 72));
         Assert.False(zone.InDragBand(1280, 73));
         Assert.False(zone.InDragBand(800, 10));
+    }
+
+    [Fact]
+    public void TheRevealZoneFollowsTheIslandAndStaysOnTheMonitor()
+    {
+        // 30% of 2560 is 768 wide, centred under an island moved to x = 600, and moved in at either side.
+        Assert.Equal((216, 984), Span(RevealZone.For(0, 0, 2560, 600, 0.30, 48, 1.5)));
+        Assert.Equal((0, 768), Span(RevealZone.For(0, 0, 2560, 100, 0.30, 48, 1.5)));
+        Assert.Equal((1792, 2560), Span(RevealZone.For(0, 0, 2560, 2500, 0.30, 48, 1.5)));
+        // A hand-edited fraction over 1 is the whole edge.
+        Assert.Equal((0, 2560), Span(RevealZone.For(0, 0, 2560, 600, 1.5, 48, 1.5)));
+
+        static (int, int) Span(RevealZone zone) => (zone.Left, zone.Right);
     }
 }
