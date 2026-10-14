@@ -112,6 +112,9 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const string Run = "Run", Cancel = "Cancel", AlwaysAllow = "Always allow";
     public const string Include = "Include", SendTip = "Send (Enter)";
 
+    /// <summary>The foot's provider line while a card asks before a tool runs: nothing is on its way until the user answers.</summary>
+    public const string Waiting = "Waiting for you";
+
     /// <summary>
     /// An off chip: a faint fill, an outline at about 4.5:1 against the palette, and grey ink for its picture and "+".
     /// An on chip takes the accent fill with black ink. Glyph ink is opaque, so a glyph fades as one.

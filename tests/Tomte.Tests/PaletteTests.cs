@@ -220,6 +220,32 @@ public class PaletteTests : IDisposable
     }
 
     [Fact]
+    public async Task TheProviderLineSaysItWaitsForTheUserWhileACardAsks()
+    {
+        _provider.Turns.Add(ScriptedProvider.Call(BuiltInTools.OpenUrl, """{"url":"https://example.com"}"""));
+        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "ok"));
+        var session = Session();
+        string? asking = null;
+        session.ConfirmTool = (_, _) =>
+        {
+            asking = session.ProviderIndicator;
+            return Task.FromResult(PermissionAnswer.Deny);
+        };
+        var shown = new List<string>();
+        session.Changed += () =>
+        {
+            if (shown.Count == 0 || shown[^1] != session.ProviderIndicator)
+                shown.Add(session.ProviderIndicator);
+        };
+
+        await session.SendAsync();
+
+        Assert.Equal("Waiting for you", asking);
+        // Once answered the line is the provider's again: the denial goes back to the model.
+        Assert.Equal(["Nothing sent", "Sending to p · m", "Waiting for you", "Sending to p · m", "Sent to p · m"], shown);
+    }
+
+    [Fact]
     public async Task AlwaysAllowAsksOnceThenRunsWithoutPrompting()
     {
         _provider.Turns.Add(ScriptedProvider.Call(BuiltInTools.OpenUrl, """{"url":"https://example.com/1"}"""));

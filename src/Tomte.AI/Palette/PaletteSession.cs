@@ -418,6 +418,23 @@ public sealed partial class PaletteSession : IPaletteSession
 
     public void Cancel() => _userCancel?.Cancel();
 
+    // A card asks before a tool runs, and nothing is on its way while it waits: the provider line says so until the answer.
+    private async Task<PermissionAnswer> AskAsync(ToolRequest request, CancellationToken ct)
+    {
+        string was = _indicator;
+        _indicator = PaletteLayout.Waiting;
+        Changed?.Invoke();
+        try
+        {
+            return await ConfirmTool(request, ct);
+        }
+        finally
+        {
+            _indicator = was;
+            Changed?.Invoke();
+        }
+    }
+
     // The conversation so far as text, a question and an answer each; what the chips attached then is not sent again. An
     // answer-less turn gives its tool lines, or its error.
     private IEnumerable<(string Prompt, string Answer)> EarlierText() => Conversation.Select(turn => (turn.Prompt,
@@ -534,14 +551,14 @@ public sealed partial class PaletteSession : IPaletteSession
 
         if (Scheduling is not null)
         {
-            var (planned, outcome, failed) = await Scheduling.ScheduleAsync(call, _config, ConfirmTool, ct);
+            var (planned, outcome, failed) = await Scheduling.ScheduleAsync(call, _config, AskAsync, ct);
             return Step(call, planned, outcome, failed);
         }
 
         // Another app's window: every list and every action asks the user, whatever any grant says.
         if (Automation is not null && AutomationTools.Owns(call.Name))
         {
-            var step = await Automation.RunAsync(call, ConfirmTool, ct);
+            var step = await Automation.RunAsync(call, AskAsync, ct);
             if (step.Sent is not null)
                 _skillFiles.Add(step.Sent); // the send log's list of what was read and sent besides the chips
             if (step.Done is not null)
@@ -575,7 +592,7 @@ public sealed partial class PaletteSession : IPaletteSession
         if (Voice ? call.Name != BuiltInTools.SaveNote : _grants.NeedsConfirmation(grant, tier))
         {
             var request = new ToolRequest(call.Name, summary, tier, !Voice && PermissionGrants.CanAlwaysAllow(tier));
-            var answer = await ConfirmTool(request, ct);
+            var answer = await AskAsync(request, ct);
             // The grant is a settings.json write that can wait on the settings process; the pool takes it, not the island's thread.
             if (answer == PermissionAnswer.AlwaysAllow && request.OfferAlwaysAllow)
                 await Task.Run(() => _grants.AlwaysAllow(grant));
