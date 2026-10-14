@@ -37,7 +37,20 @@ public sealed class McpProcessTests : IDisposable
         string path = InFolder(name);
         while (!File.Exists(path))
             await Task.Delay(10, _limit.Token);
-        return JsonDocument.Parse(await File.ReadAllTextAsync(path)).RootElement;
+
+        // A file just renamed into place can be held for a moment by something else on the machine
+        // (a virus scanner, the indexer): reading it then fails with a sharing violation.
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return JsonDocument.Parse(await File.ReadAllTextAsync(path, _limit.Token)).RootElement;
+            }
+            catch (IOException) when (attempt < 20)
+            {
+                await Task.Delay(50, _limit.Token);
+            }
+        }
     }
 
     private async Task<int> PidAsync(string name) => (await InfoAsync(name)).GetProperty("pid").GetInt32();
