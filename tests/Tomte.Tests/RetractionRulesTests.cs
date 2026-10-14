@@ -13,6 +13,8 @@ public class TakenOverTests
         var all = IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Pinned | IslandActivity.DragInProgress;
         Assert.Equal(IslandActivity.Pinned | IslandActivity.DragInProgress, RetractionRules.TakenOver(all));
         Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Rambling));
+        // A drop zone's result gives way to whatever the user opens next.
+        Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Result));
     }
 }
 
@@ -31,6 +33,7 @@ public class RetractionRulesTests
     [InlineData(IslandState.Panels, IslandActivity.Pinned, false)]
     [InlineData(IslandState.Compact, IslandActivity.Peek, false)]
     [InlineData(IslandState.Compact, IslandActivity.Rambling, false)]
+    [InlineData(IslandState.Palette, IslandActivity.Result, false)]
     public void RetractsOnlyWhenNothingIsInProgress(IslandState state, IslandActivity activity, bool expected)
     {
         Assert.Equal(expected, RetractionRules.ShouldRetract(state, activity));
@@ -46,6 +49,18 @@ public class RetractionRulesTests
     public void HoverOrScrollOnCompactOpensPanels(IslandState state, IslandActivity activity, bool expected)
     {
         Assert.Equal(expected, RetractionRules.OpensPanels(state, activity));
+    }
+
+    [Theory]
+    [InlineData(IslandState.Palette, IslandActivity.Result, true)]
+    [InlineData(IslandState.Palette, IslandActivity.Result | IslandActivity.DragInProgress, true)]
+    [InlineData(IslandState.Palette, IslandActivity.AiTask, false)]
+    [InlineData(IslandState.Palette, IslandActivity.None, false)]
+    [InlineData(IslandState.Panels, IslandActivity.None, false)]
+    [InlineData(IslandState.Compact, IslandActivity.Peek, false)]
+    public void APressOutsideDismissesOnlyAFinishedZoneResult(IslandState state, IslandActivity activity, bool expected)
+    {
+        Assert.Equal(expected, RetractionRules.DismissedByClickOutside(state, activity));
     }
 
     [Fact]

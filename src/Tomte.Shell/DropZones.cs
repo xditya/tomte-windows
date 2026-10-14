@@ -61,9 +61,9 @@ internal sealed class DropZones
 /// One drop on a zone, from the drop to its result: the panel opens, the item is on the shelf, then the file is read
 /// and sent as a palette send of its own to the provider set up in settings (its key, cap and prices, B5's readers,
 /// the size question and the send log), and what comes back goes on the shelf as files the panel shows. The island
-/// stays out while the send runs and while the size question waits for an answer; Esc, or anything else that takes the
-/// island down, ends the send and answers the question with cancel. On the island's thread; the reading and the
-/// sending await on the pool.
+/// stays out while the send runs, while the size question waits for an answer, and then while the result shows, until
+/// the user dismisses it; Esc, or anything else that takes the island down, ends the send and answers the question
+/// with cancel. On the island's thread; the reading and the sending await on the pool.
 /// </summary>
 internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, Action<string>? log)
 {
@@ -204,7 +204,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             return;
         }
 
-        triggers.ZonePalette(PanelSize.PaletteMinHeight, busy: false);
+        triggers.ZonePalette(PanelSize.PaletteMinHeight, busy: false, hold: false);
         if (!Program.AskInPalette(island, triggers, store, shelf, log, item.Name))
         {
             view = new DropResultView(island, triggers, shelf, text, log);
@@ -233,7 +233,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
                 : copy is null ? "The copy could not be made. Nothing changed."
                 : $"A copy is on the shelf. {item.Name} keeps its own name.";
             Finish(DropZoneRequest.Panel(title, item.Name, session, null, line, name is null ? null : $"Suggested name: {name}", [.. kept.Select(ResultTile.Of)]),
-                kept, ok: copy is not null, done: $"A renamed copy of {item.Name} is on the shelf");
+                kept, ok: copy is not null);
             return;
         }
 
@@ -246,8 +246,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             1 => "Kept on the shelf.",
             var n => $"{n} files kept on the shelf.",
         };
-        string done = added.Count == 1 ? $"{added[0].Name} is on the shelf" : $"{added.Count} files from {item.Name} are on the shelf";
-        Finish(DropZoneRequest.Panel(title, item.Name, session, null, outcome, null, [.. added.Select(ResultTile.Of)]), added, ok: true, done);
+        Finish(DropZoneRequest.Panel(title, item.Name, session, null, outcome, null, [.. added.Select(ResultTile.Of)]), added, ok: true);
     }
 
     /// <summary>Session changes come in bursts while the answer streams; the panel follows once per turn of the dispatcher.</summary>
@@ -270,23 +269,23 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         });
     }
 
-    private void Show(DropResult result, bool busy, IReadOnlyList<ShelfItem>? items = null, string? done = null)
+    private void Show(DropResult result, bool busy, IReadOnlyList<ShelfItem>? items = null)
     {
         view.Show(result, items ?? []);
-        triggers.ZonePalette(view.Height, busy, done);
+        triggers.ZonePalette(view.Height, busy);
     }
 
     private void Finish(DropResult result, bool ok) => Finish(result, [], ok);
 
-    /// <summary>The last state of the panel. <paramref name="done"/> is the event line for files kept, shown if the pointer is away.</summary>
-    private void Finish(DropResult result, IReadOnlyList<ShelfItem> items, bool ok, string? done = null)
+    /// <summary>The last state of the panel, which holds the island until the user dismisses it.</summary>
+    private void Finish(DropResult result, IReadOnlyList<ShelfItem> items, bool ok)
     {
         if (!view.Open)
         {
             return;
         }
 
-        Show(result, busy: false, items, items.Count > 0 ? done : null);
+        Show(result, busy: false, items);
         island.Mascot.Set(ok ? MascotState.Result : MascotState.Error);
     }
 }
