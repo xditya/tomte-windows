@@ -33,9 +33,28 @@ internal static partial class Program
     {
         text = renderer;
         focus = new TypingFocus(island, triggers.Machine, renderer, log) { Escape = triggers.Hide, Typing = triggers.Typing };
-        triggers.PaletteOpened = () => OpenPalette(island, triggers, store, log)
-            .ContinueWith(t => log?.Invoke($"palette: not opened: {t.Exception?.InnerException}"), CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        triggers.PaletteOpened = async () =>
+        {
+            try
+            {
+                await OpenPalette(island, triggers, store, log);
+            }
+            catch (Exception e)
+            {
+                NotOpened(triggers, log, e);
+            }
+        };
         return focus;
+    }
+
+    // A palette that failed to open would leave the island in the Palette state with nothing in it.
+    private static void NotOpened(TriggerController triggers, Action<string>? log, Exception e)
+    {
+        log?.Invoke($"palette: not opened: {e}");
+        if (triggers.Machine.State == IslandState.Palette)
+        {
+            triggers.Hide();
+        }
     }
 
     /// <summary>
@@ -56,7 +75,14 @@ internal static partial class Program
         }
 
         triggers.PaletteFromCapture();
-        await OpenPalette(island, triggers, store, log, ContextChips.Lasso(png, w, h), foreground);
+        try
+        {
+            await OpenPalette(island, triggers, store, log, ContextChips.Lasso(png, w, h), foreground);
+        }
+        catch (Exception e)
+        {
+            NotOpened(triggers, log, e);
+        }
     }
 
     /// <summary>
