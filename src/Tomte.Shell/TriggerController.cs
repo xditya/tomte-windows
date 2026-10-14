@@ -93,6 +93,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         InputThread.Start(island.Hwnd, store);
         // Changed arrives on a pool thread; the input thread re-reads the store where it runs.
         store.Changed += s => island.Queue.TryEnqueue(() => OnSettingsChanged(s));
+        // Events wait out a pause; a resume from the tray, or the hour running out, shows them.
+        pause.Ended += ReadThenRelease;
         log?.Invoke($"input: mouse hook {(InputThread.HookInstalled ? "on" : "off")}, ui thread {Environment.CurrentManagedThreadId}, all monitors={settings.AllMonitors} (primary only until the island window can move)");
 
         SchedulePeek();
@@ -171,23 +173,22 @@ internal sealed unsafe partial class TriggerController : IDisposable
         CompactRules.Content(Compact, eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other, (timer.Run ?? finished) is not null, playing);
 
     /// <summary>
-    /// An internal event: shows Compact for the hold time. It waits while Focus, DND or fullscreen is on, and while
-    /// the island is showing something else; then it shows once that ends. Nothing raised here is dropped for
-    /// arriving at a busy moment.
+    /// An internal event: shows Compact for the hold time. It waits while the tray pause, Focus, DND or fullscreen
+    /// is on, and while the island is showing something else; then it shows once that ends. Nothing raised here is
+    /// dropped for arriving at a busy moment; a pause until restart drops what waits when the app quits.
     /// </summary>
     public void Raise(IslandEvent e)
     {
         // Focus and quiet hours change with no event to hear, so the notification state is read for each event.
         watch.ReadNotificationState(() =>
         {
-            bool held = TriggerQueue.IslandBusy(machine.State, activity) || !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules);
-            if (events.Offer(e, held))
+            if (events.Offer(e, EventsWait()))
             {
                 ShowEvent([e]);
             }
             else
             {
-                log?.Invoke($"events: \"{e.Text}\" waits, {events.Count} queued (island {machine.State})");
+                log?.Invoke($"events: \"{e.Text}\" waits, {events.Count} queued (island {machine.State}{(pause.IsPaused(DateTimeOffset.Now) ? ", paused" : "")})");
             }
         });
     }
@@ -253,10 +254,18 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void OnSettingsChanged(TomteSettings next)
     {
+        var previous = settings;
         settings = next;
         log?.Invoke("settings changed");
+        // The input thread applies only the parts whose settings changed. Pointer tracking restarts only for a change
+        // in what PushZone reads: records compare by value, so the first-run flag, a tool grant or the media switch
+        // leaves it as it is.
         InputThread.ApplySettings();
-        PushZone();
+        if (next.Reveal != previous.Reveal || next.AttachToTopEdge != previous.AttachToTopEdge)
+        {
+            PushZone();
+        }
+
         watch.Refresh();
         if (!settings.DesktopPeek && activity.HasFlag(IslandActivity.Peek))
         {
@@ -337,6 +346,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 // set nor counts on time across a sleep. Work the wait out again; an end that has passed fires at once.
                 log?.Invoke(message == PInvoke.WM_TIMECHANGE ? "clock changed" : "resumed from sleep");
                 ArmTimer();
+                // The tray's pause one-shot has the same blind spot; an hour that ran out on the wall clock frees the queue.
+                ReadThenRelease();
                 return false; // every window gets these; DefWindowProc gives the reply
             default:
                 return false;
@@ -608,14 +619,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// One digest for everything that waited, once nothing holds events back; its content is the panel work's.
-    /// Called when the suppression changes and when the island hides, the two ways a wait can end.
+    /// Called when the suppression changes, when the island hides and when a pause ends, the ways a wait can end.
     /// </summary>
     private void ReleaseEvents()
     {
-        if (events.Count == 0
-            || holdEvents
-            || TriggerQueue.IslandBusy(machine.State, activity)
-            || !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules))
+        if (events.Count == 0 || holdEvents || EventsWait())
         {
             return;
         }
@@ -649,14 +657,28 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
         else
         {
-            // Paused: the events are dropped, as every event is while the island is paused, and the ring with the
-            // timer's own.
-            if (shown.Any(IsTimerDone))
+            // The callers asked about the pause and the suppression a moment ago. Should either have changed since,
+            // the events wait again, and a finished timer keeps its ring for its own pill.
+            foreach (var e in shown)
             {
-                finished = null;
+                events.Offer(e, suppressed: true);
             }
+        }
+    }
 
-            UpdateRing();
+    private bool EventsWait() =>
+        TriggerQueue.Waits(pause.IsPaused(DateTimeOffset.Now), Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules), machine.State, activity);
+
+    /// <summary>
+    /// A pause, a sleep or a clock change ended a wait. Focus and quiet hours may have started during it with no event
+    /// to hear, so the notification state is read fresh before the queue goes out, as Raise does. No event waiting,
+    /// no read.
+    /// </summary>
+    private void ReadThenRelease()
+    {
+        if (events.Count > 0)
+        {
+            watch.ReadNotificationState(ReleaseEvents);
         }
     }
 

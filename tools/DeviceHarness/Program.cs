@@ -37,7 +37,6 @@ switch (args.FirstOrDefault())
         RoundTrip("Audio.SetVolume(7)", () => Audio.SetVolume(7));
         RoundTrip("Audio.SetMute(true)", () => Audio.SetMute(true));
         RoundTrip("Display.SetBrightness(50)", () => Display.SetBrightness(50));
-        Thread.Sleep(3000); // let the theme broadcast finish before the process exits
         break;
 
     default:

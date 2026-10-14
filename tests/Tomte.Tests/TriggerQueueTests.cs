@@ -56,4 +56,48 @@ public class TriggerQueueTests
         Assert.False(TriggerQueue.IslandBusy(IslandState.Hidden, IslandActivity.None));
         Assert.Equal(["Timer done"], queue.Release().Select(e => e.Text));
     }
+
+    [Theory]
+    [InlineData(false, true, IslandState.Hidden, IslandActivity.None, false)]
+    [InlineData(true, true, IslandState.Hidden, IslandActivity.None, true)] // the tray pause holds events like Focus
+    [InlineData(true, true, IslandState.Compact, IslandActivity.Peek, true)] // even where the peek pill would give way
+    [InlineData(false, false, IslandState.Hidden, IslandActivity.None, true)] // Focus, Do Not Disturb, fullscreen
+    [InlineData(false, true, IslandState.Panels, IslandActivity.None, true)]
+    public void AnEventWaitsWhilePausedSuppressedOrBusy(bool paused, bool allowed, IslandState state, IslandActivity activity, bool waits) =>
+        Assert.Equal(waits, TriggerQueue.Waits(paused, allowed, state, activity));
+
+    [Theory]
+    [InlineData(false)] // resumed from the tray
+    [InlineData(true)] // the hour ran out: the tray's one-shot resumes too
+    public void AnEventRaisedWhilePausedWaitsAndShowsWhenThePauseEnds(bool hourRanOut)
+    {
+        var now = new DateTimeOffset(2026, 10, 14, 12, 0, 0, TimeSpan.Zero);
+        var pause = new PauseState();
+        var queue = new TriggerQueue();
+        IReadOnlyList<IslandEvent> shown = [];
+        // What the controller does when a pause ends: release, unless something else still holds events.
+        pause.Ended += () =>
+        {
+            if (!TriggerQueue.Waits(pause.IsPaused(now), allowed: true, IslandState.Hidden, IslandActivity.None))
+            {
+                shown = queue.Release();
+            }
+        };
+
+        pause.PauseFor(TimeSpan.FromHours(1), now);
+        Assert.False(queue.Offer(At(0, "Timer done"), TriggerQueue.Waits(pause.IsPaused(now), allowed: true, IslandState.Hidden, IslandActivity.None)));
+        // The tray's pause hides the island, and the hide's release must not take them out into the pause.
+        Assert.True(TriggerQueue.Waits(pause.IsPaused(now), allowed: true, IslandState.Hidden, IslandActivity.None));
+        Assert.Equal(1, queue.Count);
+
+        if (hourRanOut)
+        {
+            now = now.AddHours(1);
+        }
+
+        pause.Resume();
+
+        Assert.Equal(["Timer done"], shown.Select(e => e.Text));
+        Assert.Equal(0, queue.Count);
+    }
 }

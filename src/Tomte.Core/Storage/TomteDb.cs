@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using Microsoft.Data.Sqlite;
 
@@ -15,6 +16,19 @@ public sealed class TomteDb(string? path = null)
 {
     // How long a statement waits for another connection's lock before it throws.
     private const int BusySeconds = 5;
+
+    // A set-aside copy is the file's name, ".bad-" and this stamp, and "-wal" after it for its log.
+    private const string StampFormat = "yyyyMMdd-HHmmss-fff";
+
+    // Set-aside copies can hold text the user later cleared, so only a few are kept: the oldest, which holds what the
+    // user had before the first damage, and the two newest.
+    private const int KeptCopies = 3;
+
+    /// <summary>
+    /// Raised with <see cref="FilePath"/>, on the thread that called <see cref="Open"/>, after this process set a
+    /// damaged file aside. Another process's set-aside is not raised here; <see cref="TakeSetAsideNotice"/> sees both.
+    /// </summary>
+    public static event Action<string>? FileSetAside;
 
     public static string DefaultPath { get; } = Path.Combine(Path.GetDirectoryName(SettingsStore.DefaultPath)!, "tomte.db");
 
@@ -35,7 +49,8 @@ public sealed class TomteDb(string? path = null)
     /// seen), seconds behind a stuck lock. Call it only from a worker thread, never from the island's
     /// thread, the hook thread, or inside a drop or clipboard callback.
     /// A file that is not a database, or whose schema is damaged, is renamed to tomte.db.bad-(time)
-    /// and an empty one takes its place, so everything stored so far is gone from the app.
+    /// and an empty one takes its place, so everything stored so far is gone from the app. The oldest
+    /// such copy and the two newest are kept, the others deleted, and a notice is left for the user.
     /// </summary>
     /// <exception cref="SqliteException">Locked for longer than the wait, disk full, access denied, or a step that is not valid SQL.</exception>
     /// <exception cref="IOException">The folder could not be made, or a damaged file could not be renamed because something else kept it open.</exception>
@@ -84,6 +99,35 @@ public sealed class TomteDb(string? path = null)
             gate.ReleaseMutex();
         }
     }
+
+    /// <summary>
+    /// True once for each time a damaged file was set aside, by this process or another Tomte process using the same
+    /// file, since the last call that returned true; the caller tells the user. Reads and deletes a small marker file,
+    /// so it never loads SQLite and is cheap enough for start-up.
+    /// </summary>
+    public bool TakeSetAsideNotice()
+    {
+        string marker = NoticePath;
+        if (!File.Exists(marker))
+        {
+            return false;
+        }
+
+        // The claim is an exclusive open that deletes the file on close: of callers at once, one gets it and the rest a
+        // sharing violation or a missing file. A rename would not do: two renames of one file can both succeed.
+        try
+        {
+            using var claim = new FileStream(marker, FileMode.Open, FileAccess.Read, FileShare.None, 1, FileOptions.DeleteOnClose);
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Taken by another caller, or not this one's to take.
+            return false;
+        }
+    }
+
+    private string NoticePath => FilePath + ".set-aside";
 
     // only damage the open itself runs into is caught (the header, the schema, a feature's migration). A bad page
     // deep in a table throws from the feature's own query every time; PRAGMA quick_check on a process's first open would
@@ -229,7 +273,7 @@ public sealed class TomteDb(string? path = null)
 
     private void SetAside()
     {
-        string bad = $"{FilePath}.bad-{DateTime.Now:yyyyMMdd-HHmmss-fff}";
+        string bad = $"{FilePath}.bad-{DateTime.Now.ToString(StampFormat, CultureInfo.InvariantCulture)}";
         string log = FilePath + "-wal";
         for (int attempt = 0; ; attempt++)
         {
@@ -243,7 +287,7 @@ public sealed class TomteDb(string? path = null)
                 }
 
                 File.Move(FilePath, bad);
-                return;
+                break;
             }
             catch (IOException)
             {
@@ -264,6 +308,68 @@ public sealed class TomteDb(string? path = null)
 
                 Thread.Sleep(50);
             }
+        }
+
+        try
+        {
+            // Kept in a file, so a set-aside in the settings window or a job run reaches the shell too.
+            File.WriteAllText(NoticePath, Path.GetFileName(bad));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The copy is kept; only the notice is lost.
+        }
+
+        FileSetAside?.Invoke(FilePath);
+        try
+        {
+            DeleteOldCopies(Path.GetFileName(bad));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The folder could not be listed: every copy stays until the next set-aside.
+        }
+    }
+
+    // Only copies this class made: in the database's own folder, named after the database, ".bad-" and a stamp in
+    // StampFormat, with "-wal" for a log. A file and its log share a stamp and go together. Anything else is left alone.
+    // Kept: the copy just made, even when older copies carry a later stamp (a clock set back, a move west); the oldest,
+    // which holds what the user had before the first damage; and the newest of the rest.
+    private void DeleteOldCopies(string kept)
+    {
+        string prefix = Path.GetFileName(FilePath) + ".bad-";
+        string keptStamp = kept[prefix.Length..];
+        var copies = Directory.EnumerateFiles(Path.GetDirectoryName(FilePath)!, prefix + "*")
+            // The pattern also matches short 8.3 names; the long name is what counts.
+            .Where(path => Path.GetFileName(path).StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Select(path => (Path: path, Stamp: Stamp(Path.GetFileName(path)[prefix.Length..])))
+            .Where(copy => copy.Stamp is not null)
+            .GroupBy(copy => copy.Stamp, StringComparer.Ordinal)
+            .ToList();
+        // Among the others: a clock set back can give the copy just made the lowest stamp.
+        string? oldest = copies.Select(group => group.Key).Where(stamp => stamp != keptStamp).Min(StringComparer.Ordinal);
+        var old = copies
+            .OrderByDescending(group => group.Key == keptStamp)
+            .ThenByDescending(group => group.Key == oldest)
+            .ThenByDescending(group => group.Key, StringComparer.Ordinal) // fixed width, so newest first
+            .Skip(KeptCopies)
+            .SelectMany(group => group);
+        foreach (var (path, _) in old)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Open in another program, or not ours to delete: it stays, and the next set-aside tries again.
+            }
+        }
+
+        static string? Stamp(string rest)
+        {
+            string stamp = rest.EndsWith("-wal", StringComparison.Ordinal) ? rest[..^"-wal".Length] : rest;
+            return DateTime.TryParseExact(stamp, StampFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out _) ? stamp : null;
         }
     }
 }

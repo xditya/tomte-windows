@@ -201,7 +201,7 @@ internal sealed unsafe class TrayIcon : IDisposable
                 break;
             case PauseHourItem:
                 pause.PauseFor(TimeSpan.FromHours(1), now);
-                // One timer for the expiry, only to refresh the tooltip; triggers read IsPaused when they fire.
+                // One timer for the expiry: it ends the pause, so events that waited show, and refreshes the tooltip.
                 PInvoke.SetTimer(hwnd, PauseTimer, (uint)TimeSpan.FromHours(1).TotalMilliseconds, null);
                 Update(NOTIFY_ICON_DATA_FLAGS.NIF_TIP | NOTIFY_ICON_DATA_FLAGS.NIF_SHOWTIP);
                 Paused?.Invoke();
@@ -242,6 +242,10 @@ internal sealed unsafe class TrayIcon : IDisposable
         {
             case PInvoke.WM_TIMER when wParam.Value == PauseTimer:
                 PInvoke.KillTimer(hwnd, PauseTimer);
+                // Every other pause choice kills or restarts this one-shot, so the hour is what ran out. A one-shot can
+                // fire a few milliseconds early; ending the pause here rather than asking IsPaused keeps that from
+                // leaving the waiting events stuck.
+                pause.Resume();
                 Update(NOTIFY_ICON_DATA_FLAGS.NIF_TIP | NOTIFY_ICON_DATA_FLAGS.NIF_SHOWTIP);
                 return new LRESULT(0);
             case PInvoke.WM_DPICHANGED:

@@ -224,4 +224,47 @@ public sealed class SettingsTests : IDisposable
         pause.Resume();
         Assert.False(pause.IsPaused(now));
     }
+
+    [Fact]
+    public void ASaveOfSomethingElseLeavesTheChordsAndTheRevealSettingsEqual()
+    {
+        // The shell re-registers hotkeys and restarts pointer tracking only when these compare unequal, and a save
+        // from the settings window reaches it as new objects read back from the file. A collection in either record
+        // would compare by reference and make every save look like a change.
+        using var store = new SettingsStore(File);
+        var before = store.Current;
+        store.Save(before with { FirstRunHintShown = true, AlwaysAllowedTools = ["set_dark_mode"] });
+        var after = SettingsStore.Load(File);
+
+        Assert.NotSame(before.Reveal, after.Reveal);
+        Assert.True(after.Hotkeys == before.Hotkeys);
+        Assert.True(after.Reveal == before.Reveal);
+        Assert.True(after.Hotkeys.With(HotkeyAction.Summon, "") != before.Hotkeys);
+        Assert.True((after.Reveal with { DwellMs = 0 }) != before.Reveal);
+    }
+
+    [Fact]
+    public void EndingAPauseIsAnnouncedOnceAndSwitchingBetweenPausesIsNot()
+    {
+        var now = new DateTimeOffset(2026, 10, 14, 12, 0, 0, TimeSpan.Zero);
+        var pause = new PauseState();
+        int ended = 0;
+        pause.Ended += () => ended++;
+
+        pause.Resume();
+        Assert.Equal(0, ended);
+
+        pause.PauseFor(TimeSpan.FromHours(1), now);
+        pause.PauseUntilRestart();
+        pause.PauseFor(TimeSpan.FromHours(1), now);
+        Assert.Equal(0, ended);
+
+        pause.Resume();
+        pause.Resume();
+        Assert.Equal(1, ended);
+
+        pause.PauseUntilRestart();
+        pause.Resume();
+        Assert.Equal(2, ended);
+    }
 }

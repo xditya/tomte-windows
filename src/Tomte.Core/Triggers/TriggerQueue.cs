@@ -8,9 +8,9 @@ public sealed record IslandEvent(string Text, DateTimeOffset At)
 }
 
 /// <summary>
-/// Events arrive while Focus, Do Not Disturb or a fullscreen app may be on, or while the island is already
-/// showing something. Those wait here, in arrival order, and come out together once the wait ends so the island
-/// can show them as one digest.
+/// Events arrive while the tray pause, Focus, Do Not Disturb or a fullscreen app may be on, or while the island is
+/// already showing something. Those wait here, in arrival order, and come out together once the wait ends so the
+/// island can show them as one digest.
 /// </summary>
 public sealed class TriggerQueue
 {
@@ -24,6 +24,14 @@ public sealed class TriggerQueue
     /// </summary>
     public static bool IslandBusy(IslandState state, IslandActivity activity) =>
         state != IslandState.Hidden && !activity.HasFlag(IslandActivity.Peek);
+
+    /// <summary>
+    /// Whether an event waits now: while the tray pause is on, while the suppression check refuses events
+    /// (<paramref name="allowed"/> false: Focus, Do Not Disturb, quiet hours, a fullscreen app), and while the
+    /// island is busy. A pause holds events like Focus does; it does not drop them.
+    /// </summary>
+    public static bool Waits(bool paused, bool allowed, IslandState state, IslandActivity activity) =>
+        paused || !allowed || IslandBusy(state, activity);
 
     /// <summary>True when the event should show now; otherwise it has been queued.</summary>
     public bool Offer(IslandEvent e, bool suppressed)

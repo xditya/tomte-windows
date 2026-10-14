@@ -4,11 +4,15 @@ namespace Tomte.Core;
 /// The tray's pause. While paused no trigger reveals the island and clipboard history keeps nothing;
 /// "Open island" from the tray still works. Kept in memory only, so "until restart" ends with the
 /// process. Callers pass the time in, so nothing here runs on a timer: a trigger asks
-/// <see cref="IsPaused"/> when it fires. The clipboard listener asks from its own thread.
+/// <see cref="IsPaused"/> when it fires, and the tray's own one-shot calls <see cref="Resume"/> when a
+/// timed pause runs out. The clipboard listener asks from its own thread.
 /// </summary>
 public sealed class PauseState
 {
     private readonly Lock gate = new();
+
+    /// <summary>A pause ended: resumed from the tray, or its hour ran out. Events that waited may show now.</summary>
+    public event Action? Ended;
 
     public DateTimeOffset? Until { get; private set; }
 
@@ -42,10 +46,18 @@ public sealed class PauseState
 
     public void Resume()
     {
+        bool was;
         lock (gate)
         {
+            was = UntilRestart || Until is not null;
             UntilRestart = false;
             Until = null;
+        }
+
+        // Outside the lock: the handler asks IsPaused and shows the island.
+        if (was)
+        {
+            Ended?.Invoke();
         }
     }
 

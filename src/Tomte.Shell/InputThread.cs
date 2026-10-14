@@ -53,6 +53,7 @@ internal static unsafe class InputThread
     private static HHOOK hook;
     private static SettingsStore store = null!;
     private static RevealSettings reveal = null!;
+    private static HotkeySettings? hotkeys;
     private static EdgePushDetector detector = null!;
     private static HoldDetector hold = null!;
     private static ushort ramblerKey;
@@ -172,10 +173,28 @@ internal static unsafe class InputThread
         }
     }
 
-    /// <summary>Thresholds, the hook, raw mouse input and the hotkeys, from the current settings.</summary>
+    /// <summary>
+    /// Thresholds, the hook, raw mouse input and the hotkeys, from the current settings. Each part is applied only
+    /// when its own settings changed (records compare by value), so a save of something else interrupts no push or
+    /// dwell in progress and re-registers no chord.
+    /// </summary>
     private static void Apply(TomteSettings settings)
     {
-        reveal = settings.Reveal;
+        if (settings.Reveal != reveal)
+        {
+            ApplyReveal(settings.Reveal);
+        }
+
+        if (settings.Hotkeys != hotkeys)
+        {
+            hotkeys = settings.Hotkeys;
+            Register(settings.Hotkeys);
+        }
+    }
+
+    private static void ApplyReveal(RevealSettings next)
+    {
+        reveal = next;
         detector = new EdgePushDetector(reveal.PushCounts, reveal.TouchpadPushCounts, reveal.PushWindowMs);
         PInvoke.KillTimer(window, DwellTimer);
 
@@ -191,7 +210,10 @@ internal static unsafe class InputThread
             PInvoke.UnhookWindowsHookEx(hook);
             hook = HHOOK.Null;
         }
+    }
 
+    private static void Register(HotkeySettings chords)
+    {
         foreach (var r in registrations)
         {
             PInvoke.UnregisterHotKey(window, (int)r.Action + 1);
@@ -200,7 +222,7 @@ internal static unsafe class InputThread
         var next = new List<Registration>(5);
         foreach (var action in Enum.GetValues<HotkeyAction>())
         {
-            string chord = settings.Hotkeys[action];
+            string chord = chords[action];
             if (!Hotkey.TryParse(chord, out var hotkey, out _))
             {
                 continue; // empty means no shortcut; an unparsable one was refused by the settings window
