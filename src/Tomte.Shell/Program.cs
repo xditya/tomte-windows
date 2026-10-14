@@ -39,8 +39,22 @@ internal static class Program
         bool rambler = args.Contains("--rambler");
         // No prompt box renders yet, so circle-to-ask takes its typed question from here.
         string? captureQuestion = Arg(args, "--debug-capture");
+        // --debug-timer <minutes>: the only way to start the timer until the island takes input.
+        TimeSpan? debugTimer = null;
+        if (args.Contains("--debug-timer"))
+        {
+            if (!TimerRun.TryParseMinutes(Arg(args, "--debug-timer"), out var duration))
+            {
+                // A windowed app has no console of its own; this reaches a redirected stderr.
+                Console.Error.WriteLine(FormattableString.Invariant($"usage: --debug-timer <minutes>, a number from {TimerRun.MinDuration.TotalMinutes:0.###} (one second) to {TimerRun.MaxDuration.TotalMinutes:0} (one day)"));
+                return 2;
+            }
+
+            debugTimer = duration;
+        }
+
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
-        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || logArg is not null;
+        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null;
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
@@ -84,7 +98,13 @@ internal static class Program
 
         using var store = new SettingsStore();
         var pause = new PauseState();
-        var triggers = new TriggerController(island, store, pause, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
+        var timer = new IslandTimer(IslandTimer.DefaultPath);
+        var triggers = new TriggerController(island, store, pause, timer, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
+        if (debugTimer is TimeSpan length)
+        {
+            timer.Run = TimerRun.Starting(DateTimeOffset.Now, length);
+        }
+
         if (rambler)
         {
             triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);

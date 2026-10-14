@@ -9,14 +9,17 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// Turns trigger messages into state changes on the UI thread. The pause and the suppression check run before
-/// every MorphTo. Owns the retraction, hover, event, peek, first-run and drag timers, all SetTimer one-shots on
-/// the island window, so nothing runs while nothing happens.
+/// every MorphTo. Owns the retraction, hover, event, peek, first-run, drag, timer-done and quiet-recheck timers,
+/// all SetTimer one-shots on the island window, so nothing runs while nothing happens.
 /// </summary>
 internal sealed unsafe partial class TriggerController : IDisposable
 {
-    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6;
+    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6, TimerDoneTimer = 7, QuietTimer = 8;
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
+
+    // The timer's done event; the finished ring belongs to it and to no other event's pill.
+    private const string TimerDoneText = "Timer done";
 
     // Timings that are fixed rather than exposed: Compact opens Panels after a hover dwell, an event shows for
     // four seconds, window changes are debounced before peek re-checks, the first-run hint stays ten seconds.
@@ -30,27 +33,43 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private readonly DesktopWatch watch;
     private readonly DropTarget dropTarget;
     private readonly Action<string>? log;
+    private readonly IslandTimer timer;
+    private readonly TimerRing ring;
+    private TimerRun? finished;
+    private IReadOnlyList<IslandEvent> showing = [];
     private Rambler? rambler;
     private CaptureOverlay? overlay;
-    private bool capturing;
+    private bool capturing, holdEvents;
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
 
-    public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, Action<string>? log)
+    public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
     {
         this.island = island;
         this.store = store;
         this.pause = pause;
+        this.timer = timer;
         this.log = log;
+        ring = new TimerRing(island.Compositor);
+        island.Content.Children.InsertAtTop(ring.Visual);
+        // The timer has no lock and is only touched on this thread. Changed is queued, not run in place, so the
+        // caller (the debug switch, a completion inside OnTimer) finishes before the one-shot and the ring re-sync.
+        timer.Changed += () => island.Queue.TryEnqueue(ArmTimer);
+        ArmTimer();
         settings = store.Current;
         island.Message = HandleMessage;
-        island.LayoutChanged = PushZone;
+        island.LayoutChanged = () =>
+        {
+            PushZone();
+            // A scale change while the pill rests; the ring is sized in DIPs times the scale.
+            UpdateRing();
+        };
         PushZone();
 
         watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0);
         watch.Changed += OnSuppressionChanged;
-        watch.WindowsChanged += SchedulePeek;
+        watch.WindowsChanged += OnWindowsChanged;
         dropTarget = new DropTarget(island.Hwnd);
         dropTarget.Entered += OnDragEnter;
 
@@ -104,15 +123,24 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
 
-    /// <summary>An internal event: shows Compact for the hold time, or waits while Focus, DND or fullscreen is on.</summary>
+    /// <summary>
+    /// An internal event: shows Compact for the hold time. It waits while Focus, DND or fullscreen is on, and while
+    /// the island is showing something else; then it shows once that ends. Nothing raised here is dropped for
+    /// arriving at a busy moment.
+    /// </summary>
     public void Raise(IslandEvent e)
     {
         // Focus and quiet hours change with no event to hear, so the notification state is read for each event.
         watch.ReadNotificationState(() =>
         {
-            if (events.Offer(e, !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules)))
+            bool held = TriggerQueue.IslandBusy(machine.State, activity) || !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules);
+            if (events.Offer(e, held))
             {
-                ShowEvent();
+                ShowEvent([e]);
+            }
+            else
+            {
+                log?.Invoke($"events: \"{e.Text}\" waits, {events.Count} queued (island {machine.State})");
             }
         });
     }
@@ -234,6 +262,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case PInvoke.WM_TIMER:
                 OnTimer(wParam);
                 return true;
+            case PInvoke.WM_TIMECHANGE:
+            case PInvoke.WM_POWERBROADCAST when wParam == PInvoke.PBT_APMRESUMEAUTOMATIC:
+                // The end time is absolute but the one-shot is an interval, and it neither follows a clock that was
+                // set nor counts on time across a sleep. Work the wait out again; an end that has passed fires at once.
+                log?.Invoke(message == PInvoke.WM_TIMECHANGE ? "clock changed" : "resumed from sleep");
+                ArmTimer();
+                return false; // every window gets these; DefWindowProc gives the reply
             default:
                 return false;
         }
@@ -272,6 +307,25 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 break;
             case PeekTimer:
                 EvaluatePeek();
+                break;
+            case QuietTimer:
+                // A change in the answer comes back through OnSuppressionChanged, which releases the queue.
+                watch.ReadNotificationState();
+                break;
+            case TimerDoneTimer:
+                var run = timer.Run;
+                if (timer.TryComplete(DateTimeOffset.Now))
+                {
+                    finished = run;
+                    log?.Invoke($"timer: done, ended {run!.EndsAt:O}");
+                    Raise(new IslandEvent(TimerDoneText, DateTimeOffset.Now));
+                }
+                else
+                {
+                    // Early: the wall clock was set back, or the wait was capped. Wait for what is left.
+                    ArmTimer();
+                }
+
                 break;
         }
     }
@@ -382,7 +436,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     // Begin opens the 262 wide pill and sets the mascot itself.
                     rambler.Begin();
-                    activity |= IslandActivity.Rambling;
+                    // A hold started on the peek pill is no longer peek: an event, a window under the zone or an edge
+                    // push would otherwise take the pill away mid-recording.
+                    activity = (activity & ~IslandActivity.Peek) | IslandActivity.Rambling;
+                    // The rambler's pill has no room for the ring, and it changes state without Go.
+                    UpdateRing();
                     pointerInside = false;
                     InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
                 }
@@ -421,21 +479,49 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
         {
+            // An event pill taken down by the lock screen was never seen: after a sleep the lock can land a moment
+            // after the pill. Its events go back in the queue for the unlock, and a finished timer keeps its ring.
+            var unseen = eventShowing && s.Secure ? showing : [];
+            var ringKept = finished;
             Hide();
+            foreach (var e in unseen)
+            {
+                events.Offer(e, suppressed: true);
+            }
+
+            if (unseen.Count > 0)
+            {
+                finished = ringKept;
+                log?.Invoke($"events: {unseen.Count} hidden by the lock before the hold ran out, queued again");
+            }
         }
 
-        if (events.Count > 0 && Suppression.Allows(RevealTrigger.Event, s, settings.AppRules))
-        {
-            // One digest for everything that waited; its content is the panel work's.
-            var waited = events.Release();
-            log?.Invoke($"events: showing digest of {waited.Count}");
-            ShowEvent();
-        }
+        ReleaseEvents();
     }
 
-    private void ShowEvent()
+    /// <summary>
+    /// One digest for everything that waited, once nothing holds events back; its content is the panel work's.
+    /// Called when the suppression changes and when the island hides, the two ways a wait can end.
+    /// </summary>
+    private void ReleaseEvents()
     {
-        if (machine.State != IslandState.Hidden && !activity.HasFlag(IslandActivity.Peek))
+        if (events.Count == 0
+            || holdEvents
+            || TriggerQueue.IslandBusy(machine.State, activity)
+            || !Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules))
+        {
+            return;
+        }
+
+        var waited = events.Release();
+        log?.Invoke($"events: showing digest of {waited.Count}");
+        ShowEvent(waited);
+    }
+
+    private void ShowEvent(IReadOnlyList<IslandEvent> shown)
+    {
+        // Callers queue while the island is busy; this is only the last guard against morphing over a panel.
+        if (TriggerQueue.IslandBusy(machine.State, activity))
         {
             return;
         }
@@ -443,8 +529,76 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (Reveal(RevealTrigger.Event, IslandState.Compact))
         {
             eventShowing = true;
-            armed = true;
+            showing = shown;
+            // Not armed. Pointer tracking reports "outside" on its first sample, and an armed pill would take that
+            // as the pointer leaving and retract 400 ms later, well inside the hold. Only a pointer that has been
+            // on this pill may retract it early; a peek pill the pointer brushed before may have left the flag set,
+            // and a retract it started in its last 400 ms would fire into this pill. The event timer owns the end.
+            armed = false;
+            PInvoke.KillTimer(island.Hwnd, RetractTimer);
             PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
+            island.Mascot.Set(MascotState.Result);
+            UpdateRing();
+        }
+        else
+        {
+            // Paused: the events are dropped, as every event is while the island is paused, and the ring with the
+            // timer's own.
+            if (shown.Any(IsTimerDone))
+            {
+                finished = null;
+            }
+
+            UpdateRing();
+        }
+    }
+
+    /// <summary>
+    /// One SetTimer one-shot for the time left to the absolute end, or none. Called at start-up, after a resume
+    /// from sleep and after a clock change, so an end that passed while the app was down or the PC slept fires
+    /// at once; an early fire comes back here for what is left. Also re-syncs the ring to the wall clock.
+    /// </summary>
+    private void ArmTimer()
+    {
+        PInvoke.KillTimer(island.Hwnd, TimerDoneTimer);
+        if (timer.DueIn(DateTimeOffset.Now) is TimeSpan due)
+        {
+            PInvoke.SetTimer(island.Hwnd, TimerDoneTimer, (uint)Math.Clamp(Math.Ceiling(due.TotalMilliseconds), 0, int.MaxValue), null);
+            log?.Invoke($"timer: ends {timer.Run!.EndsAt:O}, in {due}");
+        }
+
+        UpdateRing();
+    }
+
+    /// <summary>
+    /// The ring shows in Compact while a timer runs, and full from the moment it ends until its done pill has
+    /// been shown. Not tied to the event pill being up: the done event takes a thread hop to show, and a peek
+    /// pill that is already up at the end would lose the ring for those frames.
+    /// </summary>
+    private void UpdateRing()
+    {
+        var run = timer.Run ?? finished;
+        if (machine.State == IslandState.Compact && run is not null && !activity.HasFlag(IslandActivity.Rambling))
+        {
+            ring.Show(run, DateTimeOffset.Now, island.Scale, island.Mascot.Enabled);
+        }
+        else
+        {
+            ring.Hide();
+        }
+    }
+
+    private static bool IsTimerDone(IslandEvent e) => e.Text == TimerDoneText;
+
+    private void OnWindowsChanged()
+    {
+        SchedulePeek();
+        if (events.Count > 0)
+        {
+            // Focus and quiet hours end with no event to hear, and the notification state was last read when the
+            // waiting event was raised. A window change is the next sign of the user doing something, so the
+            // state is read again then, after the same debounce as peek. No event waiting, no read.
+            PInvoke.SetTimer(island.Hwnd, QuietTimer, PeekDebounceMs, null);
         }
     }
 
@@ -547,6 +701,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var geometry = IslandGeometry.For(state, Math.Min(size.W, 0.6 * monitorW), Math.Min(size.H, 0.5 * monitorH));
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
+        // After MorphTo, which picks up a new monitor scale.
+        UpdateRing();
         if (log is not null)
         {
             morph.ContinueWith(_ => log($"{from}->{state} settled in {island.LastMorphMs:F0}ms, {island.LastMorphTicks} ticks"), TaskScheduler.FromCurrentSynchronizationContext());
@@ -574,7 +730,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         bool wasPeek = activity.HasFlag(IslandActivity.Peek);
         activity = IslandActivity.None;
+        if (eventShowing && showing.Any(IsTimerDone))
+        {
+            // The finished timer keeps its full ring until its done pill has been shown. A hide of anything else,
+            // another event's pill included, while that event still waits, must not take it.
+            finished = null;
+        }
+
         armed = eventShowing = firstRunShowing = dragEntered = false;
+        showing = [];
         InputThread.StopTrackingPointer();
         InputThread.SetEscape(false);
         if (machine.State != IslandState.Hidden)
@@ -582,11 +746,17 @@ internal sealed unsafe partial class TriggerController : IDisposable
             Go(IslandState.Hidden);
         }
 
+        // The rambler retracts on its own, so Go may not have run: make sure no ring animation outlives the pill.
+        UpdateRing();
+
         // The pill was peeking before something opened on top of it; nothing has moved under it, so it comes back.
         if (peekWanted && !wasPeek)
         {
             SchedulePeek();
         }
+
+        // Events that arrived while the island was showing something waited for this.
+        ReleaseEvents();
     }
 }
 
@@ -604,7 +774,18 @@ internal sealed partial class TriggerController
         try
         {
             nint foreground = (nint)PInvoke.GetForegroundWindow();
-            Hide();
+            // This hide must not show a waiting event: the overlay comes next, and Compact cannot go to Capture.
+            // The capture's own exits release the queue.
+            holdEvents = true;
+            try
+            {
+                Hide();
+            }
+            finally
+            {
+                holdEvents = false;
+            }
+
             PInvoke.GetCursorPos(out var cursor);
             machine.TransitionTo(IslandState.Capture);
             island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);
@@ -643,6 +824,8 @@ internal sealed partial class TriggerController
         {
             machine.TransitionTo(IslandState.Hidden);
             island.Mascot.Follow(IslandState.Capture, IslandState.Hidden);
+            // An event raised while the overlay was up waited for the island to be free; this path skips Hide().
+            ReleaseEvents();
         }
     }
 }
