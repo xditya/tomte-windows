@@ -52,6 +52,9 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("Hotkeys"));
         page.Children.Add(Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), CopilotNote()]));
 
+        page.Children.Add(Header("Shortcuts"));
+        page.Children.Add(ShortcutsSection());
+
         page.Children.Add(Header("Reveal zone and thresholds"));
         page.Children.Add(Card(
             Row("Edge push", Note("Push the cursor up against the top edge to reveal."), RevealToggle(r => r.EdgePush, (r, v) => r with { EdgePush = v })),
