@@ -55,6 +55,8 @@ internal sealed class TextRenderer
             {
                 visual.Draw();
             }
+
+            DeviceReady?.Invoke();
         };
         // No device: the text stays undrawn and the rest of the island works.
         device.Failed += e => log?.Invoke($"text: no device: {e.Message}");
@@ -86,6 +88,14 @@ internal sealed class TextRenderer
         device.Add();
         return visual;
     }
+
+    /// <summary>The device landed; the text boxes, which are not text visuals, take their surfaces from it now.</summary>
+    internal event Action? DeviceReady;
+
+    /// <summary>A text box uses the device too, from now until <see cref="Let"/>.</summary>
+    internal void Hold() => device.Add();
+
+    internal void Let() => device.Remove();
 
     internal void Failed(Exception e) => log?.Invoke($"text: a run was not drawn: {e.Message}");
 

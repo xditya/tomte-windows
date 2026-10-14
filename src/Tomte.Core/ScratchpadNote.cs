@@ -123,6 +123,32 @@ public sealed class ScratchpadNote : IScratchpad
     }
 
     /// <summary>
+    /// <see cref="Edit"/> only if the note is still <paramref name="basis"/>: false, and nothing changed, when
+    /// something else changed it since the editor last read it. An editor that holds its own copy of the text uses
+    /// this, so a rambler note that lands between its read and its write is never overwritten.
+    /// </summary>
+    public bool TryEdit(string basis, string newText, int newCaret)
+    {
+        lock (gate)
+        {
+            ThrowIfNotLoaded();
+            if (text != basis)
+            {
+                return false;
+            }
+
+            caret = Math.Clamp(newCaret, 0, newText.Length);
+            if (newText != text)
+            {
+                text = newText;
+                MarkDirty();
+            }
+
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Reads the saved note. The first call loads it (and carries an earlier build's file over); later
     /// calls pick up a change another process saved, unless this one holds edits not yet saved, in
     /// which case the save merges the two.

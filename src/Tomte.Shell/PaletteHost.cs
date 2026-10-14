@@ -7,15 +7,15 @@ using Windows.UI.Composition;
 namespace Tomte.Shell;
 
 /// <summary>
-/// Drives the Palette state on the island for one session: opens at 640 x 150, grows toward 480
-/// with the gentle preset as the answer streams in, and hangs a placeholder where the prompt box
-/// goes. The text renderer (DirectWrite in-process or an on-demand XAML island, not decided) will
-/// replace the placeholder and measure the real height; until then the height is estimated from
-/// the answer length. Focus rule for that renderer: the window keeps WS_EX_NOACTIVATE and only
-/// activates when the user clicks into the prompt box. A voice command enters from the rambler's pill, and while
+/// Drives the Palette state on the island for one session: opens at 640 x 150 and grows toward 480
+/// with the gentle preset as the answer streams in. With the text renderer the palette shows its
+/// prompt box, chips, answer and footer (<see cref="PaletteView"/>) and grows to their measured
+/// height; without it (the rambler's voice palette) a placeholder marks the prompt box and the
+/// height is estimated from the answer length. The window activates only for the palette hotkey
+/// or a click into the prompt box (<see cref="TypingFocus"/>). A voice command enters from the rambler's pill, and while
 /// its session waits for the user's answer a second placeholder marks where the confirmation goes.
 /// </summary>
-internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machine, Action<string> log)
+internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachine machine, Action<string> log, TextRenderer? text = null, TypingFocus? focus = null, Action? hide = null)
 {
     private double _targetHeight;
 
@@ -35,7 +35,8 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
         island.PanelLook = true;
         // Esc closes the palette, as it does every state the user opened on purpose.
         InputThread.SetEscape(true);
-        var placeholder = Placeholder(12);
+        var view = text is null ? null : new PaletteView(island, machine, text, focus, session, (float)Width, null);
+        var placeholder = view is null ? Placeholder(12) : null;
         try
         {
             _targetHeight = PanelSize.PaletteMinHeight;
@@ -52,7 +53,7 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
             {
                 if (machine.State != IslandState.Palette)
                     return;
-                double height = HeightFor(session);
+                double height = view?.Height ?? HeightFor(session);
                 if (height == _targetHeight)
                     return;
                 _targetHeight = height;
@@ -78,7 +79,8 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
         }
         finally
         {
-            island.Content.Children.Remove(placeholder);
+            if (placeholder is not null)
+                island.Content.Children.Remove(placeholder);
         }
     }
 

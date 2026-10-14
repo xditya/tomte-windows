@@ -113,17 +113,12 @@ public sealed class PanelLayoutTests
     }
 
     [Fact]
-    public void OnlyTheNotesStartGoesToTheLayout()
+    public void TheNoteIsTypedInsideItsCard()
     {
-        Assert.Equal("abcde\n\nxyz", ScratchpadPanelLayout.Opening("abcde\r\n\nxyz", 10));
-        Assert.Equal("abcde\nmore", ScratchpadPanelLayout.Opening("abcde\nmore\nand more", 2));
-        Assert.Equal("", ScratchpadPanelLayout.Opening("", 10));
-        // A long note is cut long before the card's lines could hold it.
-        Assert.Equal(400, ScratchpadPanelLayout.Opening(new string('x', 100_000), 2).Length);
-        // 320 tall less the strip: a 202 DIP card, 10 DIP of padding at either end, 19.5 a line.
+        // 320 tall less the strip: a 202 DIP card, the text box 12 in from its sides and 10 from its ends.
         var layout = new ScratchpadPanelLayout(new Vector2(520, 278));
-        Assert.Equal(9, layout.VisibleLines);
-        Assert.Equal(9 * ScratchpadPanelLayout.LineHeight, layout.NoteText.Height);
+        Assert.Equal(202, layout.Note.Height, 0.01);
+        Assert.Equal(RectangleF.FromLTRB(layout.Note.X + 12, layout.Note.Y + 10, layout.Note.Right - 12, layout.Note.Bottom - 10), layout.Editor);
     }
 
     [Fact]
@@ -193,8 +188,5 @@ public sealed class PanelLayoutTests
 
         Assert.Equal(layout.Head.X + title + 10, frame[1].Slot.X, 0.01);
         Assert.Equal(layout.Foot.Right, frame[3].Slot.Right, 0.01);
-        var (run, at) = layout.NoteRun("Call Mom\nGym 6:00 PM");
-        Assert.Equal(layout.VisibleLines, run.Lines);
-        Assert.Equal(new Vector2(layout.NoteText.X, layout.NoteText.Y), at);
     }
 }

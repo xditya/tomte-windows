@@ -22,7 +22,7 @@ using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
 
-internal static class Program
+internal static partial class Program
 {
     private const int QuitHotKey = 2;
     private const int MascotHotKey = 3;
@@ -284,13 +284,16 @@ internal static class Program
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var text = new TextRenderer(island, log);
+        var typing = StartTyping(island, triggers, store, text, log);
         var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, text, log));
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, text, log));
         panels.Register(new MediaPanel(island, media, text, () => DateTimeOffset.UtcNow, log));
-        panels.Register(new ScratchpadPanel(island, Scratchpad, text, log));
+        var scratchpad = new ScratchpadPanel(island, Scratchpad, text, typing, log);
+        panels.Register(scratchpad);
+        triggers.ScratchpadOpened = scratchpad.TakeKeys;
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
         panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), text, log));
         triggers.Panels = panels;
@@ -528,7 +531,7 @@ internal static class Program
                     log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette tool {step.Tool}: {step.Summary} -> {(step.IsError ? "error: " : "")}{step.Result.ReplaceLineEndings(" | ")}");
                 }
             };
-            var host = new PaletteHost(island, triggers.Machine, log.WriteLine);
+            var host = new PaletteHost(island, triggers.Machine, log.WriteLine, text, focus);
             await host.RunAsync(session);
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette answer: {session.AnswerText.ReplaceLineEndings(" | ")}");
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory after answer: {Memory()}");

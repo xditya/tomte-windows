@@ -150,6 +150,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
 
+    /// <summary>After the palette hotkey opened the Palette state: its content and its prompt box, which takes the keys.</summary>
+    public Action? PaletteOpened { get; set; }
+
+    /// <summary>After the scratchpad hotkey opened its tab: the note takes the keys.</summary>
+    public Action? ScratchpadOpened { get; set; }
+
     /// <summary>Which panel the Panels state shows and how large it is. Without one, Panels is an empty Shelf-sized shape.</summary>
     public PanelHost? Panels { get; set; }
 
@@ -557,11 +563,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     Panels?.Select(PanelId.Scratchpad);
                     Go(IslandState.Panels);
+                    ScratchpadOpened?.Invoke();
                 }
 
                 break;
             case HotkeyAction.Palette:
-                Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+                if (Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight)))
+                {
+                    PaletteOpened?.Invoke();
+                }
+
                 break;
             case HotkeyAction.Rambler when rambler is null:
                 log?.Invoke("rambler: no session configured (start with --rambler)");
@@ -879,6 +890,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
         // peek or the first-run hint, where swallowing the user's Esc in their own app would be a surprise. Once the
         // palette and the scratchpad activate the window they receive WM_KEYDOWN and this hotkey goes.
         InputThread.SetEscape(state is IslandState.Panels or IslandState.Palette);
+    }
+
+    /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
+    internal void Typing(bool on)
+    {
+        activity = on ? activity | IslandActivity.Typing : activity & ~IslandActivity.Typing;
+        if (!on && armed && !pointerInside && machine.State != IslandState.Hidden)
+        {
+            PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
+        }
     }
 
     internal void Hide()
