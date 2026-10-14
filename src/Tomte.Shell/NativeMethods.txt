@@ -142,3 +142,4 @@ ICompositorInterop
 ICompositionDrawingSurfaceInterop
 IDXGISurface
 ID3D11Resource
+ScreenToClient

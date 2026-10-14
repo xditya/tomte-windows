@@ -237,8 +237,8 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>A left button press on the island, in island space.</summary>
     public event Action<Vector2>? Pressed;
 
-    /// <summary>The wheel turned over the island: the raw delta, 120 a notch, positive away from the user.</summary>
-    public event Action<int>? Wheel;
+    /// <summary>The wheel turned over the island, at a point in island space: the raw delta, 120 a notch, positive away from the user.</summary>
+    public event Action<Vector2, int>? Wheel;
 
     /// <summary>The tomte at the island's left edge. Settings set Enabled and CapColor; features set its reactions.</summary>
     public Mascot Mascot { get; }
@@ -801,6 +801,14 @@ internal sealed unsafe class IslandWindow : IDisposable
     private Vector2 ToIsland(int x, int y) =>
         PanelSpace.FromPixels(x, y, root.Offset.X + (Content.Size.X - 2 * Margin) / 2, root.Offset.Y, scale);
 
+    /// <summary>The same from screen pixels, which is where the wheel message puts its point.</summary>
+    private Vector2 ScreenToIsland(int x, int y)
+    {
+        var point = new System.Drawing.Point(x, y);
+        PInvoke.ScreenToClient(Hwnd, &point);
+        return ToIsland(point.X, point.Y);
+    }
+
     /// <summary>Pointer input for whoever listens; like every handler here, it must not throw into the caller.</summary>
     private static LRESULT Guarded(Action<IslandWindow> action)
     {
@@ -848,7 +856,9 @@ internal sealed unsafe class IslandWindow : IDisposable
                 // The window never activates, but the mouse still reaches it.
                 return Guarded(i => i.Pressed?.Invoke(i.ToIsland((short)(lParam.Value & 0xFFFF), (short)((lParam.Value >> 16) & 0xFFFF))));
             case PInvoke.WM_MOUSEWHEEL:
-                return Guarded(i => i.Wheel?.Invoke((short)((wParam.Value >> 16) & 0xFFFF)));
+                // Unlike the button messages, the wheel's point is in screen pixels.
+                return Guarded(i => i.Wheel?.Invoke(
+                    i.ScreenToIsland((short)(lParam.Value & 0xFFFF), (short)((lParam.Value >> 16) & 0xFFFF)), (short)((wParam.Value >> 16) & 0xFFFF)));
             case PInvoke.WM_DPICHANGED:
                 return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
             case PInvoke.WM_DISPLAYCHANGE:

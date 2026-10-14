@@ -64,6 +64,11 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Func
         }
     }
 
+    /// <summary>Nothing here scrolls.</summary>
+    public void Wheel(Vector2 point, int delta)
+    {
+    }
+
     private void Update()
     {
         var playing = tracker.Current;

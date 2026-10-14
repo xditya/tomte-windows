@@ -101,6 +101,19 @@ public class PanelTests
     }
 
     [Fact]
+    public void PanelsAreCappedAtSixtyByFiftyPercentOfTheMonitor()
+    {
+        // 2560 x 1440 at 150% is 1706.7 x 960 DIPs: nothing is capped.
+        Assert.Equal((560, 360), PanelSize.Fit(PanelSize.Clipboard, (1706.7, 960)));
+        // 1366 x 768 at 125% is 1092.8 x 614.4 DIPs: 560 wide fits, 360 tall is cut to 307.2.
+        var fitted = PanelSize.Fit(PanelSize.Clipboard, (1092.8, 614.4));
+        Assert.Equal(560, fitted.W);
+        Assert.Equal(307.2, fitted.H, 6);
+        // 800 x 600 at 100%: 480 wide at most.
+        Assert.Equal(480, PanelSize.Fit(PanelSize.Shelf, (800, 600)).W, 6);
+    }
+
+    [Fact]
     public void TabSwitchIsPanelsReenteringItselfAndEveryTransitionIsHeard()
     {
         var machine = new IslandStateMachine();

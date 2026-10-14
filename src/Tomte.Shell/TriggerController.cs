@@ -746,8 +746,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         machine.TransitionTo(state);
         island.Mascot.Follow(from, state);
         island.PanelLook = state is IslandState.Panels or IslandState.Palette;
-        var (monitorW, monitorH) = island.MonitorSize;
-        var geometry = IslandGeometry.For(state, Math.Min(size.W, 0.6 * monitorW), Math.Min(size.H, 0.5 * monitorH));
+        var (width, height) = PanelSize.Fit(size, island.MonitorSize);
+        var geometry = IslandGeometry.For(state, width, height);
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.

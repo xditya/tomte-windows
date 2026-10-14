@@ -51,6 +51,10 @@ public static class PanelSize
     public const double PaletteMinHeight = 150;
     public const double PaletteMaxHeight = 480;
 
+    /// <summary>A size capped at 60% of the monitor's width and 50% of its height, both in DIPs.</summary>
+    public static (double W, double H) Fit((double W, double H) size, (double W, double H) monitor) =>
+        (Math.Min(size.W, 0.6 * monitor.W), Math.Min(size.H, 0.5 * monitor.H));
+
     public static (double W, double H) Of(PanelId id) => id switch
     {
         PanelId.Shelf => Shelf,
