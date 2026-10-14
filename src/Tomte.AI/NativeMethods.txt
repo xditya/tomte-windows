@@ -74,3 +74,4 @@ TOKEN_MANDATORY_LABEL
 QueryFullProcessImageName
 DwmGetWindowAttribute
 DWMWINDOWATTRIBUTE
+GetACP
