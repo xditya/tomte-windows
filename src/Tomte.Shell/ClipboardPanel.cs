@@ -40,7 +40,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
-        view = new View(island.Compositor, text, body, new ClipboardPanelLayout(size));
+        view = new View(island.Compositor, text, body, new ClipboardPanelLayout(size), island.Scale, log);
         watch.Changed += OnChanged;
         Reload();
     }
@@ -270,15 +270,18 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
         // Every text visual of the current build; the rows' own move with the scroll and land on whole pixels again.
         private readonly List<TextVisual> texts = [], rowTexts = [];
+        private readonly double scale;
+        private readonly Action<string>? log;
+        private ClipboardThumbs? thumbs;
 
         // Clear all, while history has rows: when it asks only its outline and word change.
         private CompositionRoundedRectangleGeometry? clearOutline;
         private CompositionColorBrush? clearStroke;
         private TextVisual? clearWord;
 
-        public View(Compositor compositor, TextRenderer text, ContainerVisual body, ClipboardPanelLayout layout)
+        public View(Compositor compositor, TextRenderer text, ContainerVisual body, ClipboardPanelLayout layout, double scale, Action<string>? log)
         {
-            (c, this.text, this.body, Layout) = (compositor, text, body, layout);
+            (c, this.text, this.body, Layout, this.scale, this.log) = (compositor, text, body, layout, scale, log);
             frame = c.CreateShapeVisual();
             frame.Size = layout.Body;
             body.Children.InsertAtTop(frame);
@@ -301,6 +304,8 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             frame.Shapes.Clear();
             DisposeTexts();
             (clearOutline, clearStroke, clearWord) = (null, null, null);
+            thumbs?.Dispose();
+            thumbs = new ClipboardThumbs(c, scale, log);
             var old = rowsVisual.Children.ToList();
             rowsVisual.Children.RemoveAll();
             old.ForEach(row => row.Dispose());
@@ -335,6 +340,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             }
 
             Scroll(scroll);
+            thumbs.Load();
         }
 
         /// <summary>Clear all at rest, or asking: the outline fits the word, and both turn the warn colour while it asks.</summary>
@@ -373,6 +379,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         public void Dispose()
         {
             DisposeTexts();
+            thumbs?.Dispose();
             body.Children.RemoveAll();
             frame.Dispose();
             rowsVisual.Dispose();
@@ -388,16 +395,24 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             rowBrushes.Add((row.Id, fill));
             Rounded(shapes, new RectangleF(0, 0, at.Width, at.Height), ClipboardPanelLayout.Corner, fill);
 
-            // The kind icon: three lines for text, two links for an address.
+            // The kind icon: three lines for text, two links for an address; an image shows its thumbnail.
             var icon = ClipboardPanelLayout.IconIn;
-            Rounded(shapes, icon, 6, c.CreateColorBrush(CardSelected));
+            if (row.Thumb is { } thumb)
+            {
+                thumbs!.Add(shapes, thumb);
+            }
+            else
+            {
+                Rounded(shapes, icon, 6, c.CreateColorBrush(CardSelected));
+            }
+
             var glyph = c.CreateColorBrush(Glyph);
             if (row.IsLink)
             {
                 Stroked(shapes, new RectangleF(icon.X + 5, icon.Y + 9, 9, 6), 3, glyph);
                 Stroked(shapes, new RectangleF(icon.X + 10, icon.Y + 9, 9, 6), 3, glyph);
             }
-            else
+            else if (!row.IsImage)
             {
                 foreach (var (y, w) in (ReadOnlySpan<(float, float)>)[(7, 12), (11, 12), (15, 8)])
                 {
@@ -423,7 +438,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
                 shapes.Shapes.Add(shape);
             }
 
-            foreach (var line in ClipboardPanelLayout.RowText(row.Display, row.Ago(now), at.Width))
+            foreach (var line in ClipboardPanelLayout.RowText(row.Display, row.Ago(now), at.Width, row.IsImage))
             {
                 Text(rowTexts, shapes).Show(line);
             }

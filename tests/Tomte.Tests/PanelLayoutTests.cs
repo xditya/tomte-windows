@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Clipboard;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Xunit;
@@ -249,6 +250,27 @@ public sealed class PanelLayoutTests
         Assert.Equal(2, box.Count);
         Assert.All(box, line => Assert.Equal(TextAlign.Center, line.Style.Align));
         Assert.Equal(Clipboard.List.Y + Clipboard.List.Height / 2, (box[0].Slot.Top + box[1].Slot.Bottom) / 2, 0.01);
+    }
+
+    [Theory]
+    [MemberData(nameof(Scales))]
+    public void AnImageRowHasItsThumbnailLeftAndItsLabelAfterIt(double scale)
+    {
+        // The label starts after the thumbnail, whole, and ends before the age.
+        var thumb = ClipboardPanelLayout.ThumbIn;
+        float width = Clipboard.List.Width;
+        string label = ClipboardRow.ImageLabel(1920, 1080);
+        var row = ClipboardPanelLayout.RowText(label, "2 min", width, image: true);
+        Assert.Equal("Image · 1920 x 1080", row[1].Text);
+        Assert.Equal(thumb.Right + ClipboardPanelLayout.Gap, row[1].Slot.X);
+        Assert.True(TextSlot.Measure(label, TextStyle.Primary, 1000) <= row[1].Slot.Width);
+        Assert.True(row[1].Slot.Right < row[0].Slot.Right);
+
+        // The slot is whole pixels at the scale, so the thumbnail decoded for it shows one to one; the stored one is
+        // large enough for it.
+        Assert.Equal(0, thumb.Width * scale % 1, 3);
+        Assert.Equal(0, thumb.Height * scale % 1, 3);
+        Assert.True(ClipboardImages.ThumbWidth >= thumb.Width * scale && ClipboardImages.ThumbHeight >= thumb.Height * scale);
     }
 
     [Fact]
