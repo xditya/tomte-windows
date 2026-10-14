@@ -1,5 +1,6 @@
 using System.Text;
 using Tomte.Core;
+using Tomte.Core.Device;
 
 namespace Tomte.AI.Palette;
 
@@ -15,8 +16,8 @@ public sealed class TextSegment : AnswerSegment
     public string Text => Builder.ToString();
 }
 
-/// <summary>One tool call: what was asked, what happened, and an undo for app-local writes.</summary>
-public sealed class ToolStepSegment(string tool, string summary, string result, bool isError, Action? undo) : AnswerSegment
+/// <summary>One tool call: what was asked, what happened, and an undo for app-local writes and device settings.</summary>
+public sealed class ToolStepSegment(string tool, string summary, string result, bool isError, Func<ActionResult>? undo) : AnswerSegment
 {
     public string Tool { get; } = tool;
 
@@ -26,8 +27,12 @@ public sealed class ToolStepSegment(string tool, string summary, string result, 
 
     public bool IsError { get; } = isError;
 
-    public Action? Undo { get; } = undo;
+    /// <summary>One-shot: the second call reports there is nothing left to undo.</summary>
+    public Func<ActionResult>? Undo { get; } = undo;
 }
+
+/// <summary>A device action that ran: the one line the island shows in Compact for 4 s, and its undo where the action offers one.</summary>
+public sealed record DeviceEvent(string Line, Func<ActionResult>? Undo);
 
 /// <summary>The palette's knobs. Lives here until the settings store merges; then Settings owns these values.</summary>
 public sealed record PaletteOptions
@@ -145,6 +150,9 @@ public sealed class PaletteSession : IPaletteSession
     public decimal? DailyCapUsd => _options.DailyCapUsd;
 
     public event Action? Changed;
+
+    /// <summary>Raised after a device action ran (not for reads), on the sending thread's context. The shell shows it as a Compact event.</summary>
+    public event Action<DeviceEvent>? DeviceActionExecuted;
 
     public async Task SendAsync()
     {
@@ -306,11 +314,14 @@ public sealed class PaletteSession : IPaletteSession
                 return Step(call, summary, "The user did not allow this.", isError: true);
         }
 
-        var (result, undo) = _tools.Run(call);
+        // Device actions block on WinRT, COM and WMI; the pool runs them so the island's thread keeps animating.
+        var (result, undo) = await Task.Run(() => _tools.Run(call), ct);
+        if (!result.IsError && tier != ActionTier.Read && BuiltInTools.IsDeviceTool(call.Name))
+            DeviceActionExecuted?.Invoke(new DeviceEvent(result.Content, undo));
         return Step(call, summary, result.Content, result.IsError, undo);
     }
 
-    private ToolResultPart Step(ToolCallPart call, string summary, string result, bool isError, Action? undo = null)
+    private ToolResultPart Step(ToolCallPart call, string summary, string result, bool isError, Func<ActionResult>? undo = null)
     {
         _answer.Add(new ToolStepSegment(call.Name, summary, result, isError, undo));
         Changed?.Invoke();

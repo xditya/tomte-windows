@@ -92,7 +92,7 @@ public class PaletteTests : IDisposable
         var request = Assert.Single(_provider.Requests);
         Assert.Equal("m", request.Model);
         Assert.NotNull(request.System);
-        Assert.Equal(5, request.Tools!.Count);
+        Assert.Equal(BuiltInTools.Definitions.Count, request.Tools!.Count);
         Assert.Equal("hi", ((TextPart)Assert.Single(request.Messages).Parts[0]).Text);
     }
 
@@ -439,7 +439,7 @@ public class AgentToolsTests
     [Fact]
     public void DefinitionsCarryTheSchemaTheModelNeeds()
     {
-        Assert.Equal(5, BuiltInTools.Definitions.Count);
+        Assert.Equal(5 + DeviceActionTiers.All.Count, BuiltInTools.Definitions.Count);
         var open = BuiltInTools.Definitions.Single(d => d.Name == BuiltInTools.OpenUrl);
         Assert.Equal("object", open.InputSchema.GetProperty("type").GetString());
         Assert.Equal("string", open.InputSchema.GetProperty("properties").GetProperty("url").GetProperty("type").GetString());

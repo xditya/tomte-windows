@@ -190,6 +190,17 @@ public class ProviderTests
     }
 
     [Fact]
+    public void GeminiDeclaresANoArgumentToolWithoutParameters()
+    {
+        var lockPc = new ToolDefinition("lock_pc", "Lock the PC", JsonDocument.Parse("""{"type":"object","properties":{},"required":[]}""").RootElement);
+        var body = GeminiProvider.BuildBody(Hello with { Tools = [Weather, lockPc] });
+        var declarations = body["tools"]![0]!["functionDeclarations"]!;
+        Assert.Equal("object", (string?)declarations[0]!["parameters"]!["type"]);
+        Assert.Equal("lock_pc", (string?)declarations[1]!["name"]);
+        Assert.Null(declarations[1]!["parameters"]);
+    }
+
+    [Fact]
     public async Task GeminiListsOnlyChatModels()
     {
         using var http = RecordedHandler.Client(out _, "gemini-models.json");

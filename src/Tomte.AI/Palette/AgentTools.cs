@@ -5,31 +5,71 @@ using Tomte.Core.Device;
 namespace Tomte.AI.Palette;
 
 /// <summary>
-/// The five built-in tools: definitions the model sees, argument validation, permission tiers and
-/// execution. Clipboard and URL opening are injected so tests and the harness can fake them.
+/// The tools the model sees: the five built-in ones and one per device action. Definitions,
+/// argument validation, permission tiers and execution live here. Clipboard, URL opening and
+/// the device actions are injected so tests and the harness can fake or dry-run them.
 /// </summary>
-public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<string> copyToClipboard, Action<string> openUrl)
+public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<string> copyToClipboard, Action<string> openUrl, Func<string, JsonElement, ActionResult>? device = null)
 {
     public const string ReadShelfItem = "read_shelf_item";
     public const string WriteScratchpad = "write_scratchpad";
     public const string CreateShelfFile = "create_shelf_file";
     public const string OpenUrl = "open_url";
     public const string CopyToClipboard = "copy_to_clipboard";
+    public const string SetDarkMode = "set_dark_mode";
+    public const string SetNightLight = "set_night_light";
+    public const string SetBrightness = "set_brightness";
+    public const string SetWifi = "set_wifi";
+    public const string SetBluetooth = "set_bluetooth";
+    public const string SetVolume = "set_volume";
+    public const string SetMute = "set_mute";
+    public const string SetMicMute = "set_mic_mute";
+    public const string ListOutputDevices = "list_output_devices";
+    public const string SetOutputDevice = "set_output_device";
+    public const string OpenApp = "open_app";
+    public const string OpenSettingsPage = "open_settings_page";
+    public const string LockPc = "lock_pc";
+    public const string SleepPc = "sleep_pc";
+    public const string RestartPc = "restart_pc";
+    public const string ShutDownPc = "shut_down_pc";
 
-    // Name, description, required string arguments, optional string arguments.
-    private static readonly (string Name, string Description, string[] Required, string[] Optional)[] Table =
+    private sealed record Param(string Name, string Type, bool Required = true);
+
+    // Action is the Tomte.Core.Device entry ("Group.Method") the tool runs; its tier comes from there.
+    private sealed record Tool(string Name, string Description, Param[] Params, string? Action = null);
+
+    private static readonly Tool[] Table =
     [
-        (ReadShelfItem, "Read the text of an item on the user's shelf.", ["name"], []),
-        (WriteScratchpad, "Add text to the user's scratchpad note. Appends unless mode is \"replace\".", ["text"], ["mode"]),
-        (CreateShelfFile, "Create a text file on the user's shelf.", ["name", "content"], []),
-        (OpenUrl, "Open an http or https URL in the user's default browser.", ["url"], []),
-        (CopyToClipboard, "Put text on the user's clipboard.", ["text"], []),
+        new(ReadShelfItem, "Read the text of an item on the user's shelf.", [new("name", "string")]),
+        new(WriteScratchpad, "Add text to the user's scratchpad note. Appends unless mode is \"replace\".", [new("text", "string"), new("mode", "string", false)]),
+        new(CreateShelfFile, "Create a text file on the user's shelf.", [new("name", "string"), new("content", "string")]),
+        new(OpenUrl, "Open an http or https URL in the user's default browser.", [new("url", "string")]),
+        new(CopyToClipboard, "Put text on the user's clipboard.", [new("text", "string")]),
+        new(SetDarkMode, "Turn Windows dark mode on or off.", [new("on", "boolean")], "Display.SetDarkMode"),
+        new(SetNightLight, "Open the Night light setting so the user can turn it on or off.", [new("on", "boolean")], "Display.SetNightLight"),
+        new(SetBrightness, "Set the built-in display's brightness, 0 to 100.", [new("percent", "integer")], "Display.SetBrightness"),
+        new(SetWifi, "Turn Wi-Fi on or off.", [new("on", "boolean")], "Radios.SetWifi"),
+        new(SetBluetooth, "Turn Bluetooth on or off.", [new("on", "boolean")], "Radios.SetBluetooth"),
+        new(SetVolume, "Set the speaker volume, 0 to 100.", [new("percent", "integer")], "Audio.SetVolume"),
+        new(SetMute, "Mute or unmute the speakers.", [new("muted", "boolean")], "Audio.SetMute"),
+        new(SetMicMute, "Mute or unmute the microphone.", [new("muted", "boolean")], "Audio.SetMicMute"),
+        new(ListOutputDevices, "List the audio output devices.", [], "Audio.ListOutputDevices"),
+        new(SetOutputDevice, "Switch audio output to the device whose name contains the given text.", [new("name", "string")], "Audio.SetOutputDevice"),
+        new(OpenApp, "Open an app by name, or bring it to the front if it is already running.", [new("name", "string")], "Apps.OpenApp"),
+        new(OpenSettingsPage, "Open a Windows Settings page by its ms-settings: URI, for example ms-settings:display.", [new("uri", "string")], "Apps.OpenSettingsPage"),
+        new(LockPc, "Lock the screen. Everything keeps running; the user signs back in. Not sleep, not shut down.", [], "Power.Lock"),
+        new(SleepPc, "Put the PC to sleep (low power, resumes where it was). Not lock, not shut down.", [], "Power.Sleep"),
+        new(RestartPc, "Restart the PC (everything closes, then Windows starts again).", [], "Power.Restart"),
+        new(ShutDownPc, "Shut down the PC completely (everything closes, power off). Not lock, not sleep.", [], "Power.ShutDown"),
     ];
 
-    public static readonly IReadOnlyList<ToolDefinition> Definitions = [.. Table.Select(t => new ToolDefinition(t.Name, t.Description, Schema(t.Required, t.Optional)))];
+    public static readonly IReadOnlyList<ToolDefinition> Definitions = [.. Table.Select(t => new ToolDefinition(t.Name, t.Description, Schema(t.Params)))];
+
+    /// <summary>Tool name to the device action it runs, for the device tools only.</summary>
+    public static readonly IReadOnlyDictionary<string, string> DeviceActions = Table.Where(t => t.Action is not null).ToDictionary(t => t.Name, t => t.Action!);
 
     // The clipboard belongs to the user, not the app: replacing it is an external effect.
-    public static readonly IReadOnlyDictionary<string, ActionTier> Tiers = new Dictionary<string, ActionTier>
+    private static readonly Dictionary<string, ActionTier> BuiltInTiers = new()
     {
         [ReadShelfItem] = ActionTier.Read,
         [WriteScratchpad] = ActionTier.AppLocalWrite,
@@ -38,29 +78,49 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         [CopyToClipboard] = ActionTier.ExternalEffect,
     };
 
+    public static readonly IReadOnlyDictionary<string, ActionTier> Tiers =
+        Table.ToDictionary(t => t.Name, t => t.Action is null ? BuiltInTiers[t.Name] : DeviceActionTiers.All[t.Action]);
+
+    public static bool IsDeviceTool(string name) => DeviceActions.ContainsKey(name);
+
+    /// <summary>A scheduled job may only carry tools that never need a prompt while unattended; destructive ones never run there.</summary>
+    public static bool AllowedInScheduledJobs(string name) => Tiers.TryGetValue(name, out var tier) && tier != ActionTier.Destructive;
+
     /// <summary>Null when the call can run; otherwise a message for the model.</summary>
     public static string? Validate(string name, JsonElement input)
     {
         var entry = Table.FirstOrDefault(t => t.Name == name);
-        if (entry.Name is null)
+        if (entry is null)
             return $"There is no tool named {name}.";
         if (input.ValueKind != JsonValueKind.Object)
             return "Arguments must be a JSON object.";
-        foreach (var required in entry.Required)
+        foreach (var p in entry.Params)
         {
-            if (!input.TryGetProperty(required, out var value) || value.ValueKind != JsonValueKind.String || value.GetString()!.Length == 0)
-                return $"{name} needs a non-empty string argument \"{required}\".";
+            if (!input.TryGetProperty(p.Name, out var value))
+            {
+                if (p.Required)
+                    return $"{name} needs {Expected(p)} argument \"{p.Name}\".";
+                continue;
+            }
+
+            bool ok = p.Type switch
+            {
+                "boolean" => Bool(value) is not null,
+                "integer" => Int(value) is not null,
+                _ => value.ValueKind == JsonValueKind.String && (!p.Required || value.GetString()!.Length > 0),
+            };
+            if (!ok)
+                return $"{name}: \"{p.Name}\" must be {Expected(p)}.";
         }
-        foreach (var optional in entry.Optional)
-        {
-            if (input.TryGetProperty(optional, out var value) && value.ValueKind != JsonValueKind.String)
-                return $"{name}: \"{optional}\" must be a string.";
-        }
+
         return name switch
         {
-            OpenUrl when !IsWebUrl(input.GetProperty("url").GetString()!) => "open_url only opens http and https URLs.",
-            CreateShelfFile when !IsFileName(input.GetProperty("name").GetString()!) => "name must be a plain file name with no path separators or device names.",
+            OpenUrl when !IsWebUrl(Arg(input, "url")) => "open_url only opens http and https URLs.",
+            CreateShelfFile when !IsFileName(Arg(input, "name")) => "name must be a plain file name with no path separators or device names.",
             WriteScratchpad when input.TryGetProperty("mode", out var mode) && mode.GetString() is not ("append" or "replace") => "mode must be \"append\" or \"replace\".",
+            SetBrightness or SetVolume when Int(input.GetProperty("percent")) is < 0 or > 100 => "percent must be between 0 and 100.",
+            OpenApp => Apps.ValidateAppTarget(Arg(input, "name")),
+            OpenSettingsPage when !Apps.IsSettingsUri(Arg(input, "uri")) => "A settings page looks like ms-settings:display.",
             _ => null,
         };
     }
@@ -73,16 +133,60 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         CreateShelfFile => $"Create shelf file \"{Arg(input, "name")}\" ({Arg(input, "content").Length} characters)",
         OpenUrl => $"Open {Arg(input, "url")}",
         CopyToClipboard => $"Copy to the clipboard: \"{Preview(Arg(input, "text"))}\"",
+        SetDarkMode => $"Turn dark mode {OnOff(input)}",
+        SetNightLight => $"Open Night light settings to turn it {OnOff(input)}",
+        SetBrightness => $"Set brightness to {Int(input, "percent")}%",
+        SetWifi => $"Turn Wi-Fi {OnOff(input)}",
+        SetBluetooth => $"Turn Bluetooth {OnOff(input)}",
+        SetVolume => $"Set volume to {Int(input, "percent")}%",
+        SetMute => $"{(Bool(input, "muted") ? "Mute" : "Unmute")} the speakers",
+        SetMicMute => $"{(Bool(input, "muted") ? "Mute" : "Unmute")} the microphone",
+        ListOutputDevices => "List the audio output devices",
+        SetOutputDevice => $"Switch audio output to \"{Arg(input, "name")}\"",
+        OpenApp => $"Open or focus {Arg(input, "name")}",
+        OpenSettingsPage => $"Open {Arg(input, "uri")}",
+        LockPc => "Lock the PC",
+        SleepPc => "Put the PC to sleep",
+        RestartPc => "Restart the PC",
+        ShutDownPc => "Shut down the PC",
         _ => name,
     };
 
-    /// <summary>Runs a validated call. The undo, when there is one, puts the app's own data back.</summary>
-    public (ToolResultPart Result, Action? Undo) Run(ToolCallPart call)
+    /// <summary>The device half: a validated tool call to its Tomte.Core.Device action. Blocks on WinRT and COM, so callers run it off the UI thread.</summary>
+    public static ActionResult RunDevice(string name, JsonElement input, bool dryRun) => name switch
+    {
+        SetDarkMode => Display.SetDarkMode(Bool(input, "on"), dryRun),
+        SetNightLight => Display.SetNightLight(Bool(input, "on"), dryRun),
+        SetBrightness => Display.SetBrightness(Int(input, "percent"), dryRun),
+        SetWifi => Radios.SetWifi(Bool(input, "on"), dryRun),
+        SetBluetooth => Radios.SetBluetooth(Bool(input, "on"), dryRun),
+        SetVolume => Audio.SetVolume(Int(input, "percent"), dryRun),
+        SetMute => Audio.SetMute(Bool(input, "muted"), dryRun),
+        SetMicMute => Audio.SetMicMute(Bool(input, "muted"), dryRun),
+        ListOutputDevices => Audio.ListOutputDevices(),
+        SetOutputDevice => Audio.SetOutputDevice(Arg(input, "name"), dryRun),
+        OpenApp => Apps.OpenApp(Arg(input, "name"), dryRun),
+        OpenSettingsPage => Apps.OpenSettingsPage(Arg(input, "uri"), dryRun),
+        LockPc => Power.Lock(dryRun),
+        SleepPc => Power.Sleep(dryRun),
+        RestartPc => Power.Restart(dryRun),
+        ShutDownPc => Power.ShutDown(dryRun),
+        _ => ActionResult.Fail($"{name} is not a device tool."),
+    };
+
+    /// <summary>Runs a validated call. The undo, when there is one, puts the app's own data or the device setting back.</summary>
+    public (ToolResultPart Result, Func<ActionResult>? Undo) Run(ToolCallPart call)
     {
         if (Validate(call.Name, call.Input) is { } error)
             return (new ToolResultPart(call.Id, call.Name, error, IsError: true), null);
         try
         {
+            if (IsDeviceTool(call.Name))
+            {
+                var result = (device ?? ((n, i) => RunDevice(n, i, dryRun: false)))(call.Name, call.Input);
+                return (new ToolResultPart(call.Id, call.Name, result.Message, !result.Ok), result.UndoAvailable ? result.Undo : null);
+            }
+
             return call.Name switch
             {
                 ReadShelfItem => ReadItem(call),
@@ -98,7 +202,7 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         }
     }
 
-    private (ToolResultPart, Action?) ReadItem(ToolCallPart call)
+    private (ToolResultPart, Func<ActionResult>?) ReadItem(ToolCallPart call)
     {
         var name = Arg(call.Input, "name");
         var text = shelf.ReadText(name);
@@ -108,15 +212,20 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         return (new ToolResultPart(call.Id, call.Name, $"No readable shelf item named \"{name}\". {items}", IsError: true), null);
     }
 
-    private (ToolResultPart, Action?) Write(ToolCallPart call)
+    private (ToolResultPart, Func<ActionResult>?) Write(ToolCallPart call)
     {
         var before = scratchpad.Text;
         var text = Arg(call.Input, "text");
         scratchpad.Text = Arg(call.Input, "mode") == "replace" || before.Length == 0 ? text : before.TrimEnd('\n', '\r') + "\n" + text;
-        return (new ToolResultPart(call.Id, call.Name, "Written to the scratchpad."), () => scratchpad.Text = before);
+        return (new ToolResultPart(call.Id, call.Name, "Written to the scratchpad."), () =>
+        {
+            scratchpad.Text = before;
+            return ActionResult.Done("Scratchpad put back.");
+        }
+        );
     }
 
-    private (ToolResultPart, Action?) Create(ToolCallPart call)
+    private (ToolResultPart, Func<ActionResult>?) Create(ToolCallPart call)
     {
         var name = Arg(call.Input, "name");
         var previous = shelf.ReadText(name);
@@ -128,17 +237,18 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
                     shelf.Remove(name);
                 else
                     shelf.CreateFile(name, previous);
+                return ActionResult.Done(previous is null ? $"Removed \"{name}\" from the shelf." : $"Put the previous \"{name}\" back.");
             }
         );
     }
 
-    private (ToolResultPart, Action?) Open(ToolCallPart call)
+    private (ToolResultPart, Func<ActionResult>?) Open(ToolCallPart call)
     {
         openUrl(Arg(call.Input, "url"));
         return (new ToolResultPart(call.Id, call.Name, "Opened in the browser."), null);
     }
 
-    private (ToolResultPart, Action?) Copy(ToolCallPart call)
+    private (ToolResultPart, Func<ActionResult>?) Copy(ToolCallPart call)
     {
         copyToClipboard(Arg(call.Input, "text"));
         return (new ToolResultPart(call.Id, call.Name, "Copied to the clipboard."), null);
@@ -146,6 +256,35 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
 
     private static string Arg(JsonElement input, string name) =>
         input.ValueKind == JsonValueKind.Object && input.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
+
+    // Small local models often send "true" or "30" as strings; those are taken too.
+    private static bool? Bool(JsonElement v) => v.ValueKind switch
+    {
+        JsonValueKind.True => true,
+        JsonValueKind.False => false,
+        JsonValueKind.String when bool.TryParse(v.GetString(), out var b) => b,
+        _ => null,
+    };
+
+    private static int? Int(JsonElement v) => v.ValueKind switch
+    {
+        JsonValueKind.Number when v.TryGetInt32(out var i) => i,
+        JsonValueKind.String when int.TryParse(v.GetString(), out var i) => i,
+        _ => null,
+    };
+
+    private static bool Bool(JsonElement input, string name) => input.TryGetProperty(name, out var v) && Bool(v) == true;
+
+    private static int Int(JsonElement input, string name) => input.TryGetProperty(name, out var v) ? Int(v) ?? 0 : 0;
+
+    private static string OnOff(JsonElement input) => Bool(input, "on") ? "on" : "off";
+
+    private static string Expected(Param p) => p.Type switch
+    {
+        "boolean" => "a true or false",
+        "integer" => "a whole-number",
+        _ => "a non-empty string",
+    };
 
     private static string Preview(string text) =>
         (text.Length > 40 ? text[..40] + "..." : text).ReplaceLineEndings(" ");
@@ -164,10 +303,12 @@ public sealed class BuiltInTools(IShelf shelf, IScratchpad scratchpad, Action<st
         && name is not ("." or "..")
         && !ReservedNames.Contains(name.Split('.')[0]);
 
-    private static JsonElement Schema(string[] required, string[] optional)
+    // Plain JSON Schema: type object, typed properties, required list. Anthropic, Gemini and
+    // OpenAI-compatible endpoints all take this shape; Gemini drops the schema of a no-argument tool.
+    private static JsonElement Schema(Param[] parameters)
     {
-        var properties = string.Join(",", required.Concat(optional).Select(p => $"\"{p}\":{{\"type\":\"string\"}}"));
-        var requiredList = string.Join(",", required.Select(p => $"\"{p}\""));
-        return JsonDocument.Parse($"{{\"type\":\"object\",\"properties\":{{{properties}}},\"required\":[{requiredList}]}}").RootElement;
+        var properties = string.Join(",", parameters.Select(p => $"\"{p.Name}\":{{\"type\":\"{p.Type}\"}}"));
+        var required = string.Join(",", parameters.Where(p => p.Required).Select(p => $"\"{p.Name}\""));
+        return JsonDocument.Parse($"{{\"type\":\"object\",\"properties\":{{{properties}}},\"required\":[{required}]}}").RootElement;
     }
 }

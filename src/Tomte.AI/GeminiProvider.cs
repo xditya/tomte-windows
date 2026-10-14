@@ -89,15 +89,19 @@ public sealed class GeminiProvider(HttpClient http, string key) : IChatProvider
         {
             body["tools"] = new JsonArray(new JsonObject
             {
-                ["functionDeclarations"] = new JsonArray([.. tools.Select(t => (JsonNode)new JsonObject
-                {
-                    ["name"] = t.Name,
-                    ["description"] = t.Description,
-                    ["parameters"] = JsonNode.Parse(t.InputSchema.GetRawText()),
-                })]),
+                ["functionDeclarations"] = new JsonArray([.. tools.Select(Declaration)]),
             });
         }
         return body;
+    }
+
+    // Gemini rejects an object schema with no properties, so a no-argument tool is declared without one.
+    private static JsonNode Declaration(ToolDefinition t)
+    {
+        var declaration = new JsonObject { ["name"] = t.Name, ["description"] = t.Description };
+        if (t.InputSchema.TryGetProperty("properties", out var properties) && properties.EnumerateObject().Any())
+            declaration["parameters"] = JsonNode.Parse(t.InputSchema.GetRawText());
+        return declaration;
     }
 
     private static JsonNode? Part(ContentPart part) => part switch
