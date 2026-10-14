@@ -123,7 +123,8 @@ internal sealed class PaletteView : IDisposable, IInteractive
         spend = text.Create(root);
         if (session is not null && focus is not null)
         {
-            prompt = focus.Create(root, multiline: true, PaletteLayout.PromptSize);
+            // The prompt hands Tab and Shift+Tab to the palette's chips, Send and buttons, and takes the keys back after them.
+            prompt = focus.Create(root, multiline: true, PaletteLayout.PromptSize, owner: this);
             prompt.Services.Text = session.Prompt;
             if (send is not null)
             {
