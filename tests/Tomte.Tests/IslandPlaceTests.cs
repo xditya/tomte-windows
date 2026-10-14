@@ -79,12 +79,15 @@ public class IslandPlaceTests
         Assert.Equal(twice, IslandPlace.IsDoubleClick(onPill, dx, dy, ms, boxX: 4, boxY: 4, timeMs: 500));
 
     [Theory]
-    [InlineData(true, false, false, true)]
-    // The tomte on the pill or in the strip opens the palette at once, so it is no half of a double click.
+    // The tab strip outside its labels, where a single click does nothing.
+    [InlineData(true, false, true, true)]
+    // The tomte in the strip opens the palette.
+    [InlineData(true, true, true, false)]
+    // The Compact pill opens Panels and its tomte, the peek badge's too, the palette: each acts at once.
+    [InlineData(true, false, false, false)]
     [InlineData(true, true, false, false)]
-    // On the peek badge the tomte is all there is.
-    [InlineData(true, true, true, true)]
+    // A label or a panel body.
     [InlineData(false, false, true, false)]
-    public void OnlyThePillsOwnSurfaceCountsAndTheTomteOnlyOnTheBadge(bool grabs, bool onTomte, bool peekBadge, bool counts) =>
-        Assert.Equal(counts, IslandPlace.CountsForDoubleClick(grabs, onTomte, peekBadge));
+    public void OnlyTheStripOutsideItsLabelsCountsWhereAClickDoesNothing(bool grabs, bool onTomte, bool panel, bool counts) =>
+        Assert.Equal(counts, IslandPlace.CountsForDoubleClick(grabs, onTomte, panel));
 }

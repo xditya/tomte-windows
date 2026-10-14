@@ -143,4 +143,20 @@ public class CaptureTests
         foreach (var other in new[] { IslandState.Compact, IslandState.Panels, IslandState.ShelfDrop })
             Assert.False(IslandStateMachine.CanTransition(IslandState.Capture, other));
     }
+
+    // The hint sits where the island's pill would, centred under the top edge, and its line fits it uncut.
+    [Theory]
+    [InlineData(1920f)]
+    [InlineData(1707f)]
+    [InlineData(1280f)]
+    public void TheHintIsCentredAtTheTopAndItsLineFits(float monitorWidth)
+    {
+        float text = Tomte.Core.Text.TextSlot.Measure(LassoHint.Text, LassoHint.Style, monitorWidth);
+        var card = LassoHint.Card(monitorWidth, text);
+        var line = LassoHint.Line(card);
+        Assert.Equal((float)IslandOutline.Gap, card.Y);
+        Assert.InRange(card.X + card.Width / 2 - monitorWidth / 2, -0.5f, 0.5f);
+        Assert.True(line.Width >= text && card.Contains(line));
+        Assert.Equal(IslandGeometry.Compact.Depth, card.Height);
+    }
 }

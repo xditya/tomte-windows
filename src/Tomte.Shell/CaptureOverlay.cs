@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.Graphics.Canvas.Geometry;
 using Tomte.Core;
+using Tomte.Core.Text;
 using Windows.UI;
 using Windows.UI.Composition;
 using Windows.Win32;
@@ -20,9 +21,10 @@ namespace Tomte.Shell;
 /// The circle-to-ask overlay on one monitor: created on the trigger, destroyed on the way out, so nothing
 /// exists while idle. Unlike the island it takes focus (Esc has to reach it) but stays a tool window,
 /// topmost, out of the taskbar and Alt+Tab. It is excluded from capture, so the dim never shows in the
-/// circled image. Drawn on the island's compositor: a dim with the lasso cut out, the stroke, and the
-/// bounding box. <see cref="Result"/> is the box in the monitor's pixels, or null for Esc, a right click,
-/// focus loss or a display change.
+/// circled image. Drawn on the island's compositor: a dim with the lasso cut out, the stroke, the
+/// bounding box, and at the top until the first press a line that says what to do (<see cref="LassoHint"/>).
+/// <see cref="Result"/> is the box in the monitor's pixels, or null for Esc, a right click, focus loss or a
+/// display change.
 /// </summary>
 internal sealed unsafe class CaptureOverlay : IDisposable
 {
@@ -33,6 +35,8 @@ internal sealed unsafe class CaptureOverlay : IDisposable
 
     private readonly Compositor compositor;
     private readonly Windows.UI.Composition.Desktop.DesktopWindowTarget target;
+    private readonly ContainerVisual root, hint;
+    private readonly TextVisual? line;
     private readonly ShapeVisual visual;
     private readonly CompositionPathGeometry dimGeometry;
     private readonly CompositionPathGeometry strokeGeometry;
@@ -43,7 +47,7 @@ internal sealed unsafe class CaptureOverlay : IDisposable
     private readonly int height;
     private HWND hwnd;
 
-    public CaptureOverlay(Compositor compositor, System.Drawing.Point cursor)
+    public CaptureOverlay(Compositor compositor, System.Drawing.Point cursor, TextRenderer? text)
     {
         this.compositor = compositor;
         Monitor = PInvoke.MonitorFromPoint(cursor, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
@@ -133,7 +137,11 @@ internal sealed unsafe class CaptureOverlay : IDisposable
             visual.Shapes.Add(dim);
             visual.Shapes.Add(box);
             visual.Shapes.Add(stroke);
-            target.Root = visual;
+            root = compositor.CreateContainerVisual();
+            root.Children.InsertAtBottom(visual);
+            hint = Hint(text, (float)scale, out line);
+            root.Children.InsertAtTop(hint);
+            target.Root = root;
             Redraw();
 
             PInvoke.ShowWindow(hwnd, SHOW_WINDOW_CMD.SW_SHOW);
@@ -175,7 +183,46 @@ internal sealed unsafe class CaptureOverlay : IDisposable
             // Null when the constructor failed before building them.
             target?.Dispose();
             visual?.Dispose();
+            line?.Dispose();
+            hint?.Dispose();
+            root?.Dispose();
         }
+    }
+
+    /// <summary>
+    /// The line at the top and its dark capsule, in DIPs under a container that carries this monitor's scale. Without
+    /// the island's text renderer there is no hint.
+    /// the line is drawn at the island's scale, so on a monitor with another scale it is stretched a little;
+    /// give a text visual a scale of its own if mixed-scale setups show it.
+    /// </summary>
+    private ContainerVisual Hint(TextRenderer? text, float scale, out TextVisual? words)
+    {
+        var hint = compositor.CreateContainerVisual();
+        hint.Scale = new Vector3(scale, scale, 1);
+        words = null;
+        if (text is null)
+        {
+            return hint;
+        }
+
+        float monitor = width / scale;
+        var card = LassoHint.Card(monitor, TextSlot.Measure(LassoHint.Text, LassoHint.Style, monitor));
+        var shape = compositor.CreateRoundedRectangleGeometry();
+        shape.Offset = new Vector2(card.X, card.Y);
+        shape.Size = new Vector2(card.Width, card.Height);
+        shape.CornerRadius = new Vector2(card.Height / 2);
+        var capsule = compositor.CreateSpriteShape(shape);
+        // The island's own dark and its 10% hairline.
+        capsule.FillBrush = compositor.CreateColorBrush(Color.FromArgb(255, 0x10, 0x10, 0x12));
+        capsule.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(26, 255, 255, 255));
+        capsule.StrokeThickness = 1 / scale;
+        var back = compositor.CreateShapeVisual();
+        back.Size = new Vector2(monitor, card.Bottom + 1);
+        back.Shapes.Add(capsule);
+        hint.Children.InsertAtTop(back);
+        words = text.Create(hint);
+        words.Show(LassoHint.Text, LassoHint.Style, LassoHint.Line(card));
+        return hint;
     }
 
     private void Finish(PixelRect? box)
@@ -241,6 +288,8 @@ internal sealed unsafe class CaptureOverlay : IDisposable
         switch (message)
         {
             case PInvoke.WM_LBUTTONDOWN:
+                // The hint has said its piece once a drag starts.
+                hint.StartAnimation("Opacity", PanelHost.Fade(compositor, 0, PanelHost.FadeOutMs));
                 PInvoke.SetCapture(hwnd);
                 Lasso.Down(Point(lParam).X, Point(lParam).Y);
                 Redraw();

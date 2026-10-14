@@ -129,8 +129,15 @@ internal static partial class Program
             for (int i = 0; i < layout.Choices.Count; i++)
             {
                 var r = Offset(layout.Choices[i], host);
-                c.RoundRect(r, DropResultLayout.Corner, 0x0FFFFFFF);
-                c.StrokeRect(r, DropResultLayout.Corner, i == layout.Choices.Count - 1 ? 0xFF6FA8FF : 0x59FFFFFF);
+                if (i == layout.Choices.Count - 1)
+                {
+                    c.RoundRect(r, DropResultLayout.Corner, Tomte.Core.Interaction.StateLook.Accent);
+                }
+                else
+                {
+                    c.RoundRect(r, DropResultLayout.Corner, 0x0FFFFFFF);
+                    c.StrokeRect(r, DropResultLayout.Corner, 0x1AFFFFFF);
+                }
             }
 
             for (int i = 0; i < layout.Tiles.Count; i++)

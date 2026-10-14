@@ -1,5 +1,7 @@
 using System.Drawing;
+using System.Globalization;
 using System.Numerics;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 
 namespace Tomte.Core;
@@ -34,15 +36,20 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 /// <summary>
 /// The drop zone's panel in the Palette state, in the panel's own DIPs (x = 0 at its left edge, y = 0 at its top):
 /// a head row right of the tomte with the zone and file on the left and where the request went on the right, a line
-/// under it, then the answer, the size question's choices as full-width rows and the result files as tiles. The panel
-/// is the palette's width and grows with what it shows, up to the palette's height or the monitor's cap, whichever is less.
+/// under it, then the answer, the choices as full-width buttons with their words centred, the last of them (the
+/// default) filled, and the result files as tiles. The panel is the palette's width and grows with what it shows, up to
+/// the palette's height or the monitor's cap, whichever is less.
 /// The answer is read as Markdown (<see cref="Markdown"/>): paragraphs, bold, headings as bold lines, list items with
 /// their marker hanging left of the text, code as it is. It wraps to the panel and scrolls in its band when it is longer.
 /// </summary>
 public sealed class DropResultLayout
 {
     public const float Pad = 16, HeadTop = 12, HeadHeight = 18, LineTop = 34, LineHeight = 14, BodyTop = 58;
-    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 30, Gap = 8, Corner = 8;
+    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8, Corner = 8;
+
+    /// <summary>A choice's words, and the default's on its button filled with <see cref="StateLook.Accent"/>.</summary>
+    public static readonly TextStyle ChoiceStyle = TextStyle.Secondary with { Color = TextStyle.WhiteColor, Align = TextAlign.Center };
+    public static readonly TextStyle DefaultChoiceStyle = ChoiceStyle with { Color = StateLook.CheckedText, Weight = 600 };
 
     /// <summary>A list level's indent, which is also how far a bullet's text hangs right of the bullet.</summary>
     public const float Indent = 16;
@@ -106,7 +113,8 @@ public sealed class DropResultLayout
         {
             var row = new RectangleF(Pad, y, inner, ChoiceHeight);
             choices.Add(row);
-            slots.Add(new(choice, TextStyle.Secondary with { Color = TextStyle.WhiteColor }, new(row.X + 12, row.Y, row.Width - 24, row.Height)));
+            var style = choices.Count == result.Choices.Count ? DefaultChoiceStyle : ChoiceStyle;
+            slots.Add(new(choice, style, new(row.X + 12, row.Y, row.Width - 24, row.Height)));
             y += ChoiceHeight + Gap;
         }
 
@@ -211,7 +219,20 @@ public sealed class DropResultLayout
         return (runs, y);
     }
 
-    /// <summary>What a press at a point of the panel lands on: a tile's index, a choice's index, or -1 for each.</summary>
-    public (int Tile, int Choice) At(Vector2 point) =>
-        (tiles.FindIndex(r => r.Contains(point.X, point.Y)), choices.FindIndex(r => r.Contains(point.X, point.Y)));
+    /// <summary>
+    /// What takes clicks and keys, in Tab order and the panel's own DIPs: each choice as a button ("choice:0" on), then
+    /// each tile ("tile:0" on), which a drag takes out of the island. A tile with no file behind it is disabled.
+    /// </summary>
+    public IReadOnlyList<Target> Targets(int files) =>
+    [
+        .. choices.Select((r, i) => new Target($"{ChoicePrefix}{i}", r, Corner, TargetKind.Button)),
+        .. tiles.Select((r, i) => new Target($"{TilePrefix}{i}", r, Corner, TargetKind.Tile, Enabled: i < files, Draggable: true)),
+    ];
+
+    public const string ChoicePrefix = "choice:", TilePrefix = "tile:";
+
+    /// <summary>The choice's or the tile's index in a target's id, -1 for each when it is the other.</summary>
+    public static (int Tile, int Choice) Of(string id) =>
+        id.StartsWith(TilePrefix, StringComparison.Ordinal) ? (int.Parse(id.AsSpan(TilePrefix.Length), CultureInfo.InvariantCulture), -1)
+        : id.StartsWith(ChoicePrefix, StringComparison.Ordinal) ? (-1, int.Parse(id.AsSpan(ChoicePrefix.Length), CultureInfo.InvariantCulture)) : (-1, -1);
 }

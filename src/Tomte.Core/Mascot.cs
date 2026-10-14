@@ -138,6 +138,9 @@ public static class MascotStates
     public const double ThinkAmplitude = 14;
     public const double ThinkPeriodSeconds = 0.8;
 
+    /// <summary>How far the tomte lifts while the pointer is on it, in DIPs, on top of whatever pose it holds.</summary>
+    public const double HoverLiftDips = 1.5;
+
     public static readonly IReadOnlyDictionary<MascotState, MascotReaction> Table = new Dictionary<MascotState, MascotReaction>
     {
         // Retracting lifts it back above the screen, the reveal run backwards.
@@ -177,6 +180,7 @@ public sealed class Mascot
     private readonly Spring scaleY = new();
     private readonly Spring capRotate = new();
     private readonly Spring tipRotate = new();
+    private readonly Spring lift = new(); // viewBox units, added to RootY
     private readonly Spring[] springs;
     private bool enabled = true;
     private uint capColor = MascotArt.CapRed;
@@ -197,7 +201,7 @@ public sealed class Mascot
     {
         this.clock = clock;
         this.reduceMotion = reduceMotion;
-        springs = [rootRotate, rootX, rootY, scaleX, scaleY, capRotate, tipRotate];
+        springs = [rootRotate, rootX, rootY, scaleX, scaleY, capRotate, tipRotate, lift];
         rootY.Jump(MascotStates.PeekFromY);
     }
 
@@ -258,7 +262,7 @@ public sealed class Mascot
 
     public double RootX => rootX.Value;
 
-    public double RootY => rootY.Value;
+    public double RootY => rootY.Value + lift.Value;
 
     public double ScaleX => 1 + (scaleX.Value + driveScaleX) / 100;
 
@@ -341,10 +345,25 @@ public sealed class Mascot
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// The pointer came onto the tomte, or left it: it lifts <see cref="MascotStates.HoverLiftDips"/> on the snappy
+    /// spring and settles back, a retarget from wherever it is.
+    /// </summary>
+    public void Hover(bool on)
+    {
+        double target = on ? -MascotStates.HoverLiftDips * MascotArt.ViewBox / MascotArt.SizeDips : 0;
+        if (target != lift.Target)
+        {
+            To(lift, target, SpringPreset.Snappy);
+            Changed?.Invoke();
+        }
+    }
+
     /// <summary>The island just hid: drop every animation so nothing wakes the tick while hidden.</summary>
     public void Park()
     {
         Set(MascotState.Hidden);
+        lift.Target = 0;
         foreach (var spring in springs)
         {
             spring.Jump(spring.Target);

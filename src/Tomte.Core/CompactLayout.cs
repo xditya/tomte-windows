@@ -1,4 +1,5 @@
 using System.Drawing;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 
 namespace Tomte.Core;
@@ -31,6 +32,23 @@ public static class CompactLayout
     public static readonly TextStyle ClockStyle = LineStyle with { Tabular = true };
 
     private static float Width => (float)IslandGeometry.Compact.Width;
+
+    public const string PillId = "pill", TomteId = "tomte", AskTip = "Ask Tomte";
+
+    /// <summary>
+    /// What a click on a pill of Compact's depth does, in island space for <paramref name="shape"/>: the whole pill opens
+    /// Panels and the tomte on it, which comes later and so sits on top, asks Tomte. On the peek badge, where the tomte
+    /// is all there is, the badge is the tomte. A drag on either moves the island.
+    /// </summary>
+    public static IReadOnlyList<Target> Targets(in IslandGeometry shape, bool mascot)
+    {
+        var pill = new RectangleF(-(float)shape.Width / 2, 0, (float)shape.Width, (float)shape.Depth);
+        var ask = new Target(TomteId, pill, (float)shape.Corner, TargetKind.Button, Tip: AskTip, Draggable: true);
+        var open = new Target(PillId, pill, (float)shape.Corner, TargetKind.Button, Draggable: true);
+        return !mascot ? [open]
+            : shape.Width <= IslandGeometry.Peek.Width ? [ask]
+            : [open, ask with { Bounds = MascotArt.Box(shape), Corner = MascotArt.SizeDips / 2 }];
+    }
 
     /// <summary>Where the ring starts, from the pill's left edge: after the tomte, or at the left padding when it is off.</summary>
     public static float RingLeft(bool mascot) => mascot ? MascotArt.InsetX + MascotArt.SizeDips + Gap : LeftPad;

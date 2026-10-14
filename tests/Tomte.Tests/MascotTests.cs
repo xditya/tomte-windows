@@ -1,5 +1,6 @@
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -114,6 +115,50 @@ public class MascotTests
         m.Set(MascotState.Thinking);
         Run(m, 0.35, x => 0);
         Assert.InRange(m.RootY, -1, 1); // gentle would still be about 5 units up
+    }
+
+    // Under the pointer the tomte lifts 1.5 DIP on the snappy spring, turns back from mid-flight when the pointer
+    // leaves, and settles where it was; hiding drops the lift.
+    [Fact]
+    public void HoverLiftsTheTomteOnASpringAndLeavingSettlesItBack()
+    {
+        var m = NewMascot();
+        m.Follow(IslandState.Hidden, IslandState.Compact);
+        Run(m, 1, x => 0);
+        double up = -MascotStates.HoverLiftDips * MascotArt.ViewBox / MascotArt.SizeDips;
+        m.Hover(true);
+        Run(m, 0.02, x => 0);
+        double partWay = m.RootY;
+        Assert.InRange(partWay, up + 0.1, -0.01);
+        m.Hover(false);
+        Run(m, 0.01, x => 0);
+        Assert.True(m.RootY < 0, "a retarget keeps its velocity, so it does not jump back");
+        Run(m, 0.5, x => 0);
+        Assert.InRange(m.RootY, -0.25, 0.25);
+        m.Hover(true);
+        Run(m, 0.5, x => 0);
+        Assert.InRange(m.RootY, up - 0.25, up + 0.25);
+        m.Park();
+        Assert.Equal(MascotStates.PeekFromY, m.RootY);
+    }
+
+    // A click on the pill opens Panels and one on the tomte asks Tomte: the tomte sits on top, and the peek badge is all tomte.
+    [Fact]
+    public void ThePillAndItsTomteAreTargetsAndThePeekBadgeIsTheTomte()
+    {
+        var compact = CompactLayout.Targets(IslandGeometry.Compact, mascot: true);
+        string On(Vector2 at) => compact[Target.Hit([(compact, p => p)], at)!.Value.Index].Id;
+        Assert.Equal([CompactLayout.PillId, CompactLayout.TomteId], compact.Select(t => t.Id));
+        Assert.Equal(CompactLayout.TomteId, On(new(-110 + MascotArt.InsetX + 13, 19)));
+        Assert.Equal(CompactLayout.PillId, On(new(40, 19)));
+        Assert.Equal(CompactLayout.PillId, On(new(-109, 2)));
+        Assert.Equal([null, "Ask Tomte"], compact.Select(t => t.Tip));
+        Assert.All(compact, t => Assert.True(t.Draggable && t.Kind == TargetKind.Button));
+
+        var peek = Assert.Single(CompactLayout.Targets(IslandGeometry.Peek, mascot: true));
+        Assert.Equal(CompactLayout.TomteId, peek.Id);
+        Assert.Equal(new System.Drawing.RectangleF(-18.5f, 0, 37, 38), peek.Bounds);
+        Assert.Equal(CompactLayout.PillId, Assert.Single(CompactLayout.Targets(IslandGeometry.Compact, mascot: false)).Id);
     }
 
     [Fact]
