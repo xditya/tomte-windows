@@ -40,7 +40,19 @@ internal static class Program
         // No prompt box renders yet, so circle-to-ask takes its typed question from here.
         string? captureQuestion = Arg(args, "--debug-capture");
         // --debug-timer <minutes>: the only way to start the timer until the island takes input.
-        double? debugTimer = Arg(args, "--debug-timer") is { } minutes ? double.Parse(minutes, System.Globalization.CultureInfo.InvariantCulture) : null;
+        TimeSpan? debugTimer = null;
+        if (args.Contains("--debug-timer"))
+        {
+            if (!TimerRun.TryParseMinutes(Arg(args, "--debug-timer"), out var duration))
+            {
+                // A windowed app has no console of its own; this reaches a redirected stderr.
+                Console.Error.WriteLine(FormattableString.Invariant($"usage: --debug-timer <minutes>, a number from {TimerRun.MinDuration.TotalMinutes:0.###} (one second) to {TimerRun.MaxDuration.TotalMinutes:0} (one day)"));
+                return 2;
+            }
+
+            debugTimer = duration;
+        }
+
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null;
 
@@ -88,9 +100,9 @@ internal static class Program
         var pause = new PauseState();
         var timer = new IslandTimer(IslandTimer.DefaultPath);
         var triggers = new TriggerController(island, store, pause, timer, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
-        if (debugTimer is double m)
+        if (debugTimer is TimeSpan length)
         {
-            timer.Run = TimerRun.Starting(DateTimeOffset.Now, TimeSpan.FromMinutes(m));
+            timer.Run = TimerRun.Starting(DateTimeOffset.Now, length);
         }
 
         if (rambler)

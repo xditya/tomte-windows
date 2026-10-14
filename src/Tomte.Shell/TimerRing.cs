@@ -54,7 +54,9 @@ internal sealed class TimerRing
         {
             var fill = compositor.CreateScalarKeyFrameAnimation();
             fill.InsertKeyFrame(1, 1, compositor.CreateLinearEasingFunction());
-            fill.Duration = remaining;
+            // A composition animation takes 1 ms to 24 days and throws outside that; a wrong arc is better than a
+            // throw in the middle of a state change.
+            fill.Duration = TimeSpan.FromTicks(Math.Clamp(remaining.Ticks, TimeSpan.TicksPerMillisecond, TimeSpan.FromDays(24).Ticks));
             arc.StartAnimation("TrimEnd", fill);
         }
 
