@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Tomte.AI.Files;
+using Tomte.AI.Mcp;
 using Tomte.AI.Skills;
 using Tomte.Core;
 
@@ -129,28 +130,27 @@ public static partial class DropZoneRequest
     }
 
     /// <summary>
-    /// The model's suggested name as a file name with the item's own extension: the answer's first line without
-    /// quotes, a "Name:" label or the extension it may have added, made safe for Windows and at most 60 characters
-    /// before the extension. Null when nothing is left of it.
+    /// The model's suggested name as a file name with the item's own extension: the answer's first line without the
+    /// characters that reorder text, quotes, a "Name:" label or the extension it may have added, made safe for Windows
+    /// and at most 60 characters before the extension, cut on a whole character. Null when nothing is left of it.
     /// </summary>
     public static string? SuggestedName(string answer, string item)
     {
         string ext = Path.GetExtension(item);
-        string line = answer.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
+        // Control and reordering characters go first, so a name reads as it is and nothing hides a quote.
+        string line = answer.Split('\n').Select(l => McpTools.Bound(l, 200, lines: false).Text.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
         line = NameLabel().Replace(line.Trim('"', '\'', '`', '*', ' '), "").Trim('"', '\'', '`', '*', ' ');
         if (ext.Length > 0 && line.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
             line = line[..^ext.Length].TrimEnd();
-        if (line.Length == 0)
-            return null;
-        string safe = ShelfStore.SafeName(line.Length > 60 ? line[..60] : line);
-        return safe + ext;
+        line = McpTools.Bound(line, 60, lines: false).Text.Trim();
+        return line.Length == 0 ? null : ShelfStore.SafeName(line) + ext;
     }
 
     /// <summary>
     /// A CSV block re-written field by field: a header and rows as the model gave them (quotes and doubled quotes read
-    /// as CSV reads them), line breaks as CRLF, and a field that a spreadsheet would run as a formula (one that starts
-    /// with =, +, -, @ or a tab and is not a number) kept as text with a leading apostrophe. The block came from a file
-    /// the user did not write, and a formula in it could fetch a web page when the CSV is opened.
+    /// as CSV reads them), line breaks as CRLF, and a field that a spreadsheet would run as a formula kept as text with
+    /// a leading apostrophe: one that starts with a tab, or with =, +, -, or @ after any spaces, and is not a number.
+    /// The block came from a file the user did not write, and a formula in it could fetch a web page when the CSV opens.
     /// </summary>
     public static string Csv(string block)
     {
@@ -218,8 +218,12 @@ public static partial class DropZoneRequest
 
     private static string Field(string value)
     {
-        if (value.Length > 0 && value[0] is '=' or '+' or '-' or '@' or '\t' or '\r'
-            && !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out _))
+        // A spreadsheet skips leading spaces before it reads a formula, so " =HYPERLINK(..)" runs too.
+        string lead = value.TrimStart(' ');
+        bool control = value.Length > 0 && value[0] is '\t' or '\r';
+        bool formula = lead.Length > 0 && lead[0] is '=' or '+' or '-' or '@'
+            && !double.TryParse(lead, NumberStyles.Float, CultureInfo.InvariantCulture, out _);
+        if (control || formula)
             value = "'" + value;
         return value.IndexOfAny([',', '"', '\n', '\r']) >= 0 || value != value.Trim() ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
     }
