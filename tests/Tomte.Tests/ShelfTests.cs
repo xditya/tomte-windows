@@ -534,15 +534,21 @@ public sealed class ShelfTests : IDisposable
         await shelf.AfterDragOut(shelf.Items, ShelfEffect.None, ShelfEffect.None);
         Assert.Equal(3, shelf.Items.Count);
 
+        // All three went out by path, as one mixed drag does: the reference's entry goes, the shelf's own two stay,
+        // as an app may have opened them where they are.
         await shelf.AfterDragOut(shelf.Items, ShelfEffect.Copy, ShelfEffect.None);
-        Assert.Empty(shelf.Items);
+        Assert.Equal(["a note.txt", "stick.txt"], shelf.ItemNames.Order());
         Assert.True(File.Exists(mine) && File.Exists(stick));
-        // The shelf's own files stay for this process, as a target may read them later; the next one deletes them.
-        Assert.True(File.Exists(copy.Path) && File.Exists(note.Path));
+
+        // The note alone went out as a virtual file, its bytes copied by the target: it goes, and its file with the
+        // next process's sweep, as a target may still read it in this one.
+        await shelf.AfterDragOut([note], ShelfEffect.Copy, ShelfEffect.None);
+        Assert.Equal(["stick.txt"], shelf.ItemNames);
+        Assert.True(File.Exists(note.Path));
         var next = Store();
         await next.Load();
-        Assert.False(File.Exists(copy.Path) || File.Exists(note.Path));
-        Assert.True(File.Exists(mine) && File.Exists(stick));
+        Assert.False(File.Exists(note.Path));
+        Assert.True(File.Exists(copy.Path) && File.Exists(mine) && File.Exists(stick));
     }
 
     [Fact]
@@ -751,10 +757,17 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal([moved], ShelfFormats.LeaveAfterDrag([moved, stayed], ShelfEffect.Move, ShelfEffect.None, false, Exists));
         Assert.Empty(ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.Copy, ShelfEffect.Copy, false, Exists));
 
-        // On: everything a target took, copied or moved; nothing when it took nothing.
-        Assert.Equal([moved, stayed, copy], ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        // On, and the target took it: every reference, copied or moved; nothing when it took nothing.
         Assert.Equal([moved, stayed], ShelfFormats.LeaveAfterDrag([moved, stayed], ShelfEffect.None, ShelfEffect.Move, true, Exists));
         Assert.Empty(ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.None, ShelfEffect.None, true, Exists));
+        // The shelf's own copy went out by its path, which an app may have opened in place: it stays.
+        Assert.Equal([moved, stayed], ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        Assert.Empty(ShelfFormats.LeaveAfterDrag([copy], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        // Content alone goes out as virtual files, its bytes copied during the drop: it goes. In a mixed drag it went by path and stays.
+        var note = Item(ShelfKind.Content, @"C:\shelf\a\note.txt");
+        var image = Item(ShelfKind.Content, @"C:\shelf\b\pasted.png");
+        Assert.Equal([note, image], ShelfFormats.LeaveAfterDrag([note, image], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        Assert.Equal([stayed], ShelfFormats.LeaveAfterDrag([stayed, note], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
     }
 
     [Fact]

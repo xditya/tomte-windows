@@ -29,7 +29,8 @@ public sealed record TomteSettings
 
     /// <summary>
     /// An item leaves the shelf once a drag out of it was taken by the target: a reference's entry only, never its file;
-    /// the shelf's own copy with it. Off, items stay, except references the target moved away.
+    /// the shelf's own item only when the target copied its bytes; see ShelfFormats.LeaveAfterDrag. Off, items stay, except
+    /// references the target moved away.
     /// </summary>
     public bool RemoveAfterDragOut { get; init; } = true;
 
