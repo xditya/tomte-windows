@@ -643,6 +643,9 @@ internal static class SecondProcess
                 db.Open("slow", StorageTests.Slow).Dispose();
                 Console.WriteLine($"{before} {afterOne} {Timer.ActiveCount}");
                 return 0;
+            case "extract-memory":
+                // One PDF extraction in a process of its own, so its memory is not the test runner's.
+                return FileTests.ExtractMemory(args[1], args.Length > 2 ? int.Parse(args[2], System.Globalization.CultureInfo.InvariantCulture) : 1_000_000);
             default:
                 return 2;
         }
