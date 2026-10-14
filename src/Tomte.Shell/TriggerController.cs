@@ -111,9 +111,8 @@ internal sealed unsafe class TriggerController : IDisposable
     /// <summary>The tray's "Open island": opens Panels, or retracts. It ignores the pause, not the suppression.</summary>
     public void Toggle()
     {
-        if (machine.State == IslandState.Hidden || activity.HasFlag(IslandActivity.Peek))
+        if (machine.State is not (IslandState.Panels or IslandState.Palette))
         {
-            activity &= ~IslandActivity.Peek;
             Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Shelf, ignorePause: true);
         }
         else
@@ -171,7 +170,6 @@ internal sealed unsafe class TriggerController : IDisposable
                 if (machine.State == IslandState.Hidden || activity.HasFlag(IslandActivity.Peek))
                 {
                     log?.Invoke(wParam == 1 ? "edge push: dwell" : "edge push: counts");
-                    activity &= ~IslandActivity.Peek;
                     if (Reveal(RevealTrigger.EdgePush, IslandState.Compact))
                     {
                         armed = true;
@@ -239,7 +237,6 @@ internal sealed unsafe class TriggerController : IDisposable
                 Hide();
                 break;
             case HoverTimer when machine.State == IslandState.Compact && pointerInside && !activity.HasFlag(IslandActivity.Rambling):
-                activity &= ~IslandActivity.Peek;
                 Go(IslandState.Panels, PanelSize.Shelf);
                 break;
             case EventTimer when eventShowing && machine.State == IslandState.Compact:
@@ -406,7 +403,6 @@ internal sealed unsafe class TriggerController : IDisposable
             return;
         }
 
-        activity &= ~IslandActivity.Peek;
         if (Reveal(RevealTrigger.Event, IslandState.Compact))
         {
             eventShowing = true;
@@ -493,6 +489,12 @@ internal sealed unsafe class TriggerController : IDisposable
         if (!IslandStateMachine.CanTransition(from, state))
         {
             machine.TransitionTo(IslandState.Hidden);
+        }
+
+        if (state != IslandState.Hidden)
+        {
+            // Whatever shows now was asked for; the peek pill's "retract when a window comes under" rule ends here.
+            activity &= ~IslandActivity.Peek;
         }
 
         machine.TransitionTo(state);
