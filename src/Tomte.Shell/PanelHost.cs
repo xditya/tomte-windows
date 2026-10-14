@@ -289,13 +289,17 @@ internal sealed class PanelHost
         }
     }
 
-    /// <summary>Whether an island point is on a tab label, which a press picks rather than holding it to move the island.</summary>
-    public bool OnLabel(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && LabelAt(point) is not null;
+    /// <summary>Whether an island point is on a tab label or the Ask pill, which a press picks rather than holding it to move the island.</summary>
+    public bool OnLabel(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && (LabelAt(point) is not null || TabStrip.OnAsk(StripX(point), bodySize.X));
 
-    // The labels are laid out from the outline's live outer left edge (ramps included when attached to the top), so a
+    /// <summary>Whether an island point is on the Ask pill, a press on which opens the palette as one on the tomte does.</summary>
+    public bool OnAsk(Vector2 point) => shown is not null && point.Y < PanelSpace.TabStripHeight && TabStrip.OnAsk(StripX(point), bodySize.X);
+
+    private PanelId? LabelAt(Vector2 point) => TabStrip.At(StripX(point), tabs.Order, tabs.Current, bodySize.X, island.Mascot.Enabled);
+
+    // The strip is laid out from the outline's live outer left edge (ramps included when attached to the top), so a
     // press mid-morph still finds its label.
-    private PanelId? LabelAt(Vector2 point) =>
-        TabStrip.At(point.X + (float)island.Current.OuterWidth / 2, tabs.Order, tabs.Current, bodySize.X, island.Mascot.Enabled);
+    private float StripX(Vector2 point) => point.X + (float)island.Current.OuterWidth / 2;
 
     private bool InBody(Vector2 island, out Vector2 at)
     {
@@ -304,14 +308,17 @@ internal sealed class PanelHost
     }
 
     /// <summary>
-    /// The tab labels in the strip row, with a card behind the current one. The container sits on the pill's live left
-    /// edge in every frame of a morph (island space's origin less its own offset, a whole pixel), so the labels move
-    /// with the edge they are laid out from. Labels only: presses and the wheel are the host's as before.
+    /// The tab labels in the strip row, with a card behind the current one, and the Ask pill at its right end. The
+    /// container sits on the pill's live left edge in every frame of a morph (island space's origin less its own offset,
+    /// a whole pixel), so the labels move with the edge they are laid out from. Drawing only: presses and the wheel are
+    /// the host's as before.
     /// </summary>
     private sealed class Strip : IDisposable
     {
         private readonly TextRenderer text;
-        private readonly CompositionRoundedRectangleGeometry pill;
+        private readonly CompositionRoundedRectangleGeometry pill, askCard;
+        private readonly CompositionContainerShape sparkle;
+        private readonly TextVisual ask;
         private readonly List<TextVisual> labels = [];
 
         public Strip(IslandWindow island, TextRenderer text)
@@ -327,6 +334,22 @@ internal sealed class PanelHost
             var shape = compositor.CreateSpriteShape(pill);
             shape.FillBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(28, 255, 255, 255));
             Visual.Shapes.Add(shape);
+            askCard = compositor.CreateRoundedRectangleGeometry();
+            askCard.CornerRadius = new Vector2(TabStrip.Corner);
+            var card = compositor.CreateSpriteShape(askCard);
+            card.FillBrush = compositor.CreateColorBrush(Argb(TabStrip.AskCard));
+            Visual.Shapes.Add(card);
+            sparkle = compositor.CreateContainerShape();
+            var ink = compositor.CreateColorBrush(Argb(TabStrip.AskColor));
+            foreach (var star in TabStrip.Sparkle)
+            {
+                var figure = compositor.CreateSpriteShape(compositor.CreatePathGeometry(IslandWindow.BuildPath(star, 1)));
+                figure.FillBrush = ink;
+                sparkle.Shapes.Add(figure);
+            }
+
+            Visual.Shapes.Add(sparkle);
+            ask = text.Create(Visual);
             island.Dips.Children.InsertAtTop(Visual);
         }
 
@@ -349,6 +372,13 @@ internal sealed class PanelHost
             var on = lines.FirstOrDefault(line => line.Style == TabStrip.Current).Slot;
             pill.Offset = new Vector2(on.X, on.Y);
             pill.Size = new Vector2(on.Width, on.Height);
+
+            var (card, glyph, word) = TabStrip.AskPill(width);
+            askCard.Offset = new Vector2(card.X, card.Y);
+            askCard.Size = new Vector2(card.Width, card.Height);
+            sparkle.Offset = new Vector2(glyph.X, glyph.Y);
+            sparkle.Scale = new Vector2(glyph.Height / TabStrip.SparkleBox.Y);
+            ask.Show(word);
         }
 
         public void Dispose()
@@ -358,8 +388,11 @@ internal sealed class PanelHost
                 label.Dispose();
             }
 
+            ask.Dispose();
             Visual.Parent?.Children.Remove(Visual);
             Visual.Dispose();
         }
+
+        private static Windows.UI.Color Argb(uint c) => Windows.UI.Color.FromArgb((byte)(c >> 24), (byte)(c >> 16), (byte)(c >> 8), (byte)c);
     }
 }
