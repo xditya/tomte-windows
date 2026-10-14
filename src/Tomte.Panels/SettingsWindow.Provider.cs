@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Tomte.AI;
+using Tomte.AI.Palette;
 using Tomte.Core;
 
 namespace Tomte.Panels;
@@ -24,6 +25,7 @@ public sealed partial class SettingsWindow
     private readonly NumberBox dailyCap = new()
     {
         Minimum = 0,
+        Maximum = ProviderSetup.MaxDailyCapUsd,
         SmallChange = 0.5,
         PlaceholderText = "No cap",
         SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
@@ -82,8 +84,8 @@ public sealed partial class SettingsWindow
             providerUrlRow,
             Row("Key", Note("Kept in Windows Credential Manager, not in the settings file, and saved only after a test call works. Leave it empty to keep the saved key. A server on this PC usually needs none."), providerKey),
             Row("Default model", Note("Pick one after Fetch models, or type its id. Left empty, Test and save uses the first model the provider lists."), defaultModel),
-            Row("Fast model", Note("Optional. A cheaper model for small tasks."), fastModel),
-            Row("Daily spend cap", Note("US dollars a day for this provider. Empty means no cap. Tomte estimates spend from model prices, and no prices are set yet, so for now the cap does not stop a send."), dailyCap),
+            Row("Fast model", Note("Optional. A cheaper model for the small calls: routing a voice command and reading a schedule into a job. Empty uses the default model."), fastModel),
+            Row("Daily spend cap", Note($"US dollars a day for this provider, up to {ProviderSetup.MaxDailyCapUsd:0}. Empty means no cap. Spend is estimated from token counts and list prices as of {PriceTable.AsOf:d MMMM yyyy}; a cloud model Tomte has no price for counts at the highest one, and a server on this PC is free."), dailyCap),
             buttons,
             providerNote);
     }
@@ -102,14 +104,12 @@ public sealed partial class SettingsWindow
     {
         var kind = (ProviderKind)providerKind.SelectedIndex;
         string? url = kind == ProviderKind.OpenAICompatible ? providerUrl.Text.Trim() : null;
-        return new ProviderConfig(ProviderSetup.IdFor(kind, url), kind, url, ModelId(defaultModel), ModelId(fastModel), Cap(dailyCap.Value));
+        return new ProviderConfig(ProviderSetup.IdFor(kind, url), kind, url, ModelId(defaultModel), ModelId(fastModel), ProviderSetup.CapFrom(dailyCap.Value));
     }
 
     // Typed or picked: the box's text, or the item picked before anything was typed.
     private static string? ModelId(ComboBox box) =>
         (string.IsNullOrWhiteSpace(box.Text) ? box.SelectedItem as string : box.Text)?.Trim() is { Length: > 0 } id ? id : null;
-
-    private static decimal? Cap(double value) => double.IsNaN(value) ? null : Math.Round((decimal)value, 2);
 
     private async Task TestAndSaveProviderAsync()
     {
@@ -124,7 +124,7 @@ public sealed partial class SettingsWindow
         try
         {
             using var limit = new CancellationTokenSource(ProviderSetup.TestLimit);
-            var http = providerHttp ??= new HttpClient();
+            var http = providerHttp ??= ProviderSetup.NewHttp();
             var tested = await Task.Run(() => ProviderSetup.TestAndSaveAsync(saved, config, key, http, CredentialStore.Save, CredentialStore.Delete, limit.Token));
             Save(s => s with { Provider = tested });
             providerKeySaved = key is not null;
@@ -199,7 +199,7 @@ public sealed partial class SettingsWindow
     private async Task<string> ListModelsAsync(ProviderConfig config, string? key)
     {
         using var limit = new CancellationTokenSource(ProviderSetup.TestLimit);
-        var http = providerHttp ??= new HttpClient();
+        var http = providerHttp ??= ProviderSetup.NewHttp();
         var models = await Task.Run(() => ProviderSetup.Create(config, http, key).ListModelsAsync(limit.Token));
         string[] ids = [.. models.Select(m => m.Id)];
         foreach (var box in new[] { defaultModel, fastModel })
@@ -239,15 +239,20 @@ public sealed partial class SettingsWindow
     // The cap needs no test call: it changes at once for the saved provider, and goes with the next Test and save otherwise.
     private void SaveCap(double value)
     {
-        if (store.Current.Provider is { } saved && saved.DailyCapUsd != Cap(value))
+        if (store.Current.Provider is { } saved && saved.DailyCapUsd != ProviderSetup.CapFrom(value))
         {
-            Save(s => s with { Provider = saved with { DailyCapUsd = Cap(value) } });
+            Save(s => s with { Provider = saved with { DailyCapUsd = ProviderSetup.CapFrom(value) } });
         }
     }
 
     private void Busy(bool on, string? status)
     {
-        providerSave.IsEnabled = providerModels.IsEnabled = providerRemove.IsEnabled = providerKind.IsEnabled = !on;
+        // The whole form, so nothing typed during the call is lost to what the call saves.
+        foreach (var control in new Control[] { providerKind, providerUrl, providerKey, defaultModel, fastModel, dailyCap, providerSave, providerModels, providerRemove })
+        {
+            control.IsEnabled = !on;
+        }
+
         if (status is not null)
         {
             ProviderStatus(status);
