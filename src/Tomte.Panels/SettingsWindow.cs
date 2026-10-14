@@ -46,7 +46,7 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("General"));
         page.Children.Add(Card(
             Row("Start with Windows", startupNote, startup),
-            Row("Desktop peek", Note("Show the clock and what is playing at the top of the screen when no window is there."), Toggle(s => s.DesktopPeek, (s, v) => s with { DesktopPeek = v })),
+            Row("Desktop peek", Note("Show the tomte at the top of the screen when no window is there. Point at it to open the island."), Toggle(s => s.DesktopPeek, (s, v) => s with { DesktopPeek = v })),
             Row("Track changes", Note("Show the pill for a few seconds when another track starts playing."), Toggle(s => s.MediaTrackChangeEvent, (s, v) => s with { MediaTrackChangeEvent = v })),
             Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors())));
 

@@ -805,12 +805,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void EvaluatePeek()
     {
-        string? under = watch.WindowUnder(island.RestBounds(IslandGeometry.Compact));
+        string? under = watch.WindowUnder(island.RestBounds(IslandGeometry.Peek));
         log?.Invoke(under is null ? "peek: nothing under the zone" : $"peek: {under} under the zone");
         peekWanted = under is null;
         if (peekWanted)
         {
-            if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact))
+            if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact, peek: true))
             {
                 activity |= IslandActivity.Peek;
                 // Peek is settled only now, after Go; the peek pill carries no ring.
@@ -824,14 +824,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>The pause, then the suppression check, then the morph. False when nothing was shown.</summary>
-    private bool Reveal(RevealTrigger trigger, IslandState state, (double W, double H) size = default, bool ignorePause = false)
+    private bool Reveal(RevealTrigger trigger, IslandState state, (double W, double H) size = default, bool ignorePause = false, bool peek = false)
     {
         if (!Allowed(trigger, ignorePause))
         {
             return false;
         }
 
-        Go(state, size);
+        Go(state, size, peek);
         return true;
     }
 
@@ -863,9 +863,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>
     /// One continuous morph to the state. A hop through Hidden keeps the state table honest for paths the
     /// interaction map adds (Compact to Shelf-drop, Panels to Palette); the shape still retargets directly and
-    /// the mascot follows the real transition.
+    /// the mascot follows the real transition. Desktop peek is Compact in the small pill that holds the tomte alone.
     /// </summary>
-    private void Go(IslandState state, (double W, double H) size = default)
+    private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
     {
         var from = machine.State;
         if (from == IslandState.Capture)
@@ -901,7 +901,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         island.Mascot.Follow(from, state);
         island.PanelLook = state is IslandState.Panels or IslandState.Palette;
         var (width, height) = PanelSize.Fit(size, island.MonitorSize);
-        var geometry = IslandGeometry.For(state, width, height);
+        var geometry = peek ? IslandGeometry.Peek : IslandGeometry.For(state, width, height);
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.

@@ -80,7 +80,8 @@ public static class MascotArt
 
     /// <summary>
     /// The tomte's box in island space (x from the shape's centre line, y from its top) for the shape it sits in: at the
-    /// left edge, with the art centred down the top row, which is the shape's depth up to the tab strip's height.
+    /// left edge, with the art centred down the top row, which is the shape's depth up to the tab strip's height. The
+    /// peek pill is the box with its inset on both sides, so there the tomte is centred both ways.
     /// </summary>
     public static System.Drawing.RectangleF Box(in IslandGeometry shape)
     {

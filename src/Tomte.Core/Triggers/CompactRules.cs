@@ -63,14 +63,12 @@ public static class CompactRules
 
     /// <summary>
     /// One rule for the pill's one line. The push pill shows the timer ring while a timer runs (or has ended
-    /// and waits for its done pill), else what plays. The peek pill shows what plays and never the ring. An
-    /// event pill shows only its own event's content. A digest of several events, the first-run hint and the
-    /// rambler show neither.
+    /// and waits for its done pill), else what plays. An event pill shows only its own event's content. The peek
+    /// pill holds the tomte alone, and a digest of several events, the first-run hint and the rambler show neither.
     /// </summary>
     public static CompactContent Content(CompactReason reason, IslandEventSource shown, bool timerRuns, bool playing) => reason switch
     {
         CompactReason.Summary => timerRuns ? CompactContent.TimerRing : playing ? CompactContent.NowPlaying : CompactContent.None,
-        CompactReason.Peek => playing ? CompactContent.NowPlaying : CompactContent.None,
         CompactReason.Event when shown == IslandEventSource.Timer => CompactContent.TimerRing,
         CompactReason.Event when shown == IslandEventSource.TrackChange && playing => CompactContent.NowPlaying,
         _ => CompactContent.None,

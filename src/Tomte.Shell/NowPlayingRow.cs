@@ -12,8 +12,8 @@ namespace Tomte.Shell;
 /// <summary>
 /// The Compact pill's now-playing row: the art, the title and four bars that move while something
 /// plays. It shows where <see cref="TriggerController.CompactShows"/> puts it: the push pill when no
-/// timer runs, the peek pill, and the track-change event's own pill. The media tracker is watched
-/// while such a pill is up; the visuals exist only while the row shows.
+/// timer runs, and the track-change event's own pill. The media tracker is watched while such a pill
+/// is up; the visuals exist only while the row shows.
 /// </summary>
 internal sealed class NowPlayingRow
 {
@@ -93,7 +93,6 @@ internal sealed class NowPlayingRow
     private void Update()
     {
         var playing = tracker.Current;
-        var reason = triggers.Compact;
         if (!(watching && ready && triggers.CompactShows(playing.IsPlaying) == CompactContent.NowPlaying))
         {
             if (view is not null)
@@ -112,8 +111,7 @@ internal sealed class NowPlayingRow
         if (view is null)
         {
             Release();
-            // The peek pill is ambient and can stay up for hours, so nothing moves in it: no bars.
-            view = new View(island.Compositor, text, bars: reason != CompactReason.Peek);
+            view = new View(island.Compositor, text);
             view.Root.Opacity = 0;
             island.Dips.Children.InsertAtTop(view.Root);
             view.Root.StartAnimation("Opacity", fadeIn);
@@ -139,7 +137,7 @@ internal sealed class NowPlayingRow
         private readonly ShapeVisual shapes;
         private readonly TextVisual title;
 
-        public View(Compositor compositor, TextRenderer text, bool bars)
+        public View(Compositor compositor, TextRenderer text)
         {
             Root = compositor.CreateContainerVisual();
             Art = new ArtVisual(compositor, NowPlayingRow.Art, CompactLayout.ArtCorner);
@@ -151,11 +149,6 @@ internal sealed class NowPlayingRow
             shapes.Offset = new Vector3(Title.X, 0, 0);
             shapes.Size = new Vector2(BarsLeft + Reach.Length * (Waveform.BarWidth + Waveform.Gap) - Title.X, (float)IslandGeometry.Compact.Depth);
             Root.Children.InsertAtTop(shapes);
-
-            if (!bars)
-            {
-                return;
-            }
 
             // Each bar breathes on its own period, 50 ms after the one before it, from the compositor:
             // 4 DIPs, up to 4 + 18 x reach, down to 6 + 8 x reach, up to 4 + 16 x reach, back to 4.

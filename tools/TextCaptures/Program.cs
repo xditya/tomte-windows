@@ -228,6 +228,11 @@ internal static unsafe partial class Program
             new("compact-device-event", IslandGeometry.Compact, c => CompactLine(c, "Volume 40%.", ring: null)),
             new("compact-digest", IslandGeometry.Compact, c => CompactLine(c, CompactRules.EventLine([new IslandEvent(CompactRules.TimerDone(TimeSpan.FromMinutes(25)), default), new IslandEvent("Opened Spotify.", default)]), ring: null)),
             new("compact-first-run-hint", IslandGeometry.Compact, c => CompactLine(c, CompactRules.Hint, ring: null)),
+            new("compact-peek", IslandGeometry.Peek, c =>
+            {
+                c.Pill();
+                c.Mascot();
+            }),
             new("shelf", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems)),
             new("shelf-empty", Panel(PanelSize.Shelf), c => Shelf(c, [])),
             new("shelf-drop", IslandGeometry.ShelfDrop, ShelfDrop),

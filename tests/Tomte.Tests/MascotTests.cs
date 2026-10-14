@@ -252,7 +252,7 @@ public class MascotTests
     {
         IslandGeometry[] shapes =
         [
-            IslandGeometry.Compact, IslandGeometry.Compact with { Width = 262 }, IslandGeometry.ShelfDrop,
+            IslandGeometry.Compact, IslandGeometry.Peek, IslandGeometry.Compact with { Width = 262 }, IslandGeometry.ShelfDrop,
             IslandGeometry.Panel(380, 140), IslandGeometry.Panel(560, 360), IslandGeometry.Panel(640, 150),
         ];
         foreach (var shape in shapes)
@@ -271,6 +271,10 @@ public class MascotTests
 
         var strip = Art(IslandGeometry.Panel(560, 260));
         Assert.Equal(strip.Min(p => p.Y), strip.Min(p => p.X), 0.1);
+
+        // The peek pill holds the tomte alone, centred across it as well.
+        var peek = Art(IslandGeometry.Peek);
+        Assert.Equal(IslandGeometry.Peek.Width - peek.Max(p => p.X), peek.Min(p => p.X), 0.1);
     }
 
     // The art's flattened outline and the edge of its two circles, in DIPs from the shape's top-left corner.
