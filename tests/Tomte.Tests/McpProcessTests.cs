@@ -87,7 +87,7 @@ public sealed class McpProcessTests : IDisposable
         var info = await InfoAsync("info.json");
         Assert.Equal(typed, info.GetProperty("args").EnumerateArray().Select(a => a.GetString()!));
         Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), info.GetProperty("cwd").GetString());
-        Assert.Equal("echo: hi", (await tools.CallAsync(McpToolsTests.Call("echo__echo", """{"text":"hi"}"""), _limit.Token)).Content);
+        Assert.Equal("echo: hi", (await tools.CallAsync(McpToolsTests.Call("echo__echo", """{"text":"hi"}"""), _limit.Token)).Result.Content);
     }
 
     [Fact]
@@ -172,7 +172,7 @@ public sealed class McpProcessTests : IDisposable
         Assert.Contains("MCP server \"Echo\" stopped", e.Message);
         Assert.Equal(0, tools.Running);
 
-        Assert.Equal("echo: again", (await tools.CallAsync(McpToolsTests.Call("echo__echo", """{"text":"again"}"""), _limit.Token)).Content);
+        Assert.Equal("echo: again", (await tools.CallAsync(McpToolsTests.Call("echo__echo", """{"text":"again"}"""), _limit.Token)).Result.Content);
         Assert.NotEqual(first, await PidAsync("info.json"));
     }
 

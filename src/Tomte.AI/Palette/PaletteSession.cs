@@ -358,9 +358,10 @@ public sealed class PaletteSession : IPaletteSession
             _mcpContacted.Add(server);
             _indicator = $"Sending to MCP: {server}";
             Changed?.Invoke();
-            var mcpResult = await Mcp.CallAsync(call, ct);
+            var (mcpResult, cut) = await Mcp.CallAsync(call, ct);
             _indicator = provider;
-            return Step(call, summary, mcpResult.Content, mcpResult.IsError);
+            // A long result is cut before the model gets it; the step says so without the user opening it.
+            return Step(call, cut == 0 ? summary : $"{summary} {McpTools.CutNote(cut)}", mcpResult.Content, mcpResult.IsError);
         }
 
         // Device actions block on WinRT, COM and WMI; the pool runs them so the island's thread keeps animating.
