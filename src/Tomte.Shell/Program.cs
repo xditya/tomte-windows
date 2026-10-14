@@ -275,7 +275,7 @@ internal static class Program
     {
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var text = new TextRenderer(island, log);
-        var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
+        var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, text, log));
