@@ -337,9 +337,22 @@ public sealed class DeviceToolsTests : IDisposable
             prompts++;
             return Task.FromResult(PermissionAnswer.AlwaysAllow);
         };
+        // Save raises Changed on the thread that saved, which must not be the one that sent.
+        int savedOn = 0;
+        using var saved = new ManualResetEventSlim();
+        store.Changed += _ =>
+        {
+            savedOn = Environment.CurrentManagedThreadId;
+            saved.Set();
+        };
+        int caller = Environment.CurrentManagedThreadId;
 
-        await session.SendAsync();
+        // The send returns where the grant hops to the pool; this thread stays busy until the save is done.
+        var send = session.SendAsync();
+        Assert.True(saved.Wait(TimeSpan.FromSeconds(5)), "the grant was never saved");
+        await send;
 
+        Assert.NotEqual(caller, savedOn);
         Assert.Equal(1, prompts);
         Assert.Equal(2, _ran.Count);
         Assert.Equal([BuiltInTools.SetVolume], store.Current.AlwaysAllowedTools);

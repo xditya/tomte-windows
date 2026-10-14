@@ -308,8 +308,9 @@ public sealed class PaletteSession : IPaletteSession
         if (_grants.NeedsConfirmation(call.Name, tier))
         {
             var answer = await ConfirmTool(new ToolRequest(call.Name, summary, tier, PermissionGrants.CanAlwaysAllow(tier)), ct);
+            // The grant is a settings.json write that can wait on the settings process; the pool takes it, not the island's thread.
             if (answer == PermissionAnswer.AlwaysAllow && PermissionGrants.CanAlwaysAllow(tier))
-                _grants.AlwaysAllow(call.Name);
+                await Task.Run(() => _grants.AlwaysAllow(call.Name));
             if (answer == PermissionAnswer.Deny)
                 return Step(call, summary, "The user did not allow this.", isError: true);
         }
