@@ -101,7 +101,7 @@ public class IslandOutlineTests
 
     [Theory]
     [InlineData(220, 38, 19, 19)] // Compact
-    [InlineData(220, 38, 16, 16)] // the Compact corner, with room to spare
+    [InlineData(220, 38, 16, 16)] // the notch's Compact corner, with room to spare
     [InlineData(420, 96, 20, 20)] // Shelf-drop
     [InlineData(380, 140, 22, 22)] // Media panel
     [InlineData(640, 480, 22, 22)] // Palette, grown
@@ -149,7 +149,7 @@ public class IslandOutlineTests
     }
 
     [Fact]
-    public void TheSpecsCompactCornerLeavesNoStraightRunOnTheEnds()
+    public void ACornerOf16OnCompactLeavesNoStraightRunOnTheEnds()
     {
         var segments = Segments(new IslandGeometry(220, 38, 16), attached: false);
 
@@ -258,13 +258,13 @@ public class IslandOutlineTests
     }
 
     [Fact]
-    public void AttachedPutsTheSpecsRampsBack()
+    public void AttachedPutsTheNotchsCornerAndRampsBack()
     {
         Assert.Equal(new IslandGeometry(220, 38, 16, 10, 12), IslandGeometry.Compact.Attached());
         Assert.Equal(new IslandGeometry(420, 96, 20, 16, 18), IslandGeometry.ShelfDrop.Attached());
         Assert.Equal(new IslandGeometry(380, 140, 22, 24, 24), IslandGeometry.Panel(380, 140).Attached());
         Assert.Equal(new IslandGeometry(262, 38, 16, 10, 12), (IslandGeometry.Compact with { Width = 262 }).Attached()); // the rambler's pill
-        Assert.Equal(19, IslandGeometry.Compact.Corner); // the notch keeps the 16; the pill is a capsule
+        Assert.Equal(19, IslandGeometry.Compact.Corner); // the notch's Compact corner is 16; the pill is a capsule
         Assert.Equal(IslandGeometry.Hidden, IslandGeometry.Hidden.Attached());
     }
 

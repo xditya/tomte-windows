@@ -9,7 +9,7 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
 {
     public static readonly IslandGeometry Hidden = new(120, 0, 0);
 
-    // Corner 19, half the depth: the floating Compact is a capsule. The table says 16, which the notch keeps.
+    // Corner 19, half the depth, so Compact is a capsule. The notch's Compact corner is 16.
     public static readonly IslandGeometry Compact = new(220, 38, 19);
     public static readonly IslandGeometry ShelfDrop = new(420, 96, 20);
 
@@ -19,7 +19,7 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
     /// <summary>Width of the outline including both ramps.</summary>
     public double OuterWidth => Width + 2 * RampW;
 
-    /// <summary>The same state as the attached silhouette: the corner and fillet ramps for it.</summary>
+    /// <summary>The same state drawn as the notch: the notch's own corner and fillet ramps for it.</summary>
     // keyed by the corner, which no two states share; give the table a state column if two ever do.
     public IslandGeometry Attached() => Corner switch
     {

@@ -836,7 +836,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             }
         }
 
-        /// <summary>The compositor's blur radius is three standard deviations (fitted on screen: 10.5 px for 7 DIP at 150%).</summary>
+        /// <summary>The compositor's blur radius is three sigma (fitted on screen: 10.5 px for 7 DIP at 150%).</summary>
         public void Shadow(bool on, double scale)
         {
             shadowOn = on;

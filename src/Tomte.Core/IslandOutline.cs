@@ -39,14 +39,10 @@ public static class IslandOutline
     /// <summary>How far down the pill's drop shadow falls.</summary>
     public const double ShadowOffsetY = 6;
 
-    /// <summary>
-    /// The shadow's softness as a standard deviation. The shadow is given as "0, 6, 14": read as a CSS
-    /// box-shadow, 14 is two standard deviations. The design draws it as a CSS drop-shadow filter, which takes 14
-    /// as one, twice as soft; that would be 14 here.
-    /// </summary>
+    /// <summary>The shadow's softness: a Gaussian blur of sigma 7 DIP.</summary>
     public const double ShadowSigma = 7;
 
-    /// <summary>Room the shadow gets: two standard deviations, past which under 1% black is left of it.</summary>
+    /// <summary>Room the shadow gets: two sigma, past which under 1% black is left of it.</summary>
     public const double ShadowReach = 2 * ShadowSigma;
 
     public const float TopOverhang = 4;
