@@ -254,10 +254,18 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void OnSettingsChanged(TomteSettings next)
     {
+        var previous = settings;
         settings = next;
         log?.Invoke("settings changed");
+        // The input thread applies only the parts whose settings changed. Pointer tracking restarts only for a change
+        // in what PushZone reads: records compare by value, so the first-run flag, a tool grant or the media switch
+        // leaves it as it is.
         InputThread.ApplySettings();
-        PushZone();
+        if (next.Reveal != previous.Reveal || next.AttachToTopEdge != previous.AttachToTopEdge)
+        {
+            PushZone();
+        }
+
         watch.Refresh();
         if (!settings.DesktopPeek && activity.HasFlag(IslandActivity.Peek))
         {
