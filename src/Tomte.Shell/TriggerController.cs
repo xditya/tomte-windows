@@ -7,6 +7,17 @@ using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
 
+/// <summary>Why the Compact pill is up: an edge push, desktop peek, an event, the first-run hint or the rambler.</summary>
+internal enum CompactReason
+{
+    None,
+    Summary,
+    Peek,
+    Event,
+    Hint,
+    Rambler,
+}
+
 /// <summary>
 /// Turns trigger messages into state changes on the UI thread. The pause and the suppression check run before
 /// every MorphTo. Owns the retraction, hover, event, peek, first-run, drag, timer-done and quiet-recheck timers,
@@ -123,6 +134,24 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
 
+    /// <summary>Which panel the Panels state shows and how large it is. Without one, Panels is an empty Shelf-sized shape.</summary>
+    public PanelHost? Panels { get; set; }
+
+    /// <summary>
+    /// What the Compact pill is up for, so a feature with Compact content knows whether the pill is its to
+    /// fill. Read it once the pill is up (from ContentReady on), not during the state change itself.
+    /// </summary>
+    public CompactReason Compact =>
+        machine.State != IslandState.Compact ? CompactReason.None
+        : activity.HasFlag(IslandActivity.Rambling) ? CompactReason.Rambler
+        : firstRunShowing ? CompactReason.Hint
+        : eventShowing ? CompactReason.Event
+        : activity.HasFlag(IslandActivity.Peek) ? CompactReason.Peek
+        : CompactReason.Summary;
+
+    /// <summary>The event the pill is up for; null for a digest of several, and when no event shows.</summary>
+    public IslandEvent? ShownEvent => eventShowing && showing.Count == 1 ? showing[0] : null;
+
     /// <summary>
     /// An internal event: shows Compact for the hold time. It waits while Focus, DND or fullscreen is on, and while
     /// the island is showing something else; then it shows once that ends. Nothing raised here is dropped for
@@ -150,11 +179,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         if (machine.State is not (IslandState.Panels or IslandState.Palette))
         {
-            Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Shelf, ignorePause: true);
+            Reveal(RevealTrigger.Hotkey, IslandState.Panels, ignorePause: true);
         }
         else
         {
             Hide();
+        }
+    }
+
+    /// <summary>The current panel changed while Panels is open (a tab switch): Panels re-enters itself and the shape morphs to the new size.</summary>
+    public void ResizePanels()
+    {
+        if (machine.State == IslandState.Panels)
+        {
+            Go(IslandState.Panels);
         }
     }
 
@@ -285,7 +323,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 Hide();
                 break;
             case HoverTimer when machine.State == IslandState.Compact && pointerInside && !activity.HasFlag(IslandActivity.Rambling):
-                Go(IslandState.Panels, PanelSize.Shelf);
+                Go(IslandState.Panels);
                 break;
             case EventTimer when eventShowing && machine.State == IslandState.Compact:
                 if (pointerInside)
@@ -422,10 +460,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 Hide();
                 break;
             case HotkeyAction.Summon:
-                Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Shelf);
+                Reveal(RevealTrigger.Hotkey, IslandState.Panels);
                 break;
             case HotkeyAction.Scratchpad:
-                Reveal(RevealTrigger.Hotkey, IslandState.Panels, PanelSize.Scratchpad);
+                // Until the Scratchpad panel registers there is nothing to select and Panels opens on the last-used tab.
+                if (Allowed(RevealTrigger.Hotkey))
+                {
+                    Panels?.Select(PanelId.Scratchpad);
+                    Go(IslandState.Panels);
+                }
+
                 break;
             case HotkeyAction.Palette:
                 Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
@@ -691,6 +735,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             // Whatever shows now was asked for; the peek pill's "retract when a window comes under" rule ends here.
             activity &= ~IslandActivity.Peek;
+        }
+
+        if (state == IslandState.Panels)
+        {
+            // The current panel decides the size; a tab switch comes through here again with another one.
+            size = Panels?.Size ?? PanelSize.Shelf;
         }
 
         machine.TransitionTo(state);

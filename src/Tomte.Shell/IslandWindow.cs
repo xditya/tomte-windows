@@ -34,6 +34,10 @@ internal sealed unsafe class IslandWindow : IDisposable
     // One pixel of room around the outline for the stroke's anti-aliased edge: the drawn shape and the content
     // box start that far up and left of the outline's origin, which the root puts at the window's insets.
     private const int Margin = 1;
+
+    // Content fades in once the shape is this far along its morph, and gets this long to fade out before a retract.
+    private const double ContentReadyAt = 0.6;
+    private const double ContentFadeOutSeconds = 0.1;
     private static readonly TimeSpan CrossfadeDuration = TimeSpan.FromMilliseconds(120);
     private static IslandWindow? instance;
 
@@ -59,6 +63,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly ManualResetEventSlim ticking = new(false);
     private readonly DispatcherQueueHandler tickHandler;
     private readonly DispatcherQueueHandler finishHandler;
+    private readonly DispatcherQueueHandler contentReadyHandler;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly MascotVisual mascotVisual;
     private readonly DispatcherQueueTimer wakeTimer;
@@ -80,6 +85,8 @@ internal sealed unsafe class IslandWindow : IDisposable
     private double leadMs;
     private IslandGeometry? anchor;
     private float mascotX;
+    private double fromWidth, fromDepth;
+    private bool contentPending;
 
     public IslandWindow()
     {
@@ -87,6 +94,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         springs = [width, depth, corner, rampW, rampH];
         tickHandler = Tick;
         finishHandler = FinishWithoutClock;
+        contentReadyHandler = RaiseContentReady;
 
         var hInstance = new HINSTANCE(Marshal.GetHINSTANCE(typeof(IslandWindow).Module));
         fixed (char* className = "TomteIsland")
@@ -157,6 +165,14 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         Content = compositor.CreateContainerVisual();
         Content.Clip = compositor.CreateGeometricClip(pill.Geometry);
+        // Island space hangs off Content alone: the compositor keeps its origin on Content's centre line
+        // (Content is the outline plus the margin on each side) through every frame of a morph.
+        Dips = compositor.CreateContainerVisual();
+        Dips.Scale = new Vector3((float)scale, (float)scale, 1);
+        var centre = compositor.CreateExpressionAnimation(FormattableString.Invariant($"Vector3((content.Size.X - {2 * Margin}) / 2, 0, 0)"));
+        centre.SetReferenceParameter("content", Content);
+        Dips.StartAnimation("Offset", centre);
+        Content.Children.InsertAtBottom(Dips);
 
         live = compositor.CreateContainerVisual();
         live.Children.InsertAtBottom(pill.Visual);
@@ -202,8 +218,27 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     public DispatcherQueue Queue { get; }
 
-    /// <summary>Clipped by the outline and morphing with it. Panel content attaches here.</summary>
+    /// <summary>Clipped by the outline and morphing with it, in physical pixels.</summary>
     public ContainerVisual Content { get; }
+
+    /// <summary>
+    /// Inside <see cref="Content"/>, in island space: DIPs, x = 0 on the island's centre line, y = 0 at the
+    /// island's top edge. It carries the monitor's scale, so what is built here is laid out in DIPs and
+    /// follows a DPI change by itself. Panels and Compact content attach here.
+    /// </summary>
+    public ContainerVisual Dips { get; }
+
+    /// <summary>
+    /// Raised once per morph to a visible shape when it has come 60% of the way, which is when new content
+    /// fades in. Always on a later turn of the dispatcher than the MorphTo call, reduced motion included.
+    /// </summary>
+    public event Action? ContentReady;
+
+    /// <summary>A left button press on the island, in island space.</summary>
+    public event Action<Vector2>? Pressed;
+
+    /// <summary>The wheel turned over the island: the raw delta, 120 a notch, positive away from the user.</summary>
+    public event Action<int>? Wheel;
 
     /// <summary>The tomte at the island's left edge. Settings set Enabled and CapColor; features set its reactions.</summary>
     public Mascot Mascot { get; }
@@ -289,6 +324,14 @@ internal sealed unsafe class IslandWindow : IDisposable
         var from = Current;
         targetGeometry = to;
         double lead = Mascot.TakeIslandLead();
+        if (to.Depth <= 0.5 && Dips.Children.Count > 0)
+        {
+            // Whatever shows inside fades out first; the shape follows.
+            lead = Math.Max(lead, ContentFadeOutSeconds);
+        }
+
+        (fromWidth, fromDepth) = (from.Width, from.Depth);
+        contentPending = to.Depth > 0.5;
         // Revealing or retracting, the mascot stays at the open shape's left edge while the outline grows or shrinks.
         // a retarget mid-reveal drops the anchor and the mascot jumps to the live edge in one frame; give the
         // mascot its own x spring if that shows.
@@ -319,6 +362,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         if (ForceReduceMotion || !uiSettings.AnimationsEnabled)
         {
             Crossfade(to);
+            Queue.TryEnqueue(contentReadyHandler);
         }
         else
         {
@@ -430,6 +474,11 @@ internal sealed unsafe class IslandWindow : IDisposable
                 (islandMoving, finished) = (false, true);
                 LastMorphMs = now - morphStartMs;
             }
+
+            if (contentPending && (done || Progress() >= ContentReadyAt))
+            {
+                RaiseContentReady();
+            }
         }
 
         bool mascotActive = Mascot.Step(dt);
@@ -483,6 +532,28 @@ internal sealed unsafe class IslandWindow : IDisposable
         if (settled is not null)
         {
             Settle();
+            RaiseContentReady();
+        }
+    }
+
+    /// <summary>How far the shape is along the current morph, by whichever of width and depth is further behind.</summary>
+    private double Progress()
+    {
+        return Math.Min(Along(fromWidth, width), Along(fromDepth, depth));
+
+        static double Along(double from, Spring spring)
+        {
+            double span = Math.Abs(spring.Target - from);
+            return span < 1 ? 1 : 1 - Math.Abs(spring.Value - spring.Target) / span;
+        }
+    }
+
+    private void RaiseContentReady()
+    {
+        if (contentPending)
+        {
+            contentPending = false;
+            ContentReady?.Invoke();
         }
     }
 
@@ -673,6 +744,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         (scale, screenCenterX) = (newScale, centerX);
         ShadowLook();
         TargetBounds = IslandOutline.PointerBounds(Bounds(targetGeometry), scale, attached);
+        Dips.Scale = new Vector3((float)scale, (float)scale, 1);
         LayoutChanged?.Invoke();
         if (!visible)
         {
@@ -725,6 +797,28 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
+    /// <summary>A point in the window's client pixels to island space, whose origin is the top of Content's centre line.</summary>
+    private Vector2 ToIsland(int x, int y) =>
+        PanelSpace.FromPixels(x, y, root.Offset.X + (Content.Size.X - 2 * Margin) / 2, root.Offset.Y, scale);
+
+    /// <summary>Pointer input for whoever listens; like every handler here, it must not throw into the caller.</summary>
+    private static LRESULT Guarded(Action<IslandWindow> action)
+    {
+        try
+        {
+            if (instance is not null)
+            {
+                action(instance);
+            }
+        }
+        catch (Exception e)
+        {
+            instance?.Log?.Invoke($"pointer input failed: {e}");
+        }
+
+        return new LRESULT(0);
+    }
+
     /// <summary>An exception must not unwind through the unmanaged caller: log it and report the message handled.</summary>
     private static LRESULT GuardedRescale(double? newScale)
     {
@@ -750,6 +844,11 @@ internal sealed unsafe class IslandWindow : IDisposable
         {
             case PInvoke.WM_MOUSEACTIVATE:
                 return new LRESULT((nint)PInvoke.MA_NOACTIVATE);
+            case PInvoke.WM_LBUTTONDOWN:
+                // The window never activates, but the mouse still reaches it.
+                return Guarded(i => i.Pressed?.Invoke(i.ToIsland((short)(lParam.Value & 0xFFFF), (short)((lParam.Value >> 16) & 0xFFFF))));
+            case PInvoke.WM_MOUSEWHEEL:
+                return Guarded(i => i.Wheel?.Invoke((short)((wParam.Value >> 16) & 0xFFFF)));
             case PInvoke.WM_DPICHANGED:
                 return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
             case PInvoke.WM_DISPLAYCHANGE:

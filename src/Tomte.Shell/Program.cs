@@ -100,12 +100,14 @@ internal static class Program
         using var store = new SettingsStore(Arg(args, "--debug-settings"));
         var pause = new PauseState();
         var timer = new IslandTimer(IslandTimer.DefaultPath);
-        var triggers = new TriggerController(island, store, pause, timer, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
+        Action<string>? logLine = log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}");
+        var triggers = new TriggerController(island, store, pause, timer, logLine);
         if (debugTimer is TimeSpan length)
         {
             timer.Run = TimerRun.Starting(DateTimeOffset.Now, length);
         }
 
+        StartPanels(island, triggers, logLine, args.Contains("--debug-tabs"));
         if (rambler)
         {
             triggers.Rambler = CreateRambler(args, island, triggers.Machine, log!);
@@ -177,6 +179,19 @@ internal static class Program
 
         settingsProcess?.Dispose();
         settingsProcess = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
+    }
+
+    /// <summary>The panel host. Each panel registers here once.</summary>
+    private static void StartPanels(IslandWindow island, TriggerController triggers, Action<string>? log, bool debugTabs)
+    {
+        var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
+        if (debugTabs)
+        {
+            // --debug-tabs: an empty Shelf-sized tab to switch to, until a second panel exists.
+            panels.Register(new BlankPanel());
+        }
+
+        triggers.Panels = panels;
     }
 
     /// <summary>Debug stand-ins for the drag and the microphone: lean toward the cursor, and a synthetic level at 20 Hz.</summary>
@@ -404,6 +419,23 @@ internal static class Program
     {
         int i = Array.IndexOf(args, name);
         return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
+    }
+
+    private sealed class BlankPanel : IPanel
+    {
+        public PanelId Id => PanelId.Shelf;
+
+        public void Shown(Windows.UI.Composition.ContainerVisual body, System.Numerics.Vector2 size)
+        {
+        }
+
+        public void Hidden()
+        {
+        }
+
+        public void Press(System.Numerics.Vector2 point)
+        {
+        }
     }
 
     /// <summary>Routes await continuations back to the UI thread's dispatcher queue.</summary>
