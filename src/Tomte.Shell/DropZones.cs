@@ -79,7 +79,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
     private TaskCompletionSource<bool>? offering;
     private SizeQuestion? question;
     private string? skillName;
-    private bool queued;
+    private bool queued, finished;
 
     public async Task RunAsync(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText)
     {
@@ -109,6 +109,11 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
                 var choice = DropZoneRequest.Choices(question)[i].Choice;
                 question = null;
                 asking.TrySetResult(choice);
+            }
+            else if (finished)
+            {
+                // The finished result's Close row.
+                triggers.Hide();
             }
         };
         Show(new DropResult(title, "Nothing sent", "Putting it on the shelf", false, "", [], []), busy: true);
@@ -233,6 +238,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         if (!Program.AskInPalette(island, triggers, store, shelf, log, item.Name))
         {
             view = new DropResultView(island, triggers, shelf, text, log);
+            view.Chose += _ => triggers.Hide();
             Finish(new DropResult($"{DropZoneLayout.Label(DropZone.Ask, null)} · {item.Name}", "Nothing sent", NoProvider, true, "", [], []), ok: false);
         }
     }
@@ -336,7 +342,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
 
     private void Finish(DropResult result, bool ok) => Finish(result, [], ok);
 
-    /// <summary>The last state of the panel, which holds the island until the user dismisses it.</summary>
+    /// <summary>The last state of the panel, which holds the island until the user dismisses it with Close or Esc.</summary>
     private void Finish(DropResult result, IReadOnlyList<ShelfItem> items, bool ok)
     {
         if (!view.Open)
@@ -344,7 +350,8 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             return;
         }
 
-        Show(result, busy: false, items);
+        finished = true;
+        Show(result.Closable(), busy: false, items);
         island.Mascot.Set(ok ? MascotState.Result : MascotState.Error);
     }
 }

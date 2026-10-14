@@ -20,6 +20,12 @@ public sealed record ResultTile(string Name, string Meta, uint Color)
 public sealed record DropResult(string Title, string Indicator, string? Line, bool Problem, string Body, IReadOnlyList<ResultTile> Tiles, IReadOnlyList<string> Choices)
 {
     public static readonly DropResult Empty = new("", "", null, false, "", [], []);
+
+    /// <summary>The one choice of a finished result that offers no other: it takes the island down, as Esc does.</summary>
+    public const string Close = "Close";
+
+    /// <summary>The panel's last state, which stays until dismissed: with a Close row unless it already offers its own choices.</summary>
+    public DropResult Closable() => Choices.Count == 0 ? this with { Choices = [Close] } : this;
 }
 
 /// <summary>
