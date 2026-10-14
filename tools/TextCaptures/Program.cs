@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Clipboard;
 using Tomte.Core.Interaction;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
@@ -283,6 +284,7 @@ internal static unsafe partial class Program
             new("palette-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Open the Tomte repository", Chips(false), Asked, Asking)), c => Palette(c, "Open the Tomte repository", Chips(false), "Sending to ollama · llama3.2:3b", Asked, 0, 0.03m, confirm: Asking, sending: true)),
             new("palette-voice-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Turn the computer off", [], [], PowerAsking, voice: true)), c => Palette(c, "Turn the computer off", [], "Sending to ollama · llama3.2:3b", [], 0, 0.01m, confirm: PowerAsking, voice: true, sending: true)),
             new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
+            new("clipboard-images", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, ImageRows.Value)),
             new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
             new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
             new("clipboard-clear-asking", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows, asking: true)),
@@ -886,24 +888,70 @@ internal static unsafe partial class Program
     // A conversation from the History tab, loaded and not sent yet: the box says what going on with it sends.
     private static readonly (string, TextStyle)[] Continuing = [(PaletteLayout.ContinueLine("Remind me what the dentist said"), PaletteLayout.StepText)];
 
-    private static readonly (string Display, string Ago)[] Rows =
+    private static readonly (string Display, string Ago, byte[]? Thumb)[] Rows =
     [
-        ("Pull up last quarter's numbers, compare them with this one", "2 min"),
-        ("learn.microsoft.com/windows/win32/api/dwmapi", "9 min"),
-        ("WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW", "31 min"),
-        ("Meet at 10, not 9", "1 h"),
-        ("Screenshot of the shelf, 1280 x 720", "3 d"),
+        ("Pull up last quarter's numbers, compare them with this one", "2 min", null),
+        ("learn.microsoft.com/windows/win32/api/dwmapi", "9 min", null),
+        ("WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOPMOST | WS_EX_TOOLWINDOW", "31 min", null),
+        ("Meet at 10, not 9", "1 h", null),
+        ("Screenshot of the shelf, 1280 x 720", "3 d", null),
     ];
 
+    // Image rows made by history's own path from generated bitmaps: a screenshot, a portrait photo and an icon.
+    private static readonly Lazy<(string Display, string Ago, byte[]? Thumb)[]> ImageRows = new(() =>
+    {
+        var screenshot = Kept(1920, 1080, (x, y) =>
+            x < 160 || x >= 1760 || y < 90 || y >= 990 ? (0x50, 0x3A, 0x20)
+            : y < 130 ? (0xFF, 0xFF, 0xFF)
+            : x < 460 ? (0xEE, 0xE6, 0xE0)
+            : x is < 520 or >= 1700 ? (0xF3, 0xF3, 0xF3)
+            : y < 330 ? (0xD8, 0x9A, 0x3C)
+            : y > 380 && (y - 380) % 120 < 80 ? (0xFF, 0xFF, 0xFF)
+            : (0xF3, 0xF3, 0xF3));
+        var photo = Kept(1080, 1350, (x, y) => y > 900 ? (0x20, 0x30, 0x24) : (x - 700) * (x - 700) + (y - 520) * (y - 520) < 14400 ? (0x60, 0xD0, 0xFF) : (200 - y / 6, 120 + y / 10, 40 + y / 5));
+        var icon = Kept(64, 64, (x, y) => (x - 32) * (x - 32) + (y - 32) * (y - 32) < 400 ? (0xFF, 0xFF, 0xFF) : (0x88, 0x80, 0x10));
+        return
+        [
+            (ClipboardRow.ImageLabel(screenshot.Width, screenshot.Height), "now", screenshot.Thumb),
+            ("Meet at 10, not 9", "4 min", null),
+            (ClipboardRow.ImageLabel(photo.Width, photo.Height), "12 min", photo.Thumb),
+            ("learn.microsoft.com/windows/win32/api/dwmapi", "31 min", null),
+            (ClipboardRow.ImageLabel(icon.Width, icon.Height), "2 h", icon.Thumb),
+        ];
+    });
+
+    // A generated bitmap as an app puts it on the clipboard (24 bits, bottom row first), kept as history keeps it.
+    private static KeptImage Kept(int width, int height, Func<int, int, (int B, int G, int R)> colour)
+    {
+        int stride = (width * 3 + 3) & ~3;
+        var dib = new byte[40 + stride * height];
+        BitConverter.TryWriteBytes(dib.AsSpan(0), 40);
+        BitConverter.TryWriteBytes(dib.AsSpan(4), width);
+        BitConverter.TryWriteBytes(dib.AsSpan(8), height);
+        BitConverter.TryWriteBytes(dib.AsSpan(12), (short)1);
+        BitConverter.TryWriteBytes(dib.AsSpan(14), (short)24);
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int at = 40 + (height - 1 - y) * stride + x * 3;
+                var (b, g, r) = colour(x, y);
+                (dib[at], dib[at + 1], dib[at + 2]) = ((byte)b, (byte)g, (byte)r);
+            }
+        }
+
+        return ClipboardImages.Keep(new CopiedImage(dib, Png: false), new ClipboardRetention().MaxImageReadBytes)!;
+    }
+
     // The Clipboard history: on with rows, on and empty, or off; Clear all at rest or asking; optionally where presses land.
-    private static void Clipboard(Canvas c, bool on, (string Display, string Ago)[] rows, bool asking = false, bool targets = false)
+    private static void Clipboard(Canvas c, bool on, (string Display, string Ago, byte[]? Thumb)[] rows, bool asking = false, bool targets = false)
     {
         var layout = new ClipboardPanelLayout(Body(PanelSize.Clipboard));
         var body = BodyOrigin(PanelSize.Clipboard);
         c.Pill();
         c.Mascot();
         Tabs(c, PanelId.Clipboard, PanelSize.Clipboard);
-        foreach (var line in layout.HeadText(on, 50))
+        foreach (var line in layout.HeadText(on, new ClipboardRetention()))
         {
             c.Text(line, body);
         }
@@ -914,7 +962,7 @@ internal static unsafe partial class Program
         if (!on || rows.Length == 0)
         {
             c.StrokeRect(Offset(layout.List, body), ClipboardPanelLayout.Corner, 0x2EFFFFFF);
-            foreach (var line in layout.BoxText(on, 50))
+            foreach (var line in layout.BoxText(on, new ClipboardRetention()))
             {
                 c.Text(line, body);
             }
@@ -938,12 +986,22 @@ internal static unsafe partial class Program
 
             var origin = body + new Vector2(list.X + row.X, list.Y + row.Y);
             c.RoundRect(Offset(new RectangleF(0, 0, row.Width, row.Height), origin), ClipboardPanelLayout.Corner, 0x0FFFFFFF);
-            c.RoundRect(Offset(ClipboardPanelLayout.IconIn, origin), 6, 0x1CFFFFFF);
+            if (rows[i].Thumb is { } thumb)
+            {
+                // Decoded to the slot's pixels at this scale, as the panel does when it shows.
+                int w = (int)Math.Round(ClipboardPanelLayout.ThumbWidth * c.Scale), h = (int)Math.Round(ClipboardPanelLayout.ThumbHeight * c.Scale);
+                c.Picture(Offset(ClipboardPanelLayout.ThumbIn, origin), 6, ClipboardImages.Thumbnail(thumb, w, h), w, h);
+            }
+            else
+            {
+                c.RoundRect(Offset(ClipboardPanelLayout.IconIn, origin), 6, 0x1CFFFFFF);
+            }
+
             var remove = Offset(ClipboardPanelLayout.RemoveIn(row.Width), origin);
             var middle = new Vector2(remove.X + remove.Width / 2, remove.Y + remove.Height / 2);
             c.Circle(middle, remove.Width / 2, 0x0FFFFFFF);
             c.Cross(middle, 10, 1.5f, 0x61FFFFFF);
-            foreach (var line in ClipboardPanelLayout.RowText(rows[i].Display, rows[i].Ago, row.Width))
+            foreach (var line in ClipboardPanelLayout.RowText(rows[i].Display, rows[i].Ago, row.Width, rows[i].Thumb is not null))
             {
                 c.Text(line, origin);
             }
@@ -1044,6 +1102,26 @@ internal static unsafe partial class Program
             var round = new D2D1_ROUNDED_RECT { rect = Rect(r), radiusX = radius, radiusY = radius };
             dc->FillRoundedRectangle(&round, (ID2D1Brush*)brush);
             brush->Release();
+        }
+
+        /// <summary>Premultiplied BGRA pixels, one per device pixel, filling the rectangle with rounded corners.</summary>
+        public void Picture(RectangleF r, float radius, byte[] pixels, int w, int h)
+        {
+            var props = new D2D1_BITMAP_PROPERTIES1 { pixelFormat = Format, dpiX = (float)(96 * scale), dpiY = (float)(96 * scale) };
+            ID2D1Bitmap1* bitmap;
+            fixed (byte* bits = pixels)
+            {
+                dc->CreateBitmap(new D2D_SIZE_U { width = (uint)w, height = (uint)h }, bits, (uint)w * 4, &props, &bitmap);
+            }
+
+            ID2D1BitmapBrush1* brush;
+            dc->CreateBitmapBrush((ID2D1Bitmap*)bitmap, (D2D1_BITMAP_BRUSH_PROPERTIES1*)null, (D2D1_BRUSH_PROPERTIES*)null, &brush);
+            var move = new D2D_MATRIX_3X2_F { m11 = 1, m22 = 1, dx = r.X, dy = r.Y };
+            brush->SetTransform(&move);
+            var round = new D2D1_ROUNDED_RECT { rect = Rect(r), radiusX = radius, radiusY = radius };
+            dc->FillRoundedRectangle(&round, (ID2D1Brush*)brush);
+            brush->Release();
+            bitmap->Release();
         }
 
         /// <summary>Stand-in album art: a diagonal gradient.</summary>

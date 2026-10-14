@@ -95,7 +95,7 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("Clipboard history"));
         page.Children.Add(Card(Row(
             "Keep history",
-            Note($"Keep the last {kept.MaxItems} pieces of text you copy on this PC, for up to {kept.MaxDays} days. Items password managers mark are never kept, and nothing is kept while Tomte is paused or an app with a deny rule is in front. Turning it off deletes the history."),
+            Note($"Keep the last {kept.MaxItems} pieces of text and {kept.MaxImages} images you copy on this PC, for up to {kept.MaxDays} days; an image over {kept.MaxImageBytes >> 20} MB as a PNG is not kept. Items password managers mark are never kept, and nothing is kept while Tomte is paused or an app with a deny rule is in front. Turning it off deletes the history."),
             Toggle(s => s.KeepClipboardHistory, (s, v) => s with { KeepClipboardHistory = v }))));
 
         page.Children.Add(Header("AI provider"));

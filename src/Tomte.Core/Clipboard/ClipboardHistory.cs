@@ -1,15 +1,28 @@
+using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
 using Tomte.Core.Storage;
 
 namespace Tomte.Core.Clipboard;
 
-/// <summary>How much history is kept: the newest items, none older than the age, none longer than the size.</summary>
-public sealed record ClipboardRetention(int MaxItems = 50, int MaxDays = 7, int MaxChars = 65536);
+/// <summary>
+/// How much history is kept: the newest pieces of text and, counted apart, the newest images; none older than the
+/// age; no text longer than the size. An image is read only up to <see cref="MaxImageReadBytes"/> on the clipboard
+/// and as a bitmap (a full 5K screen fits), and kept only up to <see cref="MaxImageBytes"/> as a PNG.
+/// </summary>
+public sealed record ClipboardRetention(int MaxItems = 50, int MaxDays = 7, int MaxChars = 65536, int MaxImages = 50, int MaxImageBytes = 20 << 20, int MaxImageReadBytes = 64 << 20);
 
-/// <summary>One history row as the panel shows it: never the whole item, only its start, on one line.</summary>
-public sealed record ClipboardRow(long Id, string Display, DateTimeOffset CopiedAt)
+/// <summary>
+/// One history row as the panel shows it: never the whole item, only its start, on one line. An image row has its
+/// size for the text and its stored thumbnail.
+/// </summary>
+public sealed record ClipboardRow(long Id, string Display, DateTimeOffset CopiedAt, byte[]? Thumb = null)
 {
     public const int DisplayChars = 120;
+
+    public bool IsImage => Thumb is not null;
+
+    /// <summary>"Image · 1920 x 1080".</summary>
+    public static string ImageLabel(int width, int height) => $"Image · {width} x {height}";
 
     /// <summary>A web address gets the link icon.</summary>
     public bool IsLink => Display.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
@@ -40,7 +53,19 @@ public sealed record ClipboardRow(long Id, string Display, DateTimeOffset Copied
 public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention = null)
 {
     // The whole history, oldest first. Never edit or reorder a step that has merged; add at the end.
-    private static readonly string[] Schema = ["CREATE TABLE clipboard_entries(id INTEGER PRIMARY KEY, text TEXT NOT NULL, copied_at INTEGER NOT NULL)"];
+    private static readonly string[] Schema =
+    [
+        "CREATE TABLE clipboard_entries(id INTEGER PRIMARY KEY, text TEXT NOT NULL, copied_at INTEGER NOT NULL)",
+        // Images: empty text, a width, the PNG's SHA-256, and the PNG last, so a query of the other columns never walks
+        // the PNG's pages.
+        """
+        ALTER TABLE clipboard_entries ADD COLUMN width INTEGER;
+        ALTER TABLE clipboard_entries ADD COLUMN height INTEGER;
+        ALTER TABLE clipboard_entries ADD COLUMN thumb BLOB;
+        ALTER TABLE clipboard_entries ADD COLUMN sha BLOB;
+        ALTER TABLE clipboard_entries ADD COLUMN png BLOB;
+        """,
+    ];
 
     public ClipboardRetention Retention { get; } = retention ?? new();
 
@@ -60,28 +85,66 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
         transaction.Commit();
     }
 
-    /// <summary>Newest first, shortened for display. Only the first few hundred characters of each item are read.</summary>
+    /// <summary>
+    /// Keeps the image as the newest image; the same PNG copied again moves its row up instead, without writing the
+    /// PNG twice. One over the size is not kept.
+    /// </summary>
+    public void AddImage(KeptImage image, DateTimeOffset at)
+    {
+        if (image.Png.Length > Retention.MaxImageBytes)
+        {
+            return;
+        }
+
+        byte[] sha = SHA256.HashData(image.Png);
+        using var connection = db.Open("clipboard", Schema);
+        using var transaction = connection.BeginTransaction();
+        using (var moved = Command(connection, "UPDATE clipboard_entries SET copied_at = $at WHERE sha = $sha", ("$at", at.ToUnixTimeMilliseconds()), ("$sha", sha)))
+        {
+            if (moved.ExecuteNonQuery() == 0)
+            {
+                Run(connection, "INSERT INTO clipboard_entries(text, copied_at, width, height, thumb, sha, png) VALUES ('', $at, $width, $height, $thumb, $sha, $png)",
+                    ("$at", at.ToUnixTimeMilliseconds()), ("$width", image.Width), ("$height", image.Height), ("$thumb", image.Thumb), ("$sha", sha), ("$png", image.Png));
+            }
+        }
+
+        Prune(connection, at);
+        transaction.Commit();
+    }
+
+    /// <summary>Newest first, shortened for display. Only the first few hundred characters of each item are read, and an image's thumbnail.</summary>
     public IReadOnlyList<ClipboardRow> Rows(DateTimeOffset now)
     {
         using var connection = db.Open("clipboard", Schema);
         Prune(connection, now);
-        using var command = Command(connection, "SELECT id, substr(text, 1, 400), copied_at FROM clipboard_entries ORDER BY copied_at DESC, id DESC");
+        using var command = Command(connection, "SELECT id, substr(text, 1, 400), copied_at, width, height, thumb FROM clipboard_entries ORDER BY copied_at DESC, id DESC");
         using var reader = command.ExecuteReader();
         var rows = new List<ClipboardRow>();
         while (reader.Read())
         {
-            rows.Add(new ClipboardRow(reader.GetInt64(0), ClipboardRow.Shorten(reader.GetString(1)), DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(2))));
+            var at = DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(2));
+            rows.Add(reader.IsDBNull(3)
+                ? new ClipboardRow(reader.GetInt64(0), ClipboardRow.Shorten(reader.GetString(1)), at)
+                : new ClipboardRow(reader.GetInt64(0), ClipboardRow.ImageLabel(reader.GetInt32(3), reader.GetInt32(4)), at, (byte[])reader.GetValue(5)));
         }
 
         return rows;
     }
 
-    /// <summary>The whole item, to put back on the clipboard; null when it is gone.</summary>
+    /// <summary>The whole item, to put back on the clipboard; null when it is gone. An image's text is empty.</summary>
     public string? Text(long id)
     {
         using var connection = db.Open("clipboard", Schema);
         using var command = Command(connection, "SELECT text FROM clipboard_entries WHERE id = $id", ("$id", id));
         return command.ExecuteScalar() as string;
+    }
+
+    /// <summary>An image item's PNG; null when it is gone or is text.</summary>
+    public byte[]? Image(long id)
+    {
+        using var connection = db.Open("clipboard", Schema);
+        using var command = Command(connection, "SELECT png FROM clipboard_entries WHERE id = $id", ("$id", id));
+        return command.ExecuteScalar() as byte[];
     }
 
     public void Remove(long id)
@@ -99,7 +162,9 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
     private void Prune(SqliteConnection connection, DateTimeOffset now)
     {
         Run(connection, "DELETE FROM clipboard_entries WHERE copied_at < $cutoff", ("$cutoff", now.AddDays(-Retention.MaxDays).ToUnixTimeMilliseconds()));
-        Run(connection, "DELETE FROM clipboard_entries WHERE id NOT IN (SELECT id FROM clipboard_entries ORDER BY copied_at DESC, id DESC LIMIT $max)", ("$max", Retention.MaxItems));
+        // Text and images are counted apart; a text row has no width.
+        Run(connection, "DELETE FROM clipboard_entries WHERE width IS NULL AND id NOT IN (SELECT id FROM clipboard_entries WHERE width IS NULL ORDER BY copied_at DESC, id DESC LIMIT $max)", ("$max", Retention.MaxItems));
+        Run(connection, "DELETE FROM clipboard_entries WHERE width IS NOT NULL AND id NOT IN (SELECT id FROM clipboard_entries WHERE width IS NOT NULL ORDER BY copied_at DESC, id DESC LIMIT $max)", ("$max", Retention.MaxImages));
     }
 
     private static void Run(SqliteConnection connection, string sql, params ReadOnlySpan<(string Name, object Value)> parameters)
@@ -126,6 +191,9 @@ public interface IClipboardListener : IDisposable
 {
     /// <summary>Puts text on the clipboard as Tomte's own write, which history does not keep again.</summary>
     void Put(string text);
+
+    /// <summary>Puts an image on the clipboard as Tomte's own write: the PNG and the same image as a packed bitmap.</summary>
+    void Put(byte[] png, byte[] dib);
 }
 
 /// <summary>
@@ -133,12 +201,13 @@ public interface IClipboardListener : IDisposable
 /// Off means no listener at all: no window, no thread, nothing opened. Turning it off stops capture at
 /// once (an update the listener is still reading is dropped) and clears the history.
 /// </summary>
-public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<string, DateTimeOffset>, IClipboardListener> start, Action<string>? log = null) : IDisposable
+public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<ClipboardRead, DateTimeOffset>, IClipboardListener> start, Action<string>? log = null) : IDisposable
 {
     private readonly Lock gate = new();
     private IClipboardListener? listener;
     private int generation;
     private Task queue = Task.CompletedTask;
+    private (CopiedImage Image, DateTimeOffset At)? pendingImage;
 
     /// <summary>The history or the switch changed. Raised on a worker thread or the caller's.</summary>
     public event Action? Changed;
@@ -173,10 +242,11 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<string,
             if (on)
             {
                 int current = generation;
-                listener = start((text, at) => Captured(current, text, at));
+                listener = start((read, at) => Captured(current, read, at));
             }
             else
             {
+                pendingImage = null;
                 _ = Enqueue(() => Logged("clear the history", history.Clear));
             }
         }
@@ -230,6 +300,23 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<string,
     /// </summary>
     public Task<bool> PickAsync(long id) => Enqueue(() =>
     {
+        if (history.Image(id) is { } png)
+        {
+            var dib = ClipboardImages.Dib(png);
+            lock (gate)
+            {
+                if (listener is null)
+                {
+                    return false;
+                }
+
+                listener.Put(png, dib);
+            }
+
+            log?.Invoke($"clipboard: picked an image of {png.Length} bytes");
+            return true;
+        }
+
         if (history.Text(id) is not { } text)
         {
             return false;
@@ -262,7 +349,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<string,
     });
 
     // On the listener's thread, after the read. Only the listener started last may add, and only while it is on.
-    private void Captured(int from, string text, DateTimeOffset at)
+    private void Captured(int from, ClipboardRead read, DateTimeOffset at)
     {
         lock (gate)
         {
@@ -271,8 +358,78 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<string,
                 return;
             }
 
-            _ = Enqueue(() => Logged("store an item", () => history.Add(text, at)));
+            if (read.Image is { } image)
+            {
+                // One slot: copies that land while the worker is busy replace each other, so only the latest is
+                // decoded and at most two copies are held, the one being decoded and the one waiting.
+                bool waiting = pendingImage is not null;
+                pendingImage = (image, at);
+                if (!waiting)
+                {
+                    _ = Enqueue(() => Logged("store an image", StoreImage));
+                    // A step of its own, so the copy is no longer held by the step that stored it.
+                    _ = Enqueue(GiveBackImageMemory);
+                }
+            }
+            else
+            {
+                _ = Enqueue(() => Logged("store an item", () => history.Add(read.Text!, at)));
+            }
         }
+    }
+
+    /// <summary>
+    /// After image work, which holds the image several times over in managed and native memory: the imaging objects
+    /// let go of theirs only when their finalizers run, so one collection runs those, then a full, compacting one
+    /// returns what is free to Windows. Without it the memory stays committed, tens of megabytes, for as long as the
+    /// hidden shell allocates nothing more. Every thread pauses for a few milliseconds.
+    /// </summary>
+    private static void GiveBackImageMemory()
+    {
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+    }
+
+    // The decode and the encode run here, on the worker, never on the listener's thread. Takes the waiting copy.
+    private void StoreImage()
+    {
+        CopiedImage image;
+        DateTimeOffset at;
+        lock (gate)
+        {
+            if (pendingImage is not { } pending)
+            {
+                return;
+            }
+
+            ((image, at), pendingImage) = (pending, null);
+        }
+
+        KeptImage? kept;
+        try
+        {
+            kept = ClipboardImages.Keep(image, history.Retention.MaxImageReadBytes);
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"clipboard: an image could not be read ({e.GetType().Name})");
+            return;
+        }
+
+        if (kept is null)
+        {
+            log?.Invoke($"clipboard: skipped: an image over the {history.Retention.MaxImageReadBytes >> 20} MB read as a bitmap");
+            return;
+        }
+
+        if (kept.Png.Length > history.Retention.MaxImageBytes)
+        {
+            log?.Invoke($"clipboard: skipped: an image of {kept.Png.Length} bytes as a PNG, over the {history.Retention.MaxImageBytes} kept");
+            return;
+        }
+
+        history.AddImage(kept, at);
     }
 
     // For work nobody awaits. The exception's type only: its message is never checked for what it quotes.
