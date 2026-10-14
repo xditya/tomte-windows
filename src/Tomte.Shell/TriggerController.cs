@@ -54,7 +54,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         ArmTimer();
         settings = store.Current;
         island.Message = HandleMessage;
-        island.LayoutChanged = PushZone;
+        island.LayoutChanged = () =>
+        {
+            PushZone();
+            // A scale change while the pill rests; the ring is sized in DIPs times the scale.
+            UpdateRing();
+        };
         PushZone();
 
         watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0);
