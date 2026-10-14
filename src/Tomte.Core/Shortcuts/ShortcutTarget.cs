@@ -102,7 +102,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
             return "A path holds a colon only after the drive letter.";
         }
 
-        if (UncLike(target))
+        if (NetworkPaths.IsUncLike(target))
         {
             return "Tomte does not open shortcuts on a network path.";
         }
@@ -112,7 +112,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
             return @"Use a full path, such as C:\Tools\app.exe.";
         }
 
-        return OnNetworkDrive(target) ? "Tomte does not open shortcuts on a network drive." : null;
+        return NetworkPaths.OnNetworkDrive(target) ? "Tomte does not open shortcuts on a network drive." : null;
     }
 
     /// <summary>The web address as Tomte opens it, or null when the text is not an http or https address.</summary>
@@ -188,22 +188,7 @@ public sealed record ShortcutTarget(ShortcutKind Kind, string Open, bool Missing
 
     private static string InSystem32(string relative) => Path.Combine(Environment.SystemDirectory, relative);
 
-    private static bool OnNetworkDrive(string path)
-    {
-        try
-        {
-            return new DriveInfo(Path.GetPathRoot(path)!).DriveType == DriveType.Network;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-    }
-
-    private static bool OnNetwork(string path) => UncLike(path) || (Path.IsPathFullyQualified(path) && OnNetworkDrive(path));
-
-    // Two leading separators of either kind start a network or device path: Windows reads every mix of them as two backslashes.
-    private static bool UncLike(string path) => path is ['\\' or '/', '\\' or '/', ..];
+    private static bool OnNetwork(string path) => NetworkPaths.IsUncLike(path) || (Path.IsPathFullyQualified(path) && NetworkPaths.OnNetworkDrive(path));
 
     /// <summary>
     /// The path with every short (8.3) name spelled out, so a short name set to look like another type cannot
