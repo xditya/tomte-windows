@@ -28,7 +28,7 @@ namespace TextCaptures;
 /// costs in time and memory.
 /// Usage: TextCaptures &lt;output folder&gt;
 /// </summary>
-internal static unsafe class Program
+internal static unsafe partial class Program
 {
     private static readonly double[] Scales = [1, 1.25, 1.5];
     private static readonly List<double> LayoutMs = [], DrawMs = [];
@@ -240,6 +240,7 @@ internal static unsafe class Program
             new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
             new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
             new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
+            .. DropZoneScenes(),
         ];
     }
 
