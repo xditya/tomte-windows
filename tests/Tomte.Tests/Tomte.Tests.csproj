@@ -14,6 +14,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Tomte.Core\Tomte.Core.csproj" />
     <ProjectReference Include="..\..\src\Tomte.AI\Tomte.AI.csproj" />
+    <!-- The MCP tests start this server as a real child process; its exe lands next to the tests. -->
+    <ProjectReference Include="..\..\tools\McpEchoServer\McpEchoServer.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Fixtures\**" CopyToOutputDirectory="PreserveNewest" />
