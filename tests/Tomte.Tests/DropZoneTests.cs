@@ -272,6 +272,26 @@ public sealed class DropZoneTests : IDisposable
         Assert.Contains(Shelf.Items, i => i.Path == original && i.Name == "scan0042.txt");
     }
 
+    [Fact]
+    public async Task RenameByContentCopiesAFileTheShelfKeepsItself()
+    {
+        // Dropped from a browser or a mail: the item is content in the shelf's own folder, not a reference.
+        var item = Assert.Single(await Shelf.Add([new ShelfEntry(ShelfKind.Content, "scan0042.txt", Content: Encoding.UTF8.GetBytes(Report))]));
+        var session = Zone(DropZone.Rename, item, Recorded("openai-ollama-zone-rename.sse", out _));
+
+        await session.SendAsync();
+        var copy = await Shelf.AddCopy(item.Path, DropZoneRequest.SuggestedName(session.AnswerText, item.Name)!);
+
+        Assert.NotEqual(item.Id, copy!.Id);
+        Assert.Equal(("Q3 revenue report.txt", ShelfKind.Copy), (copy.Name, copy.Kind));
+        Assert.NotEqual(Path.GetDirectoryName(item.Path), Path.GetDirectoryName(copy.Path));
+        Assert.Equal(Report, File.ReadAllText(copy.Path));
+        Assert.Equal(["Q3 revenue report.txt", "scan0042.txt"], Shelf.ItemNames);
+        // Renamed again to the same name: that copy, not a third. Renamed to its own name: a copy of its own.
+        Assert.Equal(copy.Id, (await Shelf.AddCopy(item.Path, "Q3 revenue report.txt"))!.Id);
+        Assert.Equal("scan0042 (2).txt", (await Shelf.AddCopy(item.Path, "scan0042.txt"))!.Name);
+    }
+
     [Theory]
     [InlineData("\"Q3 revenue report\"", "scan.pdf", "Q3 revenue report.pdf")]
     [InlineData("Name: invoice October.pdf\nBecause it is an invoice.", "scan.pdf", "invoice October.pdf")]

@@ -390,6 +390,38 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    public async Task ADuplicateNeverDeletesARemovedItemsFolder()
+    {
+        var shelf = Store();
+        var removed = Assert.Single(await shelf.Add([new ShelfEntry(ShelfKind.Content, "note.txt", Content: "note"u8.ToArray())]));
+        await shelf.Remove([removed]);
+        var live = Assert.Single(await shelf.Add([new ShelfEntry(ShelfKind.Content, "note.txt", Content: "note"u8.ToArray())]));
+
+        // The removed item's file, shown in Explorer and Ctrl-dropped back, is the live item's bytes: a duplicate. Its
+        // folder was made for the removed item, not for this drop, so it stays for whoever was given its path.
+        Assert.Equal(live.Id, Assert.Single(await shelf.Accept(new DroppedItems([removed.Path], [], null, KeepCopy: true))).Id);
+        Assert.True(File.Exists(removed.Path));
+    }
+
+    [Fact]
+    public async Task CreateFileMakesAnItemOfThatNameEvenWhenItsBytesAreOnTheShelf()
+    {
+        var shelf = Store();
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, "notes.txt", Content: "first"u8.ToArray())]);
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, "notes.txt", Content: "second"u8.ToArray())]);
+        Assert.Equal(["notes (2).txt", "notes.txt"], shelf.ItemNames);
+
+        // The AI tool replaces notes.txt with what notes (2).txt holds; the undo then removes exactly what it made.
+        IShelf tools = shelf;
+        tools.CreateFile("notes.txt", "second");
+        await shelf.Load();
+        Assert.Equal("second", tools.ReadText("notes.txt"));
+        tools.Remove("notes.txt");
+        await shelf.Load();
+        Assert.Equal(["notes (2).txt"], shelf.ItemNames);
+    }
+
+    [Fact]
     public async Task ARemovedItemWhoseFolderIsInUseIsSweptByALaterProcess()
     {
         var shelf = Store();
