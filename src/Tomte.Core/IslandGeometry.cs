@@ -51,6 +51,16 @@ public static class PanelSize
     public const double PaletteMinHeight = 150;
     public const double PaletteMaxHeight = 480;
 
+    public static (double W, double H) Of(PanelId id) => id switch
+    {
+        PanelId.Shelf => Shelf,
+        PanelId.Shortcuts => Shortcuts,
+        PanelId.Media => Media,
+        PanelId.Scratchpad => Scratchpad,
+        PanelId.Clipboard => Clipboard,
+        _ => throw new ArgumentOutOfRangeException(nameof(id)),
+    };
+
     /// <summary>
     /// Palette height for an answer given as lines of text, until a text renderer measures the real
     /// height: about 88 characters per line at 640 wide, 21 DIP per line, rounded up to 24 DIP

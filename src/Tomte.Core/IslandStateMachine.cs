@@ -26,6 +26,12 @@ public sealed class IslandStateMachine
 
     public IslandState State { get; private set; } = IslandState.Hidden;
 
+    /// <summary>
+    /// Every transition, self-transitions included, as (from, to), raised before the shape starts to morph.
+    /// Whatever draws content inside the island hears every driver of the machine here.
+    /// </summary>
+    public event Action<IslandState, IslandState>? Changed;
+
     public static bool CanTransition(IslandState from, IslandState to) => Allowed.Contains((from, to));
 
     public void TransitionTo(IslandState to)
@@ -35,6 +41,8 @@ public sealed class IslandStateMachine
             throw new InvalidOperationException($"No transition from {State} to {to}.");
         }
 
+        var from = State;
         State = to;
+        Changed?.Invoke(from, to);
     }
 }
