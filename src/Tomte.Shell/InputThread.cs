@@ -26,7 +26,7 @@ internal static unsafe class InputThread
 {
     // Messages posted to the island window. wParam and lParam carry what the name says.
     public const uint MsgEdgeReveal = PInvoke.WM_APP + 1;       // wParam 1 = dwell, 0 = push
-    public const uint MsgPointer = PInvoke.WM_APP + 2;          // wParam bit 0 = inside the island bounds plus the margin, bit 1 = on the island itself; lParam = packed x, y
+    public const uint MsgPointer = PInvoke.WM_APP + 2;          // wParam bit 0 = inside the island bounds plus the margin, bit 1 = on the island itself, bit 2 = a sample the island asked for changed them; lParam = packed x, y
     public const uint MsgDragCandidate = PInvoke.WM_APP + 3;    // lParam = packed x, y of the button-down point
     public const uint MsgDragInZone = PInvoke.WM_APP + 4;       // lParam = packed x, y
     public const uint MsgDragEnd = PInvoke.WM_APP + 5;
@@ -355,7 +355,7 @@ internal static unsafe class InputThread
                 case MsgSample:
                     System.Drawing.Point now;
                     PInvoke.GetCursorPos(&now);
-                    Track(now);
+                    Track(now, asked: true);
                     return new LRESULT(0);
                 case PInvoke.WM_CLOSE:
                     foreach (var r in registrations)
@@ -439,8 +439,11 @@ internal static unsafe class InputThread
         Track(cursor);
     }
 
-    /// <summary>Inside the bounds plus the margin, and on the island itself: posted when either or the bounds changed.</summary>
-    private static void Track(System.Drawing.Point cursor)
+    /// <summary>
+    /// Inside the bounds plus the margin, and on the island itself: posted when either or the bounds changed, and marked
+    /// when a sample the island <paramref name="asked"/> for changed either.
+    /// </summary>
+    private static void Track(System.Drawing.Point cursor, bool asked = false)
     {
         if (Volatile.Read(ref trackPointer) == 0)
         {
@@ -452,9 +455,10 @@ internal static unsafe class InputThread
         bool on = inside && RetractionRules.Inside(cursor.X, cursor.Y, boundsLeft, boundsTop, boundsRight, boundsBottom, 0);
         if (version != seenBoundsVersion || inside != pointerInside || on != pointerOn)
         {
+            bool changed = asked && (inside != pointerInside || on != pointerOn);
             seenBoundsVersion = version;
             (pointerInside, pointerOn) = (inside, on);
-            PInvoke.PostMessage(island, MsgPointer, (nuint)((inside ? 1 : 0) | (on ? 2 : 0)), Pack(cursor.X, cursor.Y));
+            PInvoke.PostMessage(island, MsgPointer, (nuint)((inside ? 1 : 0) | (on ? 2 : 0) | (changed ? 4 : 0)), Pack(cursor.X, cursor.Y));
         }
     }
 

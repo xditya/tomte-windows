@@ -382,6 +382,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
                 return true;
             case InputThread.MsgPointer:
+                if ((wParam & 4) != 0)
+                {
+                    log?.Invoke($"pointer: a sample the window asked for changed it to inside={(wParam & 1) != 0} on={(wParam & 2) != 0}");
+                }
+
                 OnPointer((wParam & 1) != 0, (wParam & 2) != 0);
                 return true;
             case InputThread.MsgDragCandidate:
@@ -552,6 +557,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
             // The window's own mouse messages put the pointer on the pill or the badge. The rest that opens Panels runs
             // from the input thread's raw-input samples, which have been seen to miss a pointer resting on the peek
             // badge, so that thread looks again now.
+            // guards a cause that was not found (an end-user test rested on the badge for 25 s with no rest
+            // started, while the window saw the pointer there). The "pointer: a sample the window asked for changed it"
+            // log line shows whether this ever fires; once the cause is found and fixed in the input thread's tracking
+            // (log its samples and bounds while the badge is up to see it), this sample and that line can go.
             if (id is not null && PInvoke.GetCursorPos(out var at) && at != shownAt)
             {
                 InputThread.SamplePointer();
