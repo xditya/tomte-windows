@@ -182,7 +182,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// now-playing row both ask here. <paramref name="playing"/> says whether something plays.
     /// </summary>
     public CompactContent CompactShows(bool playing) =>
-        CompactRules.Content(Compact, eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other, (timer.Run ?? finished) is not null, playing);
+        CompactRules.Content(Compact, eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other, (timer.Run ?? finished) is not null, playing, island.Mascot.Enabled);
 
     /// <summary>
     /// The words the Compact pill shows now, by <see cref="CompactRules.Line"/>, and the time left when they are
@@ -891,12 +891,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void EvaluatePeek()
     {
-        string? under = watch.WindowUnder(island.RestBounds(IslandGeometry.Peek));
+        // With the tomte off there is nothing for the small pill to hold: peek is the full pill with what plays.
+        bool tomte = island.Mascot.Enabled;
+        string? under = watch.WindowUnder(island.RestBounds(tomte ? IslandGeometry.Peek : IslandGeometry.Compact));
         log?.Invoke(under is null ? "peek: nothing under the zone" : $"peek: {under} under the zone");
         peekWanted = under is null;
         if (peekWanted)
         {
-            if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact, peek: true))
+            if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact, peek: tomte))
             {
                 activity |= IslandActivity.Peek;
                 // Peek is settled only now, after Go; the peek pill carries no ring.

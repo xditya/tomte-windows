@@ -33,6 +33,14 @@ public class CompactRulesTests
     }
 
     [Fact]
+    public void WithTheTomteOffPeekIsTheFullPillWithWhatPlaysAndNeverTheRing()
+    {
+        Assert.Equal(Row, CompactRules.Content(CompactReason.Peek, Other, timerRuns: true, playing: true, tomte: false));
+        Assert.Equal(None, CompactRules.Content(CompactReason.Peek, Other, timerRuns: true, playing: false, tomte: false));
+        Assert.Equal(Ring, CompactRules.Content(CompactReason.Summary, Other, timerRuns: true, playing: true, tomte: false));
+    }
+
+    [Fact]
     public void AnEventPillBelongsToTheFeatureThatRaisedItsOneEvent()
     {
         var now = DateTimeOffset.Now;
