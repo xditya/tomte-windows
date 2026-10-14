@@ -1,0 +1,16 @@
+D3D11CreateDevice
+D3D11_SDK_VERSION
+D2D1CreateFactory
+ID2D1Factory1
+ID2D1Device
+ID2D1DeviceContext
+ID2D1SolidColorBrush
+ID2D1LinearGradientBrush
+ID2D1GradientStopCollection
+ID2D1PathGeometry
+ID2D1GeometrySink
+ID2D1Bitmap1
+IDXGIDevice
+GetCurrentProcess
+K32GetProcessMemoryInfo
+PROCESS_MEMORY_COUNTERS_EX2
