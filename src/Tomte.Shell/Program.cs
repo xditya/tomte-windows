@@ -174,7 +174,7 @@ internal static partial class Program
             triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
         }
 
-        using var tray = new TrayIcon(pause);
+        using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
         tray.OpenSettings += OpenSettings;
         tray.Paused += triggers.Hide;
