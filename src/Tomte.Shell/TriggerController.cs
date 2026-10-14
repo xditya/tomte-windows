@@ -57,21 +57,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         ArmTimer();
         settings = store.Current;
         island.Message = HandleMessage;
-        // Hover or scroll on Compact opens Panels; on the next turn, so the notch that opens them is not
-        // also taken as a tab switch by the panel host.
-        island.Wheel += (_, _) =>
-        {
-            if (RetractionRules.OpensPanels(machine.State, activity))
-            {
-                island.Queue.TryEnqueue(() =>
-                {
-                    if (RetractionRules.OpensPanels(machine.State, activity))
-                    {
-                        Go(IslandState.Panels);
-                    }
-                });
-            }
-        };
+        // Hover, a press or a scroll on Compact opens Panels; on the next turn, so the press or notch that opens
+        // them is not also taken by the panel host as a tab switch or a press on the new body.
+        island.Wheel += (_, _) => OpenPanelsNextTurn();
+        island.Pressed += _ => OpenPanelsNextTurn();
         island.LayoutChanged += () =>
         {
             PushZone();
@@ -378,6 +367,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 return false; // every window gets these; DefWindowProc gives the reply
             default:
                 return false;
+        }
+    }
+
+    private void OpenPanelsNextTurn()
+    {
+        if (RetractionRules.OpensPanels(machine.State, activity))
+        {
+            island.Queue.TryEnqueue(() =>
+            {
+                if (RetractionRules.OpensPanels(machine.State, activity))
+                {
+                    Go(IslandState.Panels);
+                }
+            });
         }
     }
 
