@@ -10,6 +10,8 @@ namespace Tomte.Tests;
 
 public class MediaTests
 {
+    private static readonly MediaPanelLayout Layout = new((float)PanelSize.Media.W);
+
     private const MediaCommand All = MediaCommand.Play | MediaCommand.Pause | MediaCommand.Toggle | MediaCommand.Next | MediaCommand.Previous;
     private static readonly DateTimeOffset T0 = new(2026, 10, 14, 9, 0, 0, TimeSpan.Zero);
 
@@ -302,13 +304,13 @@ public class MediaTests
     [MemberData(nameof(Scales))]
     public void PressOnATransportButtonOrTheSeekBarHitsItAtEveryScale(double scale)
     {
-        var targets = MediaPanelLayout.Targets(Seekable());
+        var targets = Layout.Targets(Seekable());
         (RectangleF Button, string Id)[] buttons =
         [
-            (MediaPanelLayout.Seek, "seek"),
-            (MediaPanelLayout.Previous, "previous"),
-            (MediaPanelLayout.PlayPause, "playpause"),
-            (MediaPanelLayout.Next, "next"),
+            (Layout.Seek, "seek"),
+            (Layout.Previous, "previous"),
+            (Layout.PlayPause, "playpause"),
+            (Layout.Next, "next"),
         ];
 
         foreach (var (button, id) in buttons)
@@ -338,40 +340,40 @@ public class MediaTests
     public void ARefusedCommandIsADisabledButtonAndTheArtIsNoTarget(double scale)
     {
         var (artX, artY) = Pixel(MediaPanelLayout.Art.X + 30, MediaPanelLayout.Art.Y + 30, scale);
-        Assert.Null(HitId(MediaPanelLayout.Targets(Playing()), BodyPoint(artX, artY, scale)));
+        Assert.Null(HitId(Layout.Targets(Playing()), BodyPoint(artX, artY, scale)));
 
-        var transport = MediaPanelLayout.Targets(Playing());
+        var transport = Layout.Targets(Playing());
         Assert.Equal(["previous", "playpause", "next"], transport.Select(t => t.Id));
         Assert.All(transport, t => Assert.True(t.Enabled && t.Group == 1 && t.Bounds.Width >= 32 && t.Bounds.Height >= 32, t.Id));
         Assert.Equal(["Previous", "Pause", "Next"], transport.Select(t => t.Tip));
 
         // The app takes only pause: next and previous are disabled, play or pause still works.
         var pauseOnly = Playing().WithPlayback(true, 1, MediaCommand.Pause, T0 + S(1));
-        Assert.Equal([false, true, false], MediaPanelLayout.Targets(pauseOnly).Select(t => t.Enabled));
+        Assert.Equal([false, true, false], Layout.Targets(pauseOnly).Select(t => t.Enabled));
         Assert.Equal(MediaCommand.None, MediaPanelLayout.Command("next", pauseOnly));
         Assert.Equal(MediaCommand.Pause, MediaPanelLayout.Command("playpause", pauseOnly));
 
         // Paused, the middle button says Play. Nothing plays: every button is disabled.
-        Assert.Equal("Play", MediaPanelLayout.Targets(Playing().WithPlayback(false, 1, All, T0))[1].Tip);
-        Assert.All(MediaPanelLayout.Targets(NowPlaying.None), t => Assert.False(t.Enabled, t.Id));
+        Assert.Equal("Play", Layout.Targets(Playing().WithPlayback(false, 1, All, T0))[1].Tip);
+        Assert.All(Layout.Targets(NowPlaying.None), t => Assert.False(t.Enabled, t.Id));
     }
 
     [Fact]
     public void TheBarIsASeekBarOnlyWhileTheAppTakesAPosition()
     {
-        var seek = MediaPanelLayout.Targets(Seekable())[0];
+        var seek = Layout.Targets(Seekable())[0];
         Assert.Equal(("seek", TargetKind.Slider, true, 0), (seek.Id, seek.Kind, seek.Draggable, seek.Group));
         Assert.True(seek.Bounds.Height >= StateLook.MinTarget);
-        Assert.True(seek.Bounds.Contains(MediaPanelLayout.Bar));
+        Assert.True(seek.Bounds.Contains(Layout.Bar));
         // The knob at either end is inside it.
-        Assert.True(seek.Bounds.Left <= MediaPanelLayout.Bar.Left - MediaPanelLayout.Knob);
-        Assert.True(seek.Bounds.Right >= MediaPanelLayout.Bar.Right + MediaPanelLayout.Knob);
+        Assert.True(seek.Bounds.Left <= Layout.Bar.Left - MediaPanelLayout.Knob);
+        Assert.True(seek.Bounds.Right >= Layout.Bar.Right + MediaPanelLayout.Knob);
 
         // No position taken, or no timeline to put one on: a plain progress bar, and no target.
-        Assert.DoesNotContain(MediaPanelLayout.Targets(Playing()), t => t.Id == "seek");
+        Assert.DoesNotContain(Layout.Targets(Playing()), t => t.Id == "seek");
         var noTimeline = Seekable().WithTimeline(S(0), S(0), S(0), T0, T0);
         Assert.Null(noTimeline.Timeline);
-        Assert.DoesNotContain(MediaPanelLayout.Targets(noTimeline), t => t.Id == "seek");
+        Assert.DoesNotContain(Layout.Targets(noTimeline), t => t.Id == "seek");
     }
 
     [Fact]
@@ -391,16 +393,16 @@ public class MediaTests
     [Fact]
     public void APointOnTheBarIsAPositionAndKeysStepFiveSeconds()
     {
-        var bar = MediaPanelLayout.Bar;
+        var bar = Layout.Bar;
         var timeline = new MediaTimeline(S(10), S(190), S(48), T0, 1, true);
-        Assert.Equal(S(10), MediaPanelLayout.SeekAt(bar.Left, timeline));
-        Assert.Equal(S(190), MediaPanelLayout.SeekAt(bar.Right, timeline));
-        Assert.Equal(S(100), MediaPanelLayout.SeekAt(bar.Left + bar.Width / 2, timeline));
+        Assert.Equal(S(10), Layout.SeekAt(bar.Left, timeline));
+        Assert.Equal(S(190), Layout.SeekAt(bar.Right, timeline));
+        Assert.Equal(S(100), Layout.SeekAt(bar.Left + bar.Width / 2, timeline));
         // Past the ends, where the knob can still be grabbed, the position stays on the track.
-        Assert.Equal(S(10), MediaPanelLayout.SeekAt(bar.Left - MediaPanelLayout.Knob, timeline));
-        Assert.Equal(S(190), MediaPanelLayout.SeekAt(bar.Right + MediaPanelLayout.Knob, timeline));
-        Assert.Equal(bar.Left + bar.Width / 4, MediaPanelLayout.BarX(S(55), timeline), 0.01);
-        Assert.Equal(bar.Right, MediaPanelLayout.BarX(S(500), timeline));
+        Assert.Equal(S(10), Layout.SeekAt(bar.Left - MediaPanelLayout.Knob, timeline));
+        Assert.Equal(S(190), Layout.SeekAt(bar.Right + MediaPanelLayout.Knob, timeline));
+        Assert.Equal(bar.Left + bar.Width / 4, Layout.BarX(S(55), timeline), 0.01);
+        Assert.Equal(bar.Right, Layout.BarX(S(500), timeline));
 
         Assert.Equal(S(53), MediaPanelLayout.Stepped(S(48), 1, timeline));
         Assert.Equal(S(43), MediaPanelLayout.Stepped(S(48), -1, timeline));
@@ -408,28 +410,39 @@ public class MediaTests
         Assert.Equal(S(190), MediaPanelLayout.Stepped(S(188), 1, timeline));
 
         // The time's card follows the pointer along the bar and stops at its ends, above the bar.
-        var card = MediaPanelLayout.SeekLabel(bar.Left + 40);
+        var card = Layout.SeekLabel(bar.Left + 40);
         Assert.Equal(bar.Left + 40, card.X + card.Width / 2);
-        Assert.Equal(MediaPanelLayout.SeekLabel(bar.Right), MediaPanelLayout.SeekLabel(bar.Right + 30));
+        Assert.Equal(Layout.SeekLabel(bar.Right), Layout.SeekLabel(bar.Right + 30));
         Assert.True(card.Bottom < bar.Top);
         using var widest = TextLayout.Of(new TextRun(NowPlaying.Clock(S(35999)), MediaPanelLayout.SeekStyle, card.Width));
         Assert.False(widest.Trimmed);
     }
 
-    [Fact]
-    public void MediaBodyLayoutFitsUnderTheTabStripAndClearOfTheCorners()
+    [Theory]
+    [InlineData(560)]
+    // 60% of a 1280 x 800 screen at 150%, and of an 800 x 600 one at 100%.
+    [InlineData(512)]
+    [InlineData(480)]
+    public void MediaBodyLayoutFitsUnderTheTabStripAndClearOfTheCorners(float width)
     {
-        float width = (float)PanelSize.Media.W, height = (float)PanelSize.Media.H - PanelSpace.TabStripHeight;
+        var layout = new MediaPanelLayout(width);
+        float height = (float)PanelSize.Media.H - PanelSpace.TabStripHeight;
         RectangleF[] all =
         [
-            MediaPanelLayout.Art, MediaPanelLayout.Title, MediaPanelLayout.Artist, MediaPanelLayout.Elapsed, MediaPanelLayout.Bar,
-            MediaPanelLayout.Total, MediaPanelLayout.Seek, MediaPanelLayout.Previous, MediaPanelLayout.PlayPause, MediaPanelLayout.Next,
-            MediaPanelLayout.SeekLabel(MediaPanelLayout.Bar.Left), MediaPanelLayout.SeekLabel(MediaPanelLayout.Bar.Right),
+            MediaPanelLayout.Art, layout.Title, layout.Artist, MediaPanelLayout.Elapsed, layout.Bar,
+            layout.Total, layout.Seek, layout.Previous, layout.PlayPause, layout.Next,
+            layout.SeekLabel(layout.Bar.Left), layout.SeekLabel(layout.Bar.Right),
         ];
 
-        Assert.All(all, r => Assert.True(r.Left >= 0 && r.Top >= 0 && r.Right <= width && r.Bottom <= height, r.ToString()));
+        Assert.All(all, r => Assert.True(r.Left >= 0 && r.Top >= 0 && r.Right <= width - 14 && r.Bottom <= height, r.ToString()));
+        // The end clock keeps the right padding, the bar takes what the clocks leave, and the transport sits under its middle.
+        Assert.Equal(width - 14, layout.Total.Right);
+        Assert.Equal(layout.Total.Left - 2, layout.Bar.Right);
+        Assert.Equal(MediaPanelLayout.Elapsed.Right + 2, layout.Bar.Left);
+        Assert.Equal(layout.Bar.X + layout.Bar.Width / 2, layout.PlayPause.X + layout.PlayPause.Width / 2);
+        Assert.Equal(layout.Bar.Right, layout.BarX(S(190), new MediaTimeline(S(10), S(190), S(48), T0, 1, true)));
         // No two targets overlap, so a press has one answer; the disc is drawn inside its button.
-        RectangleF[] targets = [MediaPanelLayout.Seek, MediaPanelLayout.Previous, MediaPanelLayout.PlayPause, MediaPanelLayout.Next];
+        RectangleF[] targets = [layout.Seek, layout.Previous, layout.PlayPause, layout.Next];
         for (int i = 0; i < targets.Length; i++)
         {
             for (int j = i + 1; j < targets.Length; j++)
@@ -438,6 +451,17 @@ public class MediaTests
             }
         }
 
-        Assert.True(MediaPanelLayout.Disc <= MediaPanelLayout.PlayPause.Width);
+        Assert.True(MediaPanelLayout.Disc <= layout.PlayPause.Width);
+    }
+
+    [Fact]
+    public void TheBarIs360AtTheFullWidthAndShortensWithAPanelTheMonitorCaps()
+    {
+        Assert.Equal(new RectangleF(140, 48, 360, 4), Layout.Bar);
+        Assert.Equal(new RectangleF(502, 43, 44, 14), Layout.Total);
+        var narrow = new MediaPanelLayout(512);
+        Assert.Equal(new RectangleF(140, 48, 312, 4), narrow.Bar);
+        Assert.Equal(new RectangleF(454, 43, 44, 14), narrow.Total);
+        Assert.Equal(404, narrow.Title.Width);
     }
 }

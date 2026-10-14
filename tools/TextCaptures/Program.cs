@@ -61,7 +61,7 @@ internal static unsafe partial class Program
         report.Add(Memory("start"));
 
         var watch = Stopwatch.StartNew();
-        using (var first = TextLayout.Of(new TextRun("Nightfall", MediaPanelLayout.TitleStyle, MediaPanelLayout.Title.Width)))
+        using (var first = TextLayout.Of(new TextRun("Nightfall", MediaPanelLayout.TitleStyle, MediaLayout.Title.Width)))
         {
             report.Add($"first layout (DirectWrite factory, font and format): {watch.Elapsed.TotalMilliseconds:F1} ms");
         }
@@ -120,7 +120,7 @@ internal static unsafe partial class Program
     private static int Devices(bool shared)
     {
         // The text stack's first layout comes first in both, as in the island, so only the devices differ.
-        TextLayout.Of(new TextRun("Nightfall", MediaPanelLayout.TitleStyle, MediaPanelLayout.Title.Width)).Dispose();
+        TextLayout.Of(new TextRun("Nightfall", MediaPanelLayout.TitleStyle, MediaLayout.Title.Width)).Dispose();
         GC.Collect();
         string before = Memory("before the devices");
         var d2d = TextDraw.CreateDevice(out ID3D11Device* d3d);
@@ -128,10 +128,10 @@ internal static unsafe partial class Program
         d2d->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS.D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dc);
         foreach (var (text, style, slot) in new[]
         {
-            ("Nightfall", MediaPanelLayout.TitleStyle, MediaPanelLayout.Title),
-            ("Lo-fi radio · lofi beats to study", MediaPanelLayout.ArtistStyle, MediaPanelLayout.Artist),
+            ("Nightfall", MediaPanelLayout.TitleStyle, MediaLayout.Title),
+            ("Lo-fi radio · lofi beats to study", MediaPanelLayout.ArtistStyle, MediaLayout.Artist),
             ("00:48", MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed),
-            ("03:15", MediaPanelLayout.TotalStyle, MediaPanelLayout.Total),
+            ("03:15", MediaPanelLayout.TotalStyle, MediaLayout.Total),
         })
         {
             using var block = new TextBlock();
@@ -229,10 +229,13 @@ internal static unsafe partial class Program
             new("media-command-failed", media, c => MediaPanel(c, playing, "Spotify did not accept next.")),
             new("media-nothing-playing", media, c => MediaPanel(c, null, null)),
             new("media-next-refused", media, c => MediaPanel(c, playing with { Next = false }, null)),
-            new("media-seek-hover", media, c => MediaPanel(c, playing, null, new Seeking(MediaPanelLayout.Bar.X + 120, Drag: false))),
-            new("media-seek-drag", media, c => MediaPanel(c, playing, null, new Seeking(MediaPanelLayout.Bar.X + 120, Drag: true))),
-            new("media-seek-drag-end", media, c => MediaPanel(c, playing, null, new Seeking(MediaPanelLayout.Bar.Right + 20, Drag: true))),
+            new("media-seek-hover", media, c => MediaPanel(c, playing, null, new Seeking(MediaLayout.Bar.X + 120, Drag: false))),
+            new("media-seek-drag", media, c => MediaPanel(c, playing, null, new Seeking(MediaLayout.Bar.X + 120, Drag: true))),
+            new("media-seek-drag-end", media, c => MediaPanel(c, playing, null, new Seeking(MediaLayout.Bar.Right + 20, Drag: true))),
             new("media-targets", media, c => MediaPanel(c, playing, null, targets: true)),
+            // A panel cut to 60% of a 1280 x 800 screen at 150%: the bar and the end clock come in with the right edge.
+            new("media-narrow-playing", IslandGeometry.Panel(NarrowMedia, PanelSize.Media.H), c => MediaPanel(c, playing, null, width: NarrowMedia)),
+            new("media-narrow-targets", IslandGeometry.Panel(NarrowMedia, PanelSize.Media.H), c => MediaPanel(c, playing, null, targets: true, width: NarrowMedia)),
             new("compact-now-playing", IslandGeometry.Compact, c => NowPlayingRow(c, "Nightfall")),
             new("compact-now-playing-long", IslandGeometry.Compact, c => NowPlayingRow(c, "A Very Long Song Title That Goes On")),
             new("compact-timer-running", IslandGeometry.Compact, c => CompactLine(c, CompactRules.Countdown(TimeSpan.FromSeconds(1499.4)), ring: 0.0004f, tabular: true)),
@@ -327,15 +330,21 @@ internal static unsafe partial class Program
     // A target's area, drawn over a capture that shows where presses land.
     private const uint TargetLine = 0xFFFF00FF;
 
+    private static readonly MediaPanelLayout MediaLayout = new((float)PanelSize.Media.W);
+
+    // 60% of 1280 / 1.5 DIPs, as PanelSize.Fit gives it.
+    private const double NarrowMedia = 512;
+
     // The Media panel's view: the same slots, styles and fallbacks as the island's. A button the app does not take is
     // drawn at the disabled opacity; the seek bar shows its knob and the time while the pointer is on it.
-    private static void MediaPanel(Canvas c, Track? track, string? failure, Seeking? seek = null, bool targets = false)
+    private static void MediaPanel(Canvas c, Track? track, string? failure, Seeking? seek = null, bool targets = false, double width = PanelSize.Width)
     {
-        var size = PanelSize.Media;
+        var size = (W: width, PanelSize.Media.H);
+        var layout = new MediaPanelLayout((float)width);
         var body = new Vector2((float)(-size.W / 2), PanelSpace.TabStripHeight);
         c.Pill();
         c.Mascot();
-        Tabs(c, PanelId.Media, PanelSize.Media);
+        Tabs(c, PanelId.Media, size);
         var art = Offset(MediaPanelLayout.Art, body);
         if (track is null)
         {
@@ -346,7 +355,7 @@ internal static unsafe partial class Program
             c.Gradient(art, MediaPanelLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
         }
 
-        var line = MediaPanelLayout.Bar;
+        var line = layout.Bar;
         float played = (float)(track is { Timeline: true } ? track.Position / track.Length : 0);
         float fillEnd = seek is { Drag: true } ? Math.Clamp(seek.X, line.Left, line.Right) : line.X + line.Width * played;
         if (track is { Timeline: true })
@@ -361,8 +370,8 @@ internal static unsafe partial class Program
         }
 
         uint lit = 0xFFFFFFFF, dim = (uint)(255 * StateLook.DisabledOpacity) << 24 | 0xFFFFFF;
-        c.Glyph(Offset(MediaPanelLayout.Previous, body), track is null ? dim : lit, [new(6, 4, 2, 16)], [[new(20, 4), new(9, 12), new(20, 20)]]);
-        var button = Offset(MediaPanelLayout.PlayPause, body);
+        c.Glyph(Offset(layout.Previous, body), track is null ? dim : lit, [new(6, 4, 2, 16)], [[new(20, 4), new(9, 12), new(20, 20)]]);
+        var button = Offset(layout.PlayPause, body);
         c.Circle(new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2), MediaPanelLayout.Disc / 2, track is null ? dim : lit);
         if (track is { Playing: true })
         {
@@ -373,21 +382,21 @@ internal static unsafe partial class Program
             c.Glyph(button, 0xFF000000, [], [[new(7, 4), new(21, 12), new(7, 20)]]);
         }
 
-        c.Glyph(Offset(MediaPanelLayout.Next, body), track is { Next: true } ? lit : dim, [new(16, 4, 2, 16)], [[new(4, 4), new(15, 12), new(4, 20)]]);
+        c.Glyph(Offset(layout.Next, body), track is { Next: true } ? lit : dim, [new(16, 4, 2, 16)], [[new(4, 4), new(15, 12), new(4, 20)]]);
 
-        c.Text(track is null ? NowPlaying.NothingPlaying : track.Title, MediaPanelLayout.TitleStyle, MediaPanelLayout.Title, body);
-        c.Text(failure ?? (track is null ? "" : track.Artist.Length > 0 ? track.Artist : track.App), failure is null ? MediaPanelLayout.ArtistStyle : MediaPanelLayout.FailedStyle, MediaPanelLayout.Artist, body);
+        c.Text(track is null ? NowPlaying.NothingPlaying : track.Title, MediaPanelLayout.TitleStyle, layout.Title, body);
+        c.Text(failure ?? (track is null ? "" : track.Artist.Length > 0 ? track.Artist : track.App), failure is null ? MediaPanelLayout.ArtistStyle : MediaPanelLayout.FailedStyle, layout.Artist, body);
         if (track is { Timeline: true })
         {
             c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Position)), MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed, body);
-            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Length)), MediaPanelLayout.TotalStyle, MediaPanelLayout.Total, body);
+            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Length)), MediaPanelLayout.TotalStyle, layout.Total, body);
         }
 
         if (track is { Timeline: true } && seek is not null)
         {
             // The time's card sits over the artist's line, as the island inserts it last.
             c.Flush();
-            var card = MediaPanelLayout.SeekLabel(seek.X);
+            var card = layout.SeekLabel(seek.X);
             c.RoundRect(Offset(card, body), 4, 0xFF2A2A2F);
             float at = Math.Clamp((seek.X - line.X) / line.Width, 0, 1);
             c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Length * at)), MediaPanelLayout.SeekStyle, card, body);
@@ -399,7 +408,7 @@ internal static unsafe partial class Program
             var everything = NowPlaying.For("Spotify.exe")
                 .WithPlayback(true, 1, MediaCommand.Play | MediaCommand.Pause | MediaCommand.Next | MediaCommand.Previous | MediaCommand.Seek, default)
                 .WithTimeline(TimeSpan.Zero, TimeSpan.FromSeconds(195), TimeSpan.Zero, DateTimeOffset.Now, DateTimeOffset.Now);
-            foreach (var target in MediaPanelLayout.Targets(everything))
+            foreach (var target in layout.Targets(everything))
             {
                 c.StrokeRect(Offset(target.Bounds, body), target.Corner, TargetLine);
             }

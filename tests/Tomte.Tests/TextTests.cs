@@ -10,6 +10,8 @@ namespace Tomte.Tests;
 
 public class TextTests
 {
+    private static readonly MediaPanelLayout MediaLayout = new((float)PanelSize.Media.W);
+
     private const string Long = "A very long title that will not fit in the slot at all, not even close, and goes on for a while";
     private static readonly TextStyle Title = new(14, 600);
     private static readonly double[] Scales = [1, 1.25, 1.5];
@@ -117,10 +119,10 @@ public class TextTests
 
         Assert.Equal("99:59:59", longest.Run.Text);
         Assert.False(longest.Trimmed, $"needs {natural.Width} DIP");
-        Assert.Equal(MediaPanelLayout.Elapsed.Width, MediaPanelLayout.Total.Width);
+        Assert.Equal(MediaPanelLayout.Elapsed.Width, MediaLayout.Total.Width);
         // Both clear of the bar between them.
-        Assert.True(MediaPanelLayout.Elapsed.Right <= MediaPanelLayout.Bar.Left);
-        Assert.True(MediaPanelLayout.Total.Left >= MediaPanelLayout.Bar.Right);
+        Assert.True(MediaPanelLayout.Elapsed.Right <= MediaLayout.Bar.Left);
+        Assert.True(MediaLayout.Total.Left >= MediaLayout.Bar.Right);
     }
 
     [Fact]
