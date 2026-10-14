@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+extern alias ai;
+
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
@@ -16,9 +17,9 @@ using Xunit;
 namespace Tomte.Tests;
 
 /// <summary>
-/// Scheduled jobs: making one from a request, storing it, its Task Scheduler entry, running it unattended, and the
-/// window that arms the next run. The model answers are what llama3.2:3b on local Ollama answered to this branch's own
-/// requests (recorded with a scratch script), bad and unclear ones included.
+/// Scheduled jobs: making one from a request, storing it, its Task Scheduler entry, running it unattended, the clock
+/// that arms the next run, and the hand-off of a --run-job start. The model answers were recorded from llama3.2:3b on
+/// local Ollama, answering the requests these sessions send, bad and unclear answers included.
 /// </summary>
 public sealed class JobTests : IDisposable
 {
@@ -44,11 +45,12 @@ public sealed class JobTests : IDisposable
     private readonly InMemoryShelf _shelf = new();
     private readonly List<string> _ran = [];
     private readonly List<ToolRequest> _asked = [];
+    private readonly List<string> _logged = [];
     private PermissionAnswer _answer = PermissionAnswer.AllowOnce;
 
     public JobTests()
     {
-        _store = new JobStore(new TomteDb(Path.Combine(_dir, "tomte.db")));
+        _store = new JobStore(new TomteDb(Path.Combine(_dir, "tomte.db")), _logged.Add);
         _shelf.CreateFile("notes.txt", "Milk, eggs, bread.\nCall the dentist on Monday at 10.");
     }
 
@@ -89,14 +91,25 @@ public sealed class JobTests : IDisposable
         return (session, handler, planner);
     }
 
-    private JobRunner Runner(string name, int turns, out RecordedHandler handler, PaletteOptions? options = null)
+    private JobRunner Runner(string name, int turns, out RecordedHandler handler, PaletteOptions? options = null, bool resident = true, DateTimeOffset? now = null)
     {
         var recorded = handler = Handler(name, turns);
-        return new JobRunner(_store, _ => new OpenAICompatibleProvider(new HttpClient(recorded), Ollama.BaseUrl!, null), Tools(), new SendLog(LogPath), options ?? new PaletteOptions())
+        return new JobRunner(_store, _tasks, _ => new OpenAICompatibleProvider(new HttpClient(recorded), Ollama.BaseUrl!, null), Tools(), new SendLog(LogPath), options ?? new PaletteOptions())
         {
-            Now = () => Monday0900.AddSeconds(30),
+            Now = () => now ?? Monday0900.AddSeconds(30),
             Zone = India,
+            Resident = resident,
+            Log = _logged.Add,
         };
+    }
+
+    /// <summary>A connection to the test's tomte.db for changing rows by hand, as a damaged file or a hand edit would.</summary>
+    private void Sql(string sql)
+    {
+        using var connection = new TomteDb(Path.Combine(_dir, "tomte.db")).Open("jobs", []);
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        command.ExecuteNonQuery();
     }
 
     /// <summary>A weekday job made on Monday at 08:00, so its first run is Monday at 09:00.</summary>
@@ -314,7 +327,7 @@ public sealed class JobTests : IDisposable
         Assert.Equal("true", Value("StartWhenAvailable"));
         Assert.Equal("false", Value("WakeToRun"));
         Assert.Equal("false", Value("DisallowStartIfOnBatteries"));
-        Assert.Equal("PT0S", Value("ExecutionTimeLimit"));
+        Assert.Equal("PT10M", Value("ExecutionTimeLimit"));
         Assert.Equal("4", Value("Priority"));
         Assert.Equal("IgnoreNew", Value("MultipleInstancesPolicy"));
         Assert.Equal(Exe, Value("Command"));
@@ -360,21 +373,42 @@ public sealed class JobTests : IDisposable
         Directory.CreateDirectory(_dir);
         File.WriteAllText(_store.MarkerPath, "not a time");
         Assert.Equal(DateTimeOffset.MinValue, JobStore.ReadMarker(_store.MarkerPath));
+        // A number past what a DateTimeOffset holds is a damaged file too, not a crash at start.
+        File.WriteAllText(_store.MarkerPath, "253402300800000");
+        Assert.Equal(DateTimeOffset.MinValue, JobStore.ReadMarker(_store.MarkerPath));
+        File.WriteAllText(_store.MarkerPath, "253402300799999");
+        Assert.Equal(DateTimeOffset.MaxValue.ToUnixTimeMilliseconds(), JobStore.ReadMarker(_store.MarkerPath)!.Value.ToUnixTimeMilliseconds());
+        File.WriteAllText(_store.MarkerPath, "0");
+        Assert.Equal(DateTimeOffset.UnixEpoch, JobStore.ReadMarker(_store.MarkerPath));
     }
 
     [Fact]
     public void ARunMissedWhileAsleepIsTakenOnceAndTheNextIsInTheFuture()
     {
         AddJob("p", "read_shelf_item");
-        // Asleep from Monday 08:30 to Thursday 11:00: the runs at nine on Monday to Thursday all passed.
+        // Asleep from Monday 08:30 to Thursday 11:00: the runs at nine on Monday to Thursday all passed. Today's, two
+        // hours late, is taken once.
         var thursday = new DateTimeOffset(2026, 10, 22, 11, 0, 0, Ist);
 
-        var (claimed, due) = Assert.Single(_store.ClaimDue(thursday, India));
+        var (claimed, due, missed) = Assert.Single(_store.ClaimDue(thursday, India));
 
-        Assert.Equal(Monday0900, due);
+        Assert.False(missed);
+        Assert.Equal(new DateTimeOffset(2026, 10, 22, 9, 0, 0, Ist), due);
         Assert.Equal(new DateTimeOffset(2026, 10, 23, 9, 0, 0, Ist), claimed.NextDue);
         Assert.Empty(_store.ClaimDue(thursday.AddMinutes(1), India));
         Assert.Equal(claimed.NextDue, JobStore.ReadMarker(_store.MarkerPath));
+    }
+
+    [Fact]
+    public void ARepeatingRunMoreThanSixHoursLateIsSkipped()
+    {
+        _store.Add(new JobDraft("Morning notes", "p", WeekdaysAtNine, []), Ollama, Monday0800, India);
+        // Asleep from Monday 08:30 to Thursday 16:00: the latest run, at nine today, is seven hours late.
+        var thursday = new DateTimeOffset(2026, 10, 22, 16, 0, 0, Ist);
+
+        Assert.Empty(_store.ClaimDue(thursday, India));
+        Assert.Equal(new DateTimeOffset(2026, 10, 23, 9, 0, 0, Ist), Assert.Single(_store.All()).NextDue);
+        Assert.Contains(_logged, line => line.Contains("skipped"));
     }
 
     [Fact]
@@ -382,8 +416,9 @@ public sealed class JobTests : IDisposable
     {
         _store.Add(new JobDraft("Once", "p", new JobSchedule { Time = new TimeOnly(9, 0), Date = new DateOnly(2026, 10, 19) }, []), Ollama, Monday0800, India);
 
-        var (claimed, due) = Assert.Single(_store.ClaimDue(Monday0900.AddDays(1), India));
+        var (claimed, due, missed) = Assert.Single(_store.ClaimDue(Monday0900.AddHours(20), India));
 
+        Assert.False(missed);
         Assert.Equal(Monday0900, due);
         Assert.Null(claimed.NextDue);
         Assert.Null(_store.NextDue());
@@ -392,10 +427,44 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task AOneOffMoreThanADayLateIsKeptAsMissedAndNotRun()
+    {
+        var once = _store.Add(new JobDraft("Once", "p", new JobSchedule { Time = new TimeOnly(9, 0), Date = new DateOnly(2026, 10, 19) }, []), Ollama, Monday0800, India);
+        var runner = Runner("runshelf", 2, out var handler, now: Monday0900.AddHours(25));
+        var events = new List<IslandEvent>();
+        runner.Raised += events.Add;
+
+        Assert.Null(await runner.RunDueAsync());
+
+        Assert.Empty(handler.Bodies);
+        var run = Assert.Single(_store.Results());
+        Assert.Equal((false, JobStore.Missed, Monday0900), (run.Ok, run.Text, run.Due));
+        Assert.Equal(["Job missed: Once"], events.Select(e => e.Text));
+        Assert.Null(Assert.Single(_store.All()).NextDue);
+        // Its task would only start Tomte for nothing now.
+        Assert.Equal([once.Id], _tasks.Removed);
+    }
+
+    [Fact]
+    public void ARowThatCannotBeReadIsSwitchedOffAndTheOthersStillRun()
+    {
+        AddJob("p", "read_shelf_item");
+        var bad = AddJob("q", "read_shelf_item");
+        Sql($"UPDATE jobs_list SET schedule = 'not json' WHERE id = {bad.Id}");
+
+        var claim = Assert.Single(_store.ClaimDue(Monday0900, India));
+
+        Assert.NotEqual(bad.Id, claim.Job.Id);
+        Assert.Contains(_logged, line => line.Contains($"job {bad.Id} cannot be read"));
+        // Switched off, so it never comes due again and the runner never spins on it.
+        Assert.Equal(new DateTimeOffset(2026, 10, 20, 9, 0, 0, Ist), _store.NextDue());
+    }
+
+    [Fact]
     public async Task TwoProcessesNeverClaimTheSameRun()
     {
         AddJob("p", "read_shelf_item");
-        var other = new JobStore(new TomteDb(Path.Combine(_dir, "tomte.db")));
+        var other = new JobStore(new TomteDb(Path.Combine(_dir, "tomte.db")), _logged.Add);
 
         var claims = await Task.WhenAll(
             Task.Run(() => _store.ClaimDue(Monday0900, India)),
@@ -417,7 +486,9 @@ public sealed class JobTests : IDisposable
         var next = await runner.RunDueAsync();
 
         Assert.Equal(new DateTimeOffset(2026, 10, 20, 9, 0, 0, Ist), next);
-        Assert.Equal(["Job done: Morning notes"], events.Select(e => e.Text));
+        Assert.Equal(["Running job: Morning notes", "Job done: Morning notes"], events.Select(e => e.Text));
+        // A repeating job keeps its Task Scheduler entry.
+        Assert.Empty(_tasks.Removed);
         Assert.Equal(["read_shelf_item"], ToolNames(handler.Bodies[0]));
         var request = JsonNode.Parse(handler.Bodies[0])!;
         Assert.EndsWith("Nobody is at the keyboard, so nothing can be asked: do the task with the tools you are given and answer with the result.",
@@ -458,7 +529,7 @@ public sealed class JobTests : IDisposable
         var run = Assert.Single(_store.Results());
         Assert.False(run.Ok);
         Assert.Equal("The job called copy_to_clipboard, which it was not approved to use, so the run stopped.", run.Text);
-        Assert.Equal(["Job failed: Morning notes"], events.Select(e => e.Text));
+        Assert.Equal(["Running job: Morning notes", "Job failed: Morning notes"], events.Select(e => e.Text));
         Assert.Equal("Morning notes", Assert.Single(new SendLog(LogPath).ReadAll()).Job);
     }
 
@@ -532,66 +603,109 @@ public sealed class JobTests : IDisposable
         Assert.Empty(handler.Bodies);
     }
 
-    // ---- The window that arms the next run, and the hand-off ----
+    // ---- The clock that arms the next run, and the hand-off ----
 
     [Fact]
-    public async Task ATimeThatHasPassedFiresAtOnceAndOnlyOnce()
+    public void ATimeThatHasPassedFiresAtOnceAndOnlyOnce()
     {
-        await using var thread = new WindowThread(_dir, () => DateTimeOffset.Now);
+        var clock = new JobClock(() => Monday0900);
 
-        await thread.On(w => w.Arm(DateTimeOffset.Now.AddHours(-2)));
+        Assert.Equal(0u, clock.Arm(Monday0800));
 
-        Assert.Null(await thread.DueAsync());
-        Assert.True(await thread.QuietAsync(300));
-        await thread.On(w => Assert.Null(w.Next));
+        Assert.True(clock.Fired());
+        Assert.Null(clock.Next);
+        Assert.Null(clock.Wait());
+        Assert.False(clock.Fired());
     }
 
     [Fact]
-    public async Task AnEarlyFireWaitsAndAClockChangeWorksTheWaitOutAgain()
+    public void AnEarlyFireWaitsForWhatIsLeft()
     {
-        var shift = TimeSpan.Zero;
-        await using var thread = new WindowThread(_dir, () => DateTimeOffset.Now + shift);
+        var now = Monday0800;
+        var clock = new JobClock(() => now);
+        Assert.Equal(3_600_000u, clock.Arm(Monday0900));
 
-        await thread.On(w => w.Arm(DateTimeOffset.Now.AddMilliseconds(150)));
-        // The clock is set back an hour before the one-shot fires: the fire is early, so it waits for what is left.
-        shift = TimeSpan.FromHours(-1);
-        Assert.True(await thread.QuietAsync(600));
-        // The clock is put right: the wait is worked out again from the wall clock and the run is due at once.
-        shift = TimeSpan.Zero;
-        await thread.On(w => w.ClockChanged());
-
-        Assert.Null(await thread.DueAsync());
+        // The clock was set back ten minutes before the one-shot fired: the fire is early and waits again.
+        now = Monday0900.AddMinutes(-10);
+        Assert.False(clock.Fired());
+        Assert.Equal(600_000u, clock.Wait());
+        Assert.Equal(Monday0900, clock.Next);
     }
 
     [Fact]
-    public async Task AResumePastTheDueTimeFiresAtOnce()
+    public void AResumeOrAClockChangeWorksTheWaitOutFromTheWallClock()
     {
-        var shift = TimeSpan.Zero;
-        await using var thread = new WindowThread(_dir, () => DateTimeOffset.Now + shift);
-        await thread.On(w => w.Arm(DateTimeOffset.Now.AddHours(1)));
-        Assert.True(await thread.QuietAsync(200));
+        var now = Monday0800;
+        var clock = new JobClock(() => now);
+        clock.Arm(Monday0900);
 
-        // Two hours asleep: the one-shot did not count them, the wall clock did.
-        shift = TimeSpan.FromHours(2);
-        await thread.On(w => w.ClockChanged());
-
-        Assert.Null(await thread.DueAsync());
+        // Two hours asleep: the one-shot did not count them, the wall clock did, so the run is due at once.
+        now = Monday0800.AddHours(2);
+        Assert.Equal(0u, clock.Wait());
+        Assert.True(clock.Fired());
+        // A run a month away waits as long as SetTimer can, then asks again.
+        Assert.Equal((uint)int.MaxValue, clock.Arm(now.AddDays(30)));
     }
 
     [Fact]
     public async Task ARunJobStartHandsOverToTheTomteRunningOnTheSameFolder()
     {
-        await using var thread = new WindowThread(_dir, () => DateTimeOffset.Now);
+        // The island window of a Tomte on this folder carries this title; a plain window stands in for it.
+        await using var tomte = await TitledWindow.OpenAsync(JobTask.WindowTitle(_dir));
 
-        Assert.True(JobWindow.HandOff(_dir, 42));
-
-        Assert.Equal(42, await thread.DueAsync());
-        // No Tomte runs on another folder, so a start there is not handed over: it becomes the app.
-        Assert.False(JobWindow.HandOff(Path.Combine(_dir, "other"), 42));
+        Assert.True(JobTask.HandOff(_dir, 42));
+        // No Tomte runs on another folder, so a start there is not handed over: it runs the job itself.
+        Assert.False(JobTask.HandOff(Path.Combine(_dir, "other"), 42));
     }
 
     [Fact]
-    public void WithNoTomteRunningARunJobStartIsNotHandedOver() => Assert.False(JobWindow.HandOff(_dir, 1));
+    public void WithNoTomteRunningARunJobStartIsNotHandedOver() => Assert.False(JobTask.HandOff(_dir, 1));
+
+    [Fact]
+    public async Task AHeadlessRunKeepsItsResultForTheNextStart()
+    {
+        AddJob("Read the shelf item notes.txt and summarise it in one sentence.", "read_shelf_item");
+        var headless = Runner("runshelf", 2, out var handler, resident: false);
+        var unseen = new List<IslandEvent>();
+        headless.Raised += e => unseen.Add(e);
+
+        await headless.RunDueAsync();
+
+        // It ran, but nobody saw it: the result is kept unshown and the next start looks at once.
+        Assert.Equal(2, handler.Bodies.Count);
+        Assert.False(Assert.Single(_store.Results()).Shown);
+        Assert.Equal(DateTimeOffset.UnixEpoch, JobStore.ReadMarker(_store.MarkerPath));
+        Assert.Equal(["Running job: Morning notes"], unseen.Select(e => e.Text));
+
+        // The next start raises it once and puts the real next run back in the file.
+        var resident = Runner("runshelf", 2, out var nothing, now: Monday0900.AddMinutes(5));
+        var events = new List<IslandEvent>();
+        resident.Raised += events.Add;
+        var next = await resident.RunDueAsync();
+        Assert.Empty(nothing.Bodies);
+        Assert.Equal(["Job done: Morning notes"], events.Select(e => e.Text));
+        Assert.True(Assert.Single(_store.Results()).Shown);
+        Assert.Equal(next, JobStore.ReadMarker(_store.MarkerPath));
+        Assert.Empty(_store.TakeUnshown());
+    }
+
+    [Fact]
+    public async Task AResultThatCannotBeKeptDoesNotStopTheOtherRuns()
+    {
+        AddJob("Use the copy_to_clipboard tool to put the words standup at 10 on the clipboard.", "read_shelf_item");
+        AddJob("Use the copy_to_clipboard tool to put the words standup at 10 on the clipboard.", "read_shelf_item");
+        // The disk says no to every result.
+        Sql("CREATE TRIGGER jobs_refuse BEFORE INSERT ON jobs_runs BEGIN SELECT RAISE(FAIL, 'disk full'); END");
+        var runner = Runner("runoutside", 1, out var handler);
+        var events = new List<IslandEvent>();
+        runner.Raised += events.Add;
+
+        await runner.RunDueAsync();
+
+        Assert.Equal(2, handler.Bodies.Count);
+        Assert.Equal(4, events.Count);
+        Assert.Equal(2, _logged.Count(line => line.StartsWith("jobs: could not keep the result of job", StringComparison.Ordinal)));
+    }
 
     /// <summary>Records what would be registered; the XML is what the real entry would get.</summary>
     private sealed class FakeTasks : IJobTasks
@@ -616,57 +730,24 @@ public sealed class JobTests : IDisposable
         public void Remove(long jobId) => Removed.Add(jobId);
     }
 
-    /// <summary>A job window on a thread with a message loop, as the island's thread is.</summary>
-    private sealed class WindowThread : IAsyncDisposable
+    /// <summary>A hidden top-level window with a given title, on a thread of its own, standing in for the island window.</summary>
+    private sealed class TitledWindow : IAsyncDisposable
     {
-        private readonly DispatcherQueueController _controller = DispatcherQueueController.CreateOnDedicatedThread();
-        private readonly SemaphoreSlim _fired = new(0);
-        private readonly ConcurrentQueue<long?> _dues = new();
-        private JobWindow? _window;
+        private readonly DispatcherQueueController _thread = DispatcherQueueController.CreateOnDedicatedThread();
 
-        public WindowThread(string folder, Func<DateTimeOffset> now) => Run(() =>
+        public static async Task<TitledWindow> OpenAsync(string title)
         {
-            _window = new JobWindow(folder, now);
-            _window.Due += id =>
-            {
-                _dues.Enqueue(id);
-                _fired.Release();
-            };
-        }).Wait();
-
-        public Task On(Action<JobWindow> action) => Run(() => action(_window!));
-
-        public async Task<long?> DueAsync()
-        {
-            Assert.True(await _fired.WaitAsync(3000), "nothing came due");
-            _dues.TryDequeue(out var id);
-            return id;
+            var window = new TitledWindow();
+            var made = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            window._thread.DispatcherQueue.TryEnqueue(() => made.SetResult(Create(title)));
+            Assert.True(await made.Task);
+            return window;
         }
 
-        public async Task<bool> QuietAsync(int ms) => !await _fired.WaitAsync(ms);
+        // The window goes with its thread.
+        public async ValueTask DisposeAsync() => await _thread.ShutdownQueueAsync();
 
-        public async ValueTask DisposeAsync()
-        {
-            await Run(() => _window?.Dispose());
-            await _controller.ShutdownQueueAsync();
-        }
-
-        private Task Run(Action action)
-        {
-            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            _controller.DispatcherQueue.TryEnqueue(() =>
-            {
-                try
-                {
-                    action();
-                    done.SetResult();
-                }
-                catch (Exception e)
-                {
-                    done.SetException(e);
-                }
-            });
-            return done.Task;
-        }
+        private static unsafe bool Create(string title) =>
+            !ai::Windows.Win32.PInvoke.CreateWindowEx(0, "STATIC", title, ai::Windows.Win32.UI.WindowsAndMessaging.WINDOW_STYLE.WS_POPUP, 0, 0, 0, 0, default, null, null, null).IsNull;
     }
 }

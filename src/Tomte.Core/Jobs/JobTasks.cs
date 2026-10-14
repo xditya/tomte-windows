@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
+using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.TaskScheduler;
 
@@ -27,6 +28,9 @@ public static class JobTask
 {
     public const string RunJobSwitch = "--run-job";
 
+    /// <summary>What a --run-job start posts to the running Tomte's island window, with the job id in wParam.</summary>
+    public const uint MsgRunJob = PInvoke.WM_APP + 0x4A;
+
     private static readonly XNamespace Ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
 
     /// <summary>The job id of a --run-job start, or null.</summary>
@@ -45,6 +49,19 @@ public static class JobTask
 
     public static string Name(long jobId, string dataFolder) => $"Tomte job {jobId} {Key(dataFolder)}";
 
+    /// <summary>The island window's title, so a --run-job start finds the Tomte on its own data folder and no other.</summary>
+    public static string WindowTitle(string dataFolder) => "Tomte " + Key(dataFolder);
+
+    /// <summary>
+    /// Hands a --run-job start to the Tomte already running on <paramref name="dataFolder"/>: posts the id to the window
+    /// with that folder's title. False when none is running there; the caller then runs the job itself.
+    /// </summary>
+    public static bool HandOff(string dataFolder, long jobId)
+    {
+        var target = PInvoke.FindWindow(null, WindowTitle(dataFolder));
+        return !target.IsNull && PInvoke.PostMessage(target, MsgRunJob, (nuint)jobId, 0);
+    }
+
     public static string Arguments(long jobId, string settingsPath) =>
         string.Equals(Path.GetFullPath(settingsPath), Path.GetFullPath(SettingsStore.DefaultPath), StringComparison.OrdinalIgnoreCase)
             ? $"{RunJobSwitch} {jobId}"
@@ -53,8 +70,8 @@ public static class JobTask
     /// <summary>
     /// The task: a calendar trigger in local time from the job's next run (Task Scheduler follows daylight saving the
     /// same way), for the signed-in user only, no elevation, never waking the PC, started late when the time was missed.
-    /// No time limit, because the run starts the resident app. Normal priority instead of Task Scheduler's below-normal
-    /// default, so the island animates as it does when started by hand.
+    /// Ten minutes at most: the start hands the job to a running Tomte or runs it with no island and exits, and a run
+    /// times out after two. Normal priority instead of Task Scheduler's below-normal default.
     /// </summary>
     public static string Xml(ScheduledJob job, string exe, string arguments)
     {
@@ -82,7 +99,7 @@ public static class JobTask
                 new XElement(Ns + "StopIfGoingOnBatteries", false),
                 new XElement(Ns + "StartWhenAvailable", true),
                 new XElement(Ns + "WakeToRun", false),
-                new XElement(Ns + "ExecutionTimeLimit", "PT0S"),
+                new XElement(Ns + "ExecutionTimeLimit", "PT10M"),
                 new XElement(Ns + "Priority", 4)),
             new XElement(Ns + "Actions", new XAttribute("Context", "Author"),
                 new XElement(Ns + "Exec",
@@ -100,7 +117,7 @@ public sealed class WindowsTaskScheduler(string exe, string settingsPath) : IJob
 {
     private string DataFolder => Path.GetDirectoryName(Path.GetFullPath(settingsPath))!;
 
-    public void Register(ScheduledJob job) => WithRoot((_, root) =>
+    public void Register(ScheduledJob job) => WithRoot(root =>
     {
         using var name = new Bstr(JobTask.Name(job.Id, DataFolder));
         using var xml = new Bstr(JobTask.Xml(job, exe, JobTask.Arguments(job.Id, settingsPath)));
@@ -108,7 +125,7 @@ public sealed class WindowsTaskScheduler(string exe, string settingsPath) : IJob
         Marshal.FinalReleaseComObject(task);
     });
 
-    public void Remove(long jobId) => WithRoot((_, root) =>
+    public void Remove(long jobId) => WithRoot(root =>
     {
         using var name = new Bstr(JobTask.Name(jobId, DataFolder));
         try
@@ -122,13 +139,13 @@ public sealed class WindowsTaskScheduler(string exe, string settingsPath) : IJob
     });
 
     /// <summary>
-    /// Null when Task Scheduler takes the XML as a task definition, otherwise its message. Builds the definition in
-    /// memory and registers nothing.
+    /// Null when Task Scheduler takes the XML as a task definition, otherwise its message. Connects and builds the
+    /// definition in memory; opens no folder and registers nothing.
     /// </summary>
     public static string? Check(string xml)
     {
         string? error = null;
-        WithRoot((service, _) =>
+        WithService(service =>
         {
             service.NewTask(0, out var definition);
             using var text = new Bstr(xml);
@@ -148,22 +165,27 @@ public sealed class WindowsTaskScheduler(string exe, string settingsPath) : IJob
         return error;
     }
 
-    private static void WithRoot(Action<ITaskService, ITaskFolder> action)
+    private static void WithRoot(Action<ITaskFolder> action) => WithService(service =>
+    {
+        using var path = new Bstr("\\");
+        service.GetFolder(path, out var root);
+        try
+        {
+            action(root);
+        }
+        finally
+        {
+            Marshal.FinalReleaseComObject(root);
+        }
+    });
+
+    private static void WithService(Action<ITaskService> action)
     {
         var service = (ITaskService)new Windows.Win32.System.TaskScheduler.TaskScheduler();
         try
         {
             service.Connect(null!, null!, null!, null!);
-            using var path = new Bstr("\\");
-            service.GetFolder(path, out var root);
-            try
-            {
-                action(service, root);
-            }
-            finally
-            {
-                Marshal.FinalReleaseComObject(root);
-            }
+            action(service);
         }
         finally
         {

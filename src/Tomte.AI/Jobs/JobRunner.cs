@@ -10,27 +10,66 @@ namespace Tomte.AI.Jobs;
 /// Runs the jobs that are due, one after another, through the palette's agent loop with nobody at the keyboard. A run
 /// may use only the tools approved when its job was created and never asks: a call to any other tool, or spend past
 /// the daily cap, ends it with a result that says so. Each run writes one send-log line with the job's name and keeps
-/// its result for the palette; each finished run raises "Job done: name" (or "Job failed: name"), and each device
-/// action a run made raises its own line, as device actions do in the palette.
+/// its result for the palette. "Running job: name" comes before a run and "Job done: name" or "Job failed: name" after
+/// it; each device action a run made raises its own line, as device actions do in the palette.
 /// </summary>
-public sealed class JobRunner(JobStore store, Func<ProviderConfig, IChatProvider> provider, BuiltInTools tools, SendLog log, PaletteOptions options)
+public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConfig, IChatProvider> provider, BuiltInTools tools, SendLog log, PaletteOptions options)
 {
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.Now;
 
     public TimeZoneInfo Zone { get; init; } = TimeZoneInfo.Local;
 
-    /// <summary>Raised on the caller's context for each finished run and each device action a run made.</summary>
+    /// <summary>
+    /// False for a --run-job start with no Tomte running: nobody sees its events, so its results are kept unshown and
+    /// the next start raises them. True in the resident app, which raises results kept that way before it runs.
+    /// </summary>
+    public bool Resident { get; init; } = true;
+
+    public Action<string>? Log { get; init; }
+
+    /// <summary>Raised on the caller's context for each run as it starts and ends, each device action a run made, and each kept result.</summary>
     public event Action<IslandEvent>? Raised;
+
+    /// <summary>The event line for a kept result.</summary>
+    public static string EventText(JobRunRecord run) =>
+        (run.Ok ? "Job done: " : run.Text == JobStore.Missed ? "Job missed: " : "Job failed: ") + run.JobName;
 
     /// <summary>Claims and runs every job due now, then returns the earliest next run over all jobs (null for none).</summary>
     public async Task<DateTimeOffset?> RunDueAsync()
     {
-        var due = await Task.Run(() => store.ClaimDue(Now(), Zone));
-        foreach (var (job, at) in due)
+        var claims = await Task.Run(() => store.ClaimDue(Now(), Zone));
+        if (Resident)
         {
-            var run = await RunAsync(job, at);
-            await Task.Run(() => store.Record(run));
-            Raised?.Invoke(new IslandEvent((run.Ok ? "Job done: " : "Job failed: ") + job.Name, Now()));
+            foreach (var kept in await Task.Run(store.TakeUnshown))
+            {
+                Raised?.Invoke(new IslandEvent(EventText(kept), Now()));
+            }
+        }
+
+        foreach (var (job, due, missed) in claims)
+        {
+            // A one-off has had its turn: its entry would only start Tomte for nothing.
+            if (job.Schedule.Date is not null)
+            {
+                await Try(() => tasks.Remove(job.Id), $"remove the task of job {job.Id}");
+            }
+
+            JobRunRecord run;
+            if (missed)
+            {
+                run = Record(job, due, false, JobStore.Missed, $"Due {due:O}; Tomte did not run within {JobStore.OneOffGrace.TotalHours:0} hours.");
+            }
+            else
+            {
+                Raised?.Invoke(new IslandEvent("Running job: " + job.Name, Now()));
+                run = await RunAsync(job, due);
+            }
+
+            await Try(() => store.Record(run), $"keep the result of job {job.Id}");
+            if (Resident)
+            {
+                Raised?.Invoke(new IslandEvent(EventText(run), Now()));
+            }
         }
 
         return await Task.Run(store.NextDue);
@@ -73,5 +112,18 @@ public sealed class JobRunner(JobStore store, Func<ProviderConfig, IChatProvider
     }
 
     private JobRunRecord Record(ScheduledJob job, DateTimeOffset due, bool ok, string text, string details) =>
-        new(job.Id, job.Name, due, Now(), ok, text, details);
+        new(job.Id, job.Name, due, Now(), ok, text, details, Shown: Resident);
+
+    // A disk or database that says no for one run must not stop the others.
+    private async Task Try(Action work, string what)
+    {
+        try
+        {
+            await Task.Run(work);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            Log?.Invoke($"jobs: could not {what} ({e.GetType().Name}: {e.Message})");
+        }
+    }
 }

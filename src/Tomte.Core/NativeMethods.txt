@@ -60,17 +60,6 @@ ITaskDefinition
 IRegisteredTask
 TASK_CREATION
 TASK_LOGON_TYPE
-RegisterClassEx
-CreateWindowEx
-DefWindowProc
-DestroyWindow
-GetModuleHandle
-SetTimer
-KillTimer
 FindWindow
 PostMessage
-WM_TIMER
-WM_TIMECHANGE
-WM_POWERBROADCAST
-PBT_APMRESUMEAUTOMATIC
 WM_APP

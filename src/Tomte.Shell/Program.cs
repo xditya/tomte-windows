@@ -50,10 +50,10 @@ internal static class Program
             return 0;
         }
 
-        // --run-job from Task Scheduler while Tomte already runs on the same folder: that Tomte runs it.
-        if (Jobs.HandedOff(args))
+        // --run-job from Task Scheduler: handed to the Tomte running on the same folder, or run here with no island.
+        if (Jobs.RunJobStart(args) is int code)
         {
-            return 0;
+            return code;
         }
 
         bool debugMascot = args.Contains("--debug-mascot");
@@ -739,7 +739,7 @@ internal static class Program
     }
 
     /// <summary>Routes await continuations back to the UI thread's dispatcher queue.</summary>
-    private sealed class DispatcherQueueContext(Windows.System.DispatcherQueue queue) : SynchronizationContext
+    internal sealed class DispatcherQueueContext(Windows.System.DispatcherQueue queue) : SynchronizationContext
     {
         public override void Post(SendOrPostCallback d, object? state) => queue.TryEnqueue(() => d(state));
     }
