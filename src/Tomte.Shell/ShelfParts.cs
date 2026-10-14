@@ -22,9 +22,13 @@ internal static class ShelfColors
     public static readonly Color Ink2 = Color.FromArgb(153, 255, 255, 255);
     public static readonly Color Ink3 = Color.FromArgb(97, 255, 255, 255);
     public static readonly Color Warn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
-    public static readonly Color ButtonFill = Color.FromArgb(115, 0, 0, 0);
+    public static readonly Color Disabled = Color.FromArgb((byte)(230 * Tomte.Core.Interaction.StateLook.DisabledOpacity), 255, 255, 255);
+    public static readonly Color Mark = Color.FromArgb(77, 255, 255, 255);
+    public static readonly Color WarnFill = Color.FromArgb(41, 0xF0, 0xB3, 0x5A);
 
     public static Color Rgb(uint rgb) => Color.FromArgb(255, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
+
+    public static uint Argb(Color c) => (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
 }
 
 /// <summary>

@@ -252,8 +252,14 @@ internal static unsafe partial class Program
             new("strip-focus", StripLooks, c => StripLook(c, ring: true)),
             new("strip-tip", StripLooks, c => StripLook(c, tip: "Ask Tomte anything")),
             new("strip-acknowledged", StripLooks, c => StripLook(c, tip: "Copied", tick: true)),
-            new("shelf", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems)),
-            new("shelf-empty", Panel(PanelSize.Shelf), c => Shelf(c, [])),
+            new("shelf", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems, PanelSize.Shelf)),
+            new("shelf-hover", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems, PanelSize.Shelf, owner: 2)),
+            new("shelf-selected", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems, PanelSize.Shelf, owner: 1, selectedSlot: 1)),
+            new("shelf-remove-confirm", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems, PanelSize.Shelf, owner: 1, confirming: true, selectedSlot: 1)),
+            new("shelf-missing-hover", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems, PanelSize.Shelf, owner: 3)),
+            new("shelf-narrow-hover", Panel(NarrowShelf), c => Shelf(c, ShelfItems, NarrowShelf, owner: 0)),
+            new("shelf-narrow-remove-confirm", Panel(NarrowShelf), c => Shelf(c, ShelfItems, NarrowShelf, owner: 0, confirming: true)),
+            new("shelf-empty", Panel(PanelSize.Shelf), c => Shelf(c, [], PanelSize.Shelf)),
             new("shelf-drop", IslandGeometry.ShelfDrop, ShelfDrop),
             new("shortcuts", Panel(PanelSize.Shortcuts), Shortcuts),
             new("scratchpad", Panel(PanelSize.Scratchpad), c => Scratchpad(c, "Call Mom\nSubscribe to the newsletter about small tools, the one with the long name that wraps over two lines\nGym 6:00 PM")),
@@ -432,6 +438,9 @@ internal static unsafe partial class Program
 
     private static Vector2 BodyOrigin((double W, double H) size) => new((float)(-size.W / 2), PanelSpace.TabStripHeight);
 
+    // The Shelf panel capped at 60% of a monitor 733 DIPs wide (1280 pixels at 175%), where the names no longer fit the band.
+    private static readonly (double W, double H) NarrowShelf = (440, PanelSize.Shelf.H);
+
     private static readonly ShelfItem[] ShelfItems =
     [
         new(1, "Q3-report.pdf", @"C:\q\Q3-report.pdf", ShelfKind.Reference, default) { Size = 2_400_000 },
@@ -441,52 +450,76 @@ internal static unsafe partial class Program
         new(5, "a-long-name-for-the-invoice-of-october.docx", @"C:\q\invoice.docx", ShelfKind.Copy, default) { Size = 88_000 },
     ];
 
-    // The Shelf: head row, a page of tiles (the second one selected, with its buttons as dark squares), or the empty box.
-    private static void Shelf(Canvas c, ShelfItem[] items)
+    // The Shelf: the band over a page of tiles, or the empty box. The band shows the head row, or the actions for the
+    // tile in slot `owner`, the one under the pointer, with the host's hover layer on it and, unless it is the selected
+    // one, the outline that says the buttons are its; Remove asks while `confirming`. `panel` can be narrower than the
+    // Shelf's own size, as on a small monitor.
+    private static void Shelf(Canvas c, ShelfItem[] items, (double W, double H) panel, int? owner = null, bool confirming = false, int? selectedSlot = null)
     {
-        var size = Body(PanelSize.Shelf);
-        var body = BodyOrigin(PanelSize.Shelf);
+        var size = Body(panel);
+        var body = BodyOrigin(panel);
         c.Pill();
         c.Mascot();
-        Tabs(c, PanelId.Shelf, PanelSize.Shelf);
-        foreach (var line in ShelfLayout.HeadText(size, items.Length))
-        {
-            c.Text(line, body);
-        }
-
+        Tabs(c, PanelId.Shelf, panel);
         if (items.Length == 0)
         {
-            var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadY);
+            var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadBottom);
             c.StrokeRect(Offset(empty, body), 8, 0x2EFFFFFF);
             foreach (var line in ShelfLayout.EmptyText(empty.Size))
             {
                 c.Text(line, body + new Vector2(empty.X, empty.Y));
             }
-
-            return;
         }
 
-        int visible = ShelfLayout.Rows(size) * ShelfLayout.Columns;
-        for (int slot = 0; slot < visible && slot < items.Length; slot++)
+        for (int slot = 0; slot < ShelfLayout.Visible(size, 0, items.Length); slot++)
         {
             var item = items[slot];
             var tile = ShelfLayout.Tile(slot, size);
             var origin = body + new Vector2(tile.X, tile.Y);
             var local = new RectangleF(0, 0, tile.Width, tile.Height);
-            c.RoundRect(Offset(local, origin), 8, slot == 1 ? 0x1CFFFFFFu : 0x0FFFFFFFu, item.Missing ? 0.55f : 1);
-            c.RoundRect(Offset(new RectangleF(ShelfLayout.TilePad, ShelfLayout.TilePad, ShelfLayout.Icon, ShelfLayout.Icon), origin), 7, 0xFF000000 | ShelfLayout.KindColor(item), item.Missing ? 0.55f : 1);
-            if (slot == 1)
+            float dim = item.Missing ? 0.55f : 1;
+            c.RoundRect(Offset(local, origin), ShelfLayout.TileCorner, slot == selectedSlot ? 0x1CFFFFFFu : 0x0FFFFFFFu, dim);
+            c.RoundRect(Offset(new RectangleF(ShelfLayout.TilePad, ShelfLayout.TilePad, ShelfLayout.Icon, ShelfLayout.Icon), origin), 7, 0xFF000000 | ShelfLayout.KindColor(item), dim);
+            if (slot == owner)
             {
-                c.StrokeRect(Offset(local, origin), 8, 0xFF6FA8FF);
-                foreach (var action in Enum.GetValues<ShelfAction>())
-                {
-                    c.RoundRect(Offset(ShelfLayout.ActionButton(action, local), origin), 5, 0x73000000);
-                }
+                c.RoundRect(Offset(local, origin), ShelfLayout.TileCorner, StateLook.Hover);
+            }
+
+            if (slot == selectedSlot)
+            {
+                c.StrokeRect(Offset(local, origin), ShelfLayout.TileCorner, 0xFF6FA8FF);
+            }
+            else if (slot == owner)
+            {
+                c.StrokeRect(Offset(local, origin), ShelfLayout.TileCorner, 0x4DFFFFFF);
             }
 
             foreach (var line in ShelfLayout.TileText(item, tile.Size))
             {
-                c.Text(line, origin, item.Missing ? 0.55f : 1);
+                c.Text(line, origin, dim);
+            }
+        }
+
+        if (owner is not { } at)
+        {
+            foreach (var line in ShelfLayout.HeadText(size, items.Length))
+            {
+                c.Text(line, body);
+            }
+
+            return;
+        }
+
+        foreach (var slot in ShelfLayout.Actions(size, confirming))
+        {
+            bool asking = confirming && slot.Action == ShelfAction.Remove;
+            bool allowed = ShelfStore.Allows(slot.Action, items[at]);
+            c.RoundRect(Offset(slot.Box, body), ShelfLayout.ActionCorner, asking ? 0x29F0B35Au : 0x0FFFFFFFu);
+            uint ink = asking ? 0xFFF0B35A : allowed ? 0xE6FFFFFF : 0x5CFFFFFF;
+            c.Glyph(slot.Action, body + new Vector2(slot.Icon.X, slot.Icon.Y), ink);
+            if (slot.Label is { } label)
+            {
+                c.Text(label with { Style = label.Style with { Color = ink } }, body);
             }
         }
     }
@@ -1027,6 +1060,33 @@ internal static unsafe partial class Program
             float half = (float)(0.5 / scale);
             var round = new D2D1_ROUNDED_RECT { rect = Rect(new RectangleF(r.X + half, r.Y + half, r.Width - 2 * half, r.Height - 2 * half)), radiusX = radius, radiusY = radius };
             dc->DrawRoundedRectangle(&round, (ID2D1Brush*)brush, (float)(1 / scale), null);
+            brush->Release();
+        }
+
+        /// <summary>A shelf action's line icon at the top-left corner of its square, as the island's sprite shapes draw it.</summary>
+        public void Glyph(ShelfAction action, Vector2 at, uint argb)
+        {
+            var brush = Brush(argb);
+            var props = new D2D1_STROKE_STYLE_PROPERTIES { startCap = D2D1_CAP_STYLE.D2D1_CAP_STYLE_ROUND, endCap = D2D1_CAP_STYLE.D2D1_CAP_STYLE_ROUND };
+            ID2D1StrokeStyle* round;
+            factory->CreateStrokeStyle(&props, null, 0, &round);
+            const float w = ShelfLayout.GlyphStrokeWidth, inset = w / 2;
+            foreach (var s in ShelfLayout.Glyph(action))
+            {
+                if (s.Corner < 0)
+                {
+                    dc->DrawLine(new D2D_POINT_2F { x = at.X + s.A.X, y = at.Y + s.A.Y }, new D2D_POINT_2F { x = at.X + s.B.X, y = at.Y + s.B.Y }, (ID2D1Brush*)brush, w, round);
+                }
+                else
+                {
+                    // As the island's box: the stroke kept inside the rectangle.
+                    var r = new RectangleF(at.X + s.A.X + inset, at.Y + s.A.Y + inset, s.B.X - s.A.X - w, s.B.Y - s.A.Y - w);
+                    var box = new D2D1_ROUNDED_RECT { rect = Rect(r), radiusX = s.Corner, radiusY = s.Corner };
+                    dc->DrawRoundedRectangle(&box, (ID2D1Brush*)brush, w, null);
+                }
+            }
+
+            round->Release();
             brush->Release();
         }
 
