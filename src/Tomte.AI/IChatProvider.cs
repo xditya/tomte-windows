@@ -15,8 +15,8 @@ public enum ProviderCapabilities
     Pdf = 8,
 }
 
-/// <summary>One model from the provider's list. <see cref="ContextTokens"/> is null when the API does not say.</summary>
-public sealed record ModelInfo(string Id, int? ContextTokens = null);
+/// <summary>One model from the provider's list. <see cref="ContextTokens"/> and <see cref="Vision"/> are null when the API does not say.</summary>
+public sealed record ModelInfo(string Id, int? ContextTokens = null, bool? Vision = null);
 
 /// <summary>
 /// One chat provider. Instances hold no threads, timers or open connections: nothing happens

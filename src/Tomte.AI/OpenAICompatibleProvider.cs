@@ -32,9 +32,12 @@ public sealed class OpenAICompatibleProvider(HttpClient http, string baseUrl, st
         }
         using (doc)
         {
+            // OpenRouter says what a model reads; plain OpenAI-compatible lists do not.
             return [.. doc.RootElement.GetProperty("data").EnumerateArray().Select(m => new ModelInfo(
                 m.GetProperty("id").GetString()!,
-                m.TryGetProperty("context_length", out var max) && max.ValueKind == JsonValueKind.Number ? max.GetInt32() : null))];
+                m.TryGetProperty("context_length", out var max) && max.ValueKind == JsonValueKind.Number ? max.GetInt32() : null,
+                m.TryGetProperty("architecture", out var a) && a.TryGetProperty("input_modalities", out var input) && input.ValueKind == JsonValueKind.Array
+                    ? input.EnumerateArray().Any(x => x.GetString() == "image") : null))];
         }
     }
 
