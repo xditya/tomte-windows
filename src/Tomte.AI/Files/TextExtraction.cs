@@ -44,6 +44,8 @@ public static class TextExtraction
 {
     private const string WordMain = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
     private const string WordStrict = "http://purl.oclc.org/ooxml/wordprocessingml/main";
+    private const int MaxDepth = 256;
+    private const int MaxAttributes = 256;
 
     /// <summary>What a file is, from its first bytes (and, for a zip, its extension). Anything else is tried as text.</summary>
     public static FileKind Sniff(ReadOnlySpan<byte> head, string name)
@@ -127,31 +129,51 @@ public static class TextExtraction
                 XmlResolver = null,
                 IgnoreComments = true,
                 IgnoreProcessingInstructions = true,
+                // A bound in characters besides the byte counter, tied to the text cap: Word writes at most a few
+                // dozen characters of markup for each character of text.
+                MaxCharactersInDocument = limits.MaxChars * 32L,
             });
 
             var text = new StringBuilder();
-            int seen = 0;
-            while (!reader.EOF && text.Length < limits.MaxChars)
+            var chunk = new char[4096];
+            int seen = 0, textDepth = -1;
+            try
             {
-                if ((++seen & 0xFFF) == 0)
-                    ct.ThrowIfCancellationRequested();
-                bool word = reader.NamespaceURI is WordMain or WordStrict;
-                if (word && reader.NodeType == XmlNodeType.Element && reader.LocalName == "t")
+                while (text.Length < limits.MaxChars && reader.Read())
                 {
-                    text.Append(reader.ReadElementContentAsString());
-                    continue;
+                    if ((++seen & 0xFFF) == 0)
+                        ct.ThrowIfCancellationRequested();
+                    // Word nests a few levels deep and puts a handful of attributes on an element; far more is no document.
+                    if (reader.Depth > MaxDepth || reader.AttributeCount > MaxAttributes)
+                        throw new FileReadException("could not be read: it is damaged or not a Word document.");
+                    bool word = reader.NamespaceURI is WordMain or WordStrict;
+                    switch (reader.NodeType)
+                    {
+                        case XmlNodeType.Element when word && reader.LocalName == "t":
+                            textDepth = reader.IsEmptyElement ? -1 : reader.Depth;
+                            break;
+                        case XmlNodeType.Element when word:
+                            text.Append(reader.LocalName switch { "tab" => "\t", "br" or "cr" => "\n", _ => "" });
+                            break;
+                        case XmlNodeType.Text or XmlNodeType.CDATA or XmlNodeType.Whitespace or XmlNodeType.SignificantWhitespace when textDepth >= 0:
+                            // In pieces, so a run of any length costs no more than what is kept of it.
+                            int n;
+                            while (text.Length < limits.MaxChars && (n = reader.ReadValueChunk(chunk, 0, Math.Min(chunk.Length, limits.MaxChars - text.Length))) > 0)
+                                text.Append(chunk, 0, n);
+                            break;
+                        case XmlNodeType.EndElement when word && reader.LocalName == "t":
+                            textDepth = -1;
+                            break;
+                        case XmlNodeType.EndElement when word && reader.LocalName == "p":
+                            text.Append('\n');
+                            break;
+                    }
                 }
-
-                if (word && reader.NodeType == XmlNodeType.Element)
-                {
-                    text.Append(reader.LocalName switch { "tab" => "\t", "br" or "cr" => "\n", _ => "" });
-                }
-                else if (word && reader.NodeType == XmlNodeType.EndElement && reader.LocalName == "p")
-                {
-                    text.Append('\n');
-                }
-
-                reader.Read();
+            }
+            catch (XmlException) when (text.Length > 0)
+            {
+                // Past the character bound, or broken further on: what was read so far goes, marked as cut.
+                return new Extracted(Start(text.ToString(), limits.MaxChars), Cut: true);
             }
 
             bool cut = text.Length >= limits.MaxChars;
