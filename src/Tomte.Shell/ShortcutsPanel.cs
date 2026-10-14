@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Shortcuts;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
@@ -16,9 +17,10 @@ namespace Tomte.Shell;
 /// on the thread pool (the last list is drawn meanwhile), then the icons of the tiles in view are extracted there
 /// (each source and size once a session, kept as pixels) and put on surfaces, which go when the view is rebuilt or
 /// the island hides. A click starts the tile on the thread pool, so a slow launch never holds the island's thread;
-/// a script that may not run yet opens Settings, where it is confirmed.
+/// a script that may not run yet opens Settings, where it is confirmed. Clicks and keys come through the island's
+/// interaction host: arrows move by the grid, Enter starts the tile.
 /// </summary>
-internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, Func<bool> scriptsOn, Action openSettings, TextRenderer text, Action<string>? log) : IPanel
+internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, Func<bool> scriptsOn, Action openSettings, TextRenderer text, Action<string>? log) : IPanel, IInteractive
 {
     private const string Web = "web:";
     private const int WheelNotch = 120;
@@ -26,19 +28,23 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
     // kept for the session and never refreshed, so an app whose icon changed on update shows the old one until restart.
     private readonly Dictionary<(string Source, int Pixels), ShellImage?> icons = [];
     private IReadOnlyList<Tile> tiles = [];
+    private IReadOnlyList<Target> targets = [];
     private View? view;
-    private int showing, firstRow, wheel, lastPressed = -1;
-    private long lastPressMs;
+    private int showing, firstRow, wheel;
     private bool drooped;
 
     public PanelId Id => PanelId.Shortcuts;
+
+    public IReadOnlyList<Target> Targets => targets;
+
+    public event Action? TargetsChanged;
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
         int generation = ++showing;
         view = new View(island.Compositor, text, body, size, island.Scale);
         firstRow = ShortcutGrid.FirstRow(firstRow, tiles.Count, size);
-        view.Build(tiles, firstRow, scriptsOn());
+        Build();
         _ = LoadAsync(generation);
     }
 
@@ -48,34 +54,55 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         view?.Dispose();
         view = null;
         drooped = false;
-        (wheel, lastPressed) = (0, -1);
+        wheel = 0;
+        targets = [];
+        TargetsChanged?.Invoke();
     }
 
+    /// <summary>Presses come through the targets.</summary>
     public void Press(Vector2 point)
     {
-        if (view is null || ShortcutGrid.At(point, view.Size, view.Count) is not int slot)
+    }
+
+    /// <summary>A double click starts a tile once: the first click did, and the second is dropped.</summary>
+    public void Activate(string id, ActivateBy by)
+    {
+        if (by != ActivateBy.DoubleClick)
+        {
+            Activate(id);
+        }
+    }
+
+    public void Activate(string id)
+    {
+        if (view is null)
         {
             return;
         }
 
-        int cell = view.First + slot;
-        // A double-click starts a tile once: the second press of it within the double-click time is ignored.
-        long now = Environment.TickCount64;
-        if (cell == lastPressed && now - lastPressMs < Windows.Win32.PInvoke.GetDoubleClickTime())
-        {
-            return;
-        }
-
-        (lastPressed, lastPressMs) = (cell, now);
-        if (cell == tiles.Count)
+        if (id == ShortcutGrid.AddId)
         {
             log?.Invoke("shortcuts: add tile, opening settings");
             openSettings();
+        }
+        else if (tiles.FirstOrDefault(tile => ShortcutGrid.TileId(tile.Row.Id) == id) is { } tile)
+        {
+            _ = LaunchAsync(tile);
+        }
+    }
+
+    /// <summary>Focus that reaches a tile out of view (only the arrow keys can) scrolls the grid to show it.</summary>
+    public void Hovered(string? id)
+    {
+        int cell = id is null ? -1 : targets.ToList().FindIndex(t => t.Id == id);
+        if (view is null || cell < 0 || targets[cell].Bounds.Height > 0)
+        {
             return;
         }
 
-        view.Flash(slot);
-        _ = LaunchAsync(tiles[cell]);
+        firstRow = ShortcutGrid.FirstRowFor(cell, firstRow, tiles.Count, view.Size);
+        Build();
+        _ = IconsAsync(showing);
     }
 
     /// <summary>A notch away from the user scrolls up a row, toward the user down; a touchpad's small deltas add up.</summary>
@@ -93,9 +120,17 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         if (next != firstRow)
         {
             firstRow = next;
-            view.Build(tiles, firstRow, scriptsOn());
+            Build();
             _ = IconsAsync(showing);
         }
+    }
+
+    // The tiles in view drawn again, and every target placed for the rows that show now.
+    private void Build()
+    {
+        view!.Build(tiles, firstRow, scriptsOn());
+        targets = ShortcutGrid.Targets([.. tiles.Select(tile => tile.Row)], firstRow, view.Size);
+        TargetsChanged?.Invoke();
     }
 
     // A web page always shows the browser's icon (a .url file's own icon file could be on a server); blocked and
@@ -118,7 +153,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
             {
                 tiles = loaded;
                 firstRow = ShortcutGrid.FirstRow(firstRow, tiles.Count, view!.Size);
-                view.Build(tiles, firstRow, scriptsOn());
+                Build();
             }
 
             await IconsAsync(generation);
@@ -227,7 +262,6 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
     private sealed class View(Compositor compositor, TextRenderer text, ContainerVisual body, Vector2 size, double scale) : IDisposable
     {
         private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
-        private static readonly Color Pressed = Color.FromArgb(28, 255, 255, 255);
         private static readonly Color Placeholder = Color.FromArgb(28, 255, 255, 255);
         private static readonly Color Faint = Color.FromArgb(64, 255, 255, 255);
         private static readonly Color Glyph = Color.FromArgb(97, 255, 255, 255);
@@ -235,14 +269,12 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         // A missing target's tile is drawn at 55% opacity.
         private const float MissingOpacity = 0.55f;
 
-        private readonly List<CompositionColorBrush> cards = [];
         private readonly List<SpriteVisual> slots = [];
 
         // Every composition object this view made, so a rebuild or hiding releases them now rather than when the collector runs.
         private readonly List<IDisposable> made = [];
         private ContainerVisual? grid;
         private PixelSurfaces? surfaces;
-        private ColorKeyFrameAnimation? flash;
 
         public Vector2 Size => size;
 
@@ -251,11 +283,6 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         /// <summary>Counts the builds, so icons made for an earlier one are not put on this one.</summary>
         public int Version { get; private set; }
 
-        /// <summary>The number of the first cell in view, and how many are in view, the add tile counted.</summary>
-        public int First { get; private set; }
-
-        public int Count { get; private set; }
-
         /// <summary>The tiles in view, in cell order.</summary>
         public IReadOnlyList<Tile> Tiles { get; private set; } = [];
 
@@ -263,8 +290,9 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         {
             Clear();
             Version++;
-            (First, Count) = ShortcutGrid.Visible(firstRow, all.Count, size);
-            Tiles = [.. all.Skip(First).Take(Math.Min(Count, all.Count - First))];
+            // The first cell in view, and how many are in view, the add tile counted.
+            var (first, count) = ShortcutGrid.Visible(firstRow, all.Count, size);
+            Tiles = [.. all.Skip(first).Take(Math.Min(count, all.Count - first))];
             grid = Keep(compositor.CreateContainerVisual());
             body.Children.InsertAtTop(grid);
             foreach (var line in ShortcutGrid.HeadText(size))
@@ -277,9 +305,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
                 var tile = Tiles[i];
                 var cell = ShortcutGrid.Cell(i, size);
                 var (holder, shapes) = Shapes(new Vector2(cell.Width, cell.Height), new Vector2(cell.X, cell.Y));
-                var card = Brush(Card);
-                cards.Add(card);
-                Rounded(shapes, new RectangleF(0, 0, cell.Width, cell.Height), ShortcutGrid.Corner, card);
+                Rounded(shapes, new RectangleF(0, 0, cell.Width, cell.Height), ShortcutGrid.Corner, Brush(Card));
                 // A neutral square under the icon: what shows while the icon loads, for a missing target, or with no icon.
                 var icon = ShortcutGrid.Icon(cell, scale, PanelSpace.TabStripHeight);
                 Rounded(shapes, new RectangleF(icon.X - cell.X, icon.Y - cell.Y, icon.Width, icon.Height), 8, Brush(Placeholder));
@@ -300,7 +326,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
                 slots.Add(slot);
             }
 
-            if (Tiles.Count < Count)
+            if (Tiles.Count < count)
             {
                 AddTile(ShortcutGrid.Cell(Tiles.Count, size));
             }
@@ -317,35 +343,10 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
             }
         }
 
-        /// <summary>The press shows on the card and fades back on the compositor; nothing here ticks for it.</summary>
-        public void Flash(int slot)
-        {
-            if (flash is null)
-            {
-                flash = compositor.CreateColorKeyFrameAnimation();
-                flash.InsertKeyFrame(0, Pressed);
-                flash.InsertKeyFrame(1, Card);
-                flash.Duration = TimeSpan.FromMilliseconds(250);
-            }
-
-            cards[slot].StartAnimation("Color", flash);
-        }
-
-        public void Dispose()
-        {
-            Clear();
-            flash?.Dispose();
-            flash = null;
-        }
+        public void Dispose() => Clear();
 
         private void Clear()
         {
-            foreach (var card in cards)
-            {
-                card.StopAnimation("Color");
-            }
-
-            cards.Clear();
             slots.Clear();
             if (grid is not null)
             {

@@ -2,6 +2,7 @@ using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using Tomte.Core;
 using Tomte.Core.Device;
+using Tomte.Core.Interaction;
 using Tomte.Core.Shortcuts;
 using Tomte.Core.Storage;
 using Xunit;
@@ -568,11 +569,44 @@ public sealed class ShortcutsTests : IDisposable
         Assert.True(ShortcutGrid.Cell(7, body).Bottom <= body.Y - corner);
         Assert.True(ShortcutGrid.Cell(7, body).Right <= body.X - ShortcutGrid.Inset);
 
-        Assert.Equal(3, ShortcutGrid.At(new(ShortcutGrid.Cell(3, body).X + 50, 60), body, 4));
-        Assert.Null(ShortcutGrid.At(new(135, 60), body, 8));
-        Assert.Null(ShortcutGrid.At(new(150, 150), body, 5));
-        Assert.Null(ShortcutGrid.At(new(10, 10), body, 8));
+        // Three tiles and the add tile: a press finds its cell, and nothing in a gap, past the add tile or in the head.
+        var targets = ShortcutGrid.Targets(Tiles(3), 0, body);
+        Assert.Equal("add", HitId(targets, new(ShortcutGrid.Cell(3, body).X + 50, 60)));
+        Assert.Equal("tile:2", HitId(targets, new(ShortcutGrid.Cell(1, body).X + 50, 60)));
+        Assert.Null(HitId(targets, new(135, 60)));
+        Assert.Null(HitId(targets, new(150, 150)));
+        Assert.Null(HitId(targets, new(10, 10)));
     }
+
+    [Fact]
+    public void TilesAreOneArrowGroupNamedByTheirTargetAndCellsOutOfViewHaveNoHeight()
+    {
+        var body = new System.Numerics.Vector2(520, 300 - PanelSpace.TabStripHeight);
+        var targets = ShortcutGrid.Targets(Tiles(9), 0, body);
+        Assert.Equal(10, targets.Count);
+        Assert.All(targets, t => Assert.Equal((TargetKind.Tile, 1), (t.Kind, t.Group)));
+        Assert.Equal(@"Tile 1 · C:\Tools\tile1.exe", targets[0].Tip);
+        Assert.Equal(("add", "Add a shortcut in Settings"), (targets[^1].Id, targets[^1].Tip));
+
+        // Two rows show; the third (tile 9 and the add tile) keeps its place below with no height.
+        Assert.Equal(ShortcutGrid.Cell(4, body), targets[4].Bounds);
+        Assert.Equal(0, targets[8].Bounds.Height);
+        Assert.Equal(ShortcutGrid.Cell(0, body).Y + 2 * (ShortcutGrid.TileHeight + ShortcutGrid.Gap), targets[8].Bounds.Y);
+        Assert.Null(HitId(targets, new(targets[8].Bounds.X + 10, targets[8].Bounds.Y)));
+        // Down from the second row finds it; focus there scrolls one row, and then the first row has no height.
+        Assert.Equal(8, Target.Arrow(targets, 4, new(0, 1)));
+        Assert.Equal(1, ShortcutGrid.FirstRowFor(8, 0, 9, body));
+        Assert.Equal(0, ShortcutGrid.FirstRowFor(0, 1, 9, body));
+        Assert.Equal(1, ShortcutGrid.FirstRowFor(5, 1, 9, body));
+        var scrolled = ShortcutGrid.Targets(Tiles(9), 1, body);
+        Assert.Equal(ShortcutGrid.Cell(4, body), scrolled[8].Bounds);
+        Assert.Equal(0, scrolled[0].Bounds.Height);
+    }
+
+    private static Shortcut[] Tiles(int count) => [.. Enumerable.Range(1, count).Select(i => new Shortcut(i, $"Tile {i}", $@"C:\Tools\tile{i}.exe", null))];
+
+    private static string? HitId(IReadOnlyList<Target> targets, System.Numerics.Vector2 at) =>
+        Target.Hit([(targets, p => p)], at) is { } hit ? targets[hit.Index].Id : null;
 
     [Fact]
     public void TheWheelScrollsByRowsUntilTheAddTileIsInTheBottomRow()

@@ -331,10 +331,14 @@ public sealed class ClipboardTests : IDisposable
         listeners[0].Copy(item);
         var row = Assert.Single(await watch.RowsAsync(Now));
 
-        await watch.PickAsync(row.Id);
+        Assert.True(await watch.PickAsync(row.Id));
 
         Assert.Equal([item], listeners[0].PutTexts);
         Assert.DoesNotContain(log, line => line.Contains(Secret, StringComparison.Ordinal));
+
+        // An item that is gone puts nothing back, and says so, so the panel shows no "Copied".
+        Assert.False(await watch.PickAsync(row.Id + 1000));
+        Assert.Single(listeners[0].PutTexts);
     }
 
     [Fact]

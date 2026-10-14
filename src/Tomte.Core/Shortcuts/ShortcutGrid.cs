@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Numerics;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 
 namespace Tomte.Core.Shortcuts;
@@ -8,7 +9,7 @@ namespace Tomte.Core.Shortcuts;
 /// The Shortcuts panel body in DIPs, origin at its top-left corner under the tab strip: a head line, then four
 /// columns of 80 DIP tiles with a 34 DIP icon, as many rows as the body holds (two at the panel's 520 x 300). The
 /// cells run on past the last row: tile after tile, then the add tile, and the wheel scrolls them by whole rows.
-/// Cell and At count from the first row that shows.
+/// Cell counts from the first row that shows.
 /// </summary>
 public static class ShortcutGrid
 {
@@ -40,18 +41,42 @@ public static class ShortcutGrid
         return new(Inset + index % Columns * (width + Gap), GridTop + index / Columns * (TileHeight + Gap), width, TileHeight);
     }
 
-    /// <summary>The cell under a point, among the first <paramref name="cells"/>; null over a gap or past the last.</summary>
-    public static int? At(Vector2 point, Vector2 body, int cells)
+    public const string AddId = "add", AddTip = "Add a shortcut in Settings";
+
+    public static string TileId(long id) => $"tile:{id}";
+
+    /// <summary>
+    /// Every tile and then the add tile, one arrow-key group in grid order, with the grid scrolled to
+    /// <paramref name="firstRow"/>. A tile's tip is its name and what it opens. A cell out of view keeps its place with
+    /// no height, so nothing hits it but the arrow keys still find it.
+    /// </summary>
+    public static IReadOnlyList<Target> Targets(IReadOnlyList<Shortcut> tiles, int firstRow, Vector2 body)
     {
-        for (int i = 0; i < cells; i++)
+        int rows = Rows(body);
+        var all = new List<Target>(tiles.Count + 1);
+        for (int i = 0; i <= tiles.Count; i++)
         {
-            if (Cell(i, body).Contains(point.X, point.Y))
+            int row = i / Columns - firstRow;
+            var cell = Cell(i % Columns, body);
+            cell.Offset(0, row * (TileHeight + Gap));
+            if (row < 0 || row >= rows)
             {
-                return i;
+                cell.Height = 0;
             }
+
+            all.Add(i < tiles.Count
+                ? new(TileId(tiles[i].Id), cell, Corner, TargetKind.Tile, Tip: $"{tiles[i].Name} · {tiles[i].Target}", Group: 1)
+                : new(AddId, cell, Corner, TargetKind.Tile, Tip: AddTip, Group: 1));
         }
 
-        return null;
+        return all;
+    }
+
+    /// <summary>The first row that shows cell <paramref name="index"/>, scrolling as little as it can.</summary>
+    public static int FirstRowFor(int index, int firstRow, int tiles, Vector2 body)
+    {
+        int row = index / Columns, rows = Rows(body);
+        return FirstRow(row < firstRow ? row : row >= firstRow + rows ? row - rows + 1 : firstRow, tiles, body);
     }
 
     /// <summary>The icon's size in pixels at this scale: what the shell is asked to draw.</summary>

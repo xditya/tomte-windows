@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Xunit;
 
@@ -11,6 +12,8 @@ public sealed class PanelLayoutTests
     // The Clipboard panel's body: 560 x 360 less the 42 DIP tab strip.
     private static readonly ClipboardPanelLayout Clipboard = new(new Vector2(560, 318));
 
+    private static readonly long[] Three = [7, 8, 9];
+
     [Fact]
     public void ThePartsSitInsideTheBody()
     {
@@ -18,32 +21,104 @@ public sealed class PanelLayoutTests
         Assert.Equal(14, list.X);
         Assert.Equal(40, list.Y);
         Assert.Equal(532, list.Width);
-        Assert.Equal(318 - 12 - 14 - 10, list.Bottom);
+        Assert.Equal(318 - 12 - 28 - 10, list.Bottom);
         Assert.Equal(560 - 14, Clipboard.Switch.Right);
         Assert.True(Clipboard.Foot.Bottom <= 318 - 12);
+        // Five whole rows still fit with the taller footer.
+        Assert.True(5 * ClipboardPanelLayout.RowPitch - ClipboardPanelLayout.RowGap <= list.Height);
     }
 
     [Fact]
     public void APressFindsTheRowItsRemoveButtonTheSwitchAndClearAll()
     {
+        var targets = Clipboard.Targets(on: true, Three, 0, asking: false);
         float rowMid = Clipboard.List.Y + ClipboardPanelLayout.RowHeight / 2;
-        Assert.Equal((ClipboardTarget.Row, 0), Clipboard.Hit(new(100, rowMid), 3, 0, on: true));
-        Assert.Equal((ClipboardTarget.Row, 1), Clipboard.Hit(new(100, rowMid + ClipboardPanelLayout.RowPitch), 3, 0, on: true));
+        Assert.Equal("row:7", HitId(targets, new(100, rowMid)));
+        Assert.Equal("row:8", HitId(targets, new(100, rowMid + ClipboardPanelLayout.RowPitch)));
         // The gap between rows hits nothing; nor does the space under the last row.
-        Assert.Equal((ClipboardTarget.None, -1), Clipboard.Hit(new(100, Clipboard.List.Y + ClipboardPanelLayout.RowHeight + 3), 3, 0, on: true));
-        Assert.Equal((ClipboardTarget.None, -1), Clipboard.Hit(new(100, rowMid + 3 * ClipboardPanelLayout.RowPitch), 3, 0, on: true));
+        Assert.Null(HitId(targets, new(100, Clipboard.List.Y + ClipboardPanelLayout.RowHeight + 3)));
+        Assert.Null(HitId(targets, new(100, rowMid + 3 * ClipboardPanelLayout.RowPitch)));
 
         var remove = ClipboardPanelLayout.RemoveIn(Clipboard.List.Width);
-        var onRemove = new Vector2(Clipboard.List.X + remove.X + remove.Width / 2, rowMid);
-        Assert.Equal((ClipboardTarget.RemoveRow, 0), Clipboard.Hit(onRemove, 3, 0, on: true));
+        Assert.Equal("remove:7", HitId(targets, new(Clipboard.List.X + remove.X + remove.Width / 2, rowMid)));
+        // The remove button's edge, outside a smaller drawn circle, is still the button.
+        Assert.Equal("remove:7", HitId(targets, new(Clipboard.List.X + remove.X + 1, Clipboard.List.Y + remove.Y + 1)));
 
+        // Just outside the drawn switch, inside its larger area.
         var sw = Clipboard.Switch;
-        Assert.Equal((ClipboardTarget.Switch, -1), Clipboard.Hit(new(sw.X + 5, sw.Y + 5), 0, 0, on: false));
-        var clear = Clipboard.ClearAll;
-        Assert.Equal((ClipboardTarget.ClearAll, -1), Clipboard.Hit(new(clear.X + 5, clear.Y + 5), 3, 0, on: true));
-        // Off or empty there are no rows and no Clear all to press.
-        Assert.Equal((ClipboardTarget.None, -1), Clipboard.Hit(new(100, rowMid), 3, 0, on: false));
-        Assert.Equal((ClipboardTarget.None, -1), Clipboard.Hit(new(clear.X + 5, clear.Y + 5), 0, 0, on: true));
+        Assert.Equal("switch", HitId(Clipboard.Targets(on: false, [], 0, asking: false), new(sw.X - 2, sw.Y - 2)));
+        Assert.Equal("switch", HitId(targets, new(sw.Right + 2, sw.Bottom + 2)));
+
+        var clear = Clipboard.ClearAll(asking: false);
+        Assert.Equal("clear", HitId(targets, new(clear.X + 5, clear.Y + 5)));
+        // Asking, the button is wider: its new left part is Clear all too, and only then.
+        var ask = Clipboard.ClearAll(asking: true);
+        Assert.Equal("clear", HitId(Clipboard.Targets(on: true, Three, 0, asking: true), new(ask.X + 5, ask.Y + 5)));
+        Assert.Null(HitId(targets, new(ask.X + 5, ask.Y + 5)));
+
+        // Off or empty there are no rows and no Clear all to press, only the switch.
+        Assert.Equal(["switch"], Clipboard.Targets(on: false, Three, 0, asking: false).Select(t => t.Id));
+        Assert.Equal(["switch"], Clipboard.Targets(on: true, [], 0, asking: false).Select(t => t.Id));
+    }
+
+    [Fact]
+    public void TheTargetsAreBigEnoughNamedAndInTabOrder()
+    {
+        var targets = Clipboard.Targets(on: true, Three, 0, asking: false);
+        Assert.Equal(["switch", "row:7", "remove:7", "row:8", "remove:8", "row:9", "remove:9", "clear"], targets.Select(t => t.Id));
+        Assert.All(targets, t => Assert.True(t.Bounds.Width >= StateLook.MinTarget && t.Bounds.Height >= StateLook.MinTarget, t.Id));
+
+        var sw = targets[0];
+        Assert.Equal((40f, 24f), (sw.Bounds.Width, sw.Bounds.Height));
+        Assert.True(sw.Bounds.Contains(Clipboard.Switch));
+        Assert.False(sw.Bounds.IntersectsWith(Clipboard.List));
+        Assert.Equal((TargetKind.Toggle, true, "Keep clipboard history: on"), (sw.Kind, sw.Checked, sw.Tip));
+        Assert.Equal("Keep clipboard history: off", Clipboard.Targets(on: false, [], 0, asking: false)[0].Tip);
+
+        Assert.Equal((TargetKind.Row, "Copy again", 1), (targets[1].Kind, targets[1].Tip, targets[1].Group));
+        Assert.Equal((TargetKind.Button, "Remove", 1), (targets[2].Kind, targets[2].Tip, targets[2].Group));
+        Assert.Equal((24f, 24f), (targets[2].Bounds.Width, targets[2].Bounds.Height));
+
+        // Clear all is a panel action, as tall as one, alone in its Tab stop, and grows to the left when it asks.
+        var clear = targets[^1];
+        Assert.True(clear.Bounds.Height >= StateLook.ActionHeight);
+        Assert.Equal(0, clear.Group);
+        var ask = Clipboard.ClearAll(asking: true);
+        Assert.Equal(clear.Bounds.Right, ask.Right);
+        Assert.True(ask.Width > clear.Bounds.Width);
+        Assert.Equal(clear.Bounds.Height, ask.Height);
+    }
+
+    [Fact]
+    public void RowsOutOfViewHaveNoHeightAndFocusCanScrollThemIn()
+    {
+        long[] ten = [.. Enumerable.Range(1, 10).Select(i => (long)i)];
+        var targets = Clipboard.Targets(on: true, ten, 0, asking: false);
+        RectangleF Row(IReadOnlyList<Target> all, long id) => all.First(t => t.Id == ClipboardPanelLayout.RowId(id)).Bounds;
+
+        // Five rows show; the sixth keeps its place below them with no height, so nothing hits it.
+        Assert.Equal(ClipboardPanelLayout.RowHeight, Row(targets, 5).Height);
+        var sixth = Row(targets, 6);
+        Assert.Equal((0f, Clipboard.List.Y + 5 * ClipboardPanelLayout.RowPitch), (sixth.Height, sixth.Y));
+        Assert.Null(HitId(targets, new(100, Clipboard.Foot.Y + 5)));
+
+        // Down from the fifth row finds the sixth all the same.
+        int fifth = targets.ToList().FindIndex(t => t.Id == "row:5");
+        Assert.Equal("row:6", targets[Target.Arrow(targets, fifth, new(0, 1))].Id);
+
+        // Focus on it scrolls just far enough to show it whole; then the first row is the one out of view.
+        float scroll = Clipboard.ScrolledTo(5, 0, ten.Length);
+        Assert.Equal(5 * ClipboardPanelLayout.RowPitch + ClipboardPanelLayout.RowHeight - Clipboard.List.Height, scroll);
+        var scrolled = Clipboard.Targets(on: true, ten, scroll, asking: false);
+        Assert.Equal(ClipboardPanelLayout.RowHeight, Row(scrolled, 6).Height);
+        Assert.Equal(0, Row(scrolled, 1).Height);
+        Assert.Equal(0, Clipboard.ScrolledTo(0, scroll, ten.Length));
+        Assert.Equal(scroll, Clipboard.ScrolledTo(3, scroll, ten.Length));
+
+        // A row half out of view is cut to the list, so its target never covers the head or the foot.
+        var half = Clipboard.Targets(on: true, ten, ClipboardPanelLayout.RowHeight / 2, asking: false);
+        Assert.Equal(Clipboard.List.Y, Row(half, 1).Y);
+        Assert.Equal(ClipboardPanelLayout.RowHeight / 2, Row(half, 1).Height);
     }
 
     [Fact]
@@ -61,7 +136,8 @@ public sealed class PanelLayoutTests
 
         // Scrolled by one row, the top of the list is the second row.
         float top = Clipboard.List.Y + ClipboardPanelLayout.RowHeight / 2;
-        Assert.Equal((ClipboardTarget.Row, 1), Clipboard.Hit(new(100, top), rows, down, on: true));
+        long[] ids = [.. Enumerable.Range(1, rows).Select(i => (long)i)];
+        Assert.Equal("row:2", HitId(Clipboard.Targets(on: true, ids, down, asking: false), new(100, top)));
     }
 
     public static TheoryData<double> Scales => [1.0, 1.25, 1.5];
@@ -70,14 +146,16 @@ public sealed class PanelLayoutTests
     [MemberData(nameof(Scales))]
     public void APressHitsTheSameTargetAtEveryScale(double scale)
     {
+        long[] five = [1, 2, 3, 4, 5];
+        var targets = Clipboard.Targets(on: true, five, 0, asking: false);
         float row1 = Clipboard.List.Y + ClipboardPanelLayout.RowPitch + ClipboardPanelLayout.RowHeight / 2;
         var remove = ClipboardPanelLayout.RemoveIn(Clipboard.List.Width);
-        Assert.Equal((ClipboardTarget.Row, 1), Clipboard.Hit(BodyPoint(100, row1, scale), 5, 0, on: true));
-        Assert.Equal((ClipboardTarget.RemoveRow, 1), Clipboard.Hit(BodyPoint(Clipboard.List.X + remove.X + remove.Width / 2, row1, scale), 5, 0, on: true));
-        var sw = Clipboard.Switch;
-        Assert.Equal((ClipboardTarget.Switch, -1), Clipboard.Hit(BodyPoint(sw.X + sw.Width / 2, sw.Y + sw.Height / 2, scale), 5, 0, on: true));
-        var clear = Clipboard.ClearAll;
-        Assert.Equal((ClipboardTarget.ClearAll, -1), Clipboard.Hit(BodyPoint(clear.X + clear.Width / 2, clear.Y + clear.Height / 2, scale), 5, 0, on: true));
+        Assert.Equal("row:2", HitId(targets, BodyPoint(100, row1, scale)));
+        Assert.Equal("remove:2", HitId(targets, BodyPoint(Clipboard.List.X + remove.X + remove.Width / 2, row1, scale)));
+        var sw = Clipboard.SwitchArea;
+        Assert.Equal("switch", HitId(targets, BodyPoint(sw.X + sw.Width / 2, sw.Y + sw.Height / 2, scale)));
+        var clear = Clipboard.ClearAll(asking: false);
+        Assert.Equal("clear", HitId(targets, BodyPoint(clear.X + clear.Width / 2, clear.Y + clear.Height / 2, scale)));
     }
 
     [Fact]
@@ -86,7 +164,7 @@ public sealed class PanelLayoutTests
         // The body's bottom corners are the shape's, radius 22; the tab strip keeps the top ones away.
         const float radius = 22;
         var body = Clipboard.Body;
-        RectangleF[] parts = [Clipboard.Head, Clipboard.Switch, Clipboard.List, Clipboard.Foot, Clipboard.ClearAll];
+        RectangleF[] parts = [Clipboard.Head, Clipboard.SwitchArea, Clipboard.List, Clipboard.Foot, Clipboard.ClearAll(false), Clipboard.ClearAll(true)];
         foreach (var part in parts)
         {
             foreach (var (x, y) in new[] { (part.Left, part.Top), (part.Right, part.Top), (part.Left, part.Bottom), (part.Right, part.Bottom) })
@@ -100,6 +178,11 @@ public sealed class PanelLayoutTests
             }
         }
     }
+
+    private static string? HitId(IReadOnlyList<Target> targets, Vector2 at) =>
+        Target.Hit([(targets, Same)], at) is { } hit ? targets[hit.Index].Id : null;
+
+    private static readonly Func<Vector2, Vector2> Same = p => p;
 
     // A press arrives in window pixels: island space starts one pixel in plus half the outline's width and carries
     // the monitor's scale; the body starts under the tab strip. This is the host's mapping, as the media tests use it.
@@ -141,6 +224,25 @@ public sealed class PanelLayoutTests
         float age = TextSlot.Measure("14 min", TextStyle.Small, 48);
         Assert.Equal(row[0].Slot.Right - age - ClipboardPanelLayout.Gap, row[1].Slot.Right, 0.01);
         Assert.Equal(ClipboardPanelLayout.Gap + ClipboardPanelLayout.Icon + ClipboardPanelLayout.Gap, row[1].Slot.X);
+        Assert.Equal(ClipboardPanelLayout.IconIn.Right + ClipboardPanelLayout.Gap, row[1].Slot.X);
+
+        // An image row's thumbnail starts where the icon does and fits the same 40 DIP row with room above and below.
+        var thumb = ClipboardPanelLayout.ThumbIn;
+        Assert.Equal((ClipboardPanelLayout.IconIn.X, 48f, 32f), (thumb.X, thumb.Width, thumb.Height));
+        Assert.Equal(ClipboardPanelLayout.RowHeight - thumb.Bottom, thumb.Top);
+        Assert.True(thumb.Top >= 4);
+
+        // The footer: the note ends before Clear all at its widest, so asking never moves it; the button's word fits.
+        foreach (bool asking in new[] { false, true })
+        {
+            var foot = Clipboard.FootText(asking);
+            Assert.True(foot[0].Slot.Right <= Clipboard.ClearAll(true).X - ClipboardPanelLayout.Gap, "the note runs into Clear all");
+            Assert.Equal(Clipboard.ClearAll(asking), foot[1].Slot);
+            Assert.Equal(asking ? "Clear all? Click again" : "Clear all", foot[1].Text);
+            Assert.Equal(asking ? TextStyle.WarnColor : TextStyle.SecondaryColor, foot[1].Style.Color);
+            using var word = TextLayout.Of(new TextRun(foot[1].Text, foot[1].Style, foot[1].Slot.Width));
+            Assert.False(word.Trimmed, foot[1].Text);
+        }
 
         // Off: two centred lines in the middle of the list's box.
         var box = Clipboard.BoxText(on: false, keeps: 50);

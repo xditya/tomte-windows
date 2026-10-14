@@ -2,28 +2,41 @@ using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Clipboard;
+using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
+using Windows.Win32;
+using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
 
 /// <summary>
 /// The Clipboard tab: the Keep history switch, the history rows newest first (a picked row is the
-/// selected one) with a remove button each, and Clear all; or the off or empty state. Composition
-/// visuals in DIPs laid out by <see cref="ClipboardPanelLayout"/>, built when the tab shows and
-/// released when it hides. Rows come from the watch's worker, so <see cref="Shown"/> returns at once and
-/// the rows are drawn when they land. Row text is the history's shortened form, one line each.
+/// selected one) with a remove button each, and Clear all, which asks once before it clears; or the off or
+/// empty state. Composition visuals in DIPs laid out by <see cref="ClipboardPanelLayout"/>, built when the tab
+/// shows and released when it hides. Rows come from the watch's worker, so <see cref="Shown"/> returns at once
+/// and the rows are drawn when they land. Row text is the history's shortened form, one line each. Clicks and
+/// keys come through the island's interaction host: arrows move between rows and their remove buttons, Enter
+/// copies a row again, Delete removes it.
 /// </summary>
-internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, Action<bool> keepHistory, TextRenderer text, Action<string>? log) : IPanel
+internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, Action<bool> keepHistory, TextRenderer text, Action<string>? log) : IPanel, IInteractive
 {
     private View? view;
     private IReadOnlyList<ClipboardRow> rows = [];
+    private IReadOnlyList<Target> targets = [];
     private float scroll;
     private long selected = -1;
     private int generation;
+    private bool historyOn, asking;
+    private long askedAt, removedAt;
+    private Windows.System.DispatcherQueueTimer? askTimer;
 
     public PanelId Id => PanelId.Clipboard;
+
+    public IReadOnlyList<Target> Targets => targets;
+
+    public event Action? TargetsChanged;
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
@@ -40,33 +53,83 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         view = null;
         rows = [];
         (scroll, selected) = (0, -1);
+        Ask(false);
     }
 
+    /// <summary>Presses come through the targets.</summary>
     public void Press(Vector2 point)
+    {
+    }
+
+    /// <summary>
+    /// A click within the double-click time of the last one is dropped on Clear all's question and on a remove button:
+    /// a double or triple click would answer the question before it could be read, or take the next row too once the
+    /// first has gone (each x is a target of its own, so the host sees two single clicks).
+    /// </summary>
+    public void Activate(string id)
     {
         if (view is null)
         {
             return;
         }
 
-        var (target, index) = view.Layout.Hit(point, rows.Count, scroll, watch.On);
-        switch (target)
+        if (id == ClipboardPanelLayout.SwitchId)
         {
-            case ClipboardTarget.Switch:
-                keepHistory(!watch.On);
-                break;
-            case ClipboardTarget.Row:
-                selected = rows[index].Id;
-                view.Select(selected);
-                Observe(watch.PickAsync(selected), "put the item back");
-                break;
-            case ClipboardTarget.RemoveRow:
-                Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
-                break;
-            case ClipboardTarget.ClearAll:
-                Observe(watch.ClearAsync(), "clear the history");
-                break;
+            keepHistory(!watch.On);
         }
+        else if (id == ClipboardPanelLayout.ClearId && asking)
+        {
+            if (!Soon(askedAt))
+            {
+                Ask(false);
+                Observe(watch.ClearAsync(), "clear the history");
+            }
+        }
+        else if (id == ClipboardPanelLayout.ClearId)
+        {
+            Ask(true);
+        }
+        else if (Find(id) is ({ } index, true))
+        {
+            if (!Soon(removedAt))
+            {
+                removedAt = Environment.TickCount64;
+                Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
+            }
+        }
+        else if (Find(id) is ({ } picked, false))
+        {
+            Pick(rows[picked], id);
+        }
+    }
+
+    /// <summary>Delete on a row or its remove button removes the row; a held Delete removes that one only.</summary>
+    public bool KeyDown(string id, int virtualKey, bool repeat)
+    {
+        if (virtualKey != (int)VIRTUAL_KEY.VK_DELETE || Find(id) is not ({ } index, _))
+        {
+            return false;
+        }
+
+        if (!repeat)
+        {
+            Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
+        }
+
+        return true;
+    }
+
+    /// <summary>Focus or the pointer on a row not wholly in view scrolls the list just far enough to show all of it.</summary>
+    public void Hovered(string? id)
+    {
+        if (view is null || id is null || Find(id) is not ({ } index, _) || view.Layout.ScrolledTo(index, scroll, rows.Count) is var to && to == scroll)
+        {
+            return;
+        }
+
+        scroll = to;
+        view.Scroll(scroll);
+        Retarget();
     }
 
     public void Wheel(Vector2 point, int delta)
@@ -75,7 +138,72 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         {
             scroll = view.Layout.Scrolled(scroll, delta, rows.Count);
             view.Scroll(scroll);
+            Retarget();
         }
+    }
+
+    private static bool Soon(long since) => Environment.TickCount64 - since < PInvoke.GetDoubleClickTime();
+
+    // The row a target stands for, and whether it is the row's remove button.
+    private (int? Index, bool Remove) Find(string id)
+    {
+        for (int i = 0; i < rows.Count; i++)
+        {
+            if (id == ClipboardPanelLayout.RowId(rows[i].Id) || id == ClipboardPanelLayout.RemoveId(rows[i].Id))
+            {
+                return (i, id == ClipboardPanelLayout.RemoveId(rows[i].Id));
+            }
+        }
+
+        return (null, false);
+    }
+
+    /// <summary>The row goes back on the clipboard; once it has gone to the listener, "Copied" shows at the row.</summary>
+    private async void Pick(ClipboardRow row, string id)
+    {
+        int shownAs = generation;
+        selected = row.Id;
+        view?.Select(selected);
+        try
+        {
+            if (await watch.PickAsync(row.Id) && shownAs == generation)
+            {
+                island.Interaction.Acknowledge(this, id);
+            }
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"clipboard panel: could not put the item back ({e.GetType().Name})");
+        }
+    }
+
+    /// <summary>Clear all asks, and stops asking by itself after a few seconds; or it stops asking now.</summary>
+    private void Ask(bool on)
+    {
+        asking = on;
+        askTimer?.Stop();
+        if (on)
+        {
+            askedAt = Environment.TickCount64;
+            if (askTimer is null)
+            {
+                askTimer = island.Queue.CreateTimer();
+                askTimer.IsRepeating = false;
+                askTimer.Interval = TimeSpan.FromSeconds(ClipboardPanelLayout.AskSeconds);
+                askTimer.Tick += (_, _) => Ask(false);
+            }
+
+            askTimer.Start();
+        }
+
+        view?.ShowClearAll(asking);
+        Retarget();
+    }
+
+    private void Retarget()
+    {
+        targets = view is null ? [] : view.Layout.Targets(historyOn, [.. rows.Select(row => row.Id)], scroll, asking);
+        TargetsChanged?.Invoke();
     }
 
     // Raised on a worker thread or the UI thread; the redraw always runs on the UI thread.
@@ -101,9 +229,10 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             return;
         }
 
-        rows = next;
+        (rows, historyOn) = (next, on);
         scroll = Math.Min(scroll, view.Layout.MaxScroll(rows.Count));
-        view.Show(on, rows, selected, scroll, DateTimeOffset.Now, watch.Retention.MaxItems);
+        view.Show(on, rows, selected, scroll, DateTimeOffset.Now, watch.Retention.MaxItems, asking);
+        Retarget();
     }
 
     private async void Observe(Task work, string what)
@@ -128,6 +257,8 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         private static readonly Color Off = Color.FromArgb(51, 255, 255, 255);
         private static readonly Color On = Color.FromArgb(255, 0x6F, 0xA8, 0xFF);
         private static readonly Color White = Color.FromArgb(255, 255, 255, 255);
+        private static readonly Color Outline = Color.FromArgb(64, 255, 255, 255);
+        private static readonly Color Warn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
 
         private readonly Compositor c;
         private readonly TextRenderer text;
@@ -139,6 +270,11 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
         // Every text visual of the current build; the rows' own move with the scroll and land on whole pixels again.
         private readonly List<TextVisual> texts = [], rowTexts = [];
+
+        // Clear all, while history has rows: when it asks only its outline and word change.
+        private CompositionRoundedRectangleGeometry? clearOutline;
+        private CompositionColorBrush? clearStroke;
+        private TextVisual? clearWord;
 
         public View(Compositor compositor, TextRenderer text, ContainerVisual body, ClipboardPanelLayout layout)
         {
@@ -160,10 +296,11 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
         public ClipboardPanelLayout Layout { get; }
 
-        public void Show(bool on, IReadOnlyList<ClipboardRow> rows, long selected, float scroll, DateTimeOffset now, int keeps)
+        public void Show(bool on, IReadOnlyList<ClipboardRow> rows, long selected, float scroll, DateTimeOffset now, int keeps, bool asking)
         {
             frame.Shapes.Clear();
             DisposeTexts();
+            (clearOutline, clearStroke, clearWord) = (null, null, null);
             var old = rowsVisual.Children.ToList();
             rowsVisual.Children.RemoveAll();
             old.ForEach(row => row.Dispose());
@@ -180,10 +317,16 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
                 return;
             }
 
-            foreach (var line in Layout.FootText())
-            {
-                Text(texts, body).Show(line);
-            }
+            Text(texts, body).Show(Layout.FootText(asking)[0]);
+            clearOutline = c.CreateRoundedRectangleGeometry();
+            clearOutline.CornerRadius = new Vector2(ClipboardPanelLayout.Corner);
+            clearStroke = c.CreateColorBrush();
+            var outline = c.CreateSpriteShape(clearOutline);
+            outline.StrokeBrush = clearStroke;
+            outline.StrokeThickness = 1;
+            frame.Shapes.Add(outline);
+            clearWord = Text(texts, body);
+            ShowClearAll(asking);
 
             float width = Layout.List.Width;
             for (int i = 0; i < rows.Count; i++)
@@ -192,6 +335,21 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             }
 
             Scroll(scroll);
+        }
+
+        /// <summary>Clear all at rest, or asking: the outline fits the word, and both turn the warn colour while it asks.</summary>
+        public void ShowClearAll(bool asking)
+        {
+            if (clearOutline is null || clearStroke is null || clearWord is null)
+            {
+                return;
+            }
+
+            var button = Layout.ClearAll(asking);
+            clearOutline.Offset = new Vector2(button.X + 0.5f, button.Y + 0.5f);
+            clearOutline.Size = new Vector2(button.Width - 1, button.Height - 1);
+            clearStroke.Color = asking ? Warn : Outline;
+            clearWord.Show(Layout.FootText(asking)[1]);
         }
 
         public void Select(long selected)
@@ -231,20 +389,19 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             Rounded(shapes, new RectangleF(0, 0, at.Width, at.Height), ClipboardPanelLayout.Corner, fill);
 
             // The kind icon: three lines for text, two links for an address.
-            const float icon = ClipboardPanelLayout.Icon, gap = ClipboardPanelLayout.Gap;
-            float iconY = (at.Height - icon) / 2;
-            Rounded(shapes, new RectangleF(gap, iconY, icon, icon), 6, c.CreateColorBrush(CardSelected));
+            var icon = ClipboardPanelLayout.IconIn;
+            Rounded(shapes, icon, 6, c.CreateColorBrush(CardSelected));
             var glyph = c.CreateColorBrush(Glyph);
             if (row.IsLink)
             {
-                Stroked(shapes, new RectangleF(gap + 5, iconY + 9, 9, 6), 3, glyph);
-                Stroked(shapes, new RectangleF(gap + 10, iconY + 9, 9, 6), 3, glyph);
+                Stroked(shapes, new RectangleF(icon.X + 5, icon.Y + 9, 9, 6), 3, glyph);
+                Stroked(shapes, new RectangleF(icon.X + 10, icon.Y + 9, 9, 6), 3, glyph);
             }
             else
             {
                 foreach (var (y, w) in (ReadOnlySpan<(float, float)>)[(7, 12), (11, 12), (15, 8)])
                 {
-                    Rounded(shapes, new RectangleF(gap + 6, iconY + y, w, 2), 1, glyph);
+                    Rounded(shapes, new RectangleF(icon.X + 6, icon.Y + y, w, 2), 1, glyph);
                 }
             }
 
@@ -256,13 +413,13 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             foreach (float angle in (ReadOnlySpan<float>)[MathF.PI / 4, -MathF.PI / 4])
             {
                 var bar = c.CreateRoundedRectangleGeometry();
-                bar.Size = new Vector2(9, 1.5f);
+                bar.Size = new Vector2(10, 1.5f);
                 bar.CornerRadius = new Vector2(0.75f);
                 var shape = c.CreateSpriteShape(bar);
                 shape.FillBrush = cross;
-                shape.CenterPoint = new Vector2(4.5f, 0.75f);
+                shape.CenterPoint = new Vector2(5, 0.75f);
                 shape.RotationAngle = angle;
-                shape.Offset = mid - new Vector2(4.5f, 0.75f);
+                shape.Offset = mid - new Vector2(5, 0.75f);
                 shapes.Shapes.Add(shape);
             }
 

@@ -145,12 +145,24 @@ public sealed class MediaTracker
     /// Sends a transport command to the session being followed. It acts on another app, on the user's own
     /// click. False when the app refused, went away, or nothing plays; <see cref="Failure"/> then says which.
     /// </summary>
-    public Task<bool> SendAsync(MediaCommand command) => work.StartNew(() => SendOnWorkAsync(command)).Unwrap();
+    public Task<bool> SendAsync(MediaCommand command) => work.StartNew(() => SendOnWorkAsync(command.ToString().ToLowerInvariant(), session => command switch
+    {
+        MediaCommand.Play => session.TryPlayAsync(),
+        MediaCommand.Pause => session.TryPauseAsync(),
+        MediaCommand.Toggle => session.TryTogglePlayPauseAsync(),
+        MediaCommand.Next => session.TrySkipNextAsync(),
+        MediaCommand.Previous => session.TrySkipPreviousAsync(),
+        _ => null,
+    })).Unwrap();
 
-    private async Task<bool> SendOnWorkAsync(MediaCommand command)
+    /// <summary>Moves the followed session to a position on its timeline, on the user's own click, drag or key, as <see cref="SendAsync"/> does.</summary>
+    public Task<bool> SeekAsync(TimeSpan position) =>
+        work.StartNew(() => SendOnWorkAsync("seek", session => session.TryChangePlaybackPositionAsync(position.Ticks))).Unwrap();
+
+    private async Task<bool> SendOnWorkAsync(string name, Func<Session, IAsyncOperation<bool>?> call)
     {
         var session = picked;
-        string app = current.App, name = command.ToString().ToLowerInvariant();
+        string app = current.App;
         string? failed = null;
         if (session is null)
         {
@@ -160,15 +172,7 @@ public sealed class MediaTracker
         {
             try
             {
-                var sent = command switch
-                {
-                    MediaCommand.Play => session.TryPlayAsync(),
-                    MediaCommand.Pause => session.TryPauseAsync(),
-                    MediaCommand.Toggle => session.TryTogglePlayPauseAsync(),
-                    MediaCommand.Next => session.TrySkipNextAsync(),
-                    MediaCommand.Previous => session.TrySkipPreviousAsync(),
-                    _ => null,
-                };
+                var sent = call(session);
                 if (sent is null || !await sent.AsTask().ConfigureAwait(false))
                 {
                     failed = $"{app} did not accept {name}.";
@@ -408,7 +412,8 @@ public sealed class MediaTracker
                 | (controls.IsPauseEnabled ? MediaCommand.Pause : 0)
                 | (controls.IsPlayPauseToggleEnabled ? MediaCommand.Toggle : 0)
                 | (controls.IsNextEnabled ? MediaCommand.Next : 0)
-                | (controls.IsPreviousEnabled ? MediaCommand.Previous : 0);
+                | (controls.IsPreviousEnabled ? MediaCommand.Previous : 0)
+                | (controls.IsPlaybackPositionEnabled ? MediaCommand.Seek : 0);
             bool playing = info.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
             Set(current.WithPlayback(playing, info.PlaybackRate ?? 1, commands, now()));
         }

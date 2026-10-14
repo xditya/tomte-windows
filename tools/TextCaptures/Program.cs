@@ -222,6 +222,11 @@ internal static unsafe partial class Program
             new("media-no-timeline", media, c => MediaPanel(c, new Track("Radio Paradise", "Live stream", 0, 0, true, Timeline: false), null)),
             new("media-command-failed", media, c => MediaPanel(c, playing, "Spotify did not accept next.")),
             new("media-nothing-playing", media, c => MediaPanel(c, null, null)),
+            new("media-next-refused", media, c => MediaPanel(c, playing with { Next = false }, null)),
+            new("media-seek-hover", media, c => MediaPanel(c, playing, null, new Seeking(MediaPanelLayout.Bar.X + 120, Drag: false))),
+            new("media-seek-drag", media, c => MediaPanel(c, playing, null, new Seeking(MediaPanelLayout.Bar.X + 120, Drag: true))),
+            new("media-seek-drag-end", media, c => MediaPanel(c, playing, null, new Seeking(MediaPanelLayout.Bar.Right + 20, Drag: true))),
+            new("media-targets", media, c => MediaPanel(c, playing, null, targets: true)),
             new("compact-now-playing", IslandGeometry.Compact, c => NowPlayingRow(c, "Nightfall")),
             new("compact-now-playing-long", IslandGeometry.Compact, c => NowPlayingRow(c, "A Very Long Song Title That Goes On")),
             new("compact-timer-running", IslandGeometry.Compact, c => CompactLine(c, CompactRules.Countdown(TimeSpan.FromSeconds(1499.4)), ring: 0.0004f, tabular: true)),
@@ -261,7 +266,7 @@ internal static unsafe partial class Program
             new("shelf-narrow-remove-confirm", Panel(NarrowShelf), c => Shelf(c, ShelfItems, NarrowShelf, owner: 0, confirming: true)),
             new("shelf-empty", Panel(PanelSize.Shelf), c => Shelf(c, [], PanelSize.Shelf)),
             new("shelf-drop", IslandGeometry.ShelfDrop, ShelfDrop),
-            new("shortcuts", Panel(PanelSize.Shortcuts), Shortcuts),
+            new("shortcuts", Panel(PanelSize.Shortcuts), c => Shortcuts(c)),
             new("scratchpad", Panel(PanelSize.Scratchpad), c => Scratchpad(c, "Call Mom\nSubscribe to the newsletter about small tools, the one with the long name that wraps over two lines\nGym 6:00 PM")),
             new("scratchpad-markdown", Panel(PanelSize.Scratchpad), c => Scratchpad(c, MarkdownNote)),
             new("palette-prompt", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, "What does this error mean?", Chips(false), "Nothing sent", [], 0, 0.03m)),
@@ -273,14 +278,24 @@ internal static unsafe partial class Program
             new("clipboard-history", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows)),
             new("clipboard-off", Panel(PanelSize.Clipboard), c => Clipboard(c, on: false, [])),
             new("clipboard-empty", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, [])),
+            new("clipboard-clear-asking", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows, asking: true)),
+            new("clipboard-targets", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows, targets: true)),
+            new("shortcuts-targets", Panel(PanelSize.Shortcuts), c => Shortcuts(c, targets: true)),
             .. DropZoneScenes(),
         ];
     }
 
-    private sealed record Track(string Title, string Artist, double Position, double Length, bool Playing, string App = "Spotify", bool Timeline = true);
+    private sealed record Track(string Title, string Artist, double Position, double Length, bool Playing, string App = "Spotify", bool Timeline = true, bool Next = true);
 
-    // The Media panel's view: the same slots, styles and fallbacks as the island's.
-    private static void MediaPanel(Canvas c, Track? track, string? failure)
+    /// <summary>The pointer on the seek bar at <paramref name="X"/> (body DIPs), resting there or holding the knob in a drag.</summary>
+    private sealed record Seeking(float X, bool Drag);
+
+    // A target's area, drawn over a capture that shows where presses land.
+    private const uint TargetLine = 0xFFFF00FF;
+
+    // The Media panel's view: the same slots, styles and fallbacks as the island's. A button the app does not take is
+    // drawn at the disabled opacity; the seek bar shows its knob and the time while the pointer is on it.
+    private static void MediaPanel(Canvas c, Track? track, string? failure, Seeking? seek = null, bool targets = false)
     {
         var size = PanelSize.Media;
         var body = new Vector2((float)(-size.W / 2), PanelSpace.TabStripHeight);
@@ -297,17 +312,24 @@ internal static unsafe partial class Program
             c.Gradient(art, MediaPanelLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
         }
 
+        var line = MediaPanelLayout.Bar;
+        float played = (float)(track is { Timeline: true } ? track.Position / track.Length : 0);
+        float fillEnd = seek is { Drag: true } ? Math.Clamp(seek.X, line.Left, line.Right) : line.X + line.Width * played;
         if (track is { Timeline: true })
         {
-            var bar = Offset(MediaPanelLayout.Bar, body);
+            var bar = Offset(line, body);
             c.RoundRect(bar, bar.Height / 2, 0x29FFFFFF);
-            c.RoundRect(bar with { Width = bar.Width * (float)(track.Position / track.Length) }, bar.Height / 2, 0xFFFFFFFF);
+            c.RoundRect(bar with { Width = fillEnd - line.X }, bar.Height / 2, 0xFFFFFFFF);
+            if (seek is not null)
+            {
+                c.Circle(body + new Vector2(fillEnd, line.Y + line.Height / 2), MediaPanelLayout.Knob, 0xFFFFFFFF);
+            }
         }
 
-        uint lit = track is null ? 0x61FFFFFF : 0xFFFFFFFF;
-        c.Glyph(Offset(MediaPanelLayout.Previous, body), lit, [new(6, 4, 2, 16)], [[new(20, 4), new(9, 12), new(20, 20)]]);
+        uint lit = 0xFFFFFFFF, dim = (uint)(255 * StateLook.DisabledOpacity) << 24 | 0xFFFFFF;
+        c.Glyph(Offset(MediaPanelLayout.Previous, body), track is null ? dim : lit, [new(6, 4, 2, 16)], [[new(20, 4), new(9, 12), new(20, 20)]]);
         var button = Offset(MediaPanelLayout.PlayPause, body);
-        c.Circle(new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2), button.Width / 2, lit);
+        c.Circle(new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2), MediaPanelLayout.Disc / 2, track is null ? dim : lit);
         if (track is { Playing: true })
         {
             c.Glyph(button, 0xFF000000, [new(6, 4, 4, 16), new(14, 4, 4, 16)], []);
@@ -317,7 +339,7 @@ internal static unsafe partial class Program
             c.Glyph(button, 0xFF000000, [], [[new(7, 4), new(21, 12), new(7, 20)]]);
         }
 
-        c.Glyph(Offset(MediaPanelLayout.Next, body), lit, [new(16, 4, 2, 16)], [[new(4, 4), new(15, 12), new(4, 20)]]);
+        c.Glyph(Offset(MediaPanelLayout.Next, body), track is { Next: true } ? lit : dim, [new(16, 4, 2, 16)], [[new(4, 4), new(15, 12), new(4, 20)]]);
 
         c.Text(track is null ? NowPlaying.NothingPlaying : track.Title, MediaPanelLayout.TitleStyle, MediaPanelLayout.Title, body);
         c.Text(failure ?? (track is null ? "" : track.Artist.Length > 0 ? track.Artist : track.App), failure is null ? MediaPanelLayout.ArtistStyle : MediaPanelLayout.FailedStyle, MediaPanelLayout.Artist, body);
@@ -325,6 +347,28 @@ internal static unsafe partial class Program
         {
             c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Position)), MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed, body);
             c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Length)), MediaPanelLayout.TotalStyle, MediaPanelLayout.Total, body);
+        }
+
+        if (track is { Timeline: true } && seek is not null)
+        {
+            // The time's card sits over the artist's line, as the island inserts it last.
+            c.Flush();
+            var card = MediaPanelLayout.SeekLabel(seek.X);
+            c.RoundRect(Offset(card, body), 4, 0xFF2A2A2F);
+            float at = Math.Clamp((seek.X - line.X) / line.Width, 0, 1);
+            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Length * at)), MediaPanelLayout.SeekStyle, card, body);
+        }
+
+        if (targets)
+        {
+            // Every target there can be: an app that takes every command and a position.
+            var everything = NowPlaying.For("Spotify.exe")
+                .WithPlayback(true, 1, MediaCommand.Play | MediaCommand.Pause | MediaCommand.Next | MediaCommand.Previous | MediaCommand.Seek, default)
+                .WithTimeline(TimeSpan.Zero, TimeSpan.FromSeconds(195), TimeSpan.Zero, DateTimeOffset.Now, DateTimeOffset.Now);
+            foreach (var target in MediaPanelLayout.Targets(everything))
+            {
+                c.StrokeRect(Offset(target.Bounds, body), target.Corner, TargetLine);
+            }
         }
     }
 
@@ -541,7 +585,7 @@ internal static unsafe partial class Program
     }
 
     // The Shortcuts grid with a script tile that may not run, a long name and the add tile; grey squares for icons.
-    private static void Shortcuts(Canvas c)
+    private static void Shortcuts(Canvas c, bool targets = false)
     {
         var size = Body(PanelSize.Shortcuts);
         var body = BodyOrigin(PanelSize.Shortcuts);
@@ -573,6 +617,15 @@ internal static unsafe partial class Program
             foreach (var line in ShortcutGrid.TileText(cell, tiles[i].Name, tiles[i].Why))
             {
                 c.Text(line, holder);
+            }
+        }
+
+        if (targets)
+        {
+            var rows = tiles.Select((tile, i) => new Shortcut(i, tile.Name, tile.Name, null)).ToList();
+            foreach (var target in ShortcutGrid.Targets(rows, 0, size).Where(t => t.Bounds.Height > 0))
+            {
+                c.StrokeRect(Offset(target.Bounds, body), target.Corner, TargetLine);
             }
         }
     }
@@ -756,8 +809,8 @@ internal static unsafe partial class Program
         ("Screenshot of the shelf, 1280 x 720", "3 d"),
     ];
 
-    // The Clipboard history: on with rows, on and empty, or off.
-    private static void Clipboard(Canvas c, bool on, (string Display, string Ago)[] rows)
+    // The Clipboard history: on with rows, on and empty, or off; Clear all at rest or asking; optionally where presses land.
+    private static void Clipboard(Canvas c, bool on, (string Display, string Ago)[] rows, bool asking = false, bool targets = false)
     {
         var layout = new ClipboardPanelLayout(Body(PanelSize.Clipboard));
         var body = BodyOrigin(PanelSize.Clipboard);
@@ -783,10 +836,10 @@ internal static unsafe partial class Program
             return;
         }
 
-        foreach (var line in layout.FootText())
-        {
-            c.Text(line, body);
-        }
+        var foot = layout.FootText(asking);
+        c.Text(foot[0], body);
+        c.StrokeRect(Offset(layout.ClearAll(asking), body), ClipboardPanelLayout.Corner, asking ? TextStyle.WarnColor : 0x40FFFFFFu);
+        c.Text(foot[1], body);
 
         var list = layout.List;
         for (int i = 0; i < rows.Length; i++)
@@ -799,13 +852,22 @@ internal static unsafe partial class Program
 
             var origin = body + new Vector2(list.X + row.X, list.Y + row.Y);
             c.RoundRect(Offset(new RectangleF(0, 0, row.Width, row.Height), origin), ClipboardPanelLayout.Corner, 0x0FFFFFFF);
-            float iconY = (row.Height - ClipboardPanelLayout.Icon) / 2;
-            c.RoundRect(Offset(new RectangleF(ClipboardPanelLayout.Gap, iconY, ClipboardPanelLayout.Icon, ClipboardPanelLayout.Icon), origin), 6, 0x1CFFFFFF);
+            c.RoundRect(Offset(ClipboardPanelLayout.IconIn, origin), 6, 0x1CFFFFFF);
             var remove = Offset(ClipboardPanelLayout.RemoveIn(row.Width), origin);
-            c.Circle(new Vector2(remove.X + remove.Width / 2, remove.Y + remove.Height / 2), remove.Width / 2, 0x0FFFFFFF);
+            var middle = new Vector2(remove.X + remove.Width / 2, remove.Y + remove.Height / 2);
+            c.Circle(middle, remove.Width / 2, 0x0FFFFFFF);
+            c.Cross(middle, 10, 1.5f, 0x61FFFFFF);
             foreach (var line in ClipboardPanelLayout.RowText(rows[i].Display, rows[i].Ago, row.Width))
             {
                 c.Text(line, origin);
+            }
+        }
+
+        if (targets)
+        {
+            foreach (var target in layout.Targets(on, [.. Enumerable.Range(1, rows.Length).Select(i => (long)i)], 0, asking).Where(t => t.Bounds.Height > 0))
+            {
+                c.StrokeRect(Offset(target.Bounds, body), target.Corner, TargetLine);
             }
         }
     }
@@ -1053,6 +1115,16 @@ internal static unsafe partial class Program
         /// <summary>A filled figure in DIPs, its origin at <paramref name="at"/>.</summary>
         public void Shape(ReadOnlySpan<OutlineSegment> segments, Vector2 at, uint argb) => Fill(segments, at, 1, argb);
 
+        /// <summary>An x of two strokes, <paramref name="size"/> DIPs long, crossing at <paramref name="centre"/>.</summary>
+        public void Cross(Vector2 centre, float size, float width, uint argb)
+        {
+            var brush = Brush(argb);
+            float half = size / 2 / MathF.Sqrt(2);
+            dc->DrawLine(new D2D_POINT_2F { x = centre.X - half, y = centre.Y - half }, new D2D_POINT_2F { x = centre.X + half, y = centre.Y + half }, (ID2D1Brush*)brush, width, null);
+            dc->DrawLine(new D2D_POINT_2F { x = centre.X - half, y = centre.Y + half }, new D2D_POINT_2F { x = centre.X + half, y = centre.Y - half }, (ID2D1Brush*)brush, width, null);
+            brush->Release();
+        }
+
         /// <summary>A rounded outline one pixel wide, inside the rectangle.</summary>
         public void StrokeRect(RectangleF r, float radius, uint argb)
         {
@@ -1156,7 +1228,17 @@ internal static unsafe partial class Program
 
         public void Save(string file)
         {
-            // The runs go over everything else, as the island's text sprites sit on top in their hosts.
+            Flush();
+            dc->EndDraw(null, null);
+            Png(file, Read(dc, target, width, height, scale), width, height);
+        }
+
+        /// <summary>
+        /// The runs so far go onto the canvas now, as the island's text sprites sit on top in their hosts; shapes drawn
+        /// after this go over them, as a visual inserted later does.
+        /// </summary>
+        public void Flush()
+        {
             foreach (var (pixels, w, h, at, opacity, clip) in runs)
             {
                 if (clip is { } cut)
@@ -1181,8 +1263,7 @@ internal static unsafe partial class Program
                 }
             }
 
-            dc->EndDraw(null, null);
-            Png(file, Read(dc, target, width, height, scale), width, height);
+            runs.Clear();
         }
 
         public void Dispose()

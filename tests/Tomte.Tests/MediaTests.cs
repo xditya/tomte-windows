@@ -1,7 +1,9 @@
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Media;
+using Tomte.Core.Text;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -288,54 +290,130 @@ public class MediaTests
 
     public static TheoryData<double> Scales => [1.0, 1.25, 1.5];
 
+    // The playing track, taking a new position too.
+    private static NowPlaying Seekable() => Playing().WithPlayback(true, 1, All | MediaCommand.Seek, T0);
+
+    private static string? HitId(IReadOnlyList<Target> targets, Vector2 at) =>
+        Target.Hit([(targets, Same)], at) is { } hit ? targets[hit.Index].Id : null;
+
+    private static readonly Func<Vector2, Vector2> Same = p => p;
+
     [Theory]
     [MemberData(nameof(Scales))]
-    public void PressOnATransportButtonSendsItsCommandAtEveryScale(double scale)
+    public void PressOnATransportButtonOrTheSeekBarHitsItAtEveryScale(double scale)
     {
-        var playing = Playing();
-        (RectangleF Button, MediaCommand Command)[] buttons =
+        var targets = MediaPanelLayout.Targets(Seekable());
+        (RectangleF Button, string Id)[] buttons =
         [
-            (MediaPanelLayout.Previous, MediaCommand.Previous),
-            (MediaPanelLayout.PlayPause, MediaCommand.Pause),
-            (MediaPanelLayout.Next, MediaCommand.Next),
+            (MediaPanelLayout.Seek, "seek"),
+            (MediaPanelLayout.Previous, "previous"),
+            (MediaPanelLayout.PlayPause, "playpause"),
+            (MediaPanelLayout.Next, "next"),
         ];
 
-        foreach (var (button, command) in buttons)
+        foreach (var (button, id) in buttons)
         {
             var (cx, cy) = Pixel(button.X + button.Width / 2, button.Y + button.Height / 2, scale);
-            Assert.Equal(command, MediaPanelLayout.Command(BodyPoint(cx, cy, scale), playing));
+            Assert.Equal(id, HitId(targets, BodyPoint(cx, cy, scale)));
 
-            // Two pixels inside each corner still hit; two pixels outside each edge miss.
+            // Two pixels inside each corner still hit; two pixels outside each edge do not.
             var (left, top) = Pixel(button.Left, button.Top, scale);
             var (right, bottom) = Pixel(button.Right, button.Bottom, scale);
-            Assert.Equal(command, MediaPanelLayout.Command(BodyPoint(left + 2, top + 2, scale), playing));
-            Assert.Equal(command, MediaPanelLayout.Command(BodyPoint(right - 2, bottom - 2, scale), playing));
-            Assert.Equal(MediaCommand.None, MediaPanelLayout.Command(BodyPoint(left - 2, cy, scale), playing));
-            Assert.Equal(MediaCommand.None, MediaPanelLayout.Command(BodyPoint(right + 2, cy, scale), playing));
-            Assert.Equal(MediaCommand.None, MediaPanelLayout.Command(BodyPoint(cx, top - 2, scale), playing));
-            Assert.Equal(MediaCommand.None, MediaPanelLayout.Command(BodyPoint(cx, bottom + 2, scale), playing));
+            Assert.Equal(id, HitId(targets, BodyPoint(left + 2, top + 2, scale)));
+            Assert.Equal(id, HitId(targets, BodyPoint(right - 2, bottom - 2, scale)));
+            Assert.NotEqual(id, HitId(targets, BodyPoint(left - 2, cy, scale)));
+            Assert.NotEqual(id, HitId(targets, BodyPoint(right + 2, cy, scale)));
+            Assert.NotEqual(id, HitId(targets, BodyPoint(cx, top - 2, scale)));
+            Assert.NotEqual(id, HitId(targets, BodyPoint(cx, bottom + 2, scale)));
         }
+
+        Assert.Equal(MediaCommand.Previous, MediaPanelLayout.Command("previous", Playing()));
+        Assert.Equal(MediaCommand.Pause, MediaPanelLayout.Command("playpause", Playing()));
+        Assert.Equal(MediaCommand.Next, MediaPanelLayout.Command("next", Playing()));
+        Assert.Equal(MediaCommand.None, MediaPanelLayout.Command("seek", Playing()));
     }
 
     [Theory]
     [MemberData(nameof(Scales))]
-    public void PressOutsideTheButtonsOrOnARefusedCommandSendsNothing(double scale)
+    public void ARefusedCommandIsADisabledButtonAndTheArtIsNoTarget(double scale)
     {
         var (artX, artY) = Pixel(MediaPanelLayout.Art.X + 30, MediaPanelLayout.Art.Y + 30, scale);
-        Assert.Equal(MediaCommand.None, MediaPanelLayout.Command(BodyPoint(artX, artY, scale), Playing()));
+        Assert.Null(HitId(MediaPanelLayout.Targets(Playing()), BodyPoint(artX, artY, scale)));
 
-        var (barX, barY) = Pixel(MediaPanelLayout.Bar.X + 40, MediaPanelLayout.Bar.Y + 2, scale);
-        Assert.Equal(MediaCommand.None, MediaPanelLayout.Command(BodyPoint(barX, barY, scale), Playing()));
+        var transport = MediaPanelLayout.Targets(Playing());
+        Assert.Equal(["previous", "playpause", "next"], transport.Select(t => t.Id));
+        Assert.All(transport, t => Assert.True(t.Enabled && t.Group == 1 && t.Bounds.Width >= 32 && t.Bounds.Height >= 32, t.Id));
+        Assert.Equal(["Previous", "Pause", "Next"], transport.Select(t => t.Tip));
 
-        // The app takes only pause: next and previous are dead, play or pause still works.
+        // The app takes only pause: next and previous are disabled, play or pause still works.
         var pauseOnly = Playing().WithPlayback(true, 1, MediaCommand.Pause, T0 + S(1));
-        var (nextX, nextY) = Pixel(MediaPanelLayout.Next.X + 14, MediaPanelLayout.Next.Y + 14, scale);
-        var (playX, playY) = Pixel(MediaPanelLayout.PlayPause.X + 14, MediaPanelLayout.PlayPause.Y + 14, scale);
-        Assert.Equal(MediaCommand.None, MediaPanelLayout.Command(BodyPoint(nextX, nextY, scale), pauseOnly));
-        Assert.Equal(MediaCommand.Pause, MediaPanelLayout.Command(BodyPoint(playX, playY, scale), pauseOnly));
+        Assert.Equal([false, true, false], MediaPanelLayout.Targets(pauseOnly).Select(t => t.Enabled));
+        Assert.Equal(MediaCommand.None, MediaPanelLayout.Command("next", pauseOnly));
+        Assert.Equal(MediaCommand.Pause, MediaPanelLayout.Command("playpause", pauseOnly));
 
-        // Nothing plays: every button is dead.
-        Assert.Equal(MediaCommand.None, MediaPanelLayout.Command(BodyPoint(playX, playY, scale), NowPlaying.None));
+        // Paused, the middle button says Play. Nothing plays: every button is disabled.
+        Assert.Equal("Play", MediaPanelLayout.Targets(Playing().WithPlayback(false, 1, All, T0))[1].Tip);
+        Assert.All(MediaPanelLayout.Targets(NowPlaying.None), t => Assert.False(t.Enabled, t.Id));
+    }
+
+    [Fact]
+    public void TheBarIsASeekBarOnlyWhileTheAppTakesAPosition()
+    {
+        var seek = MediaPanelLayout.Targets(Seekable())[0];
+        Assert.Equal(("seek", TargetKind.Slider, true, 0), (seek.Id, seek.Kind, seek.Draggable, seek.Group));
+        Assert.True(seek.Bounds.Height >= StateLook.MinTarget);
+        Assert.True(seek.Bounds.Contains(MediaPanelLayout.Bar));
+        // The knob at either end is inside it.
+        Assert.True(seek.Bounds.Left <= MediaPanelLayout.Bar.Left - MediaPanelLayout.Knob);
+        Assert.True(seek.Bounds.Right >= MediaPanelLayout.Bar.Right + MediaPanelLayout.Knob);
+
+        // No position taken, or no timeline to put one on: a plain progress bar, and no target.
+        Assert.DoesNotContain(MediaPanelLayout.Targets(Playing()), t => t.Id == "seek");
+        var noTimeline = Seekable().WithTimeline(S(0), S(0), S(0), T0, T0);
+        Assert.Null(noTimeline.Timeline);
+        Assert.DoesNotContain(MediaPanelLayout.Targets(noTimeline), t => t.Id == "seek");
+    }
+
+    [Fact]
+    public void ASeekHoldsTheBarUntilTheAppReportsOrTwoSecondsPass()
+    {
+        var sent = Seekable().Timeline!.Value;
+        var seek = new PendingSeek(S(120), sent, T0);
+        Assert.True(seek.Holds(sent, T0 + S(1.9)));
+        // No report within 2 s: the bar goes back to what the app last said.
+        Assert.False(seek.Holds(sent, T0 + S(2)));
+        // The app reported the new position, or stopped reporting a timeline: the bar shows that at once.
+        var reported = Seekable().WithTimeline(S(0), S(195), S(120), T0 + S(0.3), T0 + S(0.3)).Timeline;
+        Assert.False(seek.Holds(reported, T0 + S(0.3)));
+        Assert.False(seek.Holds(null, T0 + S(0.3)));
+    }
+
+    [Fact]
+    public void APointOnTheBarIsAPositionAndKeysStepFiveSeconds()
+    {
+        var bar = MediaPanelLayout.Bar;
+        var timeline = new MediaTimeline(S(10), S(190), S(48), T0, 1, true);
+        Assert.Equal(S(10), MediaPanelLayout.SeekAt(bar.Left, timeline));
+        Assert.Equal(S(190), MediaPanelLayout.SeekAt(bar.Right, timeline));
+        Assert.Equal(S(100), MediaPanelLayout.SeekAt(bar.Left + bar.Width / 2, timeline));
+        // Past the ends, where the knob can still be grabbed, the position stays on the track.
+        Assert.Equal(S(10), MediaPanelLayout.SeekAt(bar.Left - MediaPanelLayout.Knob, timeline));
+        Assert.Equal(S(190), MediaPanelLayout.SeekAt(bar.Right + MediaPanelLayout.Knob, timeline));
+        Assert.Equal(bar.Left + bar.Width / 4, MediaPanelLayout.BarX(S(55), timeline), 0.01);
+        Assert.Equal(bar.Right, MediaPanelLayout.BarX(S(500), timeline));
+
+        Assert.Equal(S(53), MediaPanelLayout.Stepped(S(48), 1, timeline));
+        Assert.Equal(S(43), MediaPanelLayout.Stepped(S(48), -1, timeline));
+        Assert.Equal(S(10), MediaPanelLayout.Stepped(S(12), -1, timeline));
+        Assert.Equal(S(190), MediaPanelLayout.Stepped(S(188), 1, timeline));
+
+        // The time's card follows the pointer along the bar and stops at its ends, above the bar.
+        var card = MediaPanelLayout.SeekLabel(bar.Left + 40);
+        Assert.Equal(bar.Left + 40, card.X + card.Width / 2);
+        Assert.Equal(MediaPanelLayout.SeekLabel(bar.Right), MediaPanelLayout.SeekLabel(bar.Right + 30));
+        Assert.True(card.Bottom < bar.Top);
+        using var widest = TextLayout.Of(new TextRun(NowPlaying.Clock(S(35999)), MediaPanelLayout.SeekStyle, card.Width));
+        Assert.False(widest.Trimmed);
     }
 
     [Fact]
@@ -345,12 +423,21 @@ public class MediaTests
         RectangleF[] all =
         [
             MediaPanelLayout.Art, MediaPanelLayout.Title, MediaPanelLayout.Artist, MediaPanelLayout.Elapsed, MediaPanelLayout.Bar,
-            MediaPanelLayout.Total, MediaPanelLayout.Previous, MediaPanelLayout.PlayPause, MediaPanelLayout.Next,
+            MediaPanelLayout.Total, MediaPanelLayout.Seek, MediaPanelLayout.Previous, MediaPanelLayout.PlayPause, MediaPanelLayout.Next,
+            MediaPanelLayout.SeekLabel(MediaPanelLayout.Bar.Left), MediaPanelLayout.SeekLabel(MediaPanelLayout.Bar.Right),
         ];
 
         Assert.All(all, r => Assert.True(r.Left >= 0 && r.Top >= 0 && r.Right <= width && r.Bottom <= height, r.ToString()));
-        // The three buttons do not overlap, so a press has one answer.
-        Assert.False(MediaPanelLayout.Previous.IntersectsWith(MediaPanelLayout.PlayPause));
-        Assert.False(MediaPanelLayout.PlayPause.IntersectsWith(MediaPanelLayout.Next));
+        // No two targets overlap, so a press has one answer; the disc is drawn inside its button.
+        RectangleF[] targets = [MediaPanelLayout.Seek, MediaPanelLayout.Previous, MediaPanelLayout.PlayPause, MediaPanelLayout.Next];
+        for (int i = 0; i < targets.Length; i++)
+        {
+            for (int j = i + 1; j < targets.Length; j++)
+            {
+                Assert.False(targets[i].IntersectsWith(targets[j]), $"{targets[i]} and {targets[j]}");
+            }
+        }
+
+        Assert.True(MediaPanelLayout.Disc <= MediaPanelLayout.PlayPause.Width);
     }
 }
