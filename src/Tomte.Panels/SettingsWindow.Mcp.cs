@@ -81,8 +81,10 @@ public sealed partial class SettingsWindow
             remove.Click += (_, _) =>
             {
                 TryCredential(() => CredentialStore.Delete(server.CredentialId));
-                Save(s => s with { McpServers = [.. s.McpServers.Where(o => o.Name != server.Name)] });
+                // The server's always-allow grants go with it, so adding a server of the same name later starts from asking.
+                Save(s => McpTools.WithServer(s, server, null));
                 RenderMcpServers();
+                RenderGrants();
             };
             var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { enabled, list, edit, remove } };
             mcpList.Children.Add(new StackPanel { Spacing = 8, Children = { Row(server.Name, Note(server.Summary), controls), tools } });
@@ -120,11 +122,17 @@ public sealed partial class SettingsWindow
                 panel.Children.Add(Row(tool.Name, tool.Description.Length == 0 ? null : Note(FirstSentence(tool.Description)), box));
             }
 
-            // A tier chosen for a tool the server no longer has, or has since changed, applies to nothing.
+            // A tier or an always-allow for a tool the server no longer has, or has since changed, applies to nothing.
             var keys = tools.Select(t => t.Key).ToHashSet();
-            if (server.ToolTiers.Keys.Any(k => !keys.Contains(k)))
+            bool Stale(string key) => McpTools.IsKeyOf(server, key) && !keys.Contains(key);
+            if (server.ToolTiers.Keys.Any(k => !keys.Contains(k)) || store.Current.AlwaysAllowedTools.Any(Stale))
             {
-                SaveMcp(s => s.Name == name ? s with { ToolTiers = s.ToolTiers.Where(t => keys.Contains(t.Key)).ToDictionary() } : s);
+                Save(s => s with
+                {
+                    McpServers = [.. s.McpServers.Select(o => o.Name == name ? o with { ToolTiers = o.ToolTiers.Where(t => keys.Contains(t.Key)).ToDictionary() } : o)],
+                    AlwaysAllowedTools = [.. s.AlwaysAllowedTools.Where(g => !Stale(g))],
+                });
+                RenderGrants();
             }
         }
         catch (Exception e)
@@ -225,12 +233,11 @@ public sealed partial class SettingsWindow
             return;
         }
 
-        Save(s => s with
-        {
-            McpServers = existing is null ? [.. s.McpServers, server] : [.. s.McpServers.Select(o => o.Name == existing.Name ? server : o)],
-        });
+        // A renamed server, or one pointed at another command or URL, loses its always-allow grants.
+        Save(s => McpTools.WithServer(s, existing, server));
         ResetMcpForm();
         RenderMcpServers();
+        RenderGrants();
     }
 
     private void SaveMcp(Func<McpServerSettings, McpServerSettings> change) =>

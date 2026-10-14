@@ -547,6 +547,9 @@ public class McpPaletteTests : IDisposable
         Assert.Single(_asked);
         string key = Assert.Single(_grants.AlwaysAllowed);
         Assert.StartsWith("files__echo#", key);
+        // What Settings does with a stored grant: shows the name, and drops it with its server.
+        Assert.Equal("files__echo", McpTools.NameOf(key));
+        Assert.True(McpTools.IsKeyOf(new McpServerSettings { Name = "Files" }, key));
         Assert.Equal(2, _fake.Calls.Count);
 
         _asked.Clear();
@@ -703,6 +706,52 @@ public class McpSettingsTests
         Assert.Empty(new McpServerSettings { Name = "Docs", Command = "npx", Arguments = ["a"] }.After(before).ToolTiers);
         Assert.Empty(new McpServerSettings { Name = "Files", Transport = McpTransport.Http, Url = "https://x" }.After(before).ToolTiers);
         Assert.True(new McpServerSettings { Name = "New", Command = "npx" }.After(null).Enabled);
+    }
+
+    [Fact]
+    public void AlwaysAllowGrantsGoWithAServerThatIsRemovedRenamedOrPointedElsewhere()
+    {
+        var files = new McpServerSettings { Name = "Files", Command = "npx", Arguments = ["a"] };
+        // Its prefix, files_2, starts like the other server's: its grants must not be taken for that one's.
+        var second = new McpServerSettings { Name = "Files 2", Command = "uvx" };
+        var settings = new TomteSettings
+        {
+            McpServers = [files, second],
+            AlwaysAllowedTools = ["files_2__log#22", "files__read#11", "files__write#12", "open_url"],
+        };
+        string[] others = ["files_2__log#22", "open_url"];
+
+        var removed = McpTools.WithServer(settings, files, null);
+        Assert.Equal([second], removed.McpServers);
+        Assert.Equal(others, removed.AlwaysAllowedTools);
+
+        // Removed and added again under the same name: nothing is left to carry over.
+        Assert.Equal(others, McpTools.WithServer(removed, null, files).AlwaysAllowedTools);
+
+        // An edit that keeps name and target (here the switch) keeps the grants.
+        var same = McpTools.WithServer(settings, files, files with { Enabled = false });
+        Assert.Equal(settings.AlwaysAllowedTools, same.AlwaysAllowedTools);
+        Assert.False(same.McpServers[0].Enabled);
+
+        Assert.Equal(others, McpTools.WithServer(settings, files, files with { Arguments = ["b"] }).AlwaysAllowedTools);
+        Assert.Equal(others, McpTools.WithServer(settings, files, files with { Command = "another-server" }).AlwaysAllowedTools);
+        var renamed = McpTools.WithServer(settings, files, files with { Name = "Docs" });
+        Assert.Equal(others, renamed.AlwaysAllowedTools);
+        Assert.Equal(["Docs", "Files 2"], renamed.McpServers.Select(s => s.Name));
+
+        var added = McpTools.WithServer(settings, null, new McpServerSettings { Name = "Web", Transport = McpTransport.Http, Url = "https://x" });
+        Assert.Equal(["Files", "Files 2", "Web"], added.McpServers.Select(s => s.Name));
+        Assert.Equal(settings.AlwaysAllowedTools, added.AlwaysAllowedTools);
+    }
+
+    [Fact]
+    public void AGrantIsShownByNameWithoutItsHash()
+    {
+        Assert.Equal("files__echo", McpTools.NameOf("files__echo#0123456789abcdef"));
+        Assert.Equal("open_url", McpTools.NameOf("open_url"));
+        Assert.True(McpTools.IsKeyOf(new McpServerSettings { Name = "Files" }, "files__echo#0123456789abcdef"));
+        Assert.False(McpTools.IsKeyOf(new McpServerSettings { Name = "Files" }, "files_2__echo#0123456789abcdef"));
+        Assert.False(McpTools.IsKeyOf(new McpServerSettings { Name = "Files" }, "open_url"));
     }
 
     [Fact]

@@ -212,6 +212,29 @@ public sealed class McpTools : IAsyncDisposable
         return name.Length > 64 ? name[..64] : name;
     }
 
+    /// <summary>Whether a stored key (a tier override or an always-allow grant) is for a tool of this server.</summary>
+    public static bool IsKeyOf(McpServerSettings server, string key) => key.StartsWith(server.Prefix + Separator, StringComparison.Ordinal);
+
+    /// <summary>A stored key as Settings shows it: the name the model sees, without the hash behind the # sign.</summary>
+    public static string NameOf(string key) => key.Split('#')[0];
+
+    /// <summary>
+    /// The settings with one server added (no <paramref name="before"/>), edited, or removed (no
+    /// <paramref name="now"/>). The always-allow grants for the server's tools go with it unless it
+    /// keeps its name and target: a grant was given for what ran then, under the name it had then.
+    /// </summary>
+    public static TomteSettings WithServer(TomteSettings settings, McpServerSettings? before, McpServerSettings? now)
+    {
+        if (before is null)
+            return now is null ? settings : settings with { McpServers = [.. settings.McpServers, now] };
+        bool same = now is not null && now.Name == before.Name && now.Target == before.Target;
+        return settings with
+        {
+            McpServers = [.. settings.McpServers.Where(s => now is not null || s.Name != before.Name).Select(s => s.Name == before.Name ? now! : s)],
+            AlwaysAllowedTools = same ? settings.AlwaysAllowedTools : [.. settings.AlwaysAllowedTools.Where(g => !IsKeyOf(before, g))],
+        };
+    }
+
     /// <summary>
     /// The arguments as they are sent. Small models send null for optional arguments they do not use,
     /// and servers read that as a wrong type, so such a null is left out. A null the schema asks for
