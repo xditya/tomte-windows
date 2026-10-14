@@ -36,6 +36,37 @@ public static class NoteMarkdown
     }
 
     /// <summary>
+    /// <paramref name="count"/> lines (fewer at the text's end) from the one <paramref name="at"/> is on: from a line's
+    /// start to a line's end, a piece of a long note to style at a time.
+    /// </summary>
+    public static (int From, int To) Lines(string text, int at, int count)
+    {
+        int start = LineStart(text, Math.Min(at, text.Length));
+        for (int end = start, i = 1; ; i++)
+        {
+            end = text.IndexOf('\n', end);
+            if (end < 0 || i >= count)
+            {
+                return (start, end < 0 ? text.Length : end);
+            }
+
+            end++;
+        }
+    }
+
+    /// <summary>About <paramref name="count"/> lines around the one <paramref name="at"/> is on, half of them before it.</summary>
+    public static (int From, int To) Around(string text, int at, int count)
+    {
+        int start = LineStart(text, Math.Min(at, text.Length));
+        for (int i = 0; i < count / 2 && start > 0; i++)
+        {
+            start = LineStart(text, start - 1);
+        }
+
+        return Lines(text, start, count);
+    }
+
+    /// <summary>
     /// How the lines from <paramref name="from"/> (a line's start) to <paramref name="to"/> (a line's end) look: each
     /// line, and runs that cover every character of them, the line break after the last one included.
     /// </summary>

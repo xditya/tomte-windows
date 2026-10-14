@@ -56,6 +56,21 @@ public class NoteMarkdownTests
     }
 
     [Fact]
+    public void ALongNoteIsStyledInPiecesOfWholeLines()
+    {
+        const string text = "a\nbb\nc\nd\ne";
+        Assert.Equal((0, 4), NoteMarkdown.Lines(text, 0, 2));
+        Assert.Equal((2, 6), NoteMarkdown.Lines(text, 3, 2));
+        Assert.Equal((7, 10), NoteMarkdown.Lines(text, 7, 9));
+        Assert.Equal((9, 10), NoteMarkdown.Lines(text, 10, 1));
+        // Around the caret: half the lines before its own.
+        Assert.Equal((5, 10), NoteMarkdown.Around(text, 7, 3));
+        Assert.Equal((0, 4), NoteMarkdown.Around(text, 0, 2));
+        Assert.Equal((0, 10), NoteMarkdown.Around(text, 10, 300));
+        Assert.Equal((0, 0), NoteMarkdown.Around("", 0, 300));
+    }
+
+    [Fact]
     public void TheNoteTakesClipboardAndFormattingKeys()
     {
         const nuint Insert = 0x2D, Delete = 0x2E, Left = 0x25, One = '1', Plus = 0xBB;
