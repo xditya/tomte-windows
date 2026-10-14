@@ -338,6 +338,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 // set nor counts on time across a sleep. Work the wait out again; an end that has passed fires at once.
                 log?.Invoke(message == PInvoke.WM_TIMECHANGE ? "clock changed" : "resumed from sleep");
                 ArmTimer();
+                // The tray's pause one-shot has the same blind spot; an hour that ran out on the wall clock frees the queue.
+                ReleaseEvents();
                 return false; // every window gets these; DefWindowProc gives the reply
             default:
                 return false;
