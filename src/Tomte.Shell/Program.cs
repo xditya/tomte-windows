@@ -4,6 +4,7 @@ using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Rambler;
+using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
@@ -216,7 +217,7 @@ internal static class Program
     /// <summary>
     /// --palette "prompt" [--screenshot] [--dry]: the debug driver. Opens the palette on the island, runs the
     /// prompt against local Ollama with the window chip on and an in-memory shelf and scratchpad, logs the
-    /// stream and the tool steps, retracts, shows each device action as a Compact event and undoes it, then
+    /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
     /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
     /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
@@ -283,13 +284,24 @@ internal static class Program
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory after answer: {Memory()}");
             await Task.Delay(2000);
             triggers.Hide();
-            // Each device action shows as a Compact event once the palette is gone, then its undo runs so a debug run leaves the PC as it was.
+            // The controller owns every reveal, so a device event goes to it like any other: the pause, the suppression
+            // check, the Focus queue and the 4 s Compact hold are its to apply.
             foreach (var e in host.Events)
             {
-                await host.ShowEventAsync(e);
-                if (e.Undo is { } undo)
+                triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
+                log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette event raised: {e.Line}{(e.Undo is null ? "" : " [undo]")}");
+            }
+
+            if (host.Events.Count > 0)
+            {
+                // Long enough for the hold and the retract; then the undos run so a debug run leaves the PC as it was.
+                await Task.Delay(4500);
+                foreach (var e in host.Events)
                 {
-                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette undo: {undo().Message}");
+                    if (e.Undo is { } undo)
+                    {
+                        log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette undo: {undo().Message}");
+                    }
                 }
             }
             GC.Collect();

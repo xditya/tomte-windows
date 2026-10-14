@@ -18,7 +18,7 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
 {
     private double _targetHeight;
 
-    /// <summary>Device actions the session ran, in order. Each shows as a Compact event once the palette has retracted.</summary>
+    /// <summary>Device actions the session ran, in order. The shell raises them as island events once the palette has retracted.</summary>
     public List<DeviceEvent> Events { get; } = [];
 
     public async Task RunAsync(PaletteSession session)
@@ -54,34 +54,6 @@ internal sealed class PaletteHost(IslandWindow island, IslandStateMachine machin
             island.Mascot.Set(session.Status == PaletteStatus.Done ? MascotState.Result : MascotState.Error);
             await growth;
             log($"{DateTime.Now:HH:mm:ss.fff} palette {session.Status}{(session.Error is null ? "" : ": " + session.Error)} indicator=\"{session.ProviderIndicator}\" steps={session.ToolSteps} height={island.Current.Depth}");
-        }
-        finally
-        {
-            island.Content.Children.Remove(placeholder);
-        }
-    }
-
-    /// <summary>
-    /// The one-line Compact event for a device action: Compact for 4 s, then Hidden. The state table
-    /// enters Compact from Hidden only, so the caller retracts the palette first. The text renderer
-    /// will draw the line and an undo affordance where the placeholder bar sits.
-    /// </summary>
-    public async Task ShowEventAsync(DeviceEvent e)
-    {
-        machine.TransitionTo(IslandState.Compact);
-        island.Mascot.Follow(IslandState.Hidden, IslandState.Compact);
-        island.PanelLook = false;
-        var compact = IslandGeometry.For(IslandState.Compact, 0, 0);
-        var placeholder = Placeholder(44, 11, compact.Width - 44 - 16, 16);
-        try
-        {
-            await island.MorphTo(compact, Spring.PresetFor(IslandState.Hidden, IslandState.Compact));
-            log($"{DateTime.Now:HH:mm:ss.fff} compact event shown: {e.Line}{(e.Undo is null ? "" : " [undo]")}");
-            await Task.Delay(4000);
-            machine.TransitionTo(IslandState.Hidden);
-            island.Mascot.Follow(IslandState.Compact, IslandState.Hidden);
-            await island.MorphTo(IslandGeometry.For(IslandState.Hidden, 0, 0), Spring.PresetFor(IslandState.Compact, IslandState.Hidden));
-            log($"{DateTime.Now:HH:mm:ss.fff} compact event timed out");
         }
         finally
         {
