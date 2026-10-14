@@ -88,7 +88,7 @@ internal sealed class InteractionHost
     private TargetRef? focus, told, tipFor;
     private TipPhase tip;
     private string tipText = "";
-    private bool ring, tracking, dragging, tipBlocked, holding;
+    private bool ring, tracking, dragging, tipBlocked;
 
     // The view a text box with the keys belongs to (the palette's prompt), and how the box takes them back.
     private IInteractive? boxOwner;
@@ -100,6 +100,8 @@ internal sealed class InteractionHost
         tipTimer = island.Queue.CreateTimer();
         tipTimer.IsRepeating = false;
         tipTimer.Tick += (_, _) => TipTick();
+        // The hold follows the press itself, so a click acts with the island no longer held by its own press.
+        pointer.Holding += on => Pressing?.Invoke(on);
         island.Settled += Refresh;
         island.LayoutChanged += Refresh;
         // Targets are placed from the shape as it is now, which a morph changes every frame: nothing shows until it rests.
@@ -686,16 +688,9 @@ internal sealed class InteractionHost
         return true;
     }
 
-    // The state layer on the pressed or hovered target and the ring on the focused one, from where they are now; and the
-    // hold that keeps the island open while a press lasts.
+    // The state layer on the pressed or hovered target and the ring on the focused one, from where they are now.
     private void Update()
     {
-        if ((pointer.Pressed is not null) != holding)
-        {
-            holding = !holding;
-            Pressing?.Invoke(holding);
-        }
-
         RectangleF? layer = null, focused = null;
         float layerCorner = 0, focusCorner = 0;
         uint fill = 0;
@@ -738,12 +733,6 @@ internal sealed class InteractionHost
 
         pointer.Reset();
         (focus, told, ring, tracking, tipBlocked, boxOwner, backToBox) = (null, null, false, false, false, null, null);
-        if (holding)
-        {
-            holding = false;
-            Pressing?.Invoke(false);
-        }
-
         lastInGroup.Clear();
         HideTip();
         overlay?.Release();

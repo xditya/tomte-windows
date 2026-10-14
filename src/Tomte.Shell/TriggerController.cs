@@ -576,14 +576,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
         int margin = (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale);
         pointerInside = PInvoke.GetCursorPos(out var cursor) && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, margin);
         pointerOn = pointerInside && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, 0);
-        if (!pointerOn)
-        {
-            // A double click sent the island back to the middle, away from the pointer.
-            island.Swell(false);
-        }
-
         PushZone();
         EndDrag();
+        // A pointer that let go of the pill rests on it at its new place, and the dwell runs from now as for one that came
+        // onto it. A double click that sent the island back to the middle leaves the pointer off it.
+        Dwell(pointerOn ? HoverStep.Start : HoverStep.Cancel);
         // A window may be under the island's new place.
         SchedulePeek();
     }
@@ -676,21 +673,26 @@ internal sealed unsafe partial class TriggerController : IDisposable
             PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
         }
 
-        // Only a pointer coming onto the pill dwells; one that was on it already has just dragged it there.
-        if (hover == HoverStep.Start && RetractionRules.OpensPanels(machine.State, activity))
+        // Only a pointer coming onto the pill dwells; one moving about on it lets the dwell run.
+        Dwell(hover);
+        if (activity.HasFlag(IslandActivity.Result))
+        {
+            InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
+        }
+    }
+
+    /// <summary>The dwell that opens Panels from the pill starts, with the push pill's swell, or stops.</summary>
+    private void Dwell(HoverStep step)
+    {
+        if (step == HoverStep.Start && RetractionRules.OpensPanels(machine.State, activity))
         {
             PInvoke.SetTimer(island.Hwnd, HoverTimer, (uint)settings.Reveal.ExpandDwellHeldMs, null);
             island.Swell(Compact == CompactReason.Summary);
         }
-        else if (hover == HoverStep.Cancel)
+        else if (step == HoverStep.Cancel)
         {
             PInvoke.KillTimer(island.Hwnd, HoverTimer);
             island.Swell(false);
-        }
-
-        if (activity.HasFlag(IslandActivity.Result))
-        {
-            InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
         }
     }
 
