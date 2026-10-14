@@ -34,8 +34,10 @@ internal static class Program
         int paletteArg = Array.IndexOf(args, "--palette");
         string? palettePrompt = paletteArg >= 0 && paletteArg + 1 < args.Length ? args[paletteArg + 1] : null;
         bool rambler = args.Contains("--rambler");
+        // No prompt box renders yet, so circle-to-ask takes its typed question from here.
+        string? captureQuestion = Arg(args, "--debug-capture");
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
-        bool debug = debugMascot || rambler || palettePrompt is not null || logArg is not null;
+        bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || logArg is not null;
 
         using var island = new IslandWindow { ForceReduceMotion = args.Contains("--debug-reduce-motion") };
         SynchronizationContext.SetSynchronizationContext(new DispatcherQueueContext(island.Queue));
@@ -88,6 +90,11 @@ internal static class Program
         if (palettePrompt is not null)
         {
             _ = PaletteRun(island, triggers, log!, palettePrompt);
+        }
+
+        if (captureQuestion is not null)
+        {
+            triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, log!, captureQuestion, overlay, crop, foreground);
         }
 
         using var tray = new TrayIcon(pause);
@@ -191,18 +198,39 @@ internal static class Program
     }
 
     /// <summary>
+    /// Circle-to-ask after the lasso: the circled region as a chip with the question. Kept out of Main so
+    /// Tomte.AI loads only on the first capture.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static async Task AskAboutCapture(IslandWindow island, TriggerController triggers, TextWriter log, string question, CaptureOverlay overlay, PixelRect crop, nint foreground)
+    {
+        long released = Stopwatch.GetTimestamp();
+        var png = await WindowCapture.CaptureMonitorRegionPngAsync(overlay.Monitor, crop, CancellationToken.None);
+        var (w, h) = overlay.Lasso.BoxDips;
+        var chip = ContextChips.Lasso(png, w, h);
+        File.WriteAllBytes(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "capture-last.png"), png);
+        log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} capture chip \"{chip.Label}\" px={crop} points={overlay.Lasso.Points.Count} png={png.Length}B in {Stopwatch.GetElapsedTime(released).TotalMilliseconds:F1}ms");
+        await PaletteRun(island, triggers, log, question, chip, foreground);
+    }
+
+    /// <summary>
     /// --palette "prompt": the debug driver. Opens the palette on the island, runs the prompt against local
     /// Ollama with the window chip on and an in-memory shelf and scratchpad, logs the stream and the tool
     /// steps, then retracts and quits. External-effect tools are allowed once each, as a user would.
+    /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
-    private static async Task PaletteRun(IslandWindow island, TriggerController triggers, TextWriter log, string prompt)
+    private static async Task PaletteRun(IslandWindow island, TriggerController triggers, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
     {
         try
         {
             // The island is still hidden, so the foreground is the window the user had in front; Tomte.AI
             // loads here, not in Main, so a normal start never touches it.
-            nint foreground = WindowContext.Foreground();
-            await Task.Delay(500);
+            if (lasso is null)
+            {
+                foreground = WindowContext.Foreground();
+                await Task.Delay(500);
+            }
+
             var config = new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", "llama3.2:3b");
             using var http = new HttpClient();
             var shelf = new InMemoryShelf();
@@ -219,6 +247,11 @@ internal static class Program
             };
             chips[1].On = true;
             chips[2].On = Environment.GetCommandLineArgs().Contains("--screenshot");
+            if (lasso is not null)
+            {
+                chips.Insert(0, lasso);
+            }
+
             log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette memory before: {Memory()}");
             var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "send-log.jsonl");
             var tools = new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl);

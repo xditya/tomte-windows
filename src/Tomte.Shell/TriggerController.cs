@@ -12,7 +12,7 @@ namespace Tomte.Shell;
 /// every MorphTo. Owns the retraction, hover, event, peek, first-run and drag timers, all SetTimer one-shots on
 /// the island window, so nothing runs while nothing happens.
 /// </summary>
-internal sealed unsafe class TriggerController : IDisposable
+internal sealed unsafe partial class TriggerController : IDisposable
 {
     private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6;
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
@@ -31,6 +31,8 @@ internal sealed unsafe class TriggerController : IDisposable
     private readonly DropTarget dropTarget;
     private readonly Action<string>? log;
     private Rambler? rambler;
+    private CaptureOverlay? overlay;
+    private bool capturing;
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, peekWanted, eventShowing, dragEntered, firstRunShowing;
@@ -95,6 +97,13 @@ internal sealed unsafe class TriggerController : IDisposable
         }
     }
 
+    /// <summary>
+    /// What a finished lasso does: crop the monitor region, then ask with it in the palette, which takes the state
+    /// from Capture to Palette. Gets the overlay, the box in its monitor's pixels and the foreground window from
+    /// before the overlay took focus. Null until a question can be supplied; then the chord only logs.
+    /// </summary>
+    public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
+
     /// <summary>An internal event: shows Compact for the hold time, or waits while Focus, DND or fullscreen is on.</summary>
     public void Raise(IslandEvent e)
     {
@@ -123,6 +132,7 @@ internal sealed unsafe class TriggerController : IDisposable
 
     public void Dispose()
     {
+        overlay?.Dispose();
         InputThread.Stop();
         dropTarget.Dispose();
         watch.Dispose();
@@ -372,8 +382,17 @@ internal sealed unsafe class TriggerController : IDisposable
                 }
 
                 break;
+            case HotkeyAction.CircleToAsk when Captured is null:
+                log?.Invoke("circle to ask: no question configured (start with --debug-capture)");
+                break;
+            case HotkeyAction.CircleToAsk when capturing:
+                break;
             case HotkeyAction.CircleToAsk:
-                log?.Invoke("circle to ask: capture overlay not built yet");
+                if (Allowed(RevealTrigger.Hotkey))
+                {
+                    _ = Capture(Captured);
+                }
+
                 break;
         }
     }
@@ -543,6 +562,60 @@ internal sealed unsafe class TriggerController : IDisposable
         if (peekWanted && !wasPeek)
         {
             SchedulePeek();
+        }
+    }
+}
+
+// Await is not allowed in an unsafe context, so the capture flow lives in a part without the modifier.
+internal sealed partial class TriggerController
+{
+    /// <summary>
+    /// The overlay on the monitor under the cursor with the island hidden under it. The guard holds from the
+    /// overlay through the crop and the palette run, so a second press never lands under a running ask.
+    /// </summary>
+    private async Task Capture(Func<CaptureOverlay, PixelRect, nint, Task> captured)
+    {
+        capturing = true;
+        long triggered = System.Diagnostics.Stopwatch.GetTimestamp();
+        try
+        {
+            nint foreground = (nint)PInvoke.GetForegroundWindow();
+            Hide();
+            PInvoke.GetCursorPos(out var cursor);
+            machine.TransitionTo(IslandState.Capture);
+            island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);
+            var open = overlay = new CaptureOverlay(island.Compositor, cursor);
+            log?.Invoke($"capture overlay shown in {System.Diagnostics.Stopwatch.GetElapsedTime(triggered).TotalMilliseconds:F1}ms monitor={open.Bounds} scale={open.Lasso.Scale} activated={open.Activated}");
+            var box = await open.Result;
+            overlay = null;
+            if (box is not PixelRect crop)
+            {
+                log?.Invoke("capture cancelled");
+                ToHiddenFromCapture();
+                return;
+            }
+
+            await captured(open, crop, foreground);
+        }
+        catch (Exception e)
+        {
+            overlay?.Dispose();
+            overlay = null;
+            log?.Invoke($"capture failed: {e}");
+            ToHiddenFromCapture();
+        }
+        finally
+        {
+            capturing = false;
+        }
+    }
+
+    private void ToHiddenFromCapture()
+    {
+        if (machine.State == IslandState.Capture)
+        {
+            machine.TransitionTo(IslandState.Hidden);
+            island.Mascot.Follow(IslandState.Capture, IslandState.Hidden);
         }
     }
 }
