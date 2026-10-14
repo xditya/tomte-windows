@@ -45,6 +45,12 @@ public sealed class StorageTests : IDisposable
     {
         if (Directory.Exists(dir))
         {
+            // One test leaves a read-only file.
+            foreach (string file in Directory.GetFiles(dir))
+            {
+                File.SetAttributes(file, FileAttributes.Normal);
+            }
+
             Directory.Delete(dir, recursive: true);
         }
     }
@@ -327,6 +333,24 @@ public sealed class StorageTests : IDisposable
         }
 
         Assert.Equal(damaged, File.ReadAllBytes(Assert.Single(Directory.GetFiles(dir, "tomte.db.bad-*"))));
+    }
+
+    [Fact]
+    public void ALogSqliteLeftBehindGoesWithTheDamagedFile()
+    {
+        // SQLite folds a log into its file, or deletes it, when the failing connection closes. Read-only is the one
+        // cheap way to make it leave the log where it is.
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(DbPath, Garbage);
+        File.WriteAllText(DbPath + "-wal", "commits that were never folded back");
+        File.SetAttributes(DbPath + "-wal", FileAttributes.ReadOnly);
+
+        new TomteDb(DbPath).Open("shelf", Shelf).Dispose();
+
+        string bad = Assert.Single(Directory.GetFiles(dir, "tomte.db.bad-*"), file => !file.EndsWith("-wal", StringComparison.Ordinal));
+        Assert.Equal("commits that were never folded back", File.ReadAllText(bad + "-wal"));
+        Assert.Equal(Garbage, File.ReadAllText(bad));
+        Assert.False(File.Exists(DbPath + "-wal"));
     }
 
     [Fact]

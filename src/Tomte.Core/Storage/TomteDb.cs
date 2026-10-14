@@ -224,6 +224,12 @@ public sealed class TomteDb(string? path = null)
         {
             try
             {
+                // The log first, when SQLite left one: commits that were never folded back stay with the file they belong to.
+                if (File.Exists(FilePath + "-wal"))
+                {
+                    File.Move(FilePath + "-wal", bad + "-wal");
+                }
+
                 File.Move(FilePath, bad);
                 return;
             }
