@@ -74,7 +74,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 });
             }
         };
-        island.LayoutChanged = () =>
+        island.LayoutChanged += () =>
         {
             PushZone();
             // A scale change while the pill rests; the ring is sized in DIPs times the scale.

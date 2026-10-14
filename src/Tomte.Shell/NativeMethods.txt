@@ -203,3 +203,9 @@ GlobalSize
 GlobalFree
 MsgWaitForMultipleObjects
 PeekMessage
+D2D1CreateFactory
+ID2D1Factory1
+ID2D1Device
+ID2D1DeviceContext
+ID2D1SolidColorBrush
+IDXGIDevice

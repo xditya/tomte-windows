@@ -166,10 +166,12 @@ internal sealed unsafe class IslandWindow : IDisposable
         Content = compositor.CreateContainerVisual();
         Content.Clip = compositor.CreateGeometricClip(pill.Geometry);
         // Island space hangs off Content alone: the compositor keeps its origin on Content's centre line
-        // (Content is the outline plus the margin on each side) through every frame of a morph.
+        // (Content is the outline plus the margin on each side) through every frame of a morph. Rounded down to a
+        // whole pixel, which for a window centred on the screen is the screen's centre column in every frame, so
+        // text drawn in DIPs can be put on the pixel grid once and stay there.
         Dips = compositor.CreateContainerVisual();
         Dips.Scale = new Vector3((float)scale, (float)scale, 1);
-        var centre = compositor.CreateExpressionAnimation(FormattableString.Invariant($"Vector3((content.Size.X - {2 * Margin}) / 2, 0, 0)"));
+        var centre = compositor.CreateExpressionAnimation(FormattableString.Invariant($"Vector3(Floor((content.Size.X - {2 * Margin}) / 2), 0, 0)"));
         centre.SetReferenceParameter("content", Content);
         Dips.StartAnimation("Offset", centre);
         Content.Children.InsertAtBottom(Dips);
@@ -292,7 +294,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     public System.Drawing.Rectangle TargetBounds { get; private set; }
 
     /// <summary>The scale or the screen centre changed; anything measured in pixels needs recomputing.</summary>
-    public Action? LayoutChanged { get; set; }
+    public event Action? LayoutChanged;
 
     /// <summary>
     /// Timers, WM_APP posts from the input thread, shell notifications, power broadcasts and clock changes land
