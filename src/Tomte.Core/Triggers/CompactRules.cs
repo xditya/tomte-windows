@@ -46,6 +46,9 @@ public sealed record GlanceFacts
 
     /// <summary>Focus or Do Not Disturb is on: waiting events are counted, never named.</summary>
     public bool Quiet { get; init; }
+
+    /// <summary>The tray pause is on: the same as <see cref="Quiet"/>.</summary>
+    public bool Paused { get; init; }
 }
 
 public static class CompactRules
@@ -90,7 +93,7 @@ public static class CompactRules
 
     /// <summary>
     /// The push pill's line with no timer and nothing playing: the time of day, then the first that applies of a job due
-    /// within the hour ("Report at 18:00"), what waits unseen (only counted during Focus or Do Not Disturb), a low battery while the PC runs on it, what is on the
+    /// within the hour ("Report at 18:00"), what waits unseen (only counted during Focus, Do Not Disturb or the tray pause), a low battery while the PC runs on it, what is on the
     /// shelf, and the short date. Cut to <paramref name="width"/> as <paramref name="measure"/> lays a line out: the
     /// job's name or the mention ends in an ellipsis, a job's time stays, and with no room even for that the time of
     /// day stands alone.
@@ -102,7 +105,7 @@ public static class CompactRules
         var (cut, kept) = facts switch
         {
             { Job: (var name, var at) } when at > now && at - now <= JobSoon => (name, $" at {TimeOfDay(at, culture)}"),
-            { Waiting.Count: 1, Quiet: false } => (facts.Waiting.First().Text, ""),
+            { Waiting.Count: 1, Quiet: false, Paused: false } => (facts.Waiting.First().Text, ""),
             { Waiting.Count: > 0 and var n } => (n == 1 ? "1 event waiting" : $"{n} events waiting", ""),
             { Battery: <= BatteryLow and var charge } => ($"Battery {charge}%", ""),
             { ShelfCount: > 0 and var count } => ($"{count} on the shelf", ""),

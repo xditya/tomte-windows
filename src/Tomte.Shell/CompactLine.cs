@@ -140,7 +140,7 @@ internal sealed class CompactLine
             _ = ReadJob(due);
         }
 
-        return new GlanceFacts { Job = job, Waiting = triggers.Waiting, Quiet = triggers.Quiet, Battery = Battery(), ShelfCount = Jobs.Shelf?.Items.Count ?? 0 };
+        return new GlanceFacts { Job = job, Waiting = triggers.Waiting, Quiet = triggers.Quiet, Paused = triggers.Paused, Battery = Battery(), ShelfCount = Jobs.Shelf?.Items.Count ?? 0 };
     }
 
     private async Task ReadJob(DateTimeOffset due)

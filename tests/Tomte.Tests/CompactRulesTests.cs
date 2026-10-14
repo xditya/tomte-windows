@@ -174,6 +174,15 @@ public class GlanceTests
         Assert.Equal("18:41 · 3 on the shelf", Glance(new GlanceFacts { ShelfCount = 3, Quiet = true }));
     }
 
+    [Fact]
+    public void DuringThePauseWaitingEventsAreCountedNeverNamed()
+    {
+        var one = new GlanceFacts { Waiting = [new IslandEvent("Summary ready", Now)], Paused = true };
+        Assert.Equal("18:41 · 1 event waiting", Glance(one));
+        Assert.Equal("18:41 · 1 event waiting", Glance(one with { Quiet = true }));
+        Assert.Equal("18:41 · Summary ready", Glance(one with { Paused = false }));
+    }
+
     [Theory]
     [InlineData("en-GB", "Wed 14 Oct")]
     [InlineData("en-US", "Wed Oct 14")]
