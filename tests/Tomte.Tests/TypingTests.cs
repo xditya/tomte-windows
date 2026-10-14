@@ -236,6 +236,83 @@ public sealed class TypingTests : IDisposable
     }
 
     [Fact]
+    public void TheAnswerScrollsWithinItsLengthAndFollowsItsEndUntilScrolledUp()
+    {
+        var layout = new PaletteLayout(640, mascot: true);
+        const float height = 480;
+        float band = layout.AnswerBand(height).Height;
+        float answer = band + 300;
+
+        // Clamped at both ends; a notch is three lines.
+        Assert.Equal(0, layout.Scrolled(0, 120, answer, height));
+        Assert.Equal(300, layout.Scrolled(300, -120, answer, height));
+        Assert.Equal(300 - PaletteLayout.WheelStep, layout.Scrolled(300, 120, answer, height));
+        Assert.Equal(0, layout.Scrolled(10, 0, band - 5, height) + layout.MaxScroll(band - 5, height));
+
+        // Pinned, a growing answer keeps its newest line in view.
+        Assert.Equal(300, layout.Follow(0, pinned: true, answer, height));
+        Assert.Equal(340, layout.Follow(300, pinned: true, answer + 40, height));
+        // Scrolled up, it stays where the user left it while it grows, and is clamped when it shrinks.
+        float up = layout.Scrolled(300, 120, answer, height);
+        Assert.False(layout.AtEnd(up, answer, height));
+        Assert.Equal(up, layout.Follow(up, pinned: false, answer + 40, height));
+        Assert.Equal(0, layout.Follow(up, pinned: false, band - 10, height));
+        // Scrolled back to the end, it is pinned again; an answer that fits is always at its end.
+        float back = layout.Scrolled(up, -240, answer + 40, height);
+        Assert.Equal(340, back);
+        Assert.True(layout.AtEnd(back, answer + 40, height));
+        Assert.True(layout.AtEnd(0, band - 10, height));
+    }
+
+    [Fact]
+    public void AltF4AlwaysHidesTheIslandAndEscOnlyWhileABoxHasTheKeys()
+    {
+        const uint KeyDownMessage = 0x0100, SysKeyDown = 0x0104;
+        const nuint Escape = 0x1B, F4 = 0x73;
+        Assert.True(IslandKeys.Hides(SysKeyDown, F4, boxHasKeys: false));
+        Assert.True(IslandKeys.Hides(SysKeyDown, F4, boxHasKeys: true));
+        Assert.True(IslandKeys.Hides(KeyDownMessage, Escape, boxHasKeys: true));
+        Assert.False(IslandKeys.Hides(KeyDownMessage, Escape, boxHasKeys: false));
+        // F4 on its own and Alt with other keys are not the island's.
+        Assert.False(IslandKeys.Hides(KeyDownMessage, F4, boxHasKeys: true));
+        Assert.False(IslandKeys.Hides(SysKeyDown, 0x41, boxHasKeys: true));
+    }
+
+    [Fact]
+    public void KeysTypedBeforeTheNoteOpensAreKeptAsText()
+    {
+        var kept = new System.Text.StringBuilder();
+        foreach (char c in "buy milkk\b\rand eggs\u0001\b\b\b\b\tx")
+        {
+            EditorText.Keep(kept, c);
+        }
+
+        // Backspace takes one back, Enter is a new line, a Ctrl shortcut is not text.
+        Assert.Equal("buy milk\nand \tx", kept.ToString());
+        kept.Clear();
+        EditorText.Keep(kept, '\b');
+        Assert.Equal("", kept.ToString());
+    }
+
+    [Fact]
+    public async Task TheBindingCountsLineBreaksAsTheBoxDoes()
+    {
+        Assert.Equal("a\nb\nc\nd", EditorText.Lines("a\r\nb\rc\vd"));
+        var note = await Note("one\r\ntwo");
+        // The caret after "two": index 8 in the note, 7 in the box.
+        note.Edit(note.Text, 8);
+        var binding = new NoteBinding(note);
+        Assert.Equal(("one\ntwo", 7), binding.Open());
+        // An append to the note lands at the box's end, not two characters past it.
+        note.Text = "one\r\ntwo\r\nthree";
+        Assert.Equal(new Splice(7, 0, "\nthree"), binding.Pull());
+        Assert.Null(binding.Pull());
+        // The box's first change writes one form back to the note.
+        Assert.Null(binding.Typed("one!\ntwo\nthree", 4));
+        Assert.Equal("one!\ntwo\nthree", note.Text);
+    }
+
+    [Fact]
     public void TheFooterSaysWhatWasSpent()
     {
         Assert.Equal("0 tool steps · $0.03 today of $2.00 cap", PaletteLayout.SpendLine(0, 0.03m, 2m));
