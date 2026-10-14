@@ -727,6 +727,18 @@ public sealed class DropZoneTests : IDisposable
     }
 
     [Fact]
+    public void AFinishedResultOffersCloseUnlessItHasChoicesOfItsOwn()
+    {
+        var done = DropResult.Empty with { Title = "Summarize · a.txt", Indicator = "Sent", Body = "- one" };
+        Assert.Equal([DropResult.Close], done.Closable().Choices);
+        var layout = new DropResultLayout(done.Closable(), 640, true);
+        Assert.Equal((-1, 0), layout.At(new(layout.Choices[0].X + 1, layout.Choices[0].Y + 1)));
+
+        var kept = done with { Choices = ["Run again: send a.txt to llama3.2:3b.", "Close: nothing is sent."] };
+        Assert.Same(kept, kept.Closable());
+    }
+
+    [Fact]
     public async Task AskAboutItAttachesTheFileAndSendsNothing()
     {
         var item = await Dropped(UserFile("report.txt", Report));

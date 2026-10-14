@@ -114,6 +114,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     public IslandState State => machine.State;
 
+    /// <summary>The island's one timer: the ring, the tray menu and the AI's set_timer all start and stop this one.</summary>
+    internal IslandTimer Timer => timer;
+
     /// <summary>The lock screen or a secure desktop is up. Safe from any thread: the state is swapped whole.</summary>
     public bool OnSecureSurface => watch.State.Secure;
 
@@ -475,9 +478,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
             },
             TaskScheduler.Default);
 
+        // The bounds are where the island is going: after a double click sent it back to the middle, a pointer left where
+        // it was is outside, so it retracts as for any pointer that left. The input thread tracks the new place at once.
         var b = island.TargetBounds;
         int margin = (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale);
         pointerInside = PInvoke.GetCursorPos(out var cursor) && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, margin);
+        PushZone();
         EndDrag();
         // A window may be under the island's new place.
         SchedulePeek();

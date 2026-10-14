@@ -70,7 +70,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly DispatcherQueueHandler contentReadyHandler;
     private readonly Stopwatch clock = Stopwatch.StartNew();
     private readonly MascotVisual mascotVisual;
-    private readonly DispatcherQueueTimer wakeTimer;
+    private readonly DispatcherQueueTimer wakeTimer, clickTimer;
     private double scale;
     private int screenWidth;
     private int windowX;
@@ -92,10 +92,11 @@ internal sealed unsafe class IslandWindow : IDisposable
     private double fromWidth, fromDepth;
     private bool contentPending;
 
-    // A press on the pill's own surface, held until it is a click or a drag; and the last such click, for a double click.
+    // A press on the pill's own surface, held until it is a click or a drag; and the last such click, for a double click,
+    // with where it landed while it waits to see whether a second one comes.
     private bool grabbing, grabMoved, grabPill;
     private System.Drawing.Point grabFrom, lastClickAt;
-    private Vector2 grabAt;
+    private Vector2 grabAt, clickAt;
     private double grabOffset;
     private long lastClick;
 
@@ -206,6 +207,14 @@ internal sealed unsafe class IslandWindow : IDisposable
         wakeTimer = Queue.CreateTimer();
         wakeTimer.IsRepeating = false;
         wakeTimer.Tick += (_, _) => Wake();
+        clickTimer = Queue.CreateTimer();
+        clickTimer.IsRepeating = false;
+        clickTimer.Tick += (_, _) => Guarded(i =>
+        {
+            // No second click came: the first counts now, and no later one pairs with it.
+            i.lastClick = 0;
+            i.Pressed?.Invoke(i.clickAt);
+        });
 
         root.Children.InsertAtBottom(ghost.Visual);
         root.Children.InsertAtTop(live);
@@ -254,18 +263,25 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>A morph to a visible shape came to rest: work held back while <see cref="Moving"/> can run now.</summary>
     public event Action? Settled;
 
-    /// <summary>A left button press on the island, in island space. One that <see cref="Grabs"/> holds arrives when the button comes up.</summary>
+    /// <summary>
+    /// A left button press on the island, in island space. One that <see cref="Grabs"/> holds arrives when the button
+    /// comes up; while the island is off the middle, only once the double-click time has passed without a second one.
+    /// </summary>
     public event Action<Vector2>? Pressed;
 
     /// <summary>
     /// Whether a press at this island point may move the island: the pill's own surface rather than a control on it.
     /// Such a press takes the mouse (the window still does not activate) until the button comes up: past the system's
-    /// drag distance the island follows the pointer along the top edge, and short of it the press is a click.
+    /// drag distance the island follows the pointer along the top edge, and short of it the press is a click. Two
+    /// quick clicks there send a moved island back to the middle.
     /// </summary>
     public Func<Vector2, bool>? Grabs { get; set; }
 
-    /// <summary>A press that <see cref="Grabs"/> took is down: it is not a hover, and not yet a click or a drag.</summary>
-    public bool Holding => grabbing;
+    /// <summary>
+    /// A press that <see cref="Grabs"/> took is down, or its click waits out the double-click time: it is not a hover,
+    /// and not yet a click or a drag.
+    /// </summary>
+    public bool Holding => grabbing || clickTimer.IsRunning;
 
     /// <summary>A held press became a drag; from now until <see cref="Moved"/> the island follows the pointer.</summary>
     public event Action? MoveStarted;
@@ -374,6 +390,12 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         var from = Current;
+        if (to.Depth != depth.Target)
+        {
+            // Another state: a click waiting for a second one was made on the one before, and must not land in this.
+            DropWaitingClick();
+        }
+
         targetGeometry = to;
         double lead = Mascot.TakeIslandLead();
         if (to.Depth <= 0.5 && Dips.Children.Count > 0)
@@ -384,11 +406,10 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         (fromWidth, fromDepth) = (from.Width, from.Depth);
         contentPending = to.Depth > 0.5;
-        // Revealing or retracting, the mascot stays at the open shape's left edge while the outline grows or shrinks.
         // a retarget mid-reveal drops the anchor and the mascot jumps to the live edge in one frame; give the
         // mascot its own x spring if that shows.
-        anchor = from.Depth <= 0.5 ? to : to.Depth <= 0.5 ? from : null;
-        TargetBounds = IslandOutline.PointerBounds(Bounds(to), scale, attached);
+        anchor = MascotArt.Anchor(from, to);
+        TargetBounds = PointerTarget();
         crossfadeGeneration++; // a crossfade still in flight must not settle this morph
         foreach (var spring in springs)
         {
@@ -456,6 +477,16 @@ internal sealed unsafe class IslandWindow : IDisposable
         Wake();
     }
 
+    /// <summary>
+    /// DWM still composes the window but draws none of it, and it takes no clicks: for driven runs and measurements
+    /// that must leave the screen alone. Throws when DWM refuses, so such a run never shows by accident.
+    /// </summary>
+    public void Cloak()
+    {
+        BOOL on = true;
+        PInvoke.DwmSetWindowAttribute(Hwnd, DWMWINDOWATTRIBUTE.DWMWA_CLOAK, &on, (uint)sizeof(BOOL)).ThrowOnFailure();
+    }
+
     public void Dispose()
     {
         ticking.Reset();
@@ -479,10 +510,16 @@ internal sealed unsafe class IslandWindow : IDisposable
     private System.Drawing.Rectangle Bounds(in IslandGeometry g) =>
         IslandOutline.WindowBounds(g, scale, IslandPlace.Center(place.Value, g, scale, screenWidth, attached), attached);
 
+    // The pointer is tracked against where the shape is heading, its place included: on a slide back to the middle,
+    // a pointer left where the island was is outside at once, and the island retracts as it would for any pointer
+    // that left it.
+    private System.Drawing.Rectangle PointerTarget() =>
+        IslandOutline.PointerBounds(IslandOutline.WindowBounds(targetGeometry, scale, IslandPlace.Center(place.Target, targetGeometry, scale, screenWidth, attached), attached), scale, attached);
+
     /// <summary>The place moved: the window and the bounds the pointer is tracked against follow it.</summary>
     private void Follow()
     {
-        TargetBounds = IslandOutline.PointerBounds(Bounds(targetGeometry), scale, attached);
+        TargetBounds = PointerTarget();
         if (!visible)
         {
             return;
@@ -704,6 +741,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             // Hidden costs nothing: no beat may wake the tick, and the next show starts from a clean tomte at its place.
             visible = false;
             wakeTimer.Stop();
+            DropWaitingClick();
             Mascot.Park();
             place.Jump(place.Target);
         }
@@ -880,7 +918,7 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         (scale, screenWidth) = (newScale, width);
         ShadowLook();
-        TargetBounds = IslandOutline.PointerBounds(Bounds(targetGeometry), scale, attached);
+        TargetBounds = PointerTarget();
         Dips.Scale = new Vector3((float)scale, (float)scale, 1);
         LayoutChanged?.Invoke();
         if (!visible)
@@ -983,15 +1021,24 @@ internal sealed unsafe class IslandWindow : IDisposable
         var screen = new System.Drawing.Point(x, y);
         PInvoke.ClientToScreen(Hwnd, &screen);
         bool grabs = Grabs?.Invoke(at) == true;
-        bool pill = grabs && !OnMascot(at);
+        bool pill = IslandPlace.CountsForDoubleClick(grabs, OnMascot(at), peekBadge: targetGeometry.Width <= IslandGeometry.Peek.Width);
         if (IslandPlace.IsDoubleClick(pill, screen.X - lastClickAt.X, screen.Y - lastClickAt.Y, Environment.TickCount64 - lastClick,
             PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXDOUBLECLK), PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYDOUBLECLK), PInvoke.GetDoubleClickTime()))
         {
-            // The second click of a double click on the pill: back to the middle, and the press is used up.
+            // The second click of a double click on the pill: back to the middle, and both presses are used up.
+            clickTimer.Stop();
             lastClick = 0;
             MoveTo(0);
             Moved?.Invoke(0);
             return;
+        }
+
+        if (clickTimer.IsRunning)
+        {
+            // Another press before the double-click time ran out: the waiting click counts first.
+            clickTimer.Stop();
+            lastClick = 0;
+            Pressed?.Invoke(clickAt);
         }
 
         if (grabs)
@@ -1049,9 +1096,27 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
         else if (message == PInvoke.WM_LBUTTONUP)
         {
-            (lastClick, lastClickAt) = (grabPill ? Environment.TickCount64 : 0, grabFrom);
+            if (grabPill && place.Target != 0)
+            {
+                // Off the middle a second click would send the island back there, so this one waits to see whether one
+                // comes rather than opening something the second would land on. In the middle, and on the tomte where
+                // it opens the palette, it counts at once.
+                (lastClick, lastClickAt, clickAt) = (Environment.TickCount64, grabFrom, grabAt);
+                clickTimer.Interval = TimeSpan.FromMilliseconds(PInvoke.GetDoubleClickTime());
+                clickTimer.Start();
+                return;
+            }
+
+            lastClick = 0;
             Pressed?.Invoke(grabAt);
         }
+    }
+
+    // A click waiting for a second one is dropped with the state it was made on, and no later click pairs with it.
+    private void DropWaitingClick()
+    {
+        clickTimer.Stop();
+        lastClick = 0;
     }
 
     /// <summary>Pointer input for whoever listens; like every handler here, it must not throw into the caller.</summary>

@@ -277,6 +277,30 @@ public class MascotTests
         Assert.Equal(IslandGeometry.Peek.Width - peek.Max(p => p.X), peek.Min(p => p.X), 0.1);
     }
 
+    // Through a reveal of the palette, frame by frame, the tomte stays on the growing outline rather than where the
+    // palette's edge will be; the pill and the peek pill still open around a tomte that has dropped in; a retract keeps it.
+    [Fact]
+    public void ARevealWiderThanThePillCarriesTheTomteOnItsEdge()
+    {
+        var palette = IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight);
+        Assert.Null(MascotArt.Anchor(IslandGeometry.Hidden, palette));
+        for (double t = 0; t <= 1; t += 0.05)
+        {
+            var live = new IslandGeometry(120 + t * (palette.Width - 120), t * palette.Depth, 22);
+            var box = MascotArt.Box(MascotArt.Anchor(IslandGeometry.Hidden, palette) ?? live);
+            Assert.True(box.X >= -live.Width / 2, $"at {t:F2} the tomte is at {box.X}, left of the outline's {-live.Width / 2}");
+        }
+
+        Assert.Equal(IslandGeometry.Compact, MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.Compact));
+        Assert.Equal(IslandGeometry.Peek, MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.Peek));
+        // The rambler's pill is wider than Compact but a pill all the same: the tomte drops in there too.
+        var rambler = IslandGeometry.Compact with { Width = 262 };
+        Assert.Equal(rambler, MascotArt.Anchor(IslandGeometry.Hidden, rambler));
+        Assert.Null(MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.ShelfDrop));
+        Assert.Equal(palette, MascotArt.Anchor(palette, IslandGeometry.Hidden));
+        Assert.Null(MascotArt.Anchor(IslandGeometry.Compact, palette));
+    }
+
     // A click on the tomte opens the palette, so its box must be where it is drawn and apart from what else takes clicks.
     [Fact]
     public void TheTomtesBoxIsApartFromTheLabelsAndTheLine()

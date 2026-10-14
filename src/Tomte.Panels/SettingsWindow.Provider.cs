@@ -49,8 +49,8 @@ public sealed partial class SettingsWindow
         {
             providerKind.SelectedIndex = (int)saved.Kind;
             providerUrl.Text = saved.BaseUrl ?? "";
-            defaultModel.Text = saved.DefaultModel ?? "";
-            fastModel.Text = saved.FastModel ?? "";
+            ShowModel(defaultModel, saved.DefaultModel);
+            ShowModel(fastModel, saved.FastModel);
             try
             {
                 providerKeySaved = CredentialStore.Read(saved.Id) is not null;
@@ -63,13 +63,32 @@ public sealed partial class SettingsWindow
 
         var cap = saved is null ? new ProviderConfig("", ProviderKind.Anthropic).DailyCapUsd : saved.DailyCapUsd;
         dailyCap.Value = cap is { } dollars ? (double)dollars : double.NaN;
+        var shownKind = (ProviderKind)providerKind.SelectedIndex;
         providerKind.SelectionChanged += (_, _) =>
         {
-            // Another API's models do not apply.
+            // Another API's models do not apply; a selection of the kind already shown keeps them.
+            if ((ProviderKind)providerKind.SelectedIndex == shownKind)
+            {
+                return;
+            }
+
+            shownKind = (ProviderKind)providerKind.SelectedIndex;
             defaultModel.ItemsSource = fastModel.ItemsSource = null;
             defaultModel.Text = fastModel.Text = "";
             ShowProvider();
         };
+        foreach (var box in new[] { defaultModel, fastModel })
+        {
+            // A model picked from the list becomes the box's text, which is all Test and save reads.
+            box.SelectionChanged += (_, _) =>
+            {
+                if (box.SelectedItem is string id)
+                {
+                    box.Text = id;
+                }
+            };
+        }
+
         providerUrl.TextChanged += (_, _) => ShowProvider();
         dailyCap.ValueChanged += (_, e) => SaveCap(e.NewValue);
         providerSave.Click += async (_, _) => await TestAndSaveProviderAsync();
@@ -107,9 +126,21 @@ public sealed partial class SettingsWindow
         return new ProviderConfig(ProviderSetup.IdFor(kind, url), kind, url, ModelId(defaultModel), ModelId(fastModel), ProviderSetup.CapFrom(dailyCap.Value));
     }
 
-    // Typed or picked: the box's text, or the item picked before anything was typed.
-    private static string? ModelId(ComboBox box) =>
-        (string.IsNullOrWhiteSpace(box.Text) ? box.SelectedItem as string : box.Text)?.Trim() is { Length: > 0 } id ? id : null;
+    // The saved model as the box's one item, picked: text alone, set on an editable box before the window first
+    // showed, came up empty, while a picked item is what the box shows as its text.
+    private static void ShowModel(ComboBox box, string? id)
+    {
+        if (id is { Length: > 0 })
+        {
+            box.ItemsSource = new[] { id };
+            box.SelectedIndex = 0;
+            box.Text = id;
+        }
+    }
+
+    // The box's text alone: the picked item is only for display (a pick also writes the text, see ProviderSection), so
+    // a box the user cleared gives no model rather than the saved one back.
+    private static string? ModelId(ComboBox box) => box.Text?.Trim() is { Length: > 0 } id ? id : null;
 
     private async Task TestAndSaveProviderAsync()
     {
