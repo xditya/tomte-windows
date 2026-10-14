@@ -125,6 +125,11 @@ internal static class Program
             triggers.Captured = (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
         }
 
+        if (args.Contains("--debug-shortcuts"))
+        {
+            ShortcutsDebug.Run(island, triggers, store, line => log?.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"), int.TryParse(Arg(args, "--debug-press"), out int press) ? press : null, int.TryParse(Arg(args, "--debug-hold"), out int hold) ? hold : 4000, int.TryParse(Arg(args, "--debug-cycles"), out int cycles) ? cycles : 1);
+        }
+
         using var tray = new TrayIcon(pause);
         tray.OpenIsland += triggers.Toggle;
         tray.OpenSettings += OpenSettings;

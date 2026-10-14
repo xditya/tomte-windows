@@ -22,6 +22,12 @@ DwmSetWindowAttribute
 CreateDispatcherQueueController
 DCompositionWaitForCompositorClock
 ICompositorDesktopInterop
+D3D11CreateDevice
+D3D11_SDK_VERSION
+ICompositorInterop
+ICompositionDrawingSurfaceInterop
+IDXGISurface
+ID3D11Resource
 WM_CLOSE
 WM_DESTROY
 WM_DPICHANGED
