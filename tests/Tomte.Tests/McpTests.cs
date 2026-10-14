@@ -510,7 +510,8 @@ public class McpPaletteTests : IDisposable
         await session.SendAsync();
 
         Assert.Equal(PaletteStatus.Done, session.Status);
-        Assert.Equal(7, _provider.Requests[0].Tools!.Count);
+        // Every built-in tool, plus the server's echo and broken.
+        Assert.Equal(BuiltInTools.Definitions.Count + 2, _provider.Requests[0].Tools!.Count);
         var request = Assert.Single(_asked);
         Assert.Equal(new ToolRequest("files__echo", """Files: echo {"text":"hi"}""", ActionTier.ExternalEffect, OfferAlwaysAllow: true), request);
         var result = (ToolResultPart)_provider.Requests[1].Messages[^1].Parts[0];
