@@ -407,8 +407,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         var s = watch.State;
         log?.Invoke($"desktop: fullscreen={s.Fullscreen} exclusive={s.ExclusiveFullscreen} secure={s.Secure} quiet={s.Quiet} exe={s.ForegroundExe}");
-        // The capture overlay is itself a monitor-sized topmost window, so the shell reports it as fullscreen; it
-        // cancels itself when a secure surface takes focus.
+        // The capture overlay is itself a monitor-sized topmost window, so the shell reports it as fullscreen and
+        // that must not hide anything. A secure surface closes it; Capture() then returns to Hidden.
+        if (machine.State == IslandState.Capture && s.Secure)
+        {
+            overlay?.Dispose();
+        }
+
         if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
         {
             Hide();
@@ -513,6 +518,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void Go(IslandState state, (double W, double H) size = default)
     {
         var from = machine.State;
+        if (from == IslandState.Capture)
+        {
+            // A hotkey, the tray or the pause took over while the overlay was up; Capture() resumes as a cancel.
+            overlay?.Dispose();
+        }
+
         if (!IslandStateMachine.CanTransition(from, state))
         {
             machine.TransitionTo(IslandState.Hidden);
