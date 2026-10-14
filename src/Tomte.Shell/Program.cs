@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Tomte.AI;
@@ -7,6 +8,8 @@ using Tomte.Core;
 using Tomte.Core.Device;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
+using Tomte.Core.Shortcuts;
+using Tomte.Core.Storage;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -24,13 +27,16 @@ internal static class Program
     private static readonly MascotState[] MascotCycle = [MascotState.Rambler, MascotState.Thinking, MascotState.Result, MascotState.Error, MascotState.Compact];
 
     private static Process? settingsProcess;
+    private static bool startingSettings;
+    private static string settingsFile = SettingsStore.DefaultPath;
 
     [STAThread]
     private static unsafe int Main(string[] args)
     {
         if (args.Contains("--settings"))
         {
-            RunSettings();
+            // --settings [path]: the shell passes the settings file it uses, so both open the same folder.
+            RunSettings(Arg(args, "--settings"));
             return 0;
         }
 
@@ -99,6 +105,7 @@ internal static class Program
 
         // --debug-settings <path>: a settings file of this run's own, so a test never edits the user's.
         using var store = new SettingsStore(Arg(args, "--debug-settings"));
+        settingsFile = store.FilePath;
         var pause = new PauseState();
         // Beside the settings file, so a run with its own settings keeps its timer to itself too.
         var timer = new IslandTimer(Path.Combine(Path.GetDirectoryName(store.FilePath)!, Path.GetFileName(IslandTimer.DefaultPath)));
@@ -167,20 +174,53 @@ internal static class Program
 
     // Kept out of Main so the WinUI assemblies load only in the settings process.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void RunSettings() => Tomte.Panels.SettingsWindow.Run();
+    private static void RunSettings(string? settingsPath) => Tomte.Panels.SettingsWindow.Run(settingsPath);
 
     // The settings window runs in its own process and exits when closed, so none of its memory stays in the shell.
-    private static void OpenSettings()
+    // Called on the island's thread after the user's own click (the tray menu, a tile), which is when Windows lets
+    // Tomte hand the foreground on.
+    private static async void OpenSettings()
     {
         if (settingsProcess is { HasExited: false })
         {
+            // The never-activated island may set the foreground only while that click is the last input; when
+            // Windows refuses, the open settings window flashes in the taskbar instead of coming to the front.
             settingsProcess.Refresh();
             PInvoke.SetForegroundWindow(new HWND(settingsProcess.MainWindowHandle));
             return;
         }
 
-        settingsProcess?.Dispose();
-        settingsProcess = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--settings"));
+        if (startingSettings)
+        {
+            return;
+        }
+
+        startingSettings = true;
+        try
+        {
+            settingsProcess?.Dispose();
+            // Starting a process takes tens of milliseconds, too long for the island's thread. The new process
+            // gets the foreground right this one has from the click, so its window opens in front.
+            settingsProcess = await Task.Run(() =>
+            {
+                var started = Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { ArgumentList = { "--settings", settingsFile } });
+                if (started is not null)
+                {
+                    PInvoke.AllowSetForegroundWindow((uint)started.Id);
+                }
+
+                return started;
+            });
+        }
+        catch (Win32Exception)
+        {
+            // The exe could not be started again (moved, blocked): nothing opens.
+            settingsProcess = null;
+        }
+        finally
+        {
+            startingSettings = false;
+        }
     }
 
     /// <summary>
@@ -193,6 +233,9 @@ internal static class Program
         var media = new MediaTracker(action => island.Queue.TryEnqueue(() => action()), () => DateTimeOffset.UtcNow, log);
         var panels = new PanelHost(island, triggers.Machine, log) { Resize = triggers.ResizePanels };
         panels.Register(new MediaPanel(island, media, () => DateTimeOffset.UtcNow, log));
+        // tomte.db next to the settings file in use, so a run with its own settings file has its own tiles too.
+        var shortcuts = new ShortcutStore(new TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db")), () => store.Current.ScriptShortcuts);
+        panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, OpenSettings, log));
         if (debugTabs)
         {
             // --debug-tabs: an empty Shelf-sized tab to switch to, until a second panel exists.

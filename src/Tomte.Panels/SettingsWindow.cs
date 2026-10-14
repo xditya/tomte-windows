@@ -26,7 +26,8 @@ public sealed partial class SettingsWindow : Window
 {
     private const string StartupTaskId = "TomteStartup";
 
-    private readonly SettingsStore store = new();
+    private static string? settingsFile;
+    private readonly SettingsStore store = new(settingsFile);
     private readonly StackPanel rulesList = new() { Spacing = 4 };
     private readonly StackPanel grantsList = new() { Spacing = 4 };
     private readonly ToggleSwitch startup = new() { OnContent = "On", OffContent = "Off" };
@@ -51,6 +52,9 @@ public sealed partial class SettingsWindow : Window
 
         page.Children.Add(Header("Hotkeys"));
         page.Children.Add(Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), CopilotNote()]));
+
+        page.Children.Add(Header("Shortcuts"));
+        page.Children.Add(ShortcutsSection());
 
         page.Children.Add(Header("Reveal zone and thresholds"));
         page.Children.Add(Card(
@@ -92,9 +96,13 @@ public sealed partial class SettingsWindow : Window
         Closed += (_, _) => store.Dispose();
     }
 
-    /// <summary>Starts WinUI on this thread, shows the window and returns when it closes.</summary>
-    public static void Run()
+    /// <summary>
+    /// Starts WinUI on this thread, shows the window and returns when it closes. <paramref name="settingsPath"/> is the
+    /// shell's settings file (null for the default); tomte.db is the one next to it.
+    /// </summary>
+    public static void Run(string? settingsPath = null)
     {
+        settingsFile = settingsPath;
         WinRT.ComWrappersSupport.InitializeComWrappers();
         Application.Start(p =>
         {

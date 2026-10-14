@@ -77,23 +77,28 @@ public static class Apps
         && uri["ms-settings:".Length..].All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '.');
 
     // Starts the target through the shell; OpenApp has already looked for a running window to
-    // focus. AllowSetForegroundWindow only works while this process may set the foreground, which
-    // the never-activated island usually may not, so the result says when the app is likely to
-    // open behind the current window.
-    private static ActionResult Launch(string target)
+    // focus.
+    private static ActionResult Launch(string target) => Launch(new ProcessStartInfo(target) { UseShellExecute = true }, target);
+
+    // The one place Tomte starts a process for the user: apps here, and a shortcut tile's file,
+    // folder, web address or confirmed script command. AllowSetForegroundWindow only works while
+    // this process may set the foreground, which the never-activated island may only right after
+    // the user's own click on it, so the result says when the app is likely to open behind the
+    // current window. Internal: it is not an action the AI layer may call.
+    internal static ActionResult Launch(ProcessStartInfo start, string name)
     {
         try
         {
-            using var process = Process.Start(new ProcessStartInfo(target) { UseShellExecute = true });
+            using var process = Process.Start(start);
             // No process means the shell handed the start to an existing broker (settings pages,
             // packaged apps); whether it comes to the front is up to that broker.
             if (process is null || PInvoke.AllowSetForegroundWindow((uint)process.Id))
-                return ActionResult.Done($"Opened {target}.");
-            return ActionResult.Done($"Opened {target} in the background; it may only flash in the taskbar.");
+                return ActionResult.Done($"Opened {name}.");
+            return ActionResult.Done($"Opened {name} in the background; it may only flash in the taskbar.");
         }
         catch (Win32Exception e)
         {
-            return ActionResult.Fail($"Could not open {target}: {e.Message}");
+            return ActionResult.Fail($"Could not open {name}: {e.Message}");
         }
     }
 }

@@ -21,6 +21,9 @@ public sealed record TomteSettings
     /// <summary>Show Compact with ambient content when no window covers the reveal zone.</summary>
     public bool DesktopPeek { get; init; } = true;
 
+    /// <summary>Script tiles may run, each once the user confirmed its command. Off until the user turns it on in the settings window.</summary>
+    public bool ScriptShortcuts { get; init; }
+
     /// <summary>Reveal on every monitor whose top is a screen edge; false means the primary monitor only.</summary>
     public bool AllMonitors { get; init; } = true;
 
