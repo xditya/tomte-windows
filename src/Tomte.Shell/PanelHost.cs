@@ -410,6 +410,9 @@ internal sealed class PanelHost
             }
         }
 
+        /// <summary>A drag from the tomte moves the island, as one from the strip's empty row does; from strip space back to island space.</summary>
+        public bool TryDrag(string id, Vector2 at) => island.Drag(new Vector2(at.X - ((float)island.Current.Width / 2), at.Y));
+
         public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot)
         {
             var lines = TabStrip.Labels(tabs, current, width, mascot);
@@ -417,7 +420,7 @@ internal sealed class PanelHost
             if (mascot)
             {
                 var box = MascotArt.Box(IslandGeometry.Panel(width, PanelSpace.TabStripHeight));
-                list.Add(new(Tomte, box with { X = box.X + (width / 2) }, box.Width / 2, TargetKind.Button, Tip: "Ask Tomte"));
+                list.Add(new(Tomte, box with { X = box.X + (width / 2) }, box.Width / 2, TargetKind.Button, Tip: "Ask Tomte", Draggable: true));
             }
 
             foreach (var (id, line) in tabs.Zip(lines))
