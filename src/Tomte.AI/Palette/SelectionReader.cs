@@ -46,13 +46,14 @@ public static unsafe class SelectionReader
     /// <summary>
     /// The selection chip for the window in front: UIA now (passive), and when UIA could not tell,
     /// the Ctrl+C fallback armed on the chip so it runs only when the user turns the chip on.
+    /// <paramref name="app"/> names the app in the chip's tooltip.
     /// </summary>
-    public static ContextChip Chip(nint expectedForeground)
+    public static ContextChip Chip(nint expectedForeground, string app = "")
     {
         var selection = ReadUia();
         if (!SelectionRule.ShouldFallBack(selection))
-            return ContextChips.Selection(string.IsNullOrEmpty(selection.Text) ? null : SelectionRule.Normalize(selection.Text));
-        return ContextChips.Selection(null, () => Fallback(expectedForeground));
+            return ContextChips.Selection(string.IsNullOrEmpty(selection.Text) ? null : SelectionRule.Normalize(selection.Text), app: app);
+        return ContextChips.Selection(null, () => Fallback(expectedForeground), app);
     }
 
     /// <summary>

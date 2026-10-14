@@ -343,23 +343,57 @@ public class PaletteTests : IDisposable
     public async Task ChipFactoriesReflectWhatIsThere()
     {
         Assert.False(ContextChips.Selection(null).Available);
-        Assert.Equal("Selection · none", ContextChips.Selection("   ").Label);
-        var selection = ContextChips.Selection("The quick brown fox jumps over the lazy dog");
+        Assert.False(ContextChips.Selection("   ").Available);
+        var selection = ContextChips.Selection("The quick brown fox jumps over the lazy dog", app: "notepad");
         Assert.True(selection.Available);
         Assert.False(selection.On, "every chip starts off; the user opts in per request");
-        Assert.Equal("Selection · \"The quick brown fox jumps ov...\"", selection.Label);
+        // A short name, and a tooltip that says exactly what goes.
+        Assert.Equal("Selection", selection.Label);
+        Assert.Equal("Selected text from notepad, 43 characters", selection.Tip);
+        Assert.Equal("Selected text, 1 character", ContextChips.Selection("x").Tip);
         Assert.Equal("<selection>\nThe quick brown fox jumps over the lazy dog\n</selection>",
             ((TextPart)(await selection.ReadAsync(CancellationToken.None))[0]).Text);
 
         Assert.False(ContextChips.Shelf(new InMemoryShelf()).Available);
         var shelf = ContextChips.Shelf(_shelf);
-        Assert.Equal("Shelf · notes.txt", shelf.Label);
+        Assert.Equal(("Shelf", "Shelf: notes.txt"), (shelf.Label, shelf.Tip));
         // The chip names the file; the session reads it at send.
         Assert.Equal("notes.txt", Assert.IsType<Tomte.AI.Files.ShelfFilePart>(Assert.Single(await shelf.ReadAsync(CancellationToken.None))).Name);
 
         _scratchpad.Text = "todo";
-        Assert.Contains("todo", ((TextPart)(await ContextChips.Scratchpad(_scratchpad).ReadAsync(CancellationToken.None))[0]).Text);
-        Assert.Equal("Window · msedge · Top 20 Adventure Games", ContextChips.Window("msedge", "Top 20 Adventure Games").Label);
+        var note = ContextChips.Scratchpad(_scratchpad);
+        Assert.Contains("todo", ((TextPart)(await note.ReadAsync(CancellationToken.None))[0]).Text);
+        Assert.Equal(("Note", "The Scratchpad note, 1 line"), (note.Label, note.Tip));
+        // The tooltip counts the note when it shows, which may have loaded since the palette opened.
+        _scratchpad.Text = "Milk\r\nEggs\nBread\n";
+        Assert.Equal("The Scratchpad note, 3 lines", note.Tip);
+        _scratchpad.Text = "";
+        Assert.Equal("The Scratchpad note, which is empty", note.Tip);
+
+        var window = ContextChips.Window("msedge", "Top 20 Adventure Games");
+        Assert.Equal(("Window", "Window title from msedge: Top 20 Adventure Games"), (window.Label, window.Tip));
+        // A window with neither an app nor a title has nothing to add, and the screenshot needs the app.
+        Assert.False(ContextChips.Window("", "").Available);
+        Assert.Equal("The name of the app in front: code", ContextChips.Window("code", "").Tip);
+        var screenshot = ContextChips.Screenshot("code", _ => Task.FromResult(Array.Empty<byte>()));
+        Assert.Equal(("Screenshot", "Screenshot of the code window, sent as an image"), (screenshot.Label, screenshot.Tip));
+        Assert.False(ContextChips.Screenshot("", _ => Task.FromResult(Array.Empty<byte>())).Available);
+    }
+
+    [Fact]
+    public void TheChipsTheyDrawCarryTheirNameIconAndState()
+    {
+        var shelf = new InMemoryShelf();
+        shelf.CreateFile("report.pdf", "x");
+        var chips = ContextChips.For(ContextChips.Lasso([1], 200, 100), "hi", "notepad", "notes.txt - Notepad", _ => Task.FromResult(Array.Empty<byte>()), shelf, _scratchpad);
+        chips[2].On = true;
+        Assert.Equal(
+            [new("Region", ChipIcon.Region, true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, true), new("Screenshot", ChipIcon.Screenshot, false), new("Shelf", ChipIcon.Shelf, false), new ChipSpec("Note", ChipIcon.Note, false)],
+            chips.Select(c => c.Spec));
+
+        // Nothing selected and an empty shelf: those chips have nothing to add, and the palette leaves them out.
+        var bare = ContextChips.For(null, null, "notepad", "notes.txt - Notepad", _ => Task.FromResult(Array.Empty<byte>()), new InMemoryShelf(), _scratchpad);
+        Assert.Equal(["Window", "Screenshot", "Note"], bare.Where(c => c.Available).Select(c => c.Label));
     }
 
     [Fact]
@@ -370,16 +404,16 @@ public class PaletteTests : IDisposable
         {
             reads++;
             return "copied text";
-        });
+        }, "code");
         Assert.True(chip.Available);
         Assert.False(chip.On);
-        Assert.Equal("Selection · read on use", chip.Label);
+        Assert.Equal("Copies the selected text from code when you turn this on, then puts the clipboard back", chip.Tip);
         Assert.Equal(0, reads);
 
         chip.On = true;
         Assert.Equal(1, reads);
         Assert.True(chip.On);
-        Assert.Equal("Selection · \"copied text\"", chip.Label);
+        Assert.Equal("Selected text from code, 11 characters", chip.Tip);
         Assert.Contains("copied text", ((TextPart)(await chip.ReadAsync(CancellationToken.None))[0]).Text);
         chip.On = false;
         chip.On = true;
@@ -389,7 +423,7 @@ public class PaletteTests : IDisposable
         nothing.On = true;
         Assert.False(nothing.On);
         Assert.False(nothing.Available);
-        Assert.Equal("Selection · none", nothing.Label);
+        Assert.Equal("No text is selected", nothing.Tip);
     }
 }
 
@@ -539,6 +573,83 @@ public class PaletteLayoutTests
         Assert.Equal(366, PanelSize.PaletteHeightFor(Enumerable.Repeat("line", 10)));
         Assert.Equal(480, PanelSize.PaletteHeightFor(Enumerable.Repeat("line", 100)));
     }
+
+    [Fact]
+    public void ChipsAreTogglesWithAPictureANameAndAMarkAfterInclude()
+    {
+        ChipSpec[] chips = [new("Region", ChipIcon.Region, true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, false), new("Screenshot", ChipIcon.Screenshot, true), new("Shelf", ChipIcon.Shelf, false), new("Note", ChipIcon.Note, false)];
+        var layout = new PaletteLayout(640, mascot: true, chips: chips);
+
+        // "Include" first, in the first row; the chips after it, each as tall as its click area must be.
+        var include = layout.IncludeLabel;
+        Assert.Equal(("Include", PaletteLayout.Pad, layout.ChipsTop), (include.Text, include.Slot.X, include.Slot.Y));
+        Assert.True(layout.Chips[0].Box.X >= include.Slot.Right + PaletteLayout.IncludeGap - 0.01f);
+        Assert.All(layout.Chips, chip =>
+        {
+            Assert.Equal(Tomte.Core.Interaction.StateLook.ChipHeight, chip.Box.Height);
+            // The picture, the name and the mark sit inside the pill, left to right, without touching.
+            Assert.True(chip.Box.Contains(chip.Icon) && chip.Box.Contains(chip.Mark));
+            Assert.True(chip.Icon.Right < chip.Label.Slot.X && chip.Label.Slot.Right < chip.Mark.X);
+            Assert.Equal(chip.Box.Y + chip.Box.Height / 2, chip.Icon.Y + chip.Icon.Height / 2, 2);
+            Assert.Equal(chip.Box.Y + chip.Box.Height / 2, chip.Mark.Y + chip.Mark.Height / 2, 2);
+        });
+
+        // On or off as asked, in the on style; no two pills overlap; a row that wraps starts under the first chip.
+        Assert.Equal([true, false, false, true, false, false], layout.Chips.Select(c => c.On));
+        Assert.Equal(PaletteLayout.ChipOn, layout.Chips[3].Label.Style);
+        Assert.Equal(PaletteLayout.Chip, layout.Chips[1].Label.Style);
+        for (int i = 1; i < layout.Chips.Count; i++)
+        {
+            Assert.False(layout.Chips[i].Box.IntersectsWith(layout.Chips[i - 1].Box));
+        }
+
+        var wrapped = layout.Chips.First(c => c.Box.Y > layout.ChipsTop);
+        Assert.Equal(layout.Chips[0].Box.X, wrapped.Box.X);
+        Assert.Equal(layout.ChipsTop + PaletteLayout.ChipHeight + PaletteLayout.ChipGap, wrapped.Box.Y);
+
+        // With no chips there is no "Include" and the answer starts under the prompt.
+        var none = new PaletteLayout(640, mascot: true);
+        Assert.Equal("", none.IncludeLabel.Text);
+        Assert.Empty(none.Chips);
+    }
+
+    [Fact]
+    public void SendSitsAtThePromptsRightEndAndWorksOnlyWithSomethingToSend()
+    {
+        var plain = new PaletteLayout(640, mascot: true);
+        var layout = new PaletteLayout(640, mascot: true, text: 52, send: true);
+        Assert.Equal(System.Drawing.RectangleF.Empty, plain.Send);
+
+        // Inside the card at its right end, level with the last line as the box grows; the text box stops short of it.
+        var card = layout.Prompt;
+        var send = layout.Send;
+        Assert.Equal(card.Right - PaletteLayout.SendInset, send.Right);
+        Assert.Equal(card.Bottom - PaletteLayout.SendInset, send.Bottom);
+        Assert.True(send.Width >= Tomte.Core.Interaction.StateLook.MinTarget && send.Height >= Tomte.Core.Interaction.StateLook.MinTarget);
+        Assert.Equal(send.X - PaletteLayout.SendGap, layout.Editor.Right, 2);
+        Assert.Equal(plain.Editor.X, layout.Editor.X);
+
+        Assert.False(PaletteLayout.CanSend("", sending: false));
+        Assert.False(PaletteLayout.CanSend(" \r\n", sending: false));
+        Assert.True(PaletteLayout.CanSend("what is this?", sending: false));
+        Assert.False(PaletteLayout.CanSend("what is this?", sending: true));
+    }
+
+    [Fact]
+    public void GlyphsStayInTheirBoxes()
+    {
+        foreach (var (figures, size) in Enum.GetValues<ChipIcon>().Select(i => (PaletteGlyphs.Icon(i), PaletteLayout.IconSize))
+            .Append((PaletteGlyphs.Plus, PaletteLayout.MarkSize)).Append((PaletteGlyphs.Tick, PaletteLayout.MarkSize)).Append((PaletteGlyphs.Send, PaletteGlyphs.SendSize)))
+        {
+            Assert.All(figures.SelectMany(f => f.Path.Select(s => (s.End, f.Stroked))), p =>
+            {
+                // A stroke reaches half its width past its outline.
+                float edge = p.Stroked ? PaletteGlyphs.Stroke / 2 : 0;
+                Assert.InRange(p.End.X, edge, size - edge);
+                Assert.InRange(p.End.Y, edge, size - edge);
+            });
+        }
+    }
 }
 
 public class SelectionRuleTests
@@ -586,15 +697,15 @@ public class SelectionRuleTests
         var chips = ContextChips.For(null, "Meet at 10, not 9", "notepad", "notes.txt - Notepad", _ => Task.FromResult(Array.Empty<byte>()), shelf, new InMemoryScratchpad());
         Assert.Equal([ContextKind.Selection, ContextKind.Window, ContextKind.Screenshot, ContextKind.ShelfItem, ContextKind.Scratchpad], chips.Select(c => c.Kind));
         var selection = chips[0];
-        Assert.Equal("Selection · \"Meet at 10, not 9\"", selection.Label);
+        Assert.Equal("Selected text from notepad, 17 characters", selection.Tip);
         Assert.True(selection.Available);
         Assert.All(chips, chip => Assert.False(chip.On));
         selection.On = true;
         Assert.True(selection.On);
 
-        // Nothing selected: the chip says so and cannot be turned on.
+        // Nothing selected: the chip has nothing to add, so it is not shown, and cannot be turned on.
         var none = ContextChips.For(null, null, "notepad", "notes.txt - Notepad", _ => Task.FromResult(Array.Empty<byte>()), shelf, new InMemoryScratchpad())[0];
-        Assert.Equal("Selection · none", none.Label);
+        Assert.False(none.Available);
         none.On = true;
         Assert.False(none.On);
     }

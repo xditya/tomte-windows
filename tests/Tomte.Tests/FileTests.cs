@@ -1066,13 +1066,13 @@ public sealed class FileTests : IDisposable
     [Fact]
     public void TheShelfChipSaysTheOtherNamesGoToo()
     {
-        Assert.Equal("Shelf · empty", ContextChips.Shelf(new FileShelf()).Label);
+        Assert.False(ContextChips.Shelf(new FileShelf()).Available);
         _shelf.Files.Add(("a.txt", "a"));
-        Assert.Equal("Shelf · a.txt", ContextChips.Shelf(_shelf).Label);
+        Assert.Equal("Shelf: a.txt", ContextChips.Shelf(_shelf).Tip);
         _shelf.Files.Insert(0, ("b.txt", "b"));
-        Assert.Equal("Shelf · b.txt and the name of 1 other", ContextChips.Shelf(_shelf).Label);
+        Assert.Equal("Shelf: b.txt and the name of 1 other", ContextChips.Shelf(_shelf).Tip);
         _shelf.Files.Insert(0, ("c.txt", "c"));
-        Assert.Equal("Shelf · c.txt and the names of 2 others", ContextChips.Shelf(_shelf).Label);
+        Assert.Equal("Shelf: c.txt and the names of 2 others", ContextChips.Shelf(_shelf).Tip);
     }
 
     // What the model reads and takes

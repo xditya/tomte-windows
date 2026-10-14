@@ -190,7 +190,7 @@ public sealed class TypingTests : IDisposable
     [Fact]
     public void ThePaletteGrowsWithItsAnswerUpTo480()
     {
-        (string, bool)[] chips = [("Selection · none", false), ("Window · notepad · notes.txt - Notepad", false), ("Screenshot of window", false), ("Shelf · Q3-report.pdf", true), ("Scratchpad", false)];
+        ChipSpec[] chips = [new("Region", ChipIcon.Region, true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, false), new("Screenshot", ChipIcon.Screenshot, false), new("Shelf", ChipIcon.Shelf, true), new("Note", ChipIcon.Note, false)];
         var layout = new PaletteLayout(640, mascot: true, text: 0, chips);
         // The prompt box sits after the tomte, one line tall; the chips that do not fit start a second row.
         Assert.Equal(new System.Drawing.RectangleF(41.5f, 12, 584.5f, 36), layout.Prompt);
@@ -198,12 +198,11 @@ public sealed class TypingTests : IDisposable
         Assert.Equal(58, layout.Chips[0].Box.Y);
         Assert.True(layout.Chips[^1].Box.Y > layout.ChipsTop, "the last chip wraps");
         Assert.All(layout.Chips, chip => Assert.True(chip.Box.Right <= 626.01f));
-        Assert.Equal(PaletteLayout.ChipOn, layout.Chips[3].Label.Style);
-        Assert.Equal(3, layout.ChipAt(new Vector2(layout.Chips[3].Box.X + 2, layout.Chips[3].Box.Y + 2)));
-        Assert.Equal(-1, layout.ChipAt(new Vector2(1, 1)));
+        Assert.Equal(PaletteLayout.ChipOn, layout.Chips[4].Label.Style);
 
-        // No answer: the smallest palette.
-        Assert.Equal(150, layout.Height(0));
+        // No answer: the smallest palette while the chips take one row; a second row makes it taller.
+        Assert.Equal(150, new PaletteLayout(640, mascot: true, text: 0, chips[1..]).Height(0));
+        Assert.Equal(layout.AnswerTop + PaletteLayout.FootHeight + PaletteLayout.Bottom, layout.Height(0), 1);
         List<(string, TextStyle)> answer = [("Read notes.txt", PaletteLayout.StepText), ("", PaletteLayout.AnswerText), ("The dentist is on Monday at 10.", PaletteLayout.AnswerText)];
         var (runs, measured) = layout.Answer(answer);
         // Laid out from the answer's top, one block under the other; an empty block takes no room.

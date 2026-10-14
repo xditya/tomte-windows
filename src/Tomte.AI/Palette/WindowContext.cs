@@ -47,7 +47,7 @@ public static unsafe class WindowContext
         var (app, title) = Describe(foreground);
         return
         [
-            SelectionReader.Chip(foreground),
+            SelectionReader.Chip(foreground, app),
             ContextChips.Window(app, title),
             ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct)),
             ContextChips.Shelf(shelf),

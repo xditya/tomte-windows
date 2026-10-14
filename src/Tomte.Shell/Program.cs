@@ -501,7 +501,7 @@ internal static partial class Program
         var (w, h) = overlay.Lasso.BoxDips;
         var chip = ContextChips.Lasso(png, w, h);
         File.WriteAllBytes(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tomte", "capture-last.png"), png);
-        log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} capture chip \"{chip.Label}\" px={crop} points={overlay.Lasso.Points.Count} png={png.Length}B in {Stopwatch.GetElapsedTime(released).TotalMilliseconds:F1}ms");
+        log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} capture chip \"{chip.Tip}\" px={crop} points={overlay.Lasso.Points.Count} png={png.Length}B in {Stopwatch.GetElapsedTime(released).TotalMilliseconds:F1}ms");
         await PaletteRun(island, triggers, store, log, question, chip, foreground);
     }
 

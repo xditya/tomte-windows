@@ -99,7 +99,7 @@ public class CaptureTests
         var chip = ContextChips.Lasso(png, 227.3, 154);
 
         Assert.True(chip.On);
-        Assert.Equal("Lasso · 227 × 154", chip.Label);
+        Assert.Equal(("Region", "The region you circled, 227 × 154, sent as an image"), (chip.Label, chip.Tip));
         var (parts, attached) = await ContextAssembly.BuildAsync([chip], "what is this?", CancellationToken.None);
         Assert.Same(png, Assert.IsType<ImagePart>(parts[0]).Data);
         Assert.Equal(["lasso"], attached);
@@ -114,9 +114,9 @@ public class CaptureTests
         var chips = ContextChips.For(ContextChips.Lasso(png, 312, 184), null, "msedge", "Store - Edge", _ => Task.FromResult(Array.Empty<byte>()), shelf, new InMemoryScratchpad());
 
         // The region first and on; the palette's other chips after it, off, and no selection is read for a lasso.
-        Assert.Equal("Lasso · 312 × 184", chips[0].Label);
+        Assert.Equal(("Region", ContextKind.Region), (chips[0].Label, chips[0].Kind));
         Assert.Equal([true, false, false, false, false, false], chips.Select(c => c.On));
-        Assert.Equal("Selection · none", chips[1].Label);
+        Assert.False(chips[1].Available);
 
         // The question is whatever the user typed, sent after the region.
         var (parts, attached) = await ContextAssembly.BuildAsync(chips, "Which game is this?", CancellationToken.None);
