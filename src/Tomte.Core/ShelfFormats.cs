@@ -193,6 +193,38 @@ public static class ShelfFormats
     /// </summary>
     public static bool AsVirtualFiles(IReadOnlyList<ShelfItem> items) => items.All(i => i.Kind == ShelfKind.Content);
 
+    /// <summary>Text the shelf keeps itself: a .txt or .md it made from dropped text or was handed as content.</summary>
+    public static bool IsText(ShelfItem item) =>
+        item.Kind == ShelfKind.Content && Path.GetExtension(item.Name).ToLowerInvariant() is ".txt" or ".md";
+
+    /// <summary>
+    /// The words a drag out offers as text, so that a text field takes them: only when every item is text the shelf
+    /// keeps, each read by <paramref name="read"/>, one after another on their own lines. Null otherwise, or when one
+    /// cannot be read.
+    /// </summary>
+    public static string? DragText(IReadOnlyList<ShelfItem> items, Func<ShelfItem, string?> read)
+    {
+        if (items.Count == 0 || !items.All(IsText))
+        {
+            return null;
+        }
+
+        var texts = items.Select(read).ToList();
+        return texts.Any(t => t is null) ? null : string.Join(Environment.NewLine, texts);
+    }
+
+    /// <summary>What a drag out offers, in this order: the text first when it has some, then the files as one of the two file formats.</summary>
+    public static IReadOnlyList<DragFormat> DragFormats(IReadOnlyList<ShelfItem> items, bool text) =>
+        [.. text ? [DragFormat.UnicodeText, DragFormat.Text] : Array.Empty<DragFormat>(),
+            .. AsVirtualFiles(items) ? [DragFormat.Descriptor, DragFormat.Contents] : new[] { DragFormat.HDrop }];
+
+    /// <summary>CF_UNICODETEXT's bytes: UTF-16 and its closing null.</summary>
+    public static byte[] UnicodeText(string text) => Encoding.Unicode.GetBytes(text + "\0");
+
+    /// <summary>CF_TEXT's bytes: in the system's ANSI code page, characters it lacks as "?", and the closing null.</summary>
+    public static byte[] AnsiText(string text, int codePage) =>
+        (CodePagesEncodingProvider.Instance.GetEncoding(codePage) ?? Encoding.GetEncoding(codePage)).GetBytes(text + "\0");
+
     /// <summary>
     /// The user's own files may be copied or moved, and the target decides from the keys as in any Windows drag: Ctrl
     /// copies, Shift moves, and with neither Explorer moves on the same volume and copies across. Anything the shelf
@@ -202,11 +234,35 @@ public static class ShelfFormats
         items.All(i => i.Kind == ShelfKind.Reference) ? ShelfEffect.Copy | ShelfEffect.Move : ShelfEffect.Copy;
 
     /// <summary>
-    /// The items that left the shelf with a drag: references the target moved away. Explorer's same-volume move returns
-    /// none and writes "Performed DropEffect" instead, so both are read; the file being gone is what decides.
+    /// The items that leave the shelf after a drag out. Explorer's same-volume move returns none from DoDragDrop and
+    /// writes "Performed DropEffect" instead, so both are read. With <paramref name="removeAfter"/> on and a drop the
+    /// target took: every reference, its entry only, its file staying where it is; and the shelf's own items when they
+    /// went out as virtual files, whose bytes the target copied during the drop. The shelf's own item that went out by
+    /// its path stays: an app that opens a dropped file where it is (Excel, Notepad, a browser) reports a copy, and the
+    /// sweep would then delete the only copy, edits and all. Off, or when the target took nothing, only references the
+    /// target moved away, whose files are gone.
     /// </summary>
-    public static List<ShelfItem> MovedAway(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed, Func<string, bool> exists) =>
-        ((returned | performed) & ShelfEffect.Move) == 0 ? [] : [.. dragged.Where(i => i.Kind == ShelfKind.Reference && !exists(i.Path))];
+    public static List<ShelfItem> LeaveAfterDrag(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed, bool removeAfter, Func<string, bool> exists)
+    {
+        var effect = returned | performed;
+        if (removeAfter && effect != ShelfEffect.None)
+        {
+            bool bytes = AsVirtualFiles(dragged);
+            return [.. dragged.Where(i => bytes || i.Kind == ShelfKind.Reference)];
+        }
+
+        return (effect & ShelfEffect.Move) == 0 ? [] : [.. dragged.Where(i => i.Kind == ShelfKind.Reference && !exists(i.Path))];
+    }
+}
+
+/// <summary>The clipboard formats a drag out can offer: CF_UNICODETEXT, CF_TEXT, CF_HDROP, FileGroupDescriptorW and FileContents.</summary>
+public enum DragFormat
+{
+    UnicodeText,
+    Text,
+    HDrop,
+    Descriptor,
+    Contents,
 }
 
 /// <summary>

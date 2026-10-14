@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Triggers;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -16,23 +17,36 @@ using Color = Windows.UI.Color;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Shelf panel's body: a head row and a grid of tiles, newest first, two rows of four at the Shelf panel's 560 x 260, the
-/// wheel scrolling a row a notch. A press selects (Ctrl adds or takes away), a press and drag drags the selection out,
-/// and a selected tile shows its five action buttons. Missing items are dimmed, with their own meta line.
+/// The Shelf panel's body: a band and a grid of tiles under it, newest first, two rows of four at the Shelf panel's
+/// 560 x 260, the wheel scrolling a row a notch. The band shows the head row, or the action buttons of the tile under
+/// the pointer or with keyboard focus. A click selects (Ctrl adds or takes away), a double click or Enter opens, a press
+/// and drag drags the tile out (the whole selection when it is one of it), and the buttons act on the same items.
+/// Remove asks once. Missing items are dimmed, with their own meta line. The island's interaction host runs the
+/// presses, hover, tooltips and focus.
 /// </summary>
-internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log) : IPanel
+internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log) : IPanel, IInteractive
 {
     private readonly HashSet<long> selected = [];
     private DataTransferManager? shareManager;
-    private Windows.System.DispatcherQueueTimer? shareWait;
+    private Windows.System.DispatcherQueueTimer? shareWait, bandWait, confirmWait;
     private List<ShelfItem> sharing = [];
     private int shareAsked;
     private ContainerVisual? body;
     private Vector2 size;
-    private Parts? parts;
+    private Parts? parts, band;
     private int first, wheel;
+    private IReadOnlyList<Target> targets = [];
+
+    // The item whose actions the band shows, and the one it changes to once the grace is over.
+    private long? shown, pending;
+
+    private readonly RemoveQuestion question = new();
+
+    public event Action? TargetsChanged;
 
     public PanelId Id => PanelId.Shelf;
+
+    public IReadOnlyList<Target> Targets => targets;
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
@@ -48,62 +62,27 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     {
         shelf.Changed -= Rebuild;
         parts?.Dispose();
-        parts = null;
-        body = null;
+        band?.Dispose();
+        (parts, band, body) = (null, null, null);
         selected.Clear();
+        bandWait?.Stop();
+        shown = null;
+        Drop();
         first = wheel = 0;
+        targets = [];
     }
 
+    /// <summary>A press on none of the targets: the selection goes. The host runs the presses on targets.</summary>
     public void Press(Vector2 point)
     {
-        var items = shelf.Items;
-        var (index, action) = ShelfLayout.At(point, size, first, items.Count, i => selected.Contains(items[i].Id));
-        if (index < 0)
+        if (targets.Any(t => t.Bounds.Contains(point.X, point.Y)))
         {
-            if (selected.Count > 0)
-            {
-                selected.Clear();
-                Rebuild();
-            }
-
             return;
         }
 
-        if (action is ShelfAction act)
+        if (selected.Count > 0)
         {
-            Act(act, Selection(items));
-            return;
-        }
-
-        long id = items[index].Id;
-        bool ctrl = (PInvoke.GetKeyState((int)VIRTUAL_KEY.VK_CONTROL) & 0x8000) != 0;
-        bool was = selected.Contains(id);
-        if (ctrl && was)
-        {
-            selected.Remove(id);
-        }
-        else if (ctrl || !was)
-        {
-            if (!ctrl)
-            {
-                selected.Clear();
-            }
-
-            selected.Add(id);
-        }
-
-        Rebuild();
-        // Win32 runs the press, move and release loop with the system's drag threshold: true is a drag, false a click.
-        PInvoke.GetCursorPos(out var at);
-        if (selected.Contains(id) && PInvoke.DragDetect(island.Hwnd, at))
-        {
-            ShelfDrag.Run(island, triggers, shelf, Selection(shelf.Items), log);
-        }
-        else if (!ctrl && was && selected.Count > 1)
-        {
-            // A click on one of several selected tiles keeps only that one, as Explorer does on release.
             selected.Clear();
-            selected.Add(id);
             Rebuild();
         }
     }
@@ -127,18 +106,205 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
     }
 
+    public void Activate(string id) => Activate(id, ActivateBy.Click);
+
+    public void Activate(string id, ActivateBy by)
+    {
+        if (ActionOf(id) is { } action)
+        {
+            // The first click of a double click already acted.
+            if (by != ActivateBy.DoubleClick && Owner() is { } owner)
+            {
+                Act(action, owner);
+            }
+
+            return;
+        }
+
+        if (Item(id) is not { } item)
+        {
+            return;
+        }
+
+        // A double click or a key opens, as in File Explorer; a click selects.
+        if (by != ActivateBy.Click)
+        {
+            Act(ShelfAction.Open, item);
+            return;
+        }
+
+        bool ctrl = (PInvoke.GetKeyState((int)VIRTUAL_KEY.VK_CONTROL) & 0x8000) != 0;
+        if (ctrl && !selected.Remove(item.Id))
+        {
+            selected.Add(item.Id);
+        }
+        else if (!ctrl)
+        {
+            selected.Clear();
+            selected.Add(item.Id);
+        }
+
+        Rebuild();
+    }
+
+    /// <summary>
+    /// A caller that cannot say whether the key repeats: a Delete while the question shows counts as one held down, so
+    /// Delete only asks, and a click or Enter on the question removes. The host calls the one below.
+    /// </summary>
+    public bool KeyDown(string id, int virtualKey) => KeyDown(id, virtualKey, repeat: question.Asks(Item(id)?.Id ?? shown, Environment.TickCount64));
+
+    /// <summary>Delete on a focused tile or on the band asks to remove, as the Remove button does; a second Delete, not a repeat, removes.</summary>
+    public bool KeyDown(string id, int virtualKey, bool repeat)
+    {
+        if (virtualKey != (int)VIRTUAL_KEY.VK_DELETE || (Item(id) is null && ActionOf(id) is null))
+        {
+            return false;
+        }
+
+        if (Item(id) is { } item && shown != item.Id)
+        {
+            bandWait?.Stop();
+            Show(item.Id);
+        }
+
+        if (Owner() is { } owner)
+        {
+            Act(ShelfAction.Remove, owner, repeat);
+        }
+
+        return true;
+    }
+
+    /// <summary>Win32 runs the press, move and release loop with the system's drag threshold: true is a drag, false a click.</summary>
+    public bool TryDrag(string id, Vector2 at)
+    {
+        if (Item(id) is not { } item)
+        {
+            return false;
+        }
+
+        PInvoke.GetCursorPos(out var cursor);
+        if (!PInvoke.DragDetect(island.Hwnd, cursor))
+        {
+            return false;
+        }
+
+        _ = ShelfDrag.Run(island, triggers, shelf, Acting(item), log);
+        return true;
+    }
+
+    public void Hovered(string? id)
+    {
+        var (change, owner) = ShelfLayout.Hover(shown, id);
+        switch (change)
+        {
+            case BandChange.Now:
+                bandWait?.Stop();
+                Show(owner);
+                Band();
+                break;
+            case BandChange.Later:
+                pending = owner;
+                if (bandWait is null)
+                {
+                    bandWait = island.Queue.CreateTimer();
+                    bandWait.Interval = TimeSpan.FromMilliseconds(ShelfLayout.BandGraceMs);
+                    bandWait.IsRepeating = false;
+                    bandWait.Tick += (_, _) =>
+                    {
+                        Show(pending);
+                        Band();
+                    };
+                }
+
+                bandWait.Start();
+                break;
+            default:
+                bandWait?.Stop();
+                break;
+        }
+    }
+
     private static unsafe nint Handle(HWND hwnd) => (nint)hwnd.Value;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static void CopyText(string text) => Tomte.AI.Palette.DesktopEffects.CopyToClipboard(text);
 
+    private static ShelfAction? ActionOf(string id) =>
+        id.StartsWith("act:", StringComparison.Ordinal) && Enum.TryParse<ShelfAction>(id.AsSpan(4), out var action) ? action : null;
+
+    private ShelfItem? Item(string id) => shelf.Items.FirstOrDefault(i => ShelfLayout.TileId(i) == id);
+
     private List<ShelfItem> Selection(IReadOnlyList<ShelfItem> items) => [.. items.Where(i => selected.Contains(i.Id))];
 
-    private void Act(ShelfAction action, List<ShelfItem> items)
+    /// <summary>What the band and a drag act on: the whole selection when the item is one of it, else the item alone.</summary>
+    private List<ShelfItem> Acting(ShelfItem item) => selected.Contains(item.Id) ? Selection(shelf.Items) : [item];
+
+    /// <summary>The item the band shows the actions of, while its tile is on the page.</summary>
+    private ShelfItem? Owner()
     {
-        var targets = items.Where(i => ShelfStore.Allows(action, i)).ToList();
-        log?.Invoke($"shelf: {action} on {targets.Count} of {items.Count}");
-        if (targets.Count == 0)
+        var items = shelf.Items;
+        for (int i = first; i < first + ShelfLayout.Visible(size, first, items.Count); i++)
+        {
+            if (items[i].Id == shown)
+            {
+                return items[i];
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Another tile's actions, or none: a question Remove asked for the last one is dropped.</summary>
+    private void Show(long? id)
+    {
+        if (id != shown)
+        {
+            shown = id;
+            Drop();
+        }
+    }
+
+    private void Drop()
+    {
+        question.Drop();
+        confirmWait?.Stop();
+    }
+
+    /// <summary>An action for the owner's tile, on the items it acts on. Remove asks first; a repeat of a held key never removes.</summary>
+    private void Act(ShelfAction action, ShelfItem owner, bool repeat = false)
+    {
+        var items = Acting(owner);
+        if (action != ShelfAction.Remove)
+        {
+            Drop();
+        }
+        else if (question.Click(owner.Id, Environment.TickCount64, PInvoke.GetDoubleClickTime(), repeat) is var step && step != RemoveStep.Remove)
+        {
+            if (step == RemoveStep.Ask)
+            {
+                if (confirmWait is null)
+                {
+                    confirmWait = island.Queue.CreateTimer();
+                    confirmWait.Interval = TimeSpan.FromMilliseconds(RemoveQuestion.AskMs);
+                    confirmWait.IsRepeating = false;
+                    confirmWait.Tick += (_, _) =>
+                    {
+                        question.Drop();
+                        Band();
+                    };
+                }
+
+                confirmWait.Start();
+                Band();
+            }
+
+            return;
+        }
+
+        var allowed = items.Where(i => ShelfStore.Allows(action, i)).ToList();
+        log?.Invoke($"shelf: {action} on {allowed.Count} of {items.Count}");
+        if (allowed.Count == 0)
         {
             return;
         }
@@ -148,24 +314,27 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             switch (action)
             {
                 case ShelfAction.Open:
-                    foreach (var item in targets)
+                    foreach (var item in allowed)
                     {
                         Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true })?.Dispose();
                     }
 
                     break;
                 case ShelfAction.Reveal:
-                    Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{targets[0].Path}\"") { UseShellExecute = true })?.Dispose();
+                    Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{allowed[0].Path}\"") { UseShellExecute = true })?.Dispose();
                     break;
                 case ShelfAction.CopyPath:
-                    CopyText(ShelfStore.PathsText(targets));
+                    CopyText(ShelfStore.PathsText(allowed));
+                    island.Interaction.Acknowledge(this, ShelfLayout.ActionId(action));
                     break;
                 case ShelfAction.Share:
-                    Share(targets);
+                    Share(allowed);
                     break;
                 default:
-                    selected.ExceptWith(targets.Select(i => i.Id));
-                    _ = shelf.Remove(targets);
+                    selected.ExceptWith(allowed.Select(i => i.Id));
+                    Show(null);
+                    _ = shelf.Remove(allowed);
+                    Band();
                     break;
             }
         }
@@ -254,31 +423,76 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var items = shelf.Items;
         selected.RemoveWhere(id => !items.Any(i => i.Id == id));
         first = ShelfLayout.Scroll(first, 0, items.Count, size);
-
-        var head = p.Shapes(body, new RectangleF(0, 0, size.X, ShelfLayout.GridTop));
-        foreach (var line in ShelfLayout.HeadText(size, items.Count))
-        {
-            p.Text(head, line);
-        }
-
         if (items.Count == 0)
         {
-            var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadY);
+            var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadBottom);
             var box = p.Shapes(body, empty);
             p.Box(box, new RectangleF(0, 0, empty.Width, empty.Height), 8, null, p.Brush(Color.FromArgb(46, 255, 255, 255)), 1).StrokeDashArray.Add(3);
             foreach (var line in ShelfLayout.EmptyText(empty.Size))
             {
                 p.Text(box, line);
             }
-
-            return;
         }
 
-        int visible = ShelfLayout.Rows(size) * ShelfLayout.Columns;
-        for (int slot = 0; slot < visible && first + slot < items.Count; slot++)
+        for (int slot = 0; slot < ShelfLayout.Visible(size, first, items.Count); slot++)
         {
             Tile(p, items[first + slot], ShelfLayout.Tile(slot, size), selected.Contains(items[first + slot].Id));
         }
+
+        Band();
+    }
+
+    /// <summary>
+    /// The band over the grid, built apart from the tiles so that the pointer moving between tiles redraws only it: the
+    /// head row, or the action buttons of the owner's tile, which is outlined unless the selection's outline is on it.
+    /// </summary>
+    private void Band()
+    {
+        band?.Dispose();
+        band = null;
+        if (body is null)
+        {
+            return;
+        }
+
+        var b = band = new Parts(island.Compositor, text);
+        var into = b.Shapes(body, new RectangleF(0, 0, size.X, ShelfLayout.GridTop));
+        var items = shelf.Items;
+        var owner = Owner();
+        var acting = owner is null ? [] : Acting(owner);
+        bool confirming = question.Asks(owner?.Id, Environment.TickCount64);
+        targets = ShelfLayout.Targets(size, first, items, owner, acting, confirming);
+        if (owner is null)
+        {
+            foreach (var line in ShelfLayout.HeadText(size, items.Count))
+            {
+                b.Text(into, line);
+            }
+
+            TargetsChanged?.Invoke();
+            return;
+        }
+
+        if (!selected.Contains(owner.Id) && targets.FirstOrDefault(t => t.Id == ShelfLayout.TileId(owner)) is { Id: not null } tile)
+        {
+            var mark = b.Shapes(body, tile.Bounds);
+            b.Box(mark, new RectangleF(0, 0, tile.Bounds.Width, tile.Bounds.Height), ShelfLayout.TileCorner, null, b.Brush(ShelfColors.Mark), 1);
+        }
+
+        foreach (var slot in ShelfLayout.Actions(size, confirming))
+        {
+            bool asking = confirming && slot.Action == ShelfAction.Remove;
+            bool allowed = acting.Any(i => ShelfStore.Allows(slot.Action, i));
+            b.Box(into, slot.Box, ShelfLayout.ActionCorner, b.Brush(asking ? ShelfColors.WarnFill : ShelfColors.Card));
+            var ink = asking ? ShelfColors.Warn : allowed ? ShelfColors.Ink : ShelfColors.Disabled;
+            Glyph(b, into, slot.Action, slot.Icon, b.Brush(ink));
+            if (slot.Label is { } label)
+            {
+                b.Text(into, label with { Style = label.Style with { Color = ShelfColors.Argb(ink) } });
+            }
+        }
+
+        TargetsChanged?.Invoke();
     }
 
     private void Tile(Parts p, ShelfItem item, RectangleF r, bool isSelected)
@@ -286,7 +500,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var v = p.Shapes(body!, r);
         v.Opacity = item.Missing ? 0.55f : 1;
         var local = new RectangleF(0, 0, r.Width, r.Height);
-        p.Box(v, local, 8, p.Brush(isSelected ? ShelfColors.CardSelected : ShelfColors.Card), isSelected ? p.Brush(ShelfColors.Info) : null, 1);
+        p.Box(v, local, ShelfLayout.TileCorner, p.Brush(isSelected ? ShelfColors.CardSelected : ShelfColors.Card), isSelected ? p.Brush(ShelfColors.Info) : null, 1);
         const float pad = ShelfLayout.TilePad, icon = ShelfLayout.Icon;
         // a coloured square by kind stands in for the file's own icon and thumbnail, which go on image
         // surfaces through the panel host's art device once it merges.
@@ -295,51 +509,22 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         {
             p.Text(v, line);
         }
-
-        if (isSelected)
-        {
-            foreach (var action in Enum.GetValues<ShelfAction>())
-            {
-                Button(p, v, action, ShelfLayout.ActionButton(action, local), ShelfStore.Allows(action, item));
-            }
-        }
     }
 
-    /// <summary>A dark rounded button with a line glyph; an action the item does not allow is dimmed.</summary>
-    private static void Button(Parts p, ShapeVisual into, ShelfAction action, RectangleF b, bool allowed)
+    /// <summary>An action's line icon in its square.</summary>
+    private static void Glyph(Parts p, ShapeVisual into, ShelfAction action, RectangleF icon, CompositionBrush ink)
     {
-        p.Box(into, b, 5, p.Brush(ShelfColors.ButtonFill));
-        var ink = p.Brush(allowed ? ShelfColors.Ink : ShelfColors.Ink3);
-        Vector2 At(float x, float y) => new(b.X + x, b.Y + y);
-        switch (action)
+        var at = new Vector2(icon.X, icon.Y);
+        foreach (var s in ShelfLayout.Glyph(action))
         {
-            case ShelfAction.Open:
-                p.Box(into, new RectangleF(b.X + 5, b.Y + 8, 9, 9), 1.5f, null, ink, 1.3f);
-                p.Line(into, At(10, 12), At(16, 6), ink);
-                p.Line(into, At(12, 6), At(16, 6), ink);
-                p.Line(into, At(16, 6), At(16, 10), ink);
-                break;
-            case ShelfAction.Reveal:
-                p.Box(into, new RectangleF(b.X + 5, b.Y + 6, 6, 3), 1, null, ink, 1.3f);
-                p.Box(into, new RectangleF(b.X + 5, b.Y + 8, 12, 9), 1.5f, null, ink, 1.3f);
-                break;
-            case ShelfAction.CopyPath:
-                p.Box(into, new RectangleF(b.X + 8, b.Y + 5, 8, 9), 1.5f, null, ink, 1.3f);
-                p.Box(into, new RectangleF(b.X + 5, b.Y + 8, 8, 9), 1.5f, p.Brush(Color.FromArgb(255, 20, 20, 22)), ink, 1.3f);
-                break;
-            case ShelfAction.Share:
-                p.Line(into, At(11, 5), At(11, 13), ink);
-                p.Line(into, At(8, 8), At(11, 5), ink);
-                p.Line(into, At(11, 5), At(14, 8), ink);
-                p.Line(into, At(6, 11), At(6, 16), ink);
-                p.Line(into, At(6, 16), At(16, 16), ink);
-                p.Line(into, At(16, 16), At(16, 11), ink);
-                break;
-            default:
-                p.Line(into, At(5, 7), At(17, 7), ink);
-                p.Line(into, At(9, 5), At(13, 5), ink);
-                p.Box(into, new RectangleF(b.X + 7, b.Y + 8, 8, 9), 1.5f, null, ink, 1.3f);
-                break;
+            if (s.Corner < 0)
+            {
+                p.Line(into, at + s.A, at + s.B, ink, ShelfLayout.GlyphStrokeWidth);
+            }
+            else
+            {
+                p.Box(into, new RectangleF(at.X + s.A.X, at.Y + s.A.Y, s.B.X - s.A.X, s.B.Y - s.A.Y), s.Corner, null, ink, ShelfLayout.GlyphStrokeWidth);
+            }
         }
     }
 }

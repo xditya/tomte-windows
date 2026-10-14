@@ -27,6 +27,13 @@ public sealed record TomteSettings
     /// <summary>Reveal on every monitor whose top is a screen edge; false means the primary monitor only.</summary>
     public bool AllMonitors { get; init; } = true;
 
+    /// <summary>
+    /// An item leaves the shelf once a drag out of it was taken by the target: a reference's entry only, never its file;
+    /// the shelf's own item only when the target copied its bytes; see ShelfFormats.LeaveAfterDrag. Off, items stay, except
+    /// references the target moved away.
+    /// </summary>
+    public bool RemoveAfterDragOut { get; init; } = true;
+
     /// <summary>Keep what is copied in clipboard history. Off by default; off, nothing listens to the clipboard.</summary>
     public bool KeepClipboardHistory { get; init; }
 

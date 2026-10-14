@@ -9,6 +9,9 @@ public sealed record ResultTile(string Name, string Meta, uint Color)
 {
     public const string OnShelf = "On the shelf · drag it out";
 
+    /// <summary>The line once a drag out took the file off the shelf.</summary>
+    public const string OffShelf = "Dragged out · no longer on the shelf";
+
     public static ResultTile Of(ShelfItem item) => new(item.Name, OnShelf, ShelfLayout.KindColor(item));
 }
 

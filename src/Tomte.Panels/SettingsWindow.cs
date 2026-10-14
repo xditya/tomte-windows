@@ -60,6 +60,12 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Header("Hotkeys"));
         page.Children.Add(Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), CopilotNote()]));
 
+        page.Children.Add(Header("Shelf"));
+        page.Children.Add(Card(Row(
+            "Remove from the shelf after dragging out",
+            Note("Once an app takes something you dragged out, it leaves the shelf. Your files stay where they are on your PC. A copy the shelf keeps stays on the shelf unless the app made its own copy of it."),
+            Toggle(s => s.RemoveAfterDragOut, (s, v) => s with { RemoveAfterDragOut = v }))));
+
         page.Children.Add(Header("Shortcuts"));
         page.Children.Add(ShortcutsSection());
 

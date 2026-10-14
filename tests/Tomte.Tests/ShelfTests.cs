@@ -3,6 +3,7 @@ using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Storage;
 using Xunit;
 
@@ -509,13 +510,45 @@ public sealed class ShelfTests : IDisposable
         string moved = Write(user, "moved.txt", "m");
         string stayed = Write(user, "stayed.txt", "s");
         var shelf = Store();
+        shelf.RemoveAfterDragOut = () => false;
         await shelf.Accept(new DroppedItems([moved, stayed], [], null, KeepCopy: false));
         File.Move(moved, Path.Combine(temp, "moved.txt"));
 
-        await shelf.ForgetMovedAway(shelf.Items, ShelfEffect.None, ShelfEffect.Move);
+        await shelf.AfterDragOut(shelf.Items, ShelfEffect.None, ShelfEffect.Move);
         Assert.Equal(["stayed.txt"], shelf.ItemNames);
-        await shelf.ForgetMovedAway(shelf.Items, ShelfEffect.Copy, ShelfEffect.None);
+        await shelf.AfterDragOut(shelf.Items, ShelfEffect.Copy, ShelfEffect.None);
         Assert.Equal(["stayed.txt"], shelf.ItemNames);
+    }
+
+    [Fact]
+    public async Task ADragTheTargetTookTakesItsItemsOffTheShelfAndNeverTheUsersFiles()
+    {
+        string mine = Write(user, "mine.txt", "mine");
+        string stick = Write(usb, "stick.txt", "stick");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([mine, stick], [], "a note", KeepCopy: false));
+        var copy = shelf.Items.Single(i => i.Kind == ShelfKind.Copy);
+        var note = shelf.Items.Single(i => i.Kind == ShelfKind.Content);
+
+        // Refused or cancelled: everything stays.
+        await shelf.AfterDragOut(shelf.Items, ShelfEffect.None, ShelfEffect.None);
+        Assert.Equal(3, shelf.Items.Count);
+
+        // All three went out by path, as one mixed drag does: the reference's entry goes, the shelf's own two stay,
+        // as an app may have opened them where they are.
+        await shelf.AfterDragOut(shelf.Items, ShelfEffect.Copy, ShelfEffect.None);
+        Assert.Equal(["a note.txt", "stick.txt"], shelf.ItemNames.Order());
+        Assert.True(File.Exists(mine) && File.Exists(stick));
+
+        // The note alone went out as a virtual file, its bytes copied by the target: it goes, and its file with the
+        // next process's sweep, as a target may still read it in this one.
+        await shelf.AfterDragOut([note], ShelfEffect.Copy, ShelfEffect.None);
+        Assert.Equal(["stick.txt"], shelf.ItemNames);
+        Assert.True(File.Exists(note.Path));
+        var next = Store();
+        await next.Load();
+        Assert.False(File.Exists(note.Path));
+        Assert.True(File.Exists(copy.Path) && File.Exists(mine) && File.Exists(stick));
     }
 
     [Fact]
@@ -684,17 +717,86 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
-    public void OnlyAReferenceTheTargetMovedAwayLeavesTheShelf()
+    public void TextTheShelfKeepsDragsOutAsItsWordsAndItsFile()
+    {
+        var note = Item(ShelfKind.Content, @"C:\shelf\a\Call Mom.txt");
+        var md = Item(ShelfKind.Content, @"C:\shelf\b\summary.MD");
+        var image = Item(ShelfKind.Content, @"C:\shelf\c\pasted.png");
+        var mine = Item(ShelfKind.Reference, @"C:\docs\mine.txt");
+        // A fake reader: the words each file holds, and none for one it cannot read.
+        string? Read(ShelfItem i) => i.Name switch { "Call Mom.txt" => "Call Mom", "summary.MD" => "# Q3", _ => null };
+
+        Assert.Equal("Call Mom", ShelfFormats.DragText([note], Read));
+        Assert.Equal("Call Mom" + Environment.NewLine + "# Q3", ShelfFormats.DragText([note, md], Read));
+        // Not text the shelf keeps, or a mixed drag: files only.
+        Assert.Null(ShelfFormats.DragText([mine], Read));
+        Assert.Null(ShelfFormats.DragText([note, image], Read));
+        Assert.Null(ShelfFormats.DragText([note with { Name = "big.txt" }], Read));
+
+        // The text first, then the file formats kept as they were.
+        Assert.Equal([DragFormat.UnicodeText, DragFormat.Text, DragFormat.Descriptor, DragFormat.Contents], ShelfFormats.DragFormats([note], text: true));
+        Assert.Equal([DragFormat.Descriptor, DragFormat.Contents], ShelfFormats.DragFormats([note, image], text: false));
+        Assert.Equal([DragFormat.HDrop], ShelfFormats.DragFormats([mine, note], text: false));
+
+        Assert.Equal("é!\0", Encoding.Unicode.GetString(ShelfFormats.UnicodeText("é!")));
+        // Windows-1252: é is one byte, a character it lacks becomes "?", and the null closes it.
+        Assert.Equal(new byte[] { 0xE9, (byte)'?', 0 }, ShelfFormats.AnsiText("é→", 1252));
+        Assert.Equal("é→\0"u8.ToArray(), ShelfFormats.AnsiText("é→", 65001));
+    }
+
+    [Fact]
+    public void WhatLeavesTheShelfAfterADragOut()
     {
         var moved = Item(ShelfKind.Reference, @"C:\gone.txt");
         var stayed = Item(ShelfKind.Reference, @"C:\here.txt");
         var copy = Item(ShelfKind.Copy, @"C:\shelf\copy.txt");
-        bool Exists(string p) => p != @"C:\gone.txt" && p != @"C:\shelf\copy.txt";
+        bool Exists(string p) => p != @"C:\gone.txt";
 
-        // Explorer's same-volume move: DoDragDrop says none, "Performed DropEffect" says move.
-        Assert.Equal([moved], ShelfFormats.MovedAway([moved, stayed, copy], ShelfEffect.None, ShelfEffect.Move, Exists));
-        Assert.Equal([moved], ShelfFormats.MovedAway([moved, stayed], ShelfEffect.Move, ShelfEffect.None, Exists));
-        Assert.Empty(ShelfFormats.MovedAway([moved, stayed], ShelfEffect.Copy, ShelfEffect.Copy, Exists));
+        // Off: only a reference the target moved away. Explorer's same-volume move says none, "Performed DropEffect" says move.
+        Assert.Equal([moved], ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.None, ShelfEffect.Move, false, Exists));
+        Assert.Equal([moved], ShelfFormats.LeaveAfterDrag([moved, stayed], ShelfEffect.Move, ShelfEffect.None, false, Exists));
+        Assert.Empty(ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.Copy, ShelfEffect.Copy, false, Exists));
+
+        // On, and the target took it: every reference, copied or moved; nothing when it took nothing.
+        Assert.Equal([moved, stayed], ShelfFormats.LeaveAfterDrag([moved, stayed], ShelfEffect.None, ShelfEffect.Move, true, Exists));
+        Assert.Empty(ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.None, ShelfEffect.None, true, Exists));
+        // The shelf's own copy went out by its path, which an app may have opened in place: it stays.
+        Assert.Equal([moved, stayed], ShelfFormats.LeaveAfterDrag([moved, stayed, copy], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        Assert.Empty(ShelfFormats.LeaveAfterDrag([copy], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        // Content alone goes out as virtual files, its bytes copied during the drop: it goes. In a mixed drag it went by path and stays.
+        var note = Item(ShelfKind.Content, @"C:\shelf\a\note.txt");
+        var image = Item(ShelfKind.Content, @"C:\shelf\b\pasted.png");
+        Assert.Equal([note, image], ShelfFormats.LeaveAfterDrag([note, image], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        Assert.Equal([stayed], ShelfFormats.LeaveAfterDrag([stayed, note], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+    }
+
+    [Fact]
+    public void RemoveAsksOnceAndADoubledClickOrAHeldKeyIsNoSecondDecision()
+    {
+        var q = new RemoveQuestion();
+        const long dbl = 500;
+        Assert.Equal(RemoveStep.Ask, q.Click(7, 1000, dbl));
+        Assert.True(q.Asks(7, 1000) && !q.Asks(8, 1000));
+        // The second click of a double click, and a key held down, do not answer it.
+        Assert.Equal(RemoveStep.Ignored, q.Click(7, 1300, dbl));
+        Assert.Equal(RemoveStep.Ignored, q.Click(7, 2000, dbl, repeat: true));
+        Assert.Equal(RemoveStep.Remove, q.Click(7, 2000, dbl));
+        Assert.Null(q.Item);
+
+        // Three seconds on, the question is over and a click asks again.
+        Assert.Equal(RemoveStep.Ask, q.Click(7, 10_000, dbl));
+        Assert.False(q.Asks(7, 10_000 + RemoveQuestion.AskMs));
+        Assert.Equal(RemoveStep.Ask, q.Click(7, 10_000 + RemoveQuestion.AskMs, dbl));
+
+        // Another tile's Remove asks about that one; the band moving on drops the question.
+        Assert.Equal(RemoveStep.Ask, q.Click(8, 20_000, dbl));
+        Assert.False(q.Asks(7, 20_000));
+        q.Drop();
+        Assert.False(q.Asks(8, 20_001));
+        Assert.Equal(RemoveStep.Ask, q.Click(8, 20_600, dbl));
+
+        // A repeat never asks either: only a real press starts the question.
+        Assert.Equal(RemoveStep.Ignored, new RemoveQuestion().Click(7, 0, dbl, repeat: true));
     }
 
     [Fact]
@@ -761,14 +863,109 @@ public sealed class ShelfTests : IDisposable
         for (int slot = 0; slot < 8; slot++)
         {
             var tile = ShelfLayout.Tile(slot, Body);
-            Assert.True(tile.Left >= ShelfLayout.PadX && tile.Right <= Body.X - ShelfLayout.PadX + 0.01f && tile.Bottom <= Body.Y - ShelfLayout.PadY + 0.01f, $"tile {slot} at {tile}");
+            Assert.True(tile.Left >= ShelfLayout.PadX && tile.Right <= Body.X - ShelfLayout.PadX + 0.01f && tile.Bottom <= Body.Y - ShelfLayout.PadBottom + 0.01f, $"tile {slot} at {tile}");
             // The panel's bottom corners have a radius of 22; a tile corner must sit inside the rounded shape.
             Assert.True(InsideRoundedBottom(tile.Left, tile.Bottom, Body, 22) && InsideRoundedBottom(tile.Right, tile.Bottom, Body, 22), $"tile {slot}");
-            foreach (var action in Enum.GetValues<ShelfAction>())
+        }
+    }
+
+    // The Shelf's own width, where every name fits, and the 60% cap on monitors 1280 pixels wide at 150% and 175%, where they do not.
+    public static TheoryData<float, bool> BandWidths => new() { { 560, false }, { 560, true }, { 512, false }, { 512, true }, { 440, false }, { 440, true }, { 360, true } };
+
+    [Theory]
+    [MemberData(nameof(BandWidths))]
+    public void TheActionsSitInTheBandClearOfEveryTile(float width, bool confirming)
+    {
+        var body = new System.Numerics.Vector2(width, Body.Y);
+        var actions = ShelfLayout.Actions(body, confirming);
+        Assert.Equal(Enum.GetValues<ShelfAction>(), actions.Select(a => a.Action));
+        for (int i = 0; i < actions.Count; i++)
+        {
+            var box = actions[i].Box;
+            Assert.True(box.Height >= StateLook.ActionHeight && box.Width >= StateLook.MinTarget, $"{actions[i].Action} is {box.Size}");
+            Assert.True(box.Left >= ShelfLayout.PadX && box.Right <= width - ShelfLayout.PadX + 0.01f && box.Top >= 0 && box.Bottom <= ShelfLayout.GridTop - ShelfLayout.Gap + 0.01f, $"{actions[i].Action} at {box}");
+            Assert.True(box.Contains(actions[i].Icon), $"{actions[i].Action}'s icon");
+            if (actions[i].Label is { } label)
             {
-                Assert.True(tile.Contains(ShelfLayout.ActionButton(action, tile)), $"{action} on tile {slot}");
+                Assert.True(box.Contains(label.Slot) && !label.Slot.IntersectsWith(actions[i].Icon), $"{actions[i].Action}'s name");
+            }
+
+            Assert.All(actions.Skip(i + 1), other => Assert.False(box.IntersectsWith(other.Box), $"{actions[i].Action} and {other.Action}"));
+            for (int slot = 0; slot < ShelfLayout.Rows(body) * ShelfLayout.Columns; slot++)
+            {
+                // Nothing of a tile is covered, so its icon and name always show.
+                Assert.False(box.IntersectsWith(ShelfLayout.Tile(slot, body)), $"{actions[i].Action} over tile {slot}");
             }
         }
+
+        // Remove's question always says itself; the rest are named when every name fits, else icons with tips.
+        var remove = actions[^1];
+        Assert.Equal(confirming ? ShelfLayout.ConfirmRemove : "Remove", remove.Label?.Text ?? "Remove");
+        Assert.Equal(width >= 560 || confirming, remove.Label is not null);
+        bool named = width >= 560;
+        Assert.All(actions.SkipLast(1), a => Assert.Equal(named, a.Label is not null));
+    }
+
+    [Theory]
+    [InlineData(560)]
+    [InlineData(440)]
+    public void RemoveAskingGrowsAwayFromTheOthers(float width)
+    {
+        var body = new System.Numerics.Vector2(width, Body.Y);
+        var rest = ShelfLayout.Actions(body, confirming: false);
+        var asking = ShelfLayout.Actions(body, confirming: true);
+        Assert.Equal(rest.SkipLast(1).Select(a => a.Box), asking.SkipLast(1).Select(a => a.Box));
+        Assert.Equal(rest[^1].Box.Right, asking[^1].Box.Right);
+        Assert.True(asking[^1].Box.Width > rest[^1].Box.Width);
+        Assert.True(asking[^1].Box.Left >= asking[^2].Box.Right + ShelfLayout.RemoveApart - 0.01f);
+    }
+
+    [Fact]
+    public void TheTargetsAreTheTilesThenTheBandsActionsForTheTileTheyAreFor()
+    {
+        ShelfItem At(int i, ShelfKind kind = ShelfKind.Reference, string folder = @"C:\docs") => new(i, $"file {i}.pdf", Path.Combine(folder, $"file {i}.pdf"), kind, default);
+        var items = Enumerable.Range(1, 10).Select(i => At(i)).ToList();
+        items[1] = items[1] with { Missing = true };
+        items[2] = At(3, ShelfKind.Content, @"C:\shelf\0123456789ab");
+
+        // Nothing hovered: the page's eight tiles, Tab and arrows in group 1, each dragged out by a press.
+        var tiles = ShelfLayout.Targets(Body, 0, items, null, [], false);
+        Assert.Equal(Enumerable.Range(1, 8).Select(i => $"tile:{i}"), tiles.Select(t => t.Id));
+        Assert.All(tiles, t => Assert.True(t is { Kind: TargetKind.Tile, Group: 1, Draggable: true, Enabled: true }));
+        Assert.Equal(Enumerable.Range(0, 8).Select(s => ShelfLayout.Tile(s, Body)), tiles.Select(t => t.Bounds));
+        Assert.Equal("file 1.pdf\nC:\\docs", tiles[0].Tip);
+        Assert.Equal("file 3.pdf\nKept on the shelf", tiles[2].Tip);
+
+        // The second tile's actions follow the tiles in group 2; it is missing, so only Copy path and Remove work.
+        var band = ShelfLayout.Targets(Body, 0, items, items[1], [items[1]], false);
+        Assert.Equal(Enum.GetValues<ShelfAction>().Select(a => $"act:{a}"), band.Skip(8).Select(t => t.Id));
+        Assert.All(band.Skip(8), t => Assert.True(t is { Kind: TargetKind.Button, Group: 2, Draggable: false, Tip: null }));
+        Assert.Equal([false, false, true, false, true], band.Skip(8).Select(t => t.Enabled));
+        Assert.Equal(ShelfLayout.Actions(Body, false).Select(a => a.Box), band.Skip(8).Select(t => t.Bounds));
+        // Acting on the selection: an action works when one of the items allows it.
+        Assert.All(ShelfLayout.Targets(Body, 0, items, items[1], [items[0], items[1]], false).Skip(8), t => Assert.True(t.Enabled));
+
+        // Icon only on a narrow band, each named in its tooltip.
+        var narrow = new System.Numerics.Vector2(440, Body.Y);
+        Assert.Equal(Enum.GetValues<ShelfAction>().Select(ShelfLayout.Name), ShelfLayout.Targets(narrow, 0, items, items[0], [items[0]], false).Skip(8).Select(t => t.Tip));
+        Assert.Equal("Show in folder", ShelfLayout.Name(ShelfAction.Reveal));
+
+        // Scrolled away from the tile the band was for: no band.
+        Assert.Equal(6, ShelfLayout.Targets(Body, 4, items, items[0], [items[0]], false).Count);
+        Assert.Equal(["tile:5", "tile:6", "tile:7", "tile:8", "tile:9", "tile:10"], ShelfLayout.Targets(Body, 4, items, null, [], false).Select(t => t.Id));
+    }
+
+    [Fact]
+    public void TheBandFollowsThePointerAfterAGrace()
+    {
+        // The first tile shows at once; its own tile and its buttons keep it and cancel a pending change.
+        Assert.Equal((BandChange.Now, 4L), ShelfLayout.Hover(null, "tile:4"));
+        Assert.Equal((BandChange.Keep, 4L), ShelfLayout.Hover(4, "tile:4"));
+        Assert.Equal((BandChange.Keep, 4L), ShelfLayout.Hover(4, "act:CopyPath"));
+        // Another tile, crossed on the way up to the band, or nothing: only after the grace.
+        Assert.Equal((BandChange.Later, 9L), ShelfLayout.Hover(4, "tile:9"));
+        Assert.Equal((BandChange.Later, (long?)null), ShelfLayout.Hover(4, null));
+        Assert.Equal((BandChange.Later, (long?)null), ShelfLayout.Hover(null, null));
     }
 
     [Fact]
@@ -783,22 +980,6 @@ public sealed class ShelfTests : IDisposable
             double cx = Math.Clamp(x, -g.Width / 2 + g.Corner, g.Width / 2 - g.Corner), cy = Math.Clamp(y, g.Corner, g.Depth - g.Corner);
             Assert.True(Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) <= g.Corner, $"corner ({x}, {y})");
         }
-    }
-
-    [Fact]
-    public void APressFindsItsTileAndOnlyASelectedTileHasButtons()
-    {
-        var sixth = ShelfLayout.Tile(5, Body);
-        var centre = new System.Numerics.Vector2(sixth.X + sixth.Width / 2, sixth.Y + sixth.Height - 10);
-        Assert.Equal((5, (ShelfAction?)null), ShelfLayout.At(centre, Body, 0, 6, _ => false));
-        Assert.Equal((9, (ShelfAction?)null), ShelfLayout.At(centre, Body, 4, 12, _ => false));
-        Assert.Equal((-1, (ShelfAction?)null), ShelfLayout.At(centre, Body, 0, 5, _ => false));
-        Assert.Equal((-1, (ShelfAction?)null), ShelfLayout.At(new(5, 5), Body, 0, 6, _ => true));
-
-        var share = ShelfLayout.ActionButton(ShelfAction.Share, sixth);
-        var onShare = new System.Numerics.Vector2(share.X + 11, share.Y + 11);
-        Assert.Equal((5, (ShelfAction?)ShelfAction.Share), ShelfLayout.At(onShare, Body, 0, 6, i => i == 5));
-        Assert.Equal((5, (ShelfAction?)null), ShelfLayout.At(onShare, Body, 0, 6, _ => false));
     }
 
     [Fact]
@@ -817,20 +998,26 @@ public sealed class ShelfTests : IDisposable
     [InlineData(1.0)]
     [InlineData(1.25)]
     [InlineData(1.5)]
-    public void APressInWindowPixelsLandsOnTheSameTileAtEveryScale(double scale)
+    public void APressInWindowPixelsLandsOnTheSameTargetAtEveryScale(double scale)
     {
-        // A press arrives in window pixels; the panel host maps it into island space and then into the body, as for
-        // Media. The island's DIP space starts one pixel in plus half the outline's width and carries the scale.
+        // A press arrives in window pixels; the interaction host maps it into island space and the panel host's
+        // function into the body. The island's DIP space starts one pixel in plus half the outline's width and carries
+        // the scale.
         var size = PanelSize.Shelf;
         float originX = 1 + (float)(IslandGeometry.Panel(size.W, size.H).OuterWidth / 2 * scale);
-        for (int slot = 0; slot < 8; slot++)
+        var items = Enumerable.Range(1, 8).Select(i => new ShelfItem(i, $"{i}.txt", $@"C:\{i}.txt", ShelfKind.Reference, default)).ToList();
+        foreach (bool confirming in new[] { false, true })
         {
-            var tile = ShelfLayout.Tile(slot, Body);
-            foreach (var (x, y) in new[] { (tile.Left + 1, tile.Top + 1), (tile.Right - 1, tile.Bottom - 1) })
+            var targets = ShelfLayout.Targets(Body, 0, items, items[5], [items[5]], confirming);
+            var views = new List<(IReadOnlyList<Target>, Func<System.Numerics.Vector2, System.Numerics.Vector2>)> { (targets, p => PanelSpace.ToBody(p, size.W)) };
+            for (int i = 0; i < targets.Count; i++)
             {
-                int px = (int)Math.Round(originX + (x - size.W / 2) * scale), py = (int)Math.Round(1 + (y + PanelSpace.TabStripHeight) * scale);
-                var back = PanelSpace.ToBody(PanelSpace.FromPixels(px, py, originX, 1, scale), size.W);
-                Assert.Equal(slot, ShelfLayout.At(back, Body, 0, 8, _ => false).Index);
+                var b = targets[i].Bounds;
+                foreach (var (x, y) in new[] { (b.Left + 1, b.Top + 1), (b.Right - 1, b.Bottom - 1) })
+                {
+                    int px = (int)Math.Round(originX + (x - size.W / 2) * scale), py = (int)Math.Round(1 + (y + PanelSpace.TabStripHeight) * scale);
+                    Assert.Equal((0, i), Target.Hit(views, PanelSpace.FromPixels(px, py, originX, 1, scale)));
+                }
             }
         }
     }
@@ -849,7 +1036,7 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal("File moved or deleted", ShelfLayout.Meta(item with { Missing = true }));
         Assert.Equal("Folder", ShelfLayout.Meta(item with { IsFolder = true, Size = null }));
         Assert.Equal(0xC0392Bu, ShelfLayout.KindColor(item));
-        Assert.Equal("Reveal in Explorer", ShelfLayout.Name(ShelfAction.Reveal));
+        Assert.Equal("Show in folder", ShelfLayout.Name(ShelfAction.Reveal));
     }
 
     private static bool InsideRoundedBottom(float x, float y, System.Numerics.Vector2 body, float radius)
