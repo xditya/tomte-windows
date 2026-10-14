@@ -4,6 +4,7 @@ using Tomte.AI.Files;
 using Tomte.AI.Palette;
 using Tomte.AI.Skills;
 using Tomte.Core;
+using Tomte.Core.Storage;
 
 namespace Tomte.Shell;
 
@@ -12,7 +13,8 @@ namespace Tomte.Shell;
 /// that lands on one. Such a drop is read inside Drop exactly as the shelf reads it and the item goes on the shelf;
 /// everything after that (loading the AI layer, the panel, reading the file, sending it, the result files) runs in a
 /// <see cref="ZoneRun"/> once Drop has returned to the source. Holds only shell and Core types and reads only the
-/// settings, so making it at start, and a drag over it, loads nothing of the AI layer and reads no key.
+/// settings, so making it at start, and a drag over it, loads nothing of the AI layer and reads no key, and the kept
+/// results are not opened until a drop on a zone.
 /// </summary>
 internal sealed class DropZones
 {
@@ -21,11 +23,13 @@ internal sealed class DropZones
     private readonly ShelfStore shelf;
     private readonly TextRenderer text;
     private readonly SettingsStore store;
+    private readonly KeptResults results;
     private readonly Action<string>? log;
 
-    public DropZones(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, Action<string>? log)
+    public DropZones(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, TomteDb db, Action<string>? log)
     {
         (this.island, this.triggers, this.shelf, this.text, this.store, this.log) = (island, triggers, shelf, text, store, log);
+        results = new KeptResults(db, log);
         Surface = new ShelfDropSurface(island, triggers.Machine, triggers.Drops, text, Layout);
         triggers.DropOnZone = Take;
     }
@@ -54,24 +58,27 @@ internal sealed class DropZones
     // Kept out of Take so the AI layer loads with the first drop on a zone, not before.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Run(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText) =>
-        _ = new ZoneRun(island, triggers, shelf, text, store, log).RunAsync(zone, accepted, fromText);
+        _ = new ZoneRun(island, triggers, shelf, text, store, results, log).RunAsync(zone, accepted, fromText);
 }
 
 /// <summary>
-/// One drop on a zone, from the drop to its result: the panel opens, the item is on the shelf, then the file is read
-/// and sent as a palette send of its own to the provider set up in settings (its key, cap and prices, B5's readers,
-/// the size question and the send log), and what comes back goes on the shelf as files the panel shows. The island
-/// stays out while the send runs, while the size question waits for an answer, and then while the result shows, until
-/// the user dismisses it; Esc, or anything else that takes the island down, ends the send and answers the question
-/// with cancel. On the island's thread; the reading and the sending await on the pool.
+/// One drop on a zone, from the drop to its result: the panel opens, the item is on the shelf, and a result this file
+/// already has from this zone shows first, with a choice to run it again. Otherwise, or on that choice, the file is
+/// read and sent as a palette send of its own to the provider set up in settings (its key, cap and prices, the
+/// readers, the size question and the send log), what comes back goes on the shelf as files the panel shows, and the
+/// result is kept. The island stays out while the send runs, while a question waits for an answer, and then while the
+/// result shows, until the user dismisses it; Esc, or anything else that takes the island down, ends the send and
+/// answers a question with cancel. On the island's thread; the reading and the sending await on the pool.
 /// </summary>
-internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, Action<string>? log)
+internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, KeptResults results, Action<string>? log)
 {
     private const string NoProvider = "The provider in settings cannot be used. Set it up again in Settings. Nothing was sent.";
     private static PermissionGrants? grants;
     private DropResultView view = null!;
     private TaskCompletionSource<SizeChoice>? asking;
+    private TaskCompletionSource<bool>? offering;
     private SizeQuestion? question;
+    private string? skillName;
     private bool queued;
 
     public async Task RunAsync(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText)
@@ -89,10 +96,15 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         {
             session?.Cancel();
             asking?.TrySetResult(SizeChoice.Cancel);
+            offering?.TrySetResult(false);
         };
         view.Chose += i =>
         {
-            if (question is not null && asking is not null && i < DropZoneRequest.Choices(question).Count)
+            if (offering is not null)
+            {
+                offering.TrySetResult(i == 0);
+            }
+            else if (question is not null && asking is not null && i < DropZoneRequest.Choices(question).Count)
             {
                 var choice = DropZoneRequest.Choices(question)[i].Choice;
                 question = null;
@@ -115,6 +127,14 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             }
 
             var item = items[0];
+            skillName = zone == DropZone.Skill ? store.Current.DropZoneSkill : null;
+            // Paid for once: what this file already has from this zone shows first, and nothing is sent unless asked.
+            var kept = await results.Last(zone, skillName, item.Path);
+            if (!view.Open || (kept is not null && !await Offer(title, kept)))
+            {
+                return;
+            }
+
             if (Program.Configured(store, log) is not { } configured)
             {
                 Finish(new DropResult($"{title} · {item.Name}", "Nothing sent", NoProvider, true, "", [], []), ok: false);
@@ -132,7 +152,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             SkillSet? skill = null;
             if (zone == DropZone.Skill)
             {
-                string? picked = store.Current.DropZoneSkill;
+                string? picked = skillName;
                 skill = await Task.Run(() => SkillSet.Picked(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills, picked));
                 if (!view.Open)
                 {
@@ -172,13 +192,14 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             };
             running.Changed += () => Update(running, item.Name, title);
             island.Mascot.Set(MascotState.Thinking);
+            decimal before = running.SpentTodayUsd;
             await running.SendAsync();
             if (!view.Open)
             {
                 return;
             }
 
-            await Done(zone, running, item, title);
+            await Done(zone, running, item, title, config.Id, running.SpentTodayUsd - before);
         }
         catch (Exception e)
         {
@@ -212,10 +233,38 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         }
     }
 
+    /// <summary>
+    /// The result this file already has from this zone, before anything is sent, with its files that are still on the
+    /// shelf. True when the user chose to run it again; false when they closed it, which takes the island down, or
+    /// dismissed it some other way.
+    /// </summary>
+    private async Task<bool> Offer(string title, KeptResult kept)
+    {
+        log?.Invoke($"drop zone: {kept.Zone} result kept from {kept.At:O}, shown");
+        var files = shelf.Items.Where(i => kept.Files.Contains(i.Path, StringComparer.OrdinalIgnoreCase)).ToList();
+        offering = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Finish(DropZoneRequest.Kept(title, kept, [.. files.Select(ResultTile.Of)]), files, ok: true);
+        bool again = await offering.Task;
+        offering = null;
+        if (!view.Open)
+        {
+            return false;
+        }
+
+        if (!again)
+        {
+            triggers.Hide();
+            return false;
+        }
+
+        Show(new DropResult($"{title} · {kept.SourceName}", "Nothing sent", $"Reading {kept.SourceName}", false, "", [], []), busy: true);
+        return true;
+    }
+
     private SendLog NewSendLog() => new(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(store.FilePath))!, "send-log.jsonl"));
 
-    /// <summary>The result: its files on the shelf, or the renamed copy, and the panel shows them.</summary>
-    private async Task Done(DropZone zone, PaletteSession session, ShelfItem item, string title)
+    /// <summary>The result: its files on the shelf, or the renamed copy, and the panel shows them; then it is kept.</summary>
+    private async Task Done(DropZone zone, PaletteSession session, ShelfItem item, string title, string provider, decimal cost)
     {
         if (session.Status != PaletteStatus.Done)
         {
@@ -234,6 +283,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
                 : $"A copy is on the shelf. {item.Name} keeps its own name.";
             Finish(DropZoneRequest.Panel(title, item.Name, session, null, line, name is null ? null : $"Suggested name: {name}", [.. kept.Select(ResultTile.Of)]),
                 kept, ok: copy is not null);
+            Keep(kept);
             return;
         }
 
@@ -247,6 +297,11 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             var n => $"{n} files kept on the shelf.",
         };
         Finish(DropZoneRequest.Panel(title, item.Name, session, null, outcome, null, [.. added.Select(ResultTile.Of)]), added, ok: true);
+        Keep(added);
+
+        // Every finished answer was paid for, files or not; the next drop of this file on this zone shows it first.
+        void Keep(IReadOnlyList<ShelfItem> files) => _ = results.Keep(new KeptResult(zone, skillName, item.Name, item.Path, provider, session.ModelId, cost,
+            DateTimeOffset.Now, session.AnswerText, [.. files.Select(f => f.Path)]));
     }
 
     /// <summary>Session changes come in bursts while the answer streams; the panel follows once per turn of the dispatcher.</summary>

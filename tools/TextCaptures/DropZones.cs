@@ -22,6 +22,11 @@ internal static partial class Program
         var failed = new DropResult("Summarize · photo.heic", "Nothing sent", "photo.heic is an image, and llama3.2:3b does not take images. Pick a model that reads images, or leave the file out. Nothing was sent.", true, "", [], []);
         var longOne = new DropResult("Summarize · board-minutes-2026-10.docx", sent, "Kept on the shelf.", false, LongAnswer,
             [new("board-minutes-2026-10 summary.md", ResultTile.OnShelf, 0x5D6D7E)], []);
+        // As DropZoneRequest.Kept builds it, for a summary kept from an earlier drop of the same file.
+        var made = new KeptResult(DropZone.Summarize, null, "Q3-report.pdf", @"C:\Users\a\Q3-report.pdf", "api.anthropic.com", "claude-haiku-4-5", 0.0031m,
+            new DateTimeOffset(2026, 10, 14, 9, 42, 0, TimeSpan.Zero), summary.Body, []);
+        var kept = new DropResult("Summarize · Q3-report.pdf", "Nothing sent", made.Line(System.Globalization.CultureInfo.InvariantCulture), false, made.Answer,
+            summary.Tiles, ["Run again: send Q3-report.pdf to claude-haiku-4-5 again.", "Close: nothing is sent."]);
         var ask = new DropResult("Ask about it · Q3-report.pdf", "Nothing sent", "File · Q3-report.pdf is attached. Nothing is sent until you ask.", false, "Ask about Q3-report.pdf", [], []);
         return
         [
@@ -32,6 +37,7 @@ internal static partial class Program
             Result("zone-result-summary", summary),
             Result("zone-result-long", longOne),
             Result("zone-result-long-scrolled", longOne, scrolled: 1),
+            Result("zone-result-kept", kept),
             Result("zone-result-tables", tables),
             Result("zone-result-rename", rename),
             Result("zone-size-question", question),

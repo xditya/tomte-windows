@@ -94,6 +94,18 @@ public static partial class DropZoneRequest
     }
 
     /// <summary>
+    /// A result this file already has from this zone, as the panel shows it before anything is sent: the answer (for
+    /// Rename, the name it suggested), when it was made, by which model and at what cost, its files still on the shelf,
+    /// and two choices: run it again, or close, the default, which costs nothing.
+    /// </summary>
+    public static DropResult Kept(string title, KeptResult kept, IReadOnlyList<ResultTile> tiles)
+    {
+        string body = kept.Zone == DropZone.Rename && SuggestedName(kept.Answer, kept.SourceName) is { } name ? $"Suggested name: {name}" : kept.Answer;
+        string file = PreparedFile.Clean(kept.SourceName);
+        return new($"{title} · {file}", "Nothing sent", kept.Line(), false, body, tiles, [$"Run again: send {file} to {kept.Model} again.", "Close: nothing is sent."]);
+    }
+
+    /// <summary>
     /// What a dropped item counts as for a skill's <c>accepts</c> list: folders, urls (an Internet shortcut), text (a
     /// text drag), images, or files. An image is taken by a skill that takes files too.
     /// </summary>
