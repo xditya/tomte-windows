@@ -110,7 +110,7 @@ public class McpToolsTests
         await using var tools = Tools();
         await tools.ListAsync(default);
 
-        var ok = await tools.CallAsync(Call("web_search__echo", """{"text":"hi"}"""), default);
+        var ok = await tools.CallAsync(Call("web_search__echo", """{"text":"hi","unused":null}"""), default);
         Assert.Equal(new ToolResultPart("c1", "web_search__echo", "echo: hi"), ok);
         Assert.Equal(["Web Search:hi"], _fake.Calls);
 
@@ -174,6 +174,35 @@ public class McpToolsTests
         var e = await Assert.ThrowsAsync<InvalidOperationException>(() => tools.ListAsync(default));
         Assert.Contains("\"Web Search\" did not start: the command was not found", e.Message);
         Assert.Equal(1, tools.Running);
+    }
+
+    [Fact]
+    public async Task HttpServersGetTheHeaderFromCredentialManager()
+    {
+        var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        int port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        probe.Stop();
+        using var listener = new System.Net.HttpListener { Prefixes = { $"http://localhost:{port}/mcp/" } };
+        listener.Start();
+        var server = new McpServerSettings { Name = $"test-{Guid.NewGuid():N}", Transport = McpTransport.Http, Url = $"http://localhost:{port}/mcp/", HeaderName = "X-Api-Key" };
+        CredentialStore.Save(server.CredentialId, "secret-value");
+        try
+        {
+            var request = listener.GetContextAsync();
+            await using var tools = new McpTools([server]);
+            var listing = tools.ListAsync(default);
+            var context = await request;
+            Assert.Equal("secret-value", context.Request.Headers["X-Api-Key"]);
+            context.Response.StatusCode = 401;
+            context.Response.Close();
+            var e = await Assert.ThrowsAsync<InvalidOperationException>(() => listing);
+            Assert.DoesNotContain("secret-value", e.Message);
+        }
+        finally
+        {
+            CredentialStore.Delete(server.CredentialId);
+        }
     }
 
     [Fact]

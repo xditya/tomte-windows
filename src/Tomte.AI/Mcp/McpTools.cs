@@ -120,8 +120,9 @@ public sealed class McpTools : IAsyncDisposable
                 client = _clients[server.Name];
             }
 
+            // Small models send null for optional arguments they do not use; servers read that as a wrong type.
             var args = call.Input.ValueKind == JsonValueKind.Object
-                ? call.Input.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone())
+                ? call.Input.EnumerateObject().Where(p => p.Value.ValueKind != JsonValueKind.Null).ToDictionary(p => p.Name, p => (object?)p.Value.Clone())
                 : [];
             var result = await client.CallToolAsync(tool.Name, args, cancellationToken: ct);
             return new ToolResultPart(call.Id, call.Name, ResultText(result), result.IsError == true);
