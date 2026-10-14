@@ -548,7 +548,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var run = timer.Run ?? finished;
         if (machine.State == IslandState.Compact && run is not null && !activity.HasFlag(IslandActivity.Rambling))
         {
-            ring.Show(run, DateTimeOffset.Now, island.Scale);
+            ring.Show(run, DateTimeOffset.Now, island.Scale, island.Mascot.Enabled);
         }
         else
         {
