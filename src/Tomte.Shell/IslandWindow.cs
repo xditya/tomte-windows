@@ -323,7 +323,10 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>
     /// A press at this island point on a target that moves the island: true once the pointer has gone the system's drag
     /// distance (Win32 runs that loop), and the island then follows it along the top edge until the button comes up, as
-    /// for a press <see cref="Grabs"/> holds; false when the button came up first, which is a click.
+    /// for a press <see cref="Grabs"/> holds; false when the button came up first, which is a click. It returns true with
+    /// the button still down: the follow goes on under the island's capture, and works only because the window
+    /// procedure hands the held press's moves, release and capture change to <see cref="Grab"/> before the interaction
+    /// host sees them.
     /// </summary>
     public bool Drag(Vector2 at)
     {
@@ -1242,6 +1245,8 @@ internal sealed unsafe class IslandWindow : IDisposable
             case PInvoke.WM_MOUSEWHEEL:
                 return Guarded(i => i.Pointer(message, wParam.Value, lParam.Value));
             case PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP or PInvoke.WM_CAPTURECHANGED when instance is { grabbing: true }:
+                // Before the interaction host's case below, and it must stay before it: a target's drag (Drag) hands
+                // the held press back to the host with the button still down, and the follow lives on these messages.
                 return Guarded(i => i.Grab(message));
             case PInvoke.WM_MOUSELEAVE:
                 return Interact(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);

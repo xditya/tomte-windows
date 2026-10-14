@@ -486,14 +486,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         public event Action? TargetsChanged;
 
-        public IReadOnlyList<Target> Targets =>
-            owner.machine.State == IslandState.Compact && !owner.activity.HasFlag(IslandActivity.Rambling)
-                ? CompactLayout.Targets(owner.island.Heading, owner.island.Mascot.Enabled)
-                : [];
+        // Read on every pointer move, so built only when something changes.
+        public IReadOnlyList<Target> Targets { get; private set; } = [];
 
-        /// <summary>The state, the shape or the rambling changed: register while in Compact, and say so.</summary>
+        /// <summary>The state, the shape or the rambling changed: the targets again, registered while in Compact, and say so.</summary>
         public void Changed()
         {
+            Targets = owner.machine.State == IslandState.Compact && !owner.activity.HasFlag(IslandActivity.Rambling)
+                ? CompactLayout.Targets(owner.island.Heading, owner.island.Mascot.Enabled)
+                : [];
             if (owner.machine.State == IslandState.Compact)
             {
                 owner.island.Interaction.Register(this, p => p, p => p);

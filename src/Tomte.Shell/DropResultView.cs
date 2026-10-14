@@ -189,7 +189,8 @@ internal sealed class DropResultView : IInteractive
             {
                 Process.Start(new ProcessStartInfo(files[tile].Path) { UseShellExecute = true })?.Dispose();
             }
-            catch (Exception e) when (e is Win32Exception or InvalidOperationException)
+            // What the shelf's own Open catches.
+            catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
             {
                 log?.Invoke($"zone result: open failed: {e.Message}");
             }
