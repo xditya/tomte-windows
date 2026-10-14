@@ -183,6 +183,19 @@ public class GlanceTests
         Assert.Equal("18:41 · Summary ready", Glance(one with { Paused = false }));
     }
 
+    [Fact]
+    public void ATwelveHourCultureKeepsAJobsTimeWithItsPm()
+    {
+        var us = CultureInfo.GetCultureInfo("en-US");
+        string now = CompactRules.TimeOfDay(Now, us), at = CompactRules.TimeOfDay(Now.AddMinutes(19), us);
+        Assert.EndsWith("PM", now);
+        Assert.EndsWith("PM", at);
+        Assert.Equal($"{now} · Weekly report at {at}", CompactRules.Glance(Now, All, 1000, Chars, us));
+        // "6:41 PM · " and " at 7:00 PM" take 21 of 28 characters; the name gives way, both times stay whole.
+        Assert.Equal($"{now} · Weekly… at {at}", CompactRules.Glance(Now, All, 28 * 7, Chars, us));
+        Assert.Equal(now, CompactRules.Glance(Now, All, 22 * 7, Chars, us));
+    }
+
     [Theory]
     [InlineData("en-GB", "Wed 14 Oct")]
     [InlineData("en-US", "Wed Oct 14")]
