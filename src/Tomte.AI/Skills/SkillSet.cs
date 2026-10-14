@@ -74,6 +74,20 @@ public sealed class SkillSet
             .Select(key => (key, skill: Skill.Read(folder, NameOf(key), listScripts: false)))
             .Where(s => s.skill.Problem is null && s.skill.Key == s.key).Select(s => s.skill)]);
 
+    /// <summary>
+    /// The skill the user picked for the drop zones' custom slot, alone: loaded only when it is on, unchanged since and
+    /// registers a drop zone; otherwise an empty set.
+    /// </summary>
+    public static SkillSet Picked(string folder, IEnumerable<string> enabled, string? name)
+    {
+        var set = Load(folder, enabled.Where(key => name is not null && NameOf(key) == name));
+        return set.DropZones.Count == 0 ? new(folder, []) : set;
+    }
+
+    /// <summary>What Settings offers for the custom slot: the listed skills that are on, load without a problem and register a drop zone.</summary>
+    public static IReadOnlyList<Skill> DropZoneChoices(IEnumerable<Skill> listed, IEnumerable<string> enabled) =>
+        [.. listed.Where(s => s.DropZone is not null && s.Problem is null && IsOn(enabled, s))];
+
     /// <summary>The skill name in an "on" key: the part before #.</summary>
     public static string NameOf(string key) => key.Split('#')[0];
 

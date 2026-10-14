@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-43","object":"chat.completion.chunk","created":1791990003,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"\"Q3 revenue report"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-43","object":"chat.completion.chunk","created":1791990003,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":".txt\""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-43","object":"chat.completion.chunk","created":1791990003,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":205,"completion_tokens":7,"total_tokens":212}}
+
+data: [DONE]
+

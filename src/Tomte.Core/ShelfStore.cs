@@ -195,12 +195,12 @@ public sealed class ShelfStore : IShelf
     /// <summary>
     /// Takes a drop. Called inside the drop on the island's thread: a path in a temporary folder is taken here and now,
     /// because its source may delete it as soon as the drop returns. Everything else is queued. The task completes when
-    /// every item, a large temporary copy included, is on the shelf.
+    /// every item, a large temporary copy included, is on the shelf, with the items as they were added.
     /// </summary>
-    public Task Accept(DroppedItems drop)
+    public Task<IReadOnlyList<ShelfItem>> Accept(DroppedItems drop)
     {
         var entries = new List<ShelfEntry>();
-        var later = new List<Task>();
+        var later = new List<Task<IReadOnlyList<ShelfItem>>>();
         var temp = TempRoots.Count > 0 ? TempRoots : TempFolders.Value;
         foreach (string path in drop.Paths)
         {
@@ -248,13 +248,42 @@ public sealed class ShelfStore : IShelf
 
         if (entries.Count > 0)
         {
-            later.Add(Run(() => AddAll(entries)));
+            later.Add(Add(entries));
         }
 
-        return Task.WhenAll(later);
+        return All(later);
+
+        static async Task<IReadOnlyList<ShelfItem>> All(List<Task<IReadOnlyList<ShelfItem>>> tasks) => [.. (await Task.WhenAll(tasks)).SelectMany(added => added)];
     }
 
-    public Task Add(IReadOnlyList<ShelfEntry> entries) => Run(() => AddAll(entries));
+    /// <summary>Queued; the task gives the items as they were added, none when the disk or the database refused them.</summary>
+    public async Task<IReadOnlyList<ShelfItem>> Add(IReadOnlyList<ShelfEntry> entries)
+    {
+        IReadOnlyList<ShelfItem> added = [];
+        await Run(() => added = AddAll(entries));
+        return added;
+    }
+
+    /// <summary>
+    /// A copy of a file as a new item called <paramref name="name"/> (made unique), in a folder of the shelf's own. The
+    /// file it came from is only read: a copy, never a link, so changing one never changes the other. Null when the
+    /// copy failed; nothing is left behind then.
+    /// </summary>
+    public async Task<ShelfItem?> AddCopy(string source, string name)
+    {
+        IReadOnlyList<ShelfItem> added = [];
+        await Run(() =>
+        {
+            string unique = Unique(SafeName(name), rows.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase));
+            string copy = IntoSlot(unique, target =>
+            {
+                File.Copy(source, target);
+                return true;
+            })!;
+            added = AddAll([new ShelfEntry(ShelfKind.Copy, unique, copy)]);
+        });
+        return added.Count > 0 ? added[0] : null;
+    }
 
     public Task Remove(IReadOnlyList<ShelfItem> items)
     {
@@ -639,7 +668,7 @@ public sealed class ShelfStore : IShelf
         transaction.Commit();
     }
 
-    private void AddAll(IReadOnlyList<ShelfEntry> entries)
+    private List<ShelfItem> AddAll(IReadOnlyList<ShelfEntry> entries)
     {
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var now = DateTimeOffset.UtcNow;
@@ -681,6 +710,7 @@ public sealed class ShelfStore : IShelf
         added.Reverse();
         rows.InsertRange(0, added);
         log?.Invoke($"shelf: added {string.Join(", ", added.Select(i => $"{i.Name} ({i.Kind})"))} in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
+        return added;
     }
 
     /// <summary>Marks the rows removed. Their files stay until the next process sweeps them.</summary>
@@ -804,7 +834,7 @@ public sealed class ShelfStore : IShelf
     /// inside the drop, with delete sharing: its source can still delete it, but the data stays readable until the copy
     /// is done. It is opened before the shelf folder is made, so a file that cannot be read leaves no folder behind.
     /// </summary>
-    private Task TakeLargeTemporary(string path, string name)
+    private Task<IReadOnlyList<ShelfItem>> TakeLargeTemporary(string path, string name)
     {
         FileStream? source = File.Exists(path) ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16) : null;
         string target = Path.Combine(Slot(), SafeName(name));
@@ -827,13 +857,13 @@ public sealed class ShelfStore : IShelf
                     CopyTree(path, target, link: false, long.MaxValue);
                 }
 
-                return Run(() => AddAll([new ShelfEntry(ShelfKind.Copy, name, target)]));
+                return Add([new ShelfEntry(ShelfKind.Copy, name, target)]);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 log?.Invoke($"shelf: could not copy {path} in, keeping a reference: {e.Message}");
                 TryDelete(Path.GetDirectoryName(target)!);
-                return Run(() => AddAll([new ShelfEntry(ShelfKind.Reference, name, path)]));
+                return Add([new ShelfEntry(ShelfKind.Reference, name, path)]);
             }
         });
     }

@@ -51,8 +51,8 @@ internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
 
     public event Action? Left;
 
-    /// <summary>The cursor's screen x on every DragOver, for the mascot's lean.</summary>
-    public event Action<int>? Over;
+    /// <summary>The cursor in screen pixels on every DragOver and at the drop, for the mascot's lean and the zone under it.</summary>
+    public event Action<int, int>? Over;
 
     /// <summary>Raised inside Drop, on the island's thread, with everything already read.</summary>
     public event Action<DroppedItems>? Dropped;
@@ -109,7 +109,7 @@ internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
             helper->DragOver((System.Drawing.Point*)&pt, *effect);
         }
 
-        Over?.Invoke(pt.x);
+        Over?.Invoke(pt.x, pt.y);
         return HRESULT.S_OK;
     }
 
@@ -127,6 +127,9 @@ internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
 
     public HRESULT Drop(IDataObject* dataObject, MODIFIERKEYS_FLAGS keys, POINTL pt, DROPEFFECT* effect)
     {
+        // The zone under the drop point decides where the drop goes, so the point is heard before Dropped is raised.
+        Over?.Invoke(pt.x, pt.y);
+
         // The effect the source hears is decided after the read: a source told "copy" for a drop that kept nothing
         // would be wrong.
         var final = Effect(keys);

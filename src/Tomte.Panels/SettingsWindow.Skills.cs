@@ -74,6 +74,8 @@ public sealed partial class SettingsWindow
                 var row = Row(name, skill.Description.Length == 0 ? null : Note(skill.Description), enabled);
                 skillsList.Children.Add(new StackPanel { Spacing = 8, Children = { row, details } });
             }
+
+            skillsList.Children.Add(SlotRow(skills));
         }
         catch (Exception e)
         {
@@ -82,12 +84,27 @@ public sealed partial class SettingsWindow
         }
     }
 
+    /// <summary>The skill behind the custom drop zone: none, or one of the skills that are on and register a drop zone.</summary>
+    private Grid SlotRow(IReadOnlyList<Skill> skills)
+    {
+        var choices = SkillSet.DropZoneChoices(skills, store.Current.EnabledSkills);
+        var names = choices.Select(s => s.Name).ToList();
+        var box = new ComboBox
+        {
+            ItemsSource = new[] { "None" }.Concat(choices.Select(s => $"{McpTools.Clean(s.Name, McpTools.MaxName)}: {McpTools.Clean(s.DropZone!.Label, 40)}")).ToArray(),
+            SelectedIndex = names.IndexOf(store.Current.DropZoneSkill ?? "") + 1,
+            MinWidth = 200,
+        };
+        box.SelectionChanged += (_, _) => Save(s => s with { DropZoneSkill = box.SelectedIndex <= 0 ? null : names[box.SelectedIndex - 1] });
+        return Row("Custom drop zone", Note("The fifth zone while you drag a file toward the top of the screen, when an AI provider is set up. A drop on it sends the file to your provider with the skill you pick here. Only skills that are on and add a drop zone are listed."), box);
+    }
+
     private static IEnumerable<string> Details(Skill skill)
     {
         if (skill.Command is { } command)
             yield return $"Adds the palette command \"{command.Name}\", which asks: {command.Text}";
         if (skill.DropZone is { } zone)
-            yield return $"Adds the drop zone \"{zone.Label}\" for {string.Join(", ", zone.Accepts)}. Drop zones are not built yet, so it does not show while you drag.";
+            yield return $"Adds the drop zone \"{zone.Label}\" for {string.Join(", ", zone.Accepts)}. It shows while you drag once you pick it as the custom drop zone below.";
         if (skill.Scripts.Count > 0)
             yield return $"Ships scripts ({string.Join(", ", skill.Scripts.Take(3).Select(s => McpTools.Clean(s, 80)))}{(skill.Scripts.Count > 3 ? $" and {skill.Scripts.Count - 3} more" : "")}). Tomte never runs them: it refuses to open a file from the skills folder.";
         if (skill.IgnoredKeys.Count > 0)

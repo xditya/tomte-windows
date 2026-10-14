@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-44","object":"chat.completion.chunk","created":1791990004,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"## Notes\n\n- Revenue up 12% in Q3."},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-44","object":"chat.completion.chunk","created":1791990004,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":260,"completion_tokens":12,"total_tokens":272}}
+
+data: [DONE]
+

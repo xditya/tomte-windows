@@ -353,7 +353,7 @@ internal static partial class Program
         // Virtual files are written into the shelf folder as the drop reads them; the drop then goes to the shelf.
         triggers.Drops.Receive = shelf.Receive;
         triggers.Dropped += drop => shelf.Accept(drop);
-        _ = new ShelfDropSurface(island, triggers.Machine, triggers.Drops, text);
+        _ = new DropZones(island, triggers, shelf, text, store, log);
         return new ShelfPanel(island, triggers, shelf, text, log);
     }
 
