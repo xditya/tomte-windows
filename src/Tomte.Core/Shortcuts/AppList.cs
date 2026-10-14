@@ -45,9 +45,8 @@ public static class AppList
             PInvoke.SHCreateItemFromParsingName("shell:AppsFolder", null, out folder).ThrowOnFailure();
             folder!.BindToHandler(null, PInvoke.BHID_EnumItems, out items);
             var one = new IShellItem[1];
-            uint fetched = 0;
-            // The end of the list is a success with nothing fetched.
-            for (items!.Next(1, one, &fetched); fetched == 1; items.Next(1, one, &fetched))
+            // S_FALSE ends the list; a failure ends it too, never reusing the item released last time round.
+            for (uint fetched = 0; items!.Next(1, one, &fetched) == HRESULT.S_OK && fetched == 1; fetched = 0)
             {
                 try
                 {
