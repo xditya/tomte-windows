@@ -280,6 +280,29 @@ public sealed class StorageTests : IDisposable
     }
 
     [Fact]
+    public void DamageInOneFeaturesIndexSetsNothingAside()
+    {
+        var db = new TomteDb(DbPath);
+        db.Open("shortcuts", Shortcuts).Dispose();
+
+        // A full-text index whose own storage was emptied: its self-check reports "malformed" with a longer code (267),
+        // not the plain 11 that means the file itself is damaged.
+        string[] search =
+        [
+            "CREATE VIRTUAL TABLE shelf_search USING fts5(body)",
+            "INSERT INTO shelf_search(body) VALUES ('one two three')",
+            "DELETE FROM shelf_search_data",
+            "INSERT INTO shelf_search(shelf_search) VALUES ('integrity-check')",
+        ];
+        var error = Assert.Throws<SqliteException>(() => db.Open("shelf", search));
+        Assert.Equal((11, 267), (error.SqliteErrorCode, error.SqliteExtendedErrorCode));
+
+        Assert.Equal(["tomte.db"], Directory.GetFiles(dir).Select(Path.GetFileName));
+        using var connection = db.Open("shortcuts", Shortcuts);
+        Assert.Equal("shortcuts=1", Versions(connection));
+    }
+
+    [Fact]
     public async Task ConnectionsMeetingADamagedFileKeepOneCopy()
     {
         Directory.CreateDirectory(dir);

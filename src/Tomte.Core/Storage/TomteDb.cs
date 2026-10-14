@@ -78,7 +78,9 @@ public sealed class TomteDb(string? path = null)
         {
             return Connect(feature, steps);
         }
-        catch (SqliteException e) when (e.SqliteErrorCode is SQLitePCL.raw.SQLITE_NOTADB or SQLitePCL.raw.SQLITE_CORRUPT)
+        // The two plain codes only. A longer code, such as a damaged full-text index reported from one feature's step, is
+        // that feature's trouble and must not take every other feature's data with it.
+        catch (SqliteException e) when (e.SqliteExtendedErrorCode is SQLitePCL.raw.SQLITE_NOTADB or SQLitePCL.raw.SQLITE_CORRUPT)
         {
             return null;
         }
