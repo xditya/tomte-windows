@@ -153,36 +153,30 @@ public sealed class StorageTests : IDisposable
     }
 
     [Fact]
-    public void ProcessesMigratingAtOnceRunEachStepOnce()
+    public async Task ProcessesMigratingAtOnceRunEachStepOnce()
     {
-        // Each child is this test assembly run as a program (see SecondProcess); all of them wait for the same signal.
+        // All four wait for the same signal.
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         string signal = "tomte-tests-" + Guid.NewGuid().ToString("N");
         using var go = new EventWaitHandle(false, EventResetMode.ManualReset, signal);
-        var children = Enumerable.Range(0, 4).Select(_ => Process.Start(new ProcessStartInfo("dotnet", [typeof(StorageTests).Assembly.Location, DbPath, signal])
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        })!).ToArray();
+        var children = Enumerable.Range(0, 4).Select(_ => new Child("migrate", DbPath, signal)).ToArray();
         try
         {
-            Assert.All(children, child => Assert.Equal("ready", child.StandardOutput.ReadLine()));
-            go.Set();
-            Assert.All(children, child =>
+            foreach (var child in children)
             {
-                Assert.True(child.WaitForExit(TimeSpan.FromSeconds(60)), "still running");
-                Assert.True(child.ExitCode == 0, child.StandardError.ReadToEnd());
-            });
+                Assert.Equal("ready", await child.Line(limit.Token));
+            }
+
+            go.Set();
+            foreach (var child in children)
+            {
+                await child.Finish(limit.Token);
+            }
         }
         finally
         {
             foreach (var child in children)
             {
-                if (!child.HasExited)
-                {
-                    child.Kill();
-                }
-
                 child.Dispose();
             }
         }
@@ -277,19 +271,71 @@ public sealed class StorageTests : IDisposable
         command.CommandText = sql;
         command.ExecuteNonQuery();
     }
+
+    /// <summary>This test assembly run as a program (see SecondProcess). Killed on dispose if it is still running.</summary>
+    private sealed class Child : IDisposable
+    {
+        private readonly Process process;
+        private readonly Task<string> errors;
+
+        public Child(params string[] arguments)
+        {
+            process = Process.Start(new ProcessStartInfo("dotnet", [typeof(StorageTests).Assembly.Location, .. arguments])
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            })!;
+            // Read while it runs, so a child that fails loudly cannot block on a full pipe.
+            errors = process.StandardError.ReadToEndAsync();
+        }
+
+        public async Task<string> Line(CancellationToken limit) =>
+            await process.StandardOutput.ReadLineAsync(limit) ?? throw new InvalidOperationException("The child exited: " + await errors);
+
+        public async Task Finish(CancellationToken limit)
+        {
+            await process.WaitForExitAsync(limit);
+            Assert.True(process.ExitCode == 0, await errors);
+        }
+
+        public void Dispose()
+        {
+            if (!process.HasExited)
+            {
+                process.Kill();
+            }
+
+            process.Dispose();
+        }
+    }
 }
 
 /// <summary>
-/// The test assembly run as a program: `dotnet Tomte.Tests.dll (database path) (signal name)` is one more
-/// process that migrates when the signal is set. The test runner never calls this.
+/// The test assembly run as a program, `dotnet Tomte.Tests.dll (what to do) (database path) ...`, for the
+/// tests that need a second process. The test runner never calls this.
 /// </summary>
 internal static class SecondProcess
 {
-    private static void Main(string[] args)
+    private static int Main(string[] args)
     {
-        using var go = EventWaitHandle.OpenExisting(args[1]);
-        Console.WriteLine("ready");
-        go.WaitOne();
-        new TomteDb(args[0]).Open("slow", StorageTests.Slow).Dispose();
+        switch (args[0])
+        {
+            case "migrate":
+                using (var go = EventWaitHandle.OpenExisting(args[2]))
+                {
+                    Console.WriteLine("ready");
+                    // Bounded, so a child does not outlive a test host that died.
+                    if (!go.WaitOne(TimeSpan.FromSeconds(60)))
+                    {
+                        return 1;
+                    }
+                }
+
+                new TomteDb(args[1]).Open("slow", StorageTests.Slow).Dispose();
+                return 0;
+            default:
+                return 2;
+        }
     }
 }
