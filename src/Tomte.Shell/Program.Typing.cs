@@ -135,6 +135,9 @@ internal static partial class Program
         // Read now, while the island is still not the foreground window.
         nint foreground = front ?? WindowContext.Foreground();
         var selection = front is null ? Task.Run(SelectionReader.Read) : Task.FromResult<string?>(null);
+        // The app's name as people know it, for what the chips say: its exe's version details, a file read, so off this
+        // thread too and in the same wait; the process name stands in when it is late.
+        var product = Task.Run(() => WindowContext.Product(foreground, WindowContext.Describe(foreground).App));
         // Skills come from beside the settings file on each open, only those turned on, so one added or turned on since
         // the last open is there; their text goes to the provider only with a send.
         var skills = Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
@@ -143,7 +146,7 @@ internal static partial class Program
         var shelf = Jobs.Shelf?.Load().ContinueWith(_ => { }, TaskScheduler.Default) ?? Task.CompletedTask;
         // Keys typed before the prompt takes them go to the app in front, so the selection and the skills get the same
         // short wait; what is not read by then is left out of this open.
-        await Task.WhenAll(shelf, Task.WhenAny(Task.WhenAll(selection, skills), Task.Delay(SelectionWait)));
+        await Task.WhenAll(shelf, Task.WhenAny(Task.WhenAll(selection, skills, product), Task.Delay(SelectionWait)));
         if (triggers.Machine.State != IslandState.Palette)
         {
             return;
@@ -155,7 +158,7 @@ internal static partial class Program
         }
 
         var session = Session(triggers, store, configured, dry: debug, foreground, selection.IsCompletedSuccessfully ? selection.Result : null,
-            skills.IsCompletedSuccessfully ? skills.Result : null, lasso);
+            skills.IsCompletedSuccessfully ? skills.Result : null, lasso, product.IsCompletedSuccessfully ? product.Result : null);
         if (!debug)
         {
             _ = DescribeAsync(session, configured.Provider, configured.Config);
@@ -205,7 +208,7 @@ internal static partial class Program
     /// (started on the first send, stopped when the palette closes) and, when Settings turned it on, UI Automation on the
     /// window that was in front, every list and action of it asked.
     /// </summary>
-    private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection, SkillSet? skills, ContextChip? lasso)
+    private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection, SkillSet? skills, ContextChip? lasso, string? product)
     {
         var (app, title) = WindowContext.Describe(foreground);
         // The real shelf, so the Shelf chip offers what is on it and a file the AI makes stays there.
@@ -215,7 +218,7 @@ internal static partial class Program
         // One per store for the process: each holds a handler on the store.
         paletteGrants ??= new PermissionGrants(store);
         var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, triggers.Timer);
-        var chips = ContextChips.For(lasso, selection, app, title, ct => WindowCapture.CapturePngAsync(foreground, ct), shelf, Scratchpad);
+        var chips = ContextChips.For(lasso, selection, app, title, ct => WindowCapture.CapturePngAsync(foreground, ct), shelf, Scratchpad, product);
         var settings = store.Current;
         var session = new PaletteSession(configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants, chips)
         {

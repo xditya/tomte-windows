@@ -261,10 +261,10 @@ internal static unsafe partial class Program
             // Nothing selected, so no Selection chip; the rest off. Send is on for the typed question.
             new("palette-prompt", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("What does this error mean?", Chips(false), [])), c => Palette(c, "What does this error mean?", Chips(false), "Nothing sent", [], 0, 0.03m)),
             new("palette-empty", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("", Chips(false), [])), c => Palette(c, "", Chips(false), "Nothing sent", [], 0, 0.03m)),
-            new("palette-chips-some-on", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text", Chips(true, ChipIcon.Selection, ChipIcon.Screenshot), [])), c => Palette(c, "Summarize the selected text", Chips(true, ChipIcon.Selection, ChipIcon.Screenshot), "Nothing sent", [], 0, 0.03m)),
-            new("palette-region", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Which game is this?", RegionChips(), [])), c => Palette(c, "Which game is this?", RegionChips(), "Nothing sent", [], 0, 0.03m)),
+            new("palette-chips-some-on", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text", Chips(true, ChipIcon.Selection, ChipIcon.Screenshot), [], sends: SomeOn)), c => Palette(c, "Summarize the selected text", Chips(true, ChipIcon.Selection, ChipIcon.Screenshot), "Nothing sent", [], 0, 0.03m, sends: SomeOn)),
+            new("palette-region", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Which game is this?", RegionChips(), [], sends: RegionOn)), c => Palette(c, "Which game is this?", RegionChips(), "Nothing sent", [], 0, 0.03m, sends: RegionOn)),
             // Sending: the chips and Send dim.
-            new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), Streaming)), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m, sending: true)),
+            new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), Streaming, sends: SelectionOn)), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m, sending: true, sends: SelectionOn)),
             new("palette-ai-off", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0)),
             new("palette-long-answer-scrolled", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight), c => Palette(c, "How do I fix a stuck Windows update?", Chips(false), "Sent to ollama · llama3.2:3b", Long, 2, 0.04m, scrolled: 0.5f)),
             // A question opens during a send: Run dim while its read guard runs, then ready.
@@ -583,6 +583,11 @@ internal static unsafe partial class Program
     // Circle-to-ask's: the region first and on, then the others.
     private static ChipSpec[] RegionChips() => [new("Region", ChipIcon.Region, true), .. Chips(true)];
 
+    // The line under the chips for those scenes, as the chips word it.
+    private const string SomeOn = "Sends your question, the text selected in Notepad and a screenshot of Notepad";
+    private const string RegionOn = "Sends your question and the region you circled";
+    private const string SelectionOn = "Sends your question and the text selected in Notepad";
+
     private static readonly (string, TextStyle)[] Streaming =
     [
         ("Read the selection", PaletteLayout.StepText),
@@ -611,7 +616,7 @@ internal static unsafe partial class Program
 
     // The palette's height for a scene, from the prompt's own height (the text box's at 150%, or what was said by voice),
     // the chips, the question and the answer, as the view lays it out.
-    private static double PaletteHeight(string prompt, ChipSpec[] chips, (string Text, TextStyle Style)[] answer, Confirmation? confirm = null, bool voice = false)
+    private static double PaletteHeight(string prompt, ChipSpec[] chips, (string Text, TextStyle Style)[] answer, Confirmation? confirm = null, bool voice = false, string sends = "")
     {
         var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, send: !voice);
         float text;
@@ -626,7 +631,7 @@ internal static unsafe partial class Program
             text = (float)(probe.ContentHeight / 1.5);
         }
 
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: !voice);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: !voice, sends);
         return layout.Height(layout.Answer(answer).Height);
     }
 
@@ -635,7 +640,7 @@ internal static unsafe partial class Program
     // shows in its band, clipped there and scrolled to <paramref name="scrolled"/> of its range (1 is the end, where a
     // streaming answer stays). In a typed palette the box has the keys. While <paramref name="sending"/> the chips and
     // Send are dimmed; <paramref name="run"/> is Run's opacity, dim while its read guard runs.
-    private static void Palette(Canvas c, string? prompt, ChipSpec[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false, bool sending = false, float run = 1)
+    private static void Palette(Canvas c, string? prompt, ChipSpec[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false, bool sending = false, float run = 1, string sends = "")
     {
         var origin = new Vector2((float)(-PanelSize.PaletteWidth / 2), 0);
         c.Pill();
@@ -657,7 +662,7 @@ internal static unsafe partial class Program
         }
 
         // As the view does it: the prompt's height first, then the box grows to it and the rest follows.
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: typed);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: typed, sends);
         var card = layout.Prompt;
         c.RoundRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
         c.Stroke(Offset(card, origin), PaletteLayout.PromptCorner, typed ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine, 1);
@@ -694,6 +699,7 @@ internal static unsafe partial class Program
         // The chips' shapes in one layer and their names on top, all dimmed while sending, as the view's chip layer is.
         float dim = sending ? StateLook.DisabledOpacity : 1;
         c.Text(layout.IncludeLabel, origin, dim);
+        c.Text(layout.SendsLine, origin, dim);
         c.Layer(dim);
         for (int i = 0; i < layout.Chips.Count; i++)
         {

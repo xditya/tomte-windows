@@ -39,6 +39,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
     private PaletteLayout layout;
     private float laidText = -1;
     private List<ChipSpec> laidChips = [];
+    private string laidSends = "";
     private List<ContextChip> shownChips = [];
     private IReadOnlyList<Target> targets = [];
     private readonly ContainerVisual root, chipLayer;
@@ -47,7 +48,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
     private readonly CompositionColorBrush cardLine;
     private readonly List<ChipSlot> slots = [];
     private readonly List<TextVisual> runs = [];
-    private readonly TextVisual placeholder, provider, spend, include;
+    private readonly TextVisual placeholder, provider, spend, include, sendsLine;
     private readonly ShapeVisual? sendVisual;
     private readonly CompositionRoundedRectangleGeometry? sendButton;
     private readonly CompositionContainerShape? sendArrow;
@@ -70,8 +71,13 @@ internal sealed class PaletteView : IDisposable, IInteractive
     private readonly Dictionary<ConfirmButton, AskButton> buttons = [];
 
     // The question whose read guard the yes buttons show, and the one a yes counts for once it has run out.
+    // The questions opened so far, which numbers the buttons' ids.
     private ToolRequest? guarded, readable;
+    private int questions;
     private DispatcherQueueTimer? readTimer;
+
+    // What the targets were last built from: rebuilt only when one of these changes, not for every streamed word.
+    private (PaletteLayout? Layout, float Height, bool Sending, bool Readable, bool CanSend) targeted;
 
     /// <param name="send">What Enter does with the prompt's text; null for a palette that only shows (voice, a driven run).</param>
     /// <param name="question">The session's open question, drawn with its buttons; null where nobody can answer (a driven run).</param>
@@ -105,6 +111,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
         root.Children.InsertAtTop(chipLayer);
         chipShapes = Shapes(chipLayer);
         include = text.Create(chipLayer);
+        sendsLine = text.Create(chipLayer);
         // The answer's runs sit in one container clipped to the answer's band and moved by the scroll.
         band = c.CreateContainerVisual();
         band.Clip = c.CreateInsetClip();
@@ -222,9 +229,9 @@ internal sealed class PaletteView : IDisposable, IInteractive
         {
             chip.On = !chip.On;
         }
-        else
+        else if (PaletteLayout.ButtonFor(id, questions) is { } button)
         {
-            Answer(Enum.Parse<ConfirmButton>(id));
+            Answer(button);
         }
 
         Update();
@@ -263,15 +270,16 @@ internal sealed class PaletteView : IDisposable, IInteractive
         // A chip with nothing to add (no selection, an empty shelf, a window that could not be read) is not shown.
         shownChips = session is null ? [] : [.. session.Chips.Where(chip => chip.Available)];
         List<ChipSpec> chips = [.. shownChips.Select(chip => chip.Spec)];
+        string sends = ContextChips.Summary(shownChips);
         var asked = question?.Asked;
         // Enter answers only while the prompt box has the keys; the line says so, and the card's outline shows it.
         bool focused = prompt is not null && focus?.Focused == prompt;
         var keys = !typed ? ConfirmKeys.Voice : focused ? ConfirmKeys.Prompt : ConfirmKeys.Pointer;
-        if (promptText != laidText || !chips.SequenceEqual(laidChips) || !ReferenceEquals(asked, laidAsk) || keys != laidKeys)
+        if (promptText != laidText || !chips.SequenceEqual(laidChips) || sends != laidSends || !ReferenceEquals(asked, laidAsk) || keys != laidKeys)
         {
-            (laidText, laidChips, laidAsk, laidKeys) = (promptText, chips, asked, keys);
+            (laidText, laidChips, laidSends, laidAsk, laidKeys) = (promptText, chips, sends, asked, keys);
             confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, keys), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive);
-            layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm, send: sendVisual is not null);
+            layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm, send: sendVisual is not null, sends);
         }
 
         var box = layout.Prompt;
@@ -353,7 +361,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
         }
 
         prompt?.Dispose();
-        foreach (var visual in slots.Select(s => s.Label).Concat(runs).Concat(buttons.Values.Select(b => b.Label)).Append(placeholder).Append(provider).Append(spend).Append(include))
+        foreach (var visual in slots.Select(s => s.Label).Concat(runs).Concat(buttons.Values.Select(b => b.Label)).Append(placeholder).Append(provider).Append(spend).Append(include).Append(sendsLine))
         {
             visual.Dispose();
         }
@@ -410,24 +418,8 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
     // One drawn chip: its pill with a fill and an outline, its picture and mark in one ink, its name, and which picture
     // and mark are drawn now. A slot past the chips shown is drawn empty.
-    private sealed class ChipSlot(CompositionRoundedRectangleGeometry pill, CompositionSpriteShape stroke, CompositionColorBrush fill, CompositionColorBrush outline, CompositionColorBrush ink, CompositionContainerShape icon, CompositionContainerShape mark, TextVisual label)
+    private sealed record ChipSlot(CompositionRoundedRectangleGeometry Pill, CompositionSpriteShape Stroke, CompositionColorBrush Fill, CompositionColorBrush Outline, CompositionColorBrush Ink, CompositionContainerShape Icon, CompositionContainerShape Mark, TextVisual Label)
     {
-        public CompositionRoundedRectangleGeometry Pill { get; } = pill;
-
-        public CompositionSpriteShape Stroke { get; } = stroke;
-
-        public CompositionColorBrush Fill { get; } = fill;
-
-        public CompositionColorBrush Outline { get; } = outline;
-
-        public CompositionColorBrush Ink { get; } = ink;
-
-        public CompositionContainerShape Icon { get; } = icon;
-
-        public CompositionContainerShape Mark { get; } = mark;
-
-        public TextVisual Label { get; } = label;
-
         public (ChipIcon Icon, bool On)? Drawn { get; set; }
     }
 
@@ -452,6 +444,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
     {
         var row = layout.Chips;
         include.Show(layout.IncludeLabel);
+        sendsLine.Show(layout.SendsLine);
         while (slots.Count < row.Count)
         {
             slots.Add(Slot());
@@ -499,29 +492,35 @@ internal sealed class PaletteView : IDisposable, IInteractive
     private bool Sending => session?.Status == PaletteStatus.Sending;
 
     // The targets the island's interaction host runs, in Tab order: the chips as one stop (the arrows move among them),
-    // Send, then each of the question's buttons as a stop of its own, the yes buttons once a yes would count. Raised to
-    // the host only when something changed.
+    // Send, then each of the question's buttons as a stop of its own, the yes buttons once a yes would count. Built
+    // again only when the layout, the sending state, the read guard or Send's state changed; raised to the host only
+    // when the list did. A chip's tooltip is read then, so a note that loads later shows in it at the next change.
     private void Retarget()
     {
-        var list = new List<Target>();
-        if (session is not null && !disposed)
+        bool sending = Sending, ready = ReferenceEquals(readable, laidAsk);
+        bool canSend = sendVisual is not null && PaletteLayout.CanSend(prompt!.Services.Text, sending);
+        var from = (layout, Height, sending, ready, canSend);
+        if (disposed || session is null || from == targeted)
         {
-            bool sending = Sending;
-            for (int i = 0; i < layout.Chips.Count; i++)
-            {
-                var chip = layout.Chips[i];
-                list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, shownChips[i].Tip, Group: 1, Checked: chip.On));
-            }
+            return;
+        }
 
-            if (sendVisual is not null)
-            {
-                list.Add(new Target(SendId, layout.Send, PaletteLayout.SendCorner, TargetKind.Button, PaletteLayout.CanSend(prompt!.Services.Text, sending), PaletteLayout.SendTip));
-            }
+        targeted = from;
+        var list = new List<Target>();
+        for (int i = 0; i < layout.Chips.Count; i++)
+        {
+            var chip = layout.Chips[i];
+            list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, shownChips[i].Tip, Group: 1, Checked: chip.On));
+        }
 
-            foreach (var (button, at, _) in layout.Ask(Height)?.Buttons ?? [])
-            {
-                list.Add(new Target(button.ToString(), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ReferenceEquals(readable, laidAsk)));
-            }
+        if (sendVisual is not null)
+        {
+            list.Add(new Target(SendId, layout.Send, PaletteLayout.SendCorner, TargetKind.Button, canSend, PaletteLayout.SendTip));
+        }
+
+        foreach (var (button, at, _) in layout.Ask(Height)?.Buttons ?? [])
+        {
+            list.Add(new Target(PaletteLayout.ButtonId(button, questions), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ready));
         }
 
         if (!list.SequenceEqual(targets))
@@ -658,6 +657,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
             // A new question: the yes buttons show the read guard, dim while a yes would not count yet, brightening as
             // it starts to. Cancel works at once.
             guarded = open;
+            questions++;
             var fade = c.CreateScalarKeyFrameAnimation();
             fade.InsertKeyFrame(0, StateLook.DisabledOpacity);
             fade.InsertKeyFrame(0.7f, StateLook.DisabledOpacity);

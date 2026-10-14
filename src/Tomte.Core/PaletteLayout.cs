@@ -55,9 +55,10 @@ public readonly record struct LaidChip(RectangleF Box, RectangleF Icon, TextSlot
 /// many rows as they need, the answer, a tool's question while one is open, and the footer along the bottom. The
 /// palette is as tall as that needs, from 150 to 480 DIPs; an answer longer than the room left scrolls in its band.
 /// <paramref name="text"/> is the prompt's own height (the text box's content height), which the box grows with.
-/// <paramref name="send"/> puts a Send button at the box's right end, for a palette with a text box.
+/// <paramref name="send"/> puts a Send button at the box's right end, for a palette with a text box. <paramref name="sends"/>
+/// is the line under the chips saying what the next send carries; empty for none.
 /// </summary>
-public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false)
+public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false, string sends = "")
 {
     public const float Pad = 14, Top = 12, Bottom = 10, Gap = 10, BlockGap = 6;
     public const float PromptHeight = 36, PromptInsetX = 12, PromptInsetY = 9, PromptCorner = 8;
@@ -70,7 +71,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// between the side paddings. "Include" stands before the first row, and the rows after it start under the first chip.
     /// </summary>
     public const float ChipHeight = StateLook.ChipHeight, ChipPadX = 10, ChipGap = 6, ChipCorner = ChipHeight / 2, ChipMaxText = 160;
-    public const float IconSize = 16, IconGap = 6, MarkSize = 10, MarkGap = 6, IncludeGap = 8;
+    public const float IconSize = 16, IconGap = 6, MarkSize = 10, MarkGap = 6, IncludeGap = 8, SendsHeight = 16;
 
     /// <summary>Send sits inside the prompt's card at its right end, level with the last line, its corner inset with the card's.</summary>
     public const float SendSize = 28, SendInset = 4, SendGap = 6, SendCorner = PromptCorner - SendInset;
@@ -187,7 +188,19 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>"Include" before the first row, as tall as a chip; empty with no chips.</summary>
     public TextSlot IncludeLabel => new(chips is { Count: > 0 } ? Include : "", Chip, new RectangleF(Pad, ChipsTop, IncludeWidth, ChipHeight));
 
-    public float AnswerTop => (Chips.Count > 0 ? Chips[^1].Box.Bottom : ChipsTop - Gap) + Gap;
+    /// <summary>What the next send carries, on one line under the chips from where they start; empty while no chip is on.</summary>
+    public TextSlot SendsLine
+    {
+        get
+        {
+            float x = Pad + IncludeWidth + IncludeGap;
+            return new(sends, Chip, new RectangleF(x, ChipsBottom + ChipGap, width - Pad - x, sends.Length > 0 ? SendsHeight : 0));
+        }
+    }
+
+    public float AnswerTop => (sends.Length > 0 ? SendsLine.Slot.Bottom : ChipsBottom) + Gap;
+
+    private float ChipsBottom => Chips.Count > 0 ? Chips[^1].Box.Bottom : ChipsTop - Gap;
 
     public float AnswerWidth => width - 2 * Pad;
 
@@ -230,6 +243,16 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         return (card, new TextRun(confirm.Summary, AskSummary, inner, AskLines), new Vector2(left, card.Y + AskPad),
             new TextSlot(confirm.Line, AskLine, new RectangleF(left, rowY, Math.Max(0, right - left), ButtonHeight)), buttons);
     }
+
+    /// <summary>
+    /// A question's button as a target: its kind and the number of the question it is for, so a press that began on
+    /// one question's button answers nothing once the next question has opened.
+    /// </summary>
+    public static string ButtonId(ConfirmButton button, int question) => string.Create(CultureInfo.InvariantCulture, $"{button}:{question}");
+
+    /// <summary>The button an id names on question <paramref name="question"/>; null for another question's, or another target.</summary>
+    public static ConfirmButton? ButtonFor(string id, int question) =>
+        Enum.GetValues<ConfirmButton>().Cast<ConfirmButton?>().FirstOrDefault(b => ButtonId(b!.Value, question) == id);
 
     // The question's card: padding, the summary's lines, the gap and the row of buttons; 0 with none.
     private float AskHeight => askHeight ??= confirm is null ? 0 : AskPad + SummaryHeight(confirm.Summary) + AskGap + ButtonHeight + AskPad;

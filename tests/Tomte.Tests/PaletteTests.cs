@@ -376,9 +376,44 @@ public class PaletteTests : IDisposable
         Assert.False(ContextChips.Window("", "").Available);
         Assert.Equal("The name of the app in front: code", ContextChips.Window("code", "").Tip);
         var screenshot = ContextChips.Screenshot("code", _ => Task.FromResult(Array.Empty<byte>()));
-        Assert.Equal(("Screenshot", "Screenshot of the code window, sent as an image"), (screenshot.Label, screenshot.Tip));
+        Assert.Equal(("Screenshot", "Screenshot of code, sent as an image"), (screenshot.Label, screenshot.Tip));
         Assert.False(ContextChips.Screenshot("", _ => Task.FromResult(Array.Empty<byte>())).Available);
     }
+
+    [Fact]
+    public void ChipsNameTheAppAsPeopleKnowItAndTheLineSaysWhatTheSendCarries()
+    {
+        var shelf = new InMemoryShelf();
+        shelf.CreateFile("report.pdf", "x");
+        shelf.CreateFile("notes.txt", "y");
+        shelf.CreateFile("todo.txt", "z");
+        var chips = ContextChips.For(null, "hi", "Code", "main.cs - tomte", _ => Task.FromResult(Array.Empty<byte>()), shelf, _scratchpad, "Visual Studio Code");
+
+        // What people call the app in what the chips say; the process name still goes to the model.
+        Assert.Equal("Selected text from Visual Studio Code, 2 characters", chips[0].Tip);
+        Assert.Equal("Window title from Visual Studio Code: main.cs - tomte", chips[1].Tip);
+        Assert.Equal("window:Code", chips[1].AttachedName);
+        Assert.Equal("Screenshot of Visual Studio Code, sent as an image", chips[2].Tip);
+
+        // Nothing on: no line. Then the question and each chip that is on, in chip order.
+        Assert.Equal("", ContextChips.Summary(chips));
+        chips[4].On = true;
+        Assert.Equal("Sends your question and the Scratchpad note", ContextChips.Summary(chips));
+        chips[2].On = true;
+        Assert.Equal("Sends your question, a screenshot of Visual Studio Code and the Scratchpad note", ContextChips.Summary(chips));
+        chips[0].On = chips[1].On = chips[3].On = true;
+        Assert.Equal("Sends your question, the text selected in Visual Studio Code, the title of the Visual Studio Code window, "
+            + "a screenshot of Visual Studio Code, todo.txt from the shelf with the names of 2 others and the Scratchpad note", ContextChips.Summary(chips));
+        Assert.Equal("Sends your question and the region you circled", ContextChips.Summary([ContextChips.Lasso([1], 10, 10)]));
+    }
+
+    [Theory]
+    [InlineData("Visual Studio Code", "Visual Studio Code", "Code", "Visual Studio Code")]
+    [InlineData(" ", "Microsoft Edge", "msedge", "Microsoft Edge")]
+    [InlineData(null, null, "game", "game")]
+    [InlineData(" Notepad ", null, "notepad", "Notepad")]
+    public void TheAppsNameIsItsFileDescriptionThenItsProductThenTheProcess(string? description, string? product, string process, string expected) =>
+        Assert.Equal(expected, WindowContext.Name(description, product, process));
 
     [Fact]
     public void TheChipsTheyDrawCarryTheirNameIconAndState()
@@ -611,6 +646,15 @@ public class PaletteLayoutTests
         var none = new PaletteLayout(640, mascot: true);
         Assert.Equal("", none.IncludeLabel.Text);
         Assert.Empty(none.Chips);
+
+        // The line of what the send carries sits under the chips, where they start, and the answer moves down for it.
+        var line = new PaletteLayout(640, mascot: true, chips: chips, sends: "Sends your question and the region you circled");
+        var sends = line.SendsLine;
+        Assert.Equal(layout.Chips[^1].Box.Bottom + PaletteLayout.ChipGap, sends.Slot.Y);
+        Assert.Equal(layout.Chips[0].Box.X, sends.Slot.X);
+        Assert.Equal(sends.Slot.Bottom + PaletteLayout.Gap, line.AnswerTop);
+        Assert.Equal(layout.AnswerTop + PaletteLayout.ChipGap + PaletteLayout.SendsHeight, line.AnswerTop, 2);
+        Assert.Equal("", layout.SendsLine.Text);
     }
 
     [Fact]

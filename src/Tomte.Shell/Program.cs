@@ -538,11 +538,12 @@ internal static partial class Program
             var scratchpad = Scratchpad;
             await scratchpad.LoadAsync();
             var (app, title) = WindowContext.Describe(foreground);
+            string product = await Task.Run(() => WindowContext.Product(foreground, app));
             var chips = new List<ContextChip>
             {
                 ContextChips.Selection(null),
-                ContextChips.Window(app, title),
-                ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct)),
+                ContextChips.Window(app, title, product),
+                ContextChips.Screenshot(app, ct => WindowCapture.CapturePngAsync(foreground, ct), product),
                 ContextChips.Shelf(shelf),
                 ContextChips.Scratchpad(scratchpad),
             };

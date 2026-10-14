@@ -217,6 +217,20 @@ public sealed class PaletteQuestionTests : IDisposable
     }
 
     [Fact]
+    public void AButtonsIdNamesItsQuestionSoAPressHeldIntoTheNextOneAnswersNothing()
+    {
+        string run = PaletteLayout.ButtonId(ConfirmButton.Run, 1);
+        Assert.Equal(ConfirmButton.Run, PaletteLayout.ButtonFor(run, 1));
+        // The next question opened while Run was held down: its Run has another id, and the old one answers nothing.
+        Assert.NotEqual(run, PaletteLayout.ButtonId(ConfirmButton.Run, 2));
+        Assert.Null(PaletteLayout.ButtonFor(run, 2));
+        Assert.Equal(ConfirmButton.Cancel, PaletteLayout.ButtonFor(PaletteLayout.ButtonId(ConfirmButton.Cancel, 2), 2));
+        // Another target's id is no button at all.
+        Assert.Null(PaletteLayout.ButtonFor("send", 1));
+        Assert.Null(PaletteLayout.ButtonFor("history", 1));
+    }
+
+    [Fact]
     public void TheQuestionSitsAboveTheFooterWithRunLastAndAlwaysAllowOnlyWhereOffered()
     {
         var plain = new PaletteLayout(640, mascot: true);
