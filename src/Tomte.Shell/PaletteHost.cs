@@ -53,7 +53,6 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
             {
                 if (machine.State != IslandState.Palette)
                     return;
-                view?.Update();
                 double height = view?.Height ?? HeightFor(session);
                 if (height == _targetHeight)
                     return;
