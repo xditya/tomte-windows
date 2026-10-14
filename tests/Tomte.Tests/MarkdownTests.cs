@@ -107,4 +107,60 @@ public class MarkdownTests
 
         Assert.Equal(["Title", "Intro with bold words\nand a second line.", "one", "two 2", "three"], blocks.Take(5).Select(b => b.Text));
     }
+
+    // The note's spans on one line as text and look.
+    private static (string, MarkdownLook)[] Note(string line) =>
+        [.. Markdown.Note(line, 0, line.Length, fenced: false).SelectMany(b => b.Spans).Select(s => (s.Text, s.Look))];
+
+    [Fact]
+    public void TheNoteReadsEmphasisWithEitherMarker()
+    {
+        Assert.Equal([("a ", MarkdownLook.Plain), ("b", MarkdownLook.Italic), (" ", MarkdownLook.Plain), ("c", MarkdownLook.Italic), (" ", MarkdownLook.Plain), ("d", MarkdownLook.Bold), (" ", MarkdownLook.Plain), ("e", MarkdownLook.Bold), (" ", MarkdownLook.Plain), ("f", MarkdownLook.Strike)],
+            Note("a *b* _c_ **d** __e__ ~~f~~"));
+        Assert.Equal([("both", MarkdownLook.Bold | MarkdownLook.Italic)], Note("***both***"));
+        // Bold inside italic, and an italic run that skips the bold markers inside it.
+        Assert.Equal([("a ", MarkdownLook.Italic), ("b", MarkdownLook.Italic | MarkdownLook.Bold), (" c", MarkdownLook.Italic)], Note("*a **b** c*"));
+
+        // Left as written: not closed, around spaces, _ inside a word, one ~, and across lines.
+        foreach (string text in new[] { "*open", "a * b * c", "snake_case_name", "~one~", "**one\nline**", "2*" })
+        {
+            Assert.All(Markdown.Note(text, 0, text.Length, false).SelectMany(b => b.Spans), s => Assert.Equal(MarkdownLook.Plain, s.Look));
+        }
+    }
+
+    [Fact]
+    public void TheNoteReadsCodeLinksAndAddresses()
+    {
+        // Nothing inside code is read; a run of two backticks is closed by two.
+        Assert.Equal([("run ", MarkdownLook.Plain), ("**x** _y_", MarkdownLook.Code), (" and ", MarkdownLook.Plain), ("a`b", MarkdownLook.Code)], Note("run `**x** _y_` and ``a`b``"));
+        Assert.Equal([("see ", MarkdownLook.Plain), ("the ", MarkdownLook.Link), ("docs", MarkdownLook.Link | MarkdownLook.Bold)], Note("see [the **docs**](https://e.x/a_b)"));
+        Assert.Equal([("at ", MarkdownLook.Plain), ("https://e.x/a_b?c=1", MarkdownLook.Link), (".", MarkdownLook.Plain)], Note("at https://e.x/a_b?c=1."));
+        // Not links: no address, a space in it, brackets alone, and a scheme inside a word.
+        foreach (string text in new[] { "[a]()", "[a](b c)", "[x] done", "xhttps://e.x" })
+        {
+            Assert.All(Markdown.Note(text, 0, text.Length, false).SelectMany(b => b.Spans), s => Assert.Equal(MarkdownLook.Plain, s.Look));
+        }
+    }
+
+    [Fact]
+    public void TheNoteReadsTaskBoxesAsPartOfTheMarker()
+    {
+        const string text = "- [ ] open\n- [x] done\n3. [X] third\n- [y] not a box\n- [ ]";
+        var blocks = Markdown.Note(text, 0, text.Length, false);
+        Assert.Equal([("- [ ]", "open"), ("- [x]", "done"), ("3. [X]", "third"), ("-", "[y] not a box")], blocks.Select(b => (b.Marker, b.Text)));
+        // The answers keep reading a box as text.
+        Assert.Equal("[x] done", Assert.Single(Markdown.Parse("- [x] done")).Text);
+    }
+
+    [Fact]
+    public void TheNoteReadsARangeOfLinesWhereTheyAre()
+    {
+        const string text = "# One\n```\ncode **not bold**\n```\n**two**";
+        int from = text.IndexOf("code", StringComparison.Ordinal), to = text.IndexOf("\n```", from, StringComparison.Ordinal);
+        var inside = Assert.Single(Markdown.Note(text, from, to, fenced: true));
+        Assert.Equal((MarkdownKind.Code, "code **not bold**", from), (inside.Kind, inside.Text, inside.Spans[0].Source));
+        int last = text.LastIndexOf("**two", StringComparison.Ordinal);
+        var bold = Assert.Single(Assert.Single(Markdown.Note(text, last, text.Length, fenced: false)).Spans);
+        Assert.Equal(("two", MarkdownLook.Bold, last + 2), (bold.Text, bold.Look, bold.Source));
+    }
 }

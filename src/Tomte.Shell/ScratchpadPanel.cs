@@ -42,14 +42,21 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
         DrawFrame(body, layout);
         editor = focus.Create(body, multiline: true, ScratchpadPanelLayout.NoteSize);
         editor.Place(layout.Editor, island.Scale);
-        bound = new NoteEditor(editor, note, island.Queue, kept);
+        // The note is styled once the Panels morph is at rest, never during it.
+        bound = new NoteEditor(editor, note, island.Queue, kept) { Moving = () => island.Moving };
+        island.Settled += bound.Settled;
         Load();
     }
 
     public void Hidden()
     {
         generation++;
-        bound?.Dispose();
+        if (bound is not null)
+        {
+            island.Settled -= bound.Settled;
+            bound.Dispose();
+        }
+
         editor?.Dispose();
         foreach (var visual in texts)
         {

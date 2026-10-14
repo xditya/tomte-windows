@@ -20,6 +20,7 @@
     <Compile Include="..\..\src\Tomte.Shell\TextServices.cs" Link="TextServices.cs" />
     <Compile Include="..\..\src\Tomte.Shell\EditorView.cs" Link="EditorView.cs" />
     <Compile Include="..\..\src\Tomte.Shell\NoteEditor.cs" Link="NoteEditor.cs" />
+    <Compile Include="..\..\src\Tomte.Shell\NoteStyle.cs" Link="NoteStyle.cs" />
     <Compile Include="..\..\src\Tomte.Shell\PixelSurfaces.cs" Link="PixelSurfaces.cs" />
   </ItemGroup>
 </Project>

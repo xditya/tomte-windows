@@ -186,6 +186,57 @@ public sealed class PromptKeys
     }
 }
 
+/// <summary>What the note does with a key it takes from its box.</summary>
+public enum NoteKey
+{
+    /// <summary>The box has it.</summary>
+    Pass,
+
+    /// <summary>One of the box's formatting shortcuts: nothing happens.</summary>
+    Ignore,
+    Copy,
+    Cut,
+    Paste,
+}
+
+/// <summary>
+/// The note's keys while its box is rich text, so the note only ever looks like its Markdown: copy, cut and paste
+/// carry plain text (rich text would bring a web page's fonts in and carry the box's white text into Word), and the
+/// box's own formatting shortcuts (Ctrl+B, Ctrl+E, Ctrl+Shift+L, Ctrl+1 and the rest) do nothing. Ctrl with Alt is
+/// AltGr on many layouts, which types, so it passes.
+/// </summary>
+public static class NoteKeys
+{
+    public const uint KeyDown = 0x0100;
+    private const int Back = 0x08, Tab = 0x09, Return = 0x0D, Shift = 0x10, Control = 0x11, Menu = 0x12, Escape = 0x1B;
+    private const int PageUp = 0x21, Down = 0x28, Insert = 0x2D, Delete = 0x2E, LeftShift = 0xA0, RightAlt = 0xA5, ProcessKey = 0xE5;
+
+    public static NoteKey Of(uint message, nuint wParam, bool ctrl, bool shift, bool alt)
+    {
+        if (message != KeyDown || alt)
+        {
+            return NoteKey.Pass;
+        }
+
+        int key = (int)(wParam & 0xFFFF);
+        if (!ctrl)
+        {
+            return !shift ? NoteKey.Pass : key == Insert ? NoteKey.Paste : key == Delete ? NoteKey.Cut : NoteKey.Pass;
+        }
+
+        return key switch
+        {
+            'C' or Insert => NoteKey.Copy,
+            'X' => NoteKey.Cut,
+            'V' => NoteKey.Paste,
+            // Select all, redo, undo, the word and line keys, moving, and the modifiers themselves.
+            'A' or 'Y' or 'Z' or Back or Tab or Return or Escape or Delete or (>= PageUp and <= Down) => NoteKey.Pass,
+            Shift or Control or Menu or (>= LeftShift and <= RightAlt) or ProcessKey => NoteKey.Pass,
+            _ => NoteKey.Ignore,
+        };
+    }
+}
+
 /// <summary>One replacement in a text: <see cref="Length"/> characters at <see cref="Start"/> become <see cref="Text"/>.</summary>
 public readonly record struct Splice(int Start, int Length, string Text)
 {

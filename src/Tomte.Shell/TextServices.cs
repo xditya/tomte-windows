@@ -10,16 +10,18 @@ using Windows.Win32.Graphics.Direct2D.Common;
 using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.Controls.RichEdit;
 using Windows.Win32.UI.Input.Ime;
+using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
 
 /// <summary>
-/// One windowless plain-text editor: the system's text services (msftedit.dll) behind a host of our own, drawn with
-/// TxDrawD2D. The services take keys, IME and TSF through the window that has keyboard focus, which is the one the
-/// host names. The host never takes focus, the foreground or the cursor on its own; it reports what the services
-/// ask for (what to repaint, where the caret is, what changed) and the caller draws. They lay out in pixels at the
-/// process's system DPI, so the caller draws at that DPI and gives any other monitor scale as <see cref="Zoom"/>.
+/// One windowless editor, plain text unless made <see cref="Rich"/>: the system's text services (msftedit.dll)
+/// behind a host of our own, drawn with TxDrawD2D. The services take keys, IME and TSF through the window that has
+/// keyboard focus, which is the one the host names. The host never takes focus, the foreground or the cursor on its
+/// own; it reports what the services ask for (what to repaint, where the caret is, what changed) and the caller
+/// draws. They lay out in pixels at the process's system DPI, so the caller draws at that DPI and gives any other
+/// monitor scale as <see cref="Zoom"/>.
 /// The services are single-threaded: create, use and dispose on the island's thread.
 /// </summary>
 internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
@@ -29,8 +31,8 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
 
     private readonly CHARFORMAT2W* charFormat;
     private readonly PARAFORMAT2* paraFormat;
-    private readonly uint bits;
     private readonly HWND window;
+    private uint bits;
     private readonly Dictionary<uint, Windows.System.DispatcherQueueTimer> timers = [];
     private ITextServices2* services;
     private nint hostUnknown;
@@ -99,11 +101,56 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
 
         // TSF (input methods, the emoji panel, dictation) through the services' own switch.
         Send(PInvoke.EM_SETEDITSTYLE, PInvoke.SES_USECTF, (nint)PInvoke.SES_USECTF);
-        Send(PInvoke.EM_SETEVENTMASK, 0, (nint)(PInvoke.ENM_CHANGE | PInvoke.ENM_SELCHANGE | PInvoke.ENM_REQUESTRESIZE));
+        Send(PInvoke.EM_SETEVENTMASK, 0, (nint)(PInvoke.ENM_CHANGE | PInvoke.ENM_SELCHANGE | PInvoke.ENM_REQUESTRESIZE | PInvoke.ENM_STARTCOMPOSITION | PInvoke.ENM_ENDCOMPOSITION));
     }
 
     /// <summary>The services' own DPI: the process's system DPI. Their units are pixels at it.</summary>
     public static uint SystemDpi { get; } = PInvoke.GetDpiForSystem();
+
+    /// <summary>The text's size in DIPs, as the box was made with.</summary>
+    public float FontDips => charFormat->Base.yHeight / (float)EditorScale.TwipsPerDip;
+
+    /// <summary>The window that has keyboard focus while the box is typed in.</summary>
+    public HWND Window => window;
+
+    /// <summary>
+    /// Rich text: parts of the text can look different (the note's Markdown). Plain until set, and set only while the
+    /// box is empty. Copy and paste then carry formatting, so a rich box's owner takes those keys.
+    /// </summary>
+    public bool Rich
+    {
+        get => (bits & PInvoke.TXTBIT_RICHTEXT) != 0;
+        set
+        {
+            // The call throws when the services refuse the change; the box then stays what it was.
+            uint was = bits;
+            bits = value ? bits | PInvoke.TXTBIT_RICHTEXT : bits & ~PInvoke.TXTBIT_RICHTEXT;
+            try
+            {
+                services->OnTxPropertyBitsChange(PInvoke.TXTBIT_RICHTEXT, bits & PInvoke.TXTBIT_RICHTEXT);
+            }
+            catch
+            {
+                bits = was;
+                throw;
+            }
+        }
+    }
+
+    /// <summary>An input method is composing in the box: the composition has a look of its own until it ends.</summary>
+    public bool Composing { get; private set; }
+
+    /// <summary>A composition was committed or cancelled.</summary>
+    public event Action? Composed;
+
+    /// <summary>The services' text object model, for styling parts of the text. The caller releases it before the box goes.</summary>
+    public ITextDocument* Document()
+    {
+        ITextDocument* document;
+        var iid = ITextDocument.IID_Guid;
+        services->QueryInterface(&iid, (void**)&document).ThrowOnFailure();
+        return document;
+    }
 
     /// <summary>The services invalidated this rectangle of the client area, in pixels.</summary>
     public event Action<PixelRect>? Invalidated;
@@ -139,6 +186,9 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
 
     public RECT Client => client;
 
+    /// <summary>The monitor's scale over the system DPI's, as the services get it. They zoom the text by it, not a paragraph's indents.</summary>
+    public float Zoom => zoom;
+
     /// <summary>The client size in pixels and the zoom for the monitor's scale; the services lay out again.</summary>
     public void Resize(int width, int height, float zoom)
     {
@@ -161,6 +211,13 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
     /// <summary>A window message for the services; false when they did not handle it and the window's default should.</summary>
     public bool TrySend(uint msg, nuint wParam, nint lParam, out LRESULT result)
     {
+        // While an input method composes it takes every key, which then arrives as VK_PROCESSKEY: any other key means
+        // no composition is going on, even if the services never said it ended.
+        if (Composing && msg == PInvoke.WM_KEYDOWN && wParam != (nuint)VIRTUAL_KEY.VK_PROCESSKEY)
+        {
+            Composing = false;
+        }
+
         // Called through the vtable (slot 3) for the HRESULT: S_FALSE means the services left the message alone.
         LRESULT r = default;
         void** vtbl = *(void***)services;
@@ -178,7 +235,9 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
             services->TxGetText(&text);
             try
             {
-                return EditorText.Lines(text.ToString() ?? "");
+                // Rich text always ends in a paragraph mark of the services' own, after the last line typed.
+                string raw = text.ToString() ?? "";
+                return EditorText.Lines(Rich && raw.EndsWith('\r') ? raw[..^1] : raw);
             }
             finally
             {
@@ -188,6 +247,12 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
 
         set
         {
+            if (Rich)
+            {
+                Write(0, int.MaxValue, value);
+                return;
+            }
+
             fixed (char* p = ToServices(value))
             {
                 services->TxSetText(p);
@@ -215,13 +280,73 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
     public void Replace(Splice change)
     {
         var (start, end) = Selection;
-        Selection = (change.Start, change.End);
-        fixed (char* p = ToServices(change.Text))
+        if (Rich)
         {
-            Send(PInvoke.EM_REPLACESEL, 0, (nint)p);
+            Write(change.Start, change.End, change.Text);
+        }
+        else
+        {
+            Selection = (change.Start, change.End);
+            fixed (char* p = ToServices(change.Text))
+            {
+                Send(PInvoke.EM_REPLACESEL, 0, (nint)p);
+            }
         }
 
         Selection = (change.Map(start), change.Map(end));
+    }
+
+    /// <summary>
+    /// The user's own insertion at the selection (a paste): one undo step, the caret after it, and in a rich box never
+    /// read as RTF.
+    /// </summary>
+    public void Insert(string text)
+    {
+        var (start, end) = Selection;
+        Write(start, end, text, undoable: true);
+        int after = start + EditorText.Lines(text).Length;
+        Selection = (after, after);
+    }
+
+    // Rich text set through the services' own calls is read as RTF when it starts with {\rtf, so a note that does would
+    // change under the user; the object model's SetText takes it as it is. Not undoable: no undo step, and the undo
+    // stack emptied, as a replacement the user cannot undo empties it in a plain box.
+    private void Write(int start, int end, string text, bool undoable = false)
+    {
+        var document = Document();
+        ITextRange* range = null;
+        nint bstr = Marshal.StringToBSTR(ToServices(text));
+        try
+        {
+            document->Range(start, end, &range);
+            if (undoable)
+            {
+                range->SetText(new BSTR((char*)bstr));
+                return;
+            }
+
+            document->Undo((int)tomConstants.tomSuspend, null);
+            try
+            {
+                range->SetText(new BSTR((char*)bstr));
+            }
+            finally
+            {
+                document->Undo((int)tomConstants.tomResume, null);
+            }
+        }
+        finally
+        {
+            Marshal.FreeBSTR(bstr);
+            if (range is not null)
+            {
+                range->Release();
+            }
+
+            document->Release();
+        }
+
+        Send(PInvoke.EM_EMPTYUNDOBUFFER);
     }
 
     /// <summary>In-place activate for the client rectangle, once it has a size: the services draw and take messages.</summary>
@@ -250,6 +375,8 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
             Send(PInvoke.WM_KILLFOCUS);
         }
 
+        // A composition never outlasts the focus.
+        Composing = false;
         StopTimers();
     }
 
@@ -597,6 +724,14 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
                 break;
             case PInvoke.EN_SELCHANGE:
                 Notify(SelectionChanged);
+                break;
+            case PInvoke.EN_STARTCOMPOSITION:
+                Composing = true;
+                break;
+            // Raised for new characters in a composition too; only its end ends it.
+            case PInvoke.EN_ENDCOMPOSITION when pv is null || ((ENDCOMPOSITIONNOTIFY*)pv)->dwCode == ENDCOMPOSITIONNOTIFY_CODE.ECN_ENDCOMPOSITION:
+                Composing = false;
+                Notify(Composed);
                 break;
             case PInvoke.EN_REQUESTRESIZE:
                 var r = ((REQRESIZE*)pv)->rc;

@@ -251,6 +251,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public event Action? ContentReady;
 
+    /// <summary>A morph to a visible shape came to rest: work held back while <see cref="Moving"/> can run now.</summary>
+    public event Action? Settled;
+
     /// <summary>A left button press on the island, in island space. One that <see cref="Grabs"/> holds arrives when the button comes up.</summary>
     public event Action<Vector2>? Pressed;
 
@@ -720,6 +723,10 @@ internal sealed unsafe class IslandWindow : IDisposable
         var done = settled;
         settled = null;
         done?.TrySetResult();
+        if (visible)
+        {
+            Settled?.Invoke();
+        }
     }
 
     /// <summary>A closed composition path from segments, scaled by <paramref name="s"/>.</summary>
