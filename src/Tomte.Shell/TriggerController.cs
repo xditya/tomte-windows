@@ -94,7 +94,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         // Changed arrives on a pool thread; the input thread re-reads the store where it runs.
         store.Changed += s => island.Queue.TryEnqueue(() => OnSettingsChanged(s));
         // Events wait out a pause; a resume from the tray, or the hour running out, shows them.
-        pause.Ended += ReleaseEvents;
+        pause.Ended += ReadThenRelease;
         log?.Invoke($"input: mouse hook {(InputThread.HookInstalled ? "on" : "off")}, ui thread {Environment.CurrentManagedThreadId}, all monitors={settings.AllMonitors} (primary only until the island window can move)");
 
         SchedulePeek();
@@ -347,7 +347,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 log?.Invoke(message == PInvoke.WM_TIMECHANGE ? "clock changed" : "resumed from sleep");
                 ArmTimer();
                 // The tray's pause one-shot has the same blind spot; an hour that ran out on the wall clock frees the queue.
-                ReleaseEvents();
+                ReadThenRelease();
                 return false; // every window gets these; DefWindowProc gives the reply
             default:
                 return false;
@@ -668,6 +668,19 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private bool EventsWait() =>
         TriggerQueue.Waits(pause.IsPaused(DateTimeOffset.Now), Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules), machine.State, activity);
+
+    /// <summary>
+    /// A pause, a sleep or a clock change ended a wait. Focus and quiet hours may have started during it with no event
+    /// to hear, so the notification state is read fresh before the queue goes out, as Raise does. No event waiting,
+    /// no read.
+    /// </summary>
+    private void ReadThenRelease()
+    {
+        if (events.Count > 0)
+        {
+            watch.ReadNotificationState(ReleaseEvents);
+        }
+    }
 
     /// <summary>
     /// One SetTimer one-shot for the time left to the absolute end, or none. Called at start-up, after a resume
