@@ -43,8 +43,8 @@ public interface IClipboardSource
     /// </summary>
     (bool Png, long Bytes)? Image { get; }
 
-    /// <summary>A copy of the bytes of the format <see cref="Image"/> named.</summary>
-    byte[] ReadImage(bool png);
+    /// <summary>One copy of the bytes of the format <see cref="Image"/> named, in memory the caller disposes.</summary>
+    CopiedImage ReadImage(bool png);
 }
 
 /// <summary>
@@ -160,8 +160,8 @@ public static class ClipboardReader
             return Skip($"an image of {bytes} bytes, over the {maxBytes} kept");
         }
 
-        var image = new CopiedImage(clipboard.ReadImage(png), png);
-        return new(null, $"kept an image of {image.Bytes.Length} bytes ({(png ? "PNG" : "bitmap")})", image);
+        var image = clipboard.ReadImage(png);
+        return new(null, $"kept an image of {image.Length} bytes ({(png ? "PNG" : "bitmap")})", image);
     }
 
     private static bool Open(IClipboardSource clipboard)
