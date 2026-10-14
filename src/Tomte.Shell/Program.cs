@@ -66,6 +66,13 @@ internal static class Program
             debugTimer = duration;
         }
 
+        // A driven yes writes a note and starts a timer: only into a run's own data folder, never the user's.
+        if (Arg(args, "--debug-answer") == "yes" && Arg(args, "--debug-settings") is null)
+        {
+            Console.Error.WriteLine("usage: --debug-answer yes needs --debug-settings <file>, so the run's notes and timer stay beside that file");
+            return 2;
+        }
+
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null;
 
