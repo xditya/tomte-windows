@@ -724,7 +724,8 @@ internal sealed unsafe class IslandWindow : IDisposable
             PlaceMascot(Current);
         }
 
-        if (visible && (mascotActive || placing))
+        // A settle can start the next motion itself (a swell asked for while the pill opened): keep ticking for it.
+        if (visible && (mascotActive || placing || islandMoving))
         {
             return;
         }
