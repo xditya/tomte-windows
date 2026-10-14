@@ -73,7 +73,7 @@ public class IslandPlaceTests
     [InlineData(true, 2, -2, 500, true)]
     [InlineData(true, 3, 0, 100, false)]
     [InlineData(true, 0, 0, 501, false)]
-    // The tomte, a label or a control: never part of a double click, however quick.
+    // A label or a control: never part of a double click, however quick.
     [InlineData(false, 0, 0, 100, false)]
     public void ASecondClickCountsOnThePillInsideTheDoubleClickBoxAndTime(bool onPill, int dx, int dy, long ms, bool twice) =>
         Assert.Equal(twice, IslandPlace.IsDoubleClick(onPill, dx, dy, ms, boxX: 4, boxY: 4, timeMs: 500));
