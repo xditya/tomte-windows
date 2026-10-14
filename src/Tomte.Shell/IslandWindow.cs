@@ -378,6 +378,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     internal Func<uint, nuint, nint, LRESULT?>? Typing { get; set; }
 
+    /// <summary>Hover, press, the cursor, tooltips and keyboard focus for the views registered with it.</summary>
+    internal InteractionHost Interaction { get; } = new();
+
     /// <summary>Where a failure inside the window procedure is written; an exception there would otherwise kill the process.</summary>
     public Action<string>? Log { get; set; }
 
@@ -1236,22 +1239,30 @@ internal sealed unsafe class IslandWindow : IDisposable
             case PInvoke.WM_MOUSEACTIVATE:
                 return new LRESULT((nint)PInvoke.MA_NOACTIVATE);
             case PInvoke.WM_LBUTTONDOWN:
+                // The window never activates, but the mouse still reaches it. A registered target takes the press first.
+                return Interact(message, wParam, lParam) ?? Guarded(i => i.Pointer(message, wParam.Value, lParam.Value));
             case PInvoke.WM_MOUSEWHEEL:
-                // The window never activates, but the mouse still reaches it.
                 return Guarded(i => i.Pointer(message, wParam.Value, lParam.Value));
             case PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP or PInvoke.WM_CAPTURECHANGED when instance is { grabbing: true }:
                 return Guarded(i => i.Grab(message));
+            case PInvoke.WM_MOUSELEAVE:
+                return Interact(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
+            case PInvoke.WM_KEYDOWN or PInvoke.WM_SETCURSOR:
+                // A text box first, for its keys and its I-beam; then the registered targets.
+                return Typed(message, wParam, lParam) ?? Interact(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
+            case PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP or PInvoke.WM_CAPTURECHANGED:
+                // The registered targets first, then a text box being drag-selected.
+                return Interact(message, wParam, lParam) ?? Typed(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_DPICHANGED:
                 return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
             case PInvoke.WM_DISPLAYCHANGE:
                 // A scaling change reaches a resting window here before its own WM_DPICHANGED does.
                 return GuardedRescale(instance?.MonitorScale());
-            case PInvoke.WM_KEYDOWN or PInvoke.WM_KEYUP or PInvoke.WM_CHAR or PInvoke.WM_SYSKEYDOWN or PInvoke.WM_SYSKEYUP or PInvoke.WM_SYSCHAR:
+            case PInvoke.WM_KEYUP or PInvoke.WM_CHAR or PInvoke.WM_SYSKEYDOWN or PInvoke.WM_SYSKEYUP or PInvoke.WM_SYSCHAR:
             case >= PInvoke.WM_IME_STARTCOMPOSITION and <= PInvoke.WM_IME_COMPOSITION:
             case >= PInvoke.WM_IME_SETCONTEXT and <= PInvoke.WM_IME_KEYUP:
-            case PInvoke.WM_ACTIVATE or PInvoke.WM_SETFOCUS or PInvoke.WM_KILLFOCUS or PInvoke.WM_SETCURSOR:
-            case PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP or PInvoke.WM_CAPTURECHANGED:
-                return RouteTyping(window, message, wParam, lParam);
+            case PInvoke.WM_ACTIVATE or PInvoke.WM_SETFOCUS or PInvoke.WM_KILLFOCUS:
+                return Typed(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_CLOSE:
                 PInvoke.DestroyWindow(window);
                 return new LRESULT(0);
@@ -1270,21 +1281,32 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
-    private static LRESULT RouteTyping(HWND window, uint message, WPARAM wParam, LPARAM lParam)
+    // The text boxes' answer, or null for the next handler.
+    private static LRESULT? Typed(uint message, WPARAM wParam, LPARAM lParam)
     {
         try
         {
-            if (instance?.Typing?.Invoke(message, wParam.Value, lParam.Value) is LRESULT handled)
-            {
-                return handled;
-            }
+            return instance?.Typing?.Invoke(message, wParam.Value, lParam.Value);
         }
         catch (Exception e)
         {
             instance?.Log?.Invoke($"typing message 0x{message:X} failed: {e}");
+            return null;
         }
+    }
 
-        return PInvoke.DefWindowProc(window, message, wParam, lParam);
+    // The registered targets' answer, or null for the old handlers.
+    private static LRESULT? Interact(uint message, WPARAM wParam, LPARAM lParam)
+    {
+        try
+        {
+            return instance?.Interaction.OnMessage(message, wParam.Value, lParam.Value);
+        }
+        catch (Exception e)
+        {
+            instance?.Log?.Invoke($"interaction message 0x{message:X} failed: {e}");
+            return null;
+        }
     }
 
     private static bool Route(uint message, nuint wParam, nint lParam)
