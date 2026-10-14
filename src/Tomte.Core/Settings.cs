@@ -56,6 +56,9 @@ public sealed record TomteSettings
 
     /// <summary>Skills the user turned on, by folder name. A skill not listed is off, so a new one starts off.</summary>
     public IReadOnlyList<string> EnabledSkills { get; init; } = [];
+
+    /// <summary>The apps the AI's UI Automation tools may use; the tools themselves are off unless a run turns them on.</summary>
+    public UiAutomationSettings UiAutomation { get; init; } = new();
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>
