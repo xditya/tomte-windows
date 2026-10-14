@@ -205,7 +205,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case InputThread.MsgDragEnd:
                 activity &= ~IslandActivity.DragInProgress;
                 armed = true;
-                if (machine.State != IslandState.Hidden && !pointerInside)
+                // A lasso is a drag too. Its release must not arm a retract that fires into the palette it opens.
+                if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !pointerInside)
                 {
                     PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
                 }
@@ -304,6 +305,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private void OnDragCandidate((int X, int Y) at)
     {
+        // The overlay answers HTCLIENT, and a lasso through the reveal zone is not a file drag.
+        if (machine.State == IslandState.Capture)
+        {
+            return;
+        }
         var child = PInvoke.WindowFromPoint(new System.Drawing.Point(at.X, at.Y));
         if (child == HWND.Null)
         {
@@ -597,6 +603,9 @@ internal sealed partial class TriggerController
                 return;
             }
 
+            // Nothing armed before or during the lasso may retract the palette this opens.
+            PInvoke.KillTimer(island.Hwnd, RetractTimer);
+            armed = false;
             await captured(open, crop, foreground);
         }
         catch (Exception e)
