@@ -196,8 +196,8 @@ public class PanelTests
         var wide = TabStrip.Labels(all, PanelId.Media, 560, mascot: true);
 
         Assert.Equal(["Shelf", "Shortcuts", "Media", "Scratchpad", "Clipboard"], wide.Select(label => label.Text));
-        // After the tomte (8 in, 26 wide, 6 more), each pill its measured text and 10 DIP either side, 2 apart.
-        Assert.Equal(40, wide[0].Slot.X);
+        // After the tomte (5.5 in, 26 wide, 6 more), each pill its measured text and 10 DIP either side, 2 apart.
+        Assert.Equal(37.5f, wide[0].Slot.X);
         for (int i = 0; i < wide.Count; i++)
         {
             float text = Tomte.Core.Text.TextSlot.Measure(wide[i].Text, wide[i].Style, 560);
@@ -214,8 +214,8 @@ public class PanelTests
         var narrow = TabStrip.Labels(all, PanelId.Media, 380, mascot: true);
         Assert.InRange(narrow.Count, 3, 5);
         Assert.All(narrow, label => Assert.True(label.Slot.Right <= 380 - TabStrip.RightPad + 0.01, $"{label.Text} ends at {label.Slot.Right}"));
-        // With the tomte off the labels start at its inset; only registered panels get one.
-        Assert.Equal(MascotArt.InsetX, TabStrip.Labels([PanelId.Media], PanelId.Media, 380, mascot: false)[0].Slot.X);
+        // With the tomte off the labels start at the left padding; only registered panels get one.
+        Assert.Equal(TabStrip.LeftPad, TabStrip.Labels([PanelId.Media], PanelId.Media, 380, mascot: false)[0].Slot.X);
         Assert.Single(TabStrip.Labels([PanelId.Media], PanelId.Media, 380, mascot: true));
     }
 

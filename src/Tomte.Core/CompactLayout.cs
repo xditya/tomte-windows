@@ -10,8 +10,8 @@ namespace Tomte.Core;
 /// </summary>
 public static class CompactLayout
 {
-    /// <summary>The gap after the tomte and after the ring, and the room kept free on the right.</summary>
-    public const float Gap = 9, RightPad = 12;
+    /// <summary>The gap after the tomte and after the ring, the room before the first thing with the tomte off, and the room kept free on the right.</summary>
+    public const float Gap = 9, LeftPad = 8, RightPad = 12;
 
     public const float RingSize = 18, RingStroke = 3.5f;
 
@@ -21,9 +21,9 @@ public static class CompactLayout
     /// <summary>How far each of the four bars reaches, as a share of the waveform's swing.</summary>
     public static readonly float[] BarReach = [.35f, .62f, .85f, 1f];
 
-    public static readonly RectangleF Art = new(-67, 8, 22, 22);
+    public static readonly RectangleF Art = new(-69.5f, 8, 22, 22);
     public const float ArtCorner = 6;
-    public static readonly RectangleF Title = new(-36, 9, 107, 20);
+    public static readonly RectangleF Title = new(-38.5f, 9, 109.5f, 20);
 
     /// <summary>The pill's one line is 13 DIP semibold white; the timer's countdown keeps its digits still.</summary>
     public static readonly TextStyle TitleStyle = new(13, 600);
@@ -32,8 +32,8 @@ public static class CompactLayout
 
     private static float Width => (float)IslandGeometry.Compact.Width;
 
-    /// <summary>Where the ring starts, from the pill's left edge: after the tomte, or at its inset when it is off.</summary>
-    public static float RingLeft(bool mascot) => mascot ? MascotArt.InsetX + MascotArt.SizeDips + Gap : MascotArt.InsetX;
+    /// <summary>Where the ring starts, from the pill's left edge: after the tomte, or at the left padding when it is off.</summary>
+    public static float RingLeft(bool mascot) => mascot ? MascotArt.InsetX + MascotArt.SizeDips + Gap : LeftPad;
 
     /// <summary>The line's slot: where the ring would start, or after the ring when it shows, to the right padding.</summary>
     public static RectangleF Line(bool mascot, bool ring)

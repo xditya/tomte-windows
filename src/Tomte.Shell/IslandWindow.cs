@@ -657,10 +657,10 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>Put the tomte at the left edge of the shape, or of the anchor shape during a reveal or retract.</summary>
     private void PlaceMascot(in IslandGeometry g)
     {
-        var a = anchor ?? g;
+        var box = MascotArt.Box(anchor ?? g);
         float s = (float)scale;
-        mascotX = (float)(g.OuterWidth / 2 - a.Width / 2 + MascotVisual.InsetX) * s;
-        mascotVisual.Apply(Mascot, new Vector2(mascotX, MascotVisual.InsetY * s), s);
+        mascotX = (float)(g.OuterWidth / 2 + box.X) * s;
+        mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s);
     }
 
     private void ClearRegion()

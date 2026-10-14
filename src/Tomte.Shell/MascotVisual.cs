@@ -11,14 +11,15 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed class MascotVisual
 {
-    /// <summary>Rendered size of the 64-unit viewBox and its inset from the island's top-left, in DIPs.</summary>
-    public const float SizeDips = MascotArt.SizeDips, InsetX = MascotArt.InsetX, InsetY = MascotArt.InsetY;
+    /// <summary>Rendered size of the 64-unit viewBox and its inset from the island's left edge, in DIPs.</summary>
+    public const float SizeDips = MascotArt.SizeDips, InsetX = MascotArt.InsetX;
 
     private readonly ContainerVisual place;
     private readonly ContainerVisual root;
     private readonly ContainerVisual body;
     private readonly ContainerVisual cap;
     private readonly ShapeVisual tip;
+    private readonly InsetClip edge;
     private readonly CompositionColorBrush capBrush;
     private readonly CompositionColorBrush shadeBrush;
     private uint capColor = uint.MaxValue;
@@ -47,12 +48,13 @@ internal sealed class MascotVisual
         // pill has the gap, and the drop-in comes out of the line the pill grows from, not down across the gap.
         place.Size = new Vector2(MascotArt.ViewBox);
         float far = 4 * MascotArt.ViewBox;
-        place.Clip = compositor.CreateInsetClip(-far, -InsetY * MascotArt.ViewBox / SizeDips, -far, -far);
+        edge = compositor.CreateInsetClip(-far, 0, -far, -far);
+        place.Clip = edge;
     }
 
     public Visual Visual => place;
 
-    /// <summary>Copy the pose onto the visuals. Property sets only; nothing is allocated per frame.</summary>
+    /// <summary>Copy the pose onto the visuals, the box's top-left at <paramref name="offsetPx"/> from the island's. Property sets only; nothing is allocated per frame.</summary>
     public void Apply(Mascot mascot, Vector2 offsetPx, float scale)
     {
         place.IsVisible = mascot.Visible;
@@ -64,6 +66,8 @@ internal sealed class MascotVisual
         float k = SizeDips / MascotArt.ViewBox * scale;
         place.Offset = new Vector3(offsetPx, 0);
         place.Scale = new Vector3(k, k, 1);
+        // The box sits lower in a deeper row; the clip stays on the island's top edge, in viewBox units.
+        edge.TopInset = -offsetPx.Y / k;
         root.RotationAngleInDegrees = (float)mascot.RootRotate;
         root.Offset = new Vector3((float)mascot.RootX, (float)mascot.RootY, 0);
         body.Scale = new Vector3((float)mascot.ScaleX, (float)mascot.ScaleY, 1);

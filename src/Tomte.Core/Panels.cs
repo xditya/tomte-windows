@@ -64,13 +64,14 @@ public sealed class PanelTabs
 }
 
 /// <summary>
-/// The tab labels in the 42 DIP strip, in DIPs from the panel's left edge and top: after the tomte, each label
-/// centred in a pill 10 DIP wider than its text on each side, 2 DIP apart, the current one white, the others at 60%.
-/// A label that would run past the right padding is cut to the room left; one with almost no room is left out.
+/// The tab labels in the 42 DIP strip, in DIPs from the panel's left edge and top: after the tomte (or the left
+/// padding with it off), each label centred in a pill 10 DIP wider than its text on each side, 2 DIP apart, the
+/// current one white, the others at 60%. A label that would run past the right padding is cut to the room left; one
+/// with almost no room is left out.
 /// </summary>
 public static class TabStrip
 {
-    public const float PadX = 10, Gap = 2, Height = 28, Corner = 8, AfterMascot = 6, RightPad = 10, MinWidth = 32;
+    public const float PadX = 10, Gap = 2, Height = 28, Corner = 8, AfterMascot = 6, LeftPad = 8, RightPad = 10, MinWidth = 32;
 
     public static readonly TextStyle Label = new(12.5f, Color: TextStyle.SecondaryColor, Align: TextAlign.Center);
     public static readonly TextStyle Current = Label with { Color = TextStyle.WhiteColor };
@@ -87,7 +88,7 @@ public static class TabStrip
     /// <summary>One label per tab, in tab order; the current one's slot is also where its pill goes.</summary>
     public static IReadOnlyList<TextSlot> Labels(IEnumerable<PanelId> tabs, PanelId? current, float panelWidth, bool mascot)
     {
-        float x = mascot ? MascotArt.InsetX + MascotArt.SizeDips + AfterMascot : MascotArt.InsetX;
+        float x = mascot ? MascotArt.InsetX + MascotArt.SizeDips + AfterMascot : LeftPad;
         float y = (PanelSpace.TabStripHeight - Height) / 2;
         var labels = new List<TextSlot>();
         foreach (var id in tabs)

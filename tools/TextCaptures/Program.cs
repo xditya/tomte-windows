@@ -697,10 +697,11 @@ internal static unsafe partial class Program
             path->Release();
         }
 
-        /// <summary>The tomte at rest, at its inset from the pill's top-left corner.</summary>
+        /// <summary>The tomte at rest, in its box at the pill's left edge.</summary>
         public void Mascot()
         {
-            var at = new Vector2((float)(-g.Width / 2) + MascotArt.InsetX, MascotArt.InsetY);
+            var box = MascotArt.Box(g);
+            var at = new Vector2(box.X, box.Y);
             float k = MascotArt.SizeDips / MascotArt.ViewBox;
             uint cap = 0xFF000000 | MascotArt.CapRed, shade = 0xFF000000 | MascotArt.Shade(MascotArt.CapRed);
             Fill(MascotArt.Beard, at, k, 0xFF000000 | MascotArt.BeardColor);

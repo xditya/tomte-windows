@@ -193,7 +193,7 @@ public sealed class TypingTests : IDisposable
         (string, bool)[] chips = [("Selection · none", false), ("Window · notepad · notes.txt - Notepad", false), ("Screenshot of window", false), ("Shelf · Q3-report.pdf", true), ("Scratchpad", false)];
         var layout = new PaletteLayout(640, mascot: true, text: 0, chips);
         // The prompt box sits after the tomte, one line tall; the chips that do not fit start a second row.
-        Assert.Equal(new System.Drawing.RectangleF(44, 12, 582, 36), layout.Prompt);
+        Assert.Equal(new System.Drawing.RectangleF(41.5f, 12, 584.5f, 36), layout.Prompt);
         Assert.Equal(58, layout.ChipsTop);
         Assert.Equal(58, layout.Chips[0].Box.Y);
         Assert.True(layout.Chips[^1].Box.Y > layout.ChipsTop, "the last chip wraps");

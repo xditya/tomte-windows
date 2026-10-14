@@ -40,11 +40,14 @@ public static class MascotArt
 {
     public const float ViewBox = 64;
 
-    /// <summary>Rendered size of the 64-unit viewBox and its inset from the island's top-left, in DIPs.</summary>
-    public const float SizeDips = 26, InsetX = 8;
+    /// <summary>
+    /// Rendered size of the 64-unit viewBox and its inset from the island's left edge, in DIPs. The inset leaves the
+    /// art (8.1 to 55.9 across) as much room on its left as it has above it in the 42 DIP tab strip: 8.8 DIP.
+    /// </summary>
+    public const float SizeDips = 26, InsetX = 5.5f;
 
-    /// <summary>Low enough that the reveal start pose (PeekFromY) is fully above the island's top edge on the first frame.</summary>
-    public const float InsetY = 3.5f;
+    /// <summary>The art's middle row, between the cap tip (1) and the bottom of the beard (61).</summary>
+    public const float MiddleY = 31;
 
     /// <summary>Whole character and body: bottom centre. Cap: brim centre. Tip: where it leaves the cone.</summary>
     public static readonly Vector2 RootPivot = new(32, 61);
@@ -75,6 +78,16 @@ public static class MascotArt
 
     public static readonly OutlineSegment[] Brim = [M(9, 31), L(55, 31), C(56.2f, 33, 56.2f, 35, 55, 37), L(9, 37), C(7.8f, 35, 7.8f, 33, 9, 31)];
 
+    /// <summary>
+    /// The tomte's box in island space (x from the shape's centre line, y from its top) for the shape it sits in: at the
+    /// left edge, with the art centred down the top row, which is the shape's depth up to the tab strip's height.
+    /// </summary>
+    public static System.Drawing.RectangleF Box(in IslandGeometry shape)
+    {
+        float row = (float)Math.Min(shape.Depth, PanelSpace.TabStripHeight);
+        return new(-(float)shape.Width / 2 + InsetX, row / 2 - MiddleY * SizeDips / ViewBox, SizeDips, SizeDips);
+    }
+
     /// <summary>The brim colour: the cap colour at 76% brightness, so a user-chosen cap keeps its shading.</summary>
     public static uint Shade(uint rgb)
     {
@@ -92,7 +105,8 @@ public static class MascotArt
 /// <summary>The state table and the timeline values of the seven states.</summary>
 public static class MascotStates
 {
-    public const double PeekFromY = -70;
+    /// <summary>The reveal's start pose: the bottom of the beard (61) above the island's top edge from the tab strip's inset.</summary>
+    public const double PeekFromY = -82;
     public const double IslandLeadSeconds = 0.07;
     public const double PeekToRestSeconds = 0.7;
     public const double SwayAngle = 3;
