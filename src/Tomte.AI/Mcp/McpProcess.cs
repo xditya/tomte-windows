@@ -12,10 +12,11 @@ namespace Tomte.AI.Mcp;
 /// One stdio server as a child process that Tomte starts and owns. The process sits in a job object
 /// that Windows ends when Tomte's handle to it closes, so the server and everything it started stop
 /// with Tomte however Tomte ends: quit, crash or killed. Tomte itself is never in such a job.
-/// A program (.exe, .com) is started directly with its arguments as typed. A .cmd or .bat (npx and
-/// uvx are such files) can only run through cmd.exe, so those go through it with the arguments
-/// quoted to arrive unchanged. The child gets Tomte's whole environment and runs in the user's
-/// profile folder.
+/// A program (.exe, .com; uvx is one) is started directly with its arguments as typed. A .cmd or
+/// .bat (npx is one) can only run through cmd.exe, so those go through it with the arguments quoted
+/// to arrive unchanged. A batch file that hands its arguments on with CALL makes cmd read them a
+/// second time, which the quoting does not cover; npx.cmd does not. The child gets Tomte's whole
+/// environment and runs in the user's profile folder.
 /// </summary>
 internal sealed class McpProcess : IAsyncDisposable
 {

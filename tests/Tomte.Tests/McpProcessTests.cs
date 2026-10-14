@@ -75,7 +75,7 @@ public sealed class McpProcessTests : IDisposable
         string command = Exe;
         if (throughCmd)
         {
-            // What npx.cmd and uvx.cmd are: a batch file that hands its arguments on to a program.
+            // What npx.cmd is: a batch file that hands its arguments on to a program.
             command = InFolder("shim.cmd");
             File.WriteAllText(command, $"@\"{Exe}\" %*\r\n");
         }
