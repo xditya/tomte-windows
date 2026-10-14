@@ -222,6 +222,16 @@ public sealed class McpProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task SettingsListsAToolLeftOutForItsSchema()
+    {
+        // The path the settings window takes: start the server, list, stop.
+        var tools = await McpTools.ProbeAsync(Echo(InFolder("info.json"), "--huge"), _limit.Token);
+        Assert.Equal(["echo", "huge"], tools.Select(t => t.Name));
+        Assert.Null(tools[0].LeftOut);
+        Assert.StartsWith("The AI is not offered this tool", tools[1].LeftOut);
+    }
+
+    [Fact]
     public async Task DisposeCancelsAStartThatNeverAnswers()
     {
         // "sleep" never answers the first request. With nothing to cancel the start, the SDK waits 60 s
