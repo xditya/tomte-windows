@@ -360,7 +360,7 @@ public class MediaTests
     public void TheBarIsASeekBarOnlyWhileTheAppTakesAPosition()
     {
         var seek = MediaPanelLayout.Targets(Seekable())[0];
-        Assert.Equal(("seek", true, 0), (seek.Id, seek.Draggable, seek.Group));
+        Assert.Equal(("seek", TargetKind.Slider, true, 0), (seek.Id, seek.Kind, seek.Draggable, seek.Group));
         Assert.True(seek.Bounds.Height >= StateLook.MinTarget);
         Assert.True(seek.Bounds.Contains(MediaPanelLayout.Bar));
         // The knob at either end is inside it.
@@ -372,6 +372,20 @@ public class MediaTests
         var noTimeline = Seekable().WithTimeline(S(0), S(0), S(0), T0, T0);
         Assert.Null(noTimeline.Timeline);
         Assert.DoesNotContain(MediaPanelLayout.Targets(noTimeline), t => t.Id == "seek");
+    }
+
+    [Fact]
+    public void ASeekHoldsTheBarUntilTheAppReportsOrTwoSecondsPass()
+    {
+        var sent = Seekable().Timeline!.Value;
+        var seek = new PendingSeek(S(120), sent, T0);
+        Assert.True(seek.Holds(sent, T0 + S(1.9)));
+        // No report within 2 s: the bar goes back to what the app last said.
+        Assert.False(seek.Holds(sent, T0 + S(2)));
+        // The app reported the new position, or stopped reporting a timeline: the bar shows that at once.
+        var reported = Seekable().WithTimeline(S(0), S(195), S(120), T0 + S(0.3), T0 + S(0.3)).Timeline;
+        Assert.False(seek.Holds(reported, T0 + S(0.3)));
+        Assert.False(seek.Holds(null, T0 + S(0.3)));
     }
 
     [Fact]

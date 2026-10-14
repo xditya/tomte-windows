@@ -29,8 +29,9 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
     private IReadOnlyList<Target> targets = [];
     private Vector2? pressAt;
 
-    // The last seek sent, and the timeline it was sent from: until the app reports another, positions count from it.
-    private (TimeSpan To, MediaTimeline From)? sought;
+    // The last seek sent: until the app reports another timeline, or for 2 s, the bar and the keys count from it.
+    private PendingSeek? sought;
+    private Windows.System.DispatcherQueueTimer? settle;
     private bool drooped;
 
     public PanelId Id => PanelId.Media;
@@ -55,6 +56,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         view?.Dispose();
         view = null;
         (drooped, pressAt, sought) = (false, null, null);
+        settle?.Stop();
         targets = [];
         TargetsChanged?.Invoke();
     }
@@ -124,7 +126,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             return false;
         }
 
-        var from = sought is { } last && last.From == timeline ? last.To : timeline.PositionAt(now());
+        var from = sought is { } last && last.Holds(timeline, now()) ? last.To : timeline.PositionAt(now());
         TimeSpan? to = (VIRTUAL_KEY)virtualKey switch
         {
             VIRTUAL_KEY.VK_LEFT => MediaPanelLayout.Stepped(from, -1, timeline),
@@ -202,8 +204,19 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             return;
         }
 
-        sought = (position, timeline);
+        sought = new PendingSeek(position, timeline, now());
         view?.Hold(MediaPanelLayout.BarX(position, timeline));
+        // With no report by then, the bar goes back to the last position the app gave.
+        if (settle is null)
+        {
+            settle = island.Queue.CreateTimer();
+            settle.IsRepeating = false;
+            settle.Interval = PendingSeek.Wait;
+            settle.Tick += (_, _) => Update();
+        }
+
+        settle.Stop();
+        settle.Start();
         bool accepted = await tracker.SeekAsync(position);
         if (!accepted)
         {
@@ -248,11 +261,14 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         var playing = tracker.Current;
         var at = now();
         view?.Update(playing, tracker.Failure, at);
-        // A seek the app has not reported yet keeps the fill where it was sent.
-        // an app that takes a seek and never reports its timeline leaves the fill held there; let a timer free it if one shows up.
-        if (sought is { } last && last.From == playing.Timeline)
+        // A seek the app has not reported yet keeps the fill where it was sent, for a while.
+        if (sought is { } last && last.Holds(playing.Timeline, at))
         {
             view?.Hold(MediaPanelLayout.BarX(last.To, last.From));
+        }
+        else
+        {
+            sought = null;
         }
 
         var next = MediaPanelLayout.Targets(playing);

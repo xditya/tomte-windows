@@ -236,6 +236,17 @@ public sealed class MediaWatchers
 }
 
 /// <summary>
+/// A seek sent to <paramref name="To"/> from the timeline <paramref name="From"/> at <paramref name="At"/>. The bar holds
+/// there while the app still reports that timeline, for up to <see cref="Wait"/>; then it shows what the app says again.
+/// </summary>
+public readonly record struct PendingSeek(TimeSpan To, MediaTimeline From, DateTimeOffset At)
+{
+    public static readonly TimeSpan Wait = TimeSpan.FromSeconds(2);
+
+    public bool Holds(MediaTimeline? reported, DateTimeOffset now) => reported == From && now - At < Wait;
+}
+
+/// <summary>
 /// Where things sit in the Media panel's body (380 x 98 DIPs under the tab strip): art on the left,
 /// then title, artist, the progress row and the transport row. The text slots are where the text is
 /// drawn, each run as wide as its slot; the clocks have room for "99:59:59" either side of the
@@ -289,7 +300,7 @@ public static class MediaPanelLayout
         var buttons = new List<Target>();
         if (now.CanSeek)
         {
-            buttons.Add(new(SeekId, Seek, Seek.Height / 2, TargetKind.Button, Draggable: true));
+            buttons.Add(new(SeekId, Seek, Seek.Height / 2, TargetKind.Slider, Draggable: true));
         }
 
         buttons.Add(new(PreviousId, Previous, Previous.Width / 2, TargetKind.Button, now.Accepts(MediaCommand.Previous), "Previous", Group: 1));
