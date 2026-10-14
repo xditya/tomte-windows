@@ -7,7 +7,7 @@ using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
 
-/// <summary>Colours from the design's tokens.</summary>
+/// <summary>The island's colours: cards, inks, the info blue and the warning amber.</summary>
 internal static class ShelfColors
 {
     public static readonly Color Clear = Color.FromArgb(0, 0, 0, 0);

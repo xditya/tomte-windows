@@ -4,7 +4,7 @@ using System.Numerics;
 namespace Tomte.Core;
 
 /// <summary>
-/// Where the shelf's parts sit, in DIPs, from the design. The panel body's origin is its top-left corner under the
+/// Where the shelf's parts sit, in DIPs. The panel body's origin is its top-left corner under the
 /// tab strip; the drop surface is in island space (x = 0 on the island's centre line, y = 0 at its top edge). Also
 /// the strings each part would show: there is no text renderer on the island yet, so the views draw a neutral bar
 /// where each one goes and these are what a renderer will draw.
@@ -109,7 +109,7 @@ public static class ShelfLayout
         _ => "Remove",
     };
 
-    /// <summary>The icon square's colour (RRGGBB) by kind, from the design.</summary>
+    /// <summary>The icon square's colour (RRGGBB) by kind of file.</summary>
     public static uint KindColor(ShelfItem item) => item.IsFolder ? 0xD9A441u : Path.GetExtension(item.Name).ToLowerInvariant() switch
     {
         ".pdf" => 0xC0392Bu,

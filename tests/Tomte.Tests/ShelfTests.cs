@@ -92,7 +92,7 @@ public sealed class ShelfTests : IDisposable
     [InlineData(@"E:\photos\x.jpg", false, DriveType.Removable, DropDecision.CopyLater)]
     [InlineData(@"F:\disc\x.jpg", false, DriveType.CDRom, DropDecision.CopyLater)]
     [InlineData(@"\\server\share\x.txt", false, DriveType.Network, DropDecision.Reference)]
-    public void DecideFollowsTheSpec(string path, bool keepCopy, DriveType drive, DropDecision expected) =>
+    public void TemporaryFoldersRemovableDrivesAndCtrlAreCopied(string path, bool keepCopy, DriveType drive, DropDecision expected) =>
         Assert.Equal(expected, ShelfStore.Decide(path, keepCopy, [@"C:\Users\a\AppData\Local\Temp\"], _ => drive));
 
     [Fact]

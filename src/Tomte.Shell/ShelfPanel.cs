@@ -16,7 +16,7 @@ using Color = Windows.UI.Color;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Shelf panel's body: a head row and a grid of tiles, newest first, two rows of four at the 560 x 260, the
+/// The Shelf panel's body: a head row and a grid of tiles, newest first, two rows of four at the Shelf panel's 560 x 260, the
 /// wheel scrolling a row a notch. A press selects (Ctrl adds or takes away), a press and drag drags the selection out,
 /// and a selected tile shows its five action buttons. Missing items are dimmed, with their own meta line.
 /// </summary>
