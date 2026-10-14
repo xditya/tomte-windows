@@ -77,6 +77,12 @@ public sealed class DeviceToolsTests : IDisposable
         Assert.False(BuiltInTools.IsDeviceTool(BuiltInTools.OpenUrl));
     }
 
+    // A tool from outside (an MCP server) reaches the model as "server__tool". No built-in name may have a
+    // double underscore, or an outside tool could take its place.
+    [Fact]
+    public void BuiltInNamesCannotBeTakenByAnOutsideTool() =>
+        Assert.All(BuiltInTools.Definitions, d => Assert.DoesNotContain("__", d.Name));
+
     [Fact]
     public void DestructiveToolsAreOutOfScheduledJobs()
     {
