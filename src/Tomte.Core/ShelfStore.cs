@@ -127,7 +127,11 @@ public sealed class ShelfStore : IShelf
     public Task Load() => Run(static () => { });
 
     /// <summary>Looks at every item on disk again: the island opened, so moved and deleted files are flagged now.</summary>
-    public Task Check() => Run(() => rows = rows.ConvertAll(Probe));
+    public Task Check() => Run(() =>
+    {
+        rows = rows.ConvertAll(Probe);
+        log?.Invoke($"shelf: checked {rows.Count} items, {rows.Count(r => r.Missing)} missing");
+    });
 
     /// <summary>
     /// Takes a drop. Called inside the drop on the island's thread: a path in a temporary folder is copied here and
@@ -399,6 +403,7 @@ public sealed class ShelfStore : IShelf
 
     private void LoadRows()
     {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var loadedRows = new List<ShelfItem>();
         using (var connection = db.Open(Feature, Schema))
         using (var command = connection.CreateCommand())
@@ -415,6 +420,7 @@ public sealed class ShelfStore : IShelf
         rows = loadedRows;
         loaded = true;
         Sweep();
+        log?.Invoke($"shelf: loaded {rows.Count} items ({rows.Count(r => r.Missing)} missing) in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
     }
 
     /// <summary>Deletes the folders of items removed in an earlier process. Folders this process made are never touched.</summary>
@@ -452,6 +458,7 @@ public sealed class ShelfStore : IShelf
 
     private void AddAll(IReadOnlyList<ShelfEntry> entries)
     {
+        long started = System.Diagnostics.Stopwatch.GetTimestamp();
         var now = DateTimeOffset.UtcNow;
         var taken = rows.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var added = new List<ShelfItem>();
@@ -489,6 +496,7 @@ public sealed class ShelfStore : IShelf
         transaction.Commit();
         added.Reverse();
         rows.InsertRange(0, added);
+        log?.Invoke($"shelf: added {string.Join(", ", added.Select(i => $"{i.Name} ({i.Kind})"))} in {System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
     }
 
     private void RemoveAll(HashSet<long> ids)

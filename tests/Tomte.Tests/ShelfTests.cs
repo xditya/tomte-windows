@@ -334,6 +334,111 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal("c.txt", ShelfStore.Unique("c.txt", taken));
     }
 
+    private static readonly System.Numerics.Vector2 Body = new(560, 260 - ShelfLayout.TabStrip);
+
+    [Fact]
+    public void TheGridFitsTheShelfPanelClearOfItsCorners()
+    {
+        Assert.Equal(2, ShelfLayout.Rows(Body));
+        for (int slot = 0; slot < 8; slot++)
+        {
+            var tile = ShelfLayout.Tile(slot, Body);
+            Assert.True(tile.Left >= ShelfLayout.PadX && tile.Right <= Body.X - ShelfLayout.PadX + 0.01f && tile.Bottom <= Body.Y - ShelfLayout.PadY + 0.01f, $"tile {slot} at {tile}");
+            // The panel's bottom corners have a radius of 22; a tile corner must sit inside the rounded shape.
+            Assert.True(InsideRoundedBottom(tile.Left, tile.Bottom, Body, 22) && InsideRoundedBottom(tile.Right, tile.Bottom, Body, 22), $"tile {slot}");
+            foreach (var action in Enum.GetValues<ShelfAction>())
+            {
+                Assert.True(tile.Contains(ShelfLayout.ActionButton(action, tile)), $"{action} on tile {slot}");
+            }
+        }
+    }
+
+    [Fact]
+    public void TheDropTargetLeavesTheMascotItsColumnAndClearsTheCorners()
+    {
+        var g = IslandGeometry.ShelfDrop;
+        var r = ShelfLayout.DropTarget(g.Width, g.Depth);
+        Assert.True(r.Left >= -g.Width / 2 + 8 + 26 + 8);
+        // The floating pill rounds all four corners with the state's corner, 20 here.
+        foreach (var (x, y) in new[] { (r.Left, r.Top), (r.Right, r.Top), (r.Left, r.Bottom), (r.Right, r.Bottom) })
+        {
+            double cx = Math.Clamp(x, -g.Width / 2 + g.Corner, g.Width / 2 - g.Corner), cy = Math.Clamp(y, g.Corner, g.Depth - g.Corner);
+            Assert.True(Math.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) <= g.Corner, $"corner ({x}, {y})");
+        }
+    }
+
+    [Fact]
+    public void APressFindsItsTileAndOnlyASelectedTileHasButtons()
+    {
+        var sixth = ShelfLayout.Tile(5, Body);
+        var centre = new System.Numerics.Vector2(sixth.X + sixth.Width / 2, sixth.Y + sixth.Height - 10);
+        Assert.Equal((5, (ShelfAction?)null), ShelfLayout.At(centre, Body, 0, 6, _ => false));
+        Assert.Equal((9, (ShelfAction?)null), ShelfLayout.At(centre, Body, 4, 12, _ => false));
+        Assert.Equal((-1, (ShelfAction?)null), ShelfLayout.At(centre, Body, 0, 5, _ => false));
+        Assert.Equal((-1, (ShelfAction?)null), ShelfLayout.At(new(5, 5), Body, 0, 6, _ => true));
+
+        var share = ShelfLayout.ActionButton(ShelfAction.Share, sixth);
+        var onShare = new System.Numerics.Vector2(share.X + 11, share.Y + 11);
+        Assert.Equal((5, (ShelfAction?)ShelfAction.Share), ShelfLayout.At(onShare, Body, 0, 6, i => i == 5));
+        Assert.Equal((5, (ShelfAction?)null), ShelfLayout.At(onShare, Body, 0, 6, _ => false));
+    }
+
+    [Fact]
+    public void TheWheelScrollsARowANotchWithinTheItems()
+    {
+        // 18 items are five rows; two show.
+        Assert.Equal(4, ShelfLayout.Scroll(0, -1, 18, Body));
+        Assert.Equal(12, ShelfLayout.Scroll(0, -10, 18, Body));
+        Assert.Equal(0, ShelfLayout.Scroll(4, 3, 18, Body));
+        Assert.Equal(0, ShelfLayout.Scroll(0, -1, 8, Body));
+        // Items removed while scrolled down pull the page back.
+        Assert.Equal(0, ShelfLayout.Scroll(12, 0, 5, Body));
+    }
+
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(1.25)]
+    [InlineData(1.5)]
+    public void APressInWindowPixelsLandsOnTheSameTileAtEveryScale(double scale)
+    {
+        // The settled Panels window: the shape's box plus one pixel each side, the shape centred in it.
+        int clientWidth = (int)Math.Ceiling((560 + 2 * 24) * scale) + 2;
+        for (int slot = 0; slot < 8; slot++)
+        {
+            var tile = ShelfLayout.Tile(slot, Body);
+            foreach (var (x, y) in new[] { (tile.Left + 1, tile.Top + 1), (tile.Right - 1, tile.Bottom - 1) })
+            {
+                int px = (int)Math.Round((x - 280) * scale + clientWidth / 2.0), py = (int)Math.Round((y + ShelfLayout.TabStrip) * scale + 1);
+                var back = ShelfLayout.BodyPoint(px, py, clientWidth, scale, 560);
+                Assert.Equal(slot, ShelfLayout.At(back, Body, 0, 8, _ => false).Index);
+            }
+        }
+    }
+
+    [Fact]
+    public void TheStringsThatWaitForTheRenderer()
+    {
+        Assert.Equal("1 item · references by default", ShelfLayout.Head(1));
+        Assert.Equal("3 items · references by default", ShelfLayout.Head(3));
+        Assert.Equal("4 KB", ShelfLayout.Size(4000));
+        Assert.Equal("1 KB", ShelfLayout.Size(20));
+        Assert.Equal("2.4 MB", ShelfLayout.Size(2_516_582));
+        Assert.Equal("5.0 GB", ShelfLayout.Size(5L << 30));
+        var item = Item(ShelfKind.Reference, @"C:\a\Q3-report.pdf") with { Size = 2_516_582 };
+        Assert.Equal("2.4 MB", ShelfLayout.Meta(item));
+        Assert.Equal("File moved or deleted", ShelfLayout.Meta(item with { Missing = true }));
+        Assert.Equal("Folder", ShelfLayout.Meta(item with { IsFolder = true, Size = null }));
+        Assert.Equal(0xC0392Bu, ShelfLayout.KindColor(item));
+        Assert.Equal("Reveal in Explorer", ShelfLayout.Name(ShelfAction.Reveal));
+    }
+
+    private static bool InsideRoundedBottom(float x, float y, System.Numerics.Vector2 body, float radius)
+    {
+        // Body coordinates; the panel's bottom corners are the body's.
+        float cx = Math.Clamp(x, radius, body.X - radius), cy = Math.Min(y, body.Y - radius);
+        return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= radius * radius;
+    }
+
     private static ShelfItem Item(ShelfKind kind, string path = @"C:\x.txt") => new(1, Path.GetFileName(path), path, kind, DateTimeOffset.UnixEpoch);
 
     private static string Write(string folder, string name, string text)
