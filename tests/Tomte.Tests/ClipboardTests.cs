@@ -363,7 +363,7 @@ public sealed class ClipboardTests : IDisposable
         var image = new FakeClipboard { ImageBytes = [1, 2, 3], ImageIsPng = true };
         var read = Read(image);
         Assert.Null(read.Text);
-        Assert.Equal([1, 2, 3], read.Image!.Bytes);
+        Assert.Equal([1, 2, 3], read.Image!.ToArray());
         Assert.True(read.Image.Png);
         Assert.Equal("kept an image of 3 bytes (PNG)", read.Outcome);
         Assert.Equal(0, image.OpenNow);
@@ -430,7 +430,7 @@ public sealed class ClipboardTests : IDisposable
     [InlineData(32)]
     public void ACopiedBitmapIsKeptAsAPngAndPutBackPixelForPixel(int bits)
     {
-        var kept = ClipboardImages.Keep(new CopiedImage(Dib(5, 3, bits, Colour), Png: false), Limits.MaxImageReadBytes)!;
+        var kept = ClipboardImages.Keep(new CopiedImage(Dib(5, 3, bits, Colour), png: false), Limits.MaxImageReadBytes)!;
         Assert.Equal((5, 3), (kept.Width, kept.Height));
         Assert.Equal("\u0089PNG", Encoding.Latin1.GetString(kept.Png, 0, 4));
 
@@ -448,8 +448,8 @@ public sealed class ClipboardTests : IDisposable
         }
 
         // A PNG that came as one is kept as it came, less what the clipboard's memory held after its end.
-        Assert.Same(kept.Png, ClipboardImages.Keep(new CopiedImage(kept.Png, Png: true), Limits.MaxImageReadBytes)!.Png);
-        Assert.Equal(kept.Png, ClipboardImages.Keep(new CopiedImage([.. kept.Png, 7, 7, 7], Png: true), Limits.MaxImageReadBytes)!.Png);
+        Assert.Equal(kept.Png, ClipboardImages.Keep(new CopiedImage(kept.Png, png: true), Limits.MaxImageReadBytes)!.Png);
+        Assert.Equal(kept.Png, ClipboardImages.Keep(new CopiedImage([.. kept.Png, 7, 7, 7], png: true), Limits.MaxImageReadBytes)!.Png);
     }
 
     [Fact]
@@ -457,7 +457,7 @@ public sealed class ClipboardTests : IDisposable
     {
         // Green at both ends, red then blue between: a centred 3:2 cut shows red on its left and blue on its right.
         static (byte, byte, byte) Bands(int x, int y) => x < 50 || x >= 350 ? ((byte)0, (byte)255, (byte)0) : x < 200 ? ((byte)0, (byte)0, (byte)255) : ((byte)255, (byte)0, (byte)0);
-        var kept = ClipboardImages.Keep(new CopiedImage(Dib(400, 100, 24, Bands), Png: false), Limits.MaxImageReadBytes)!;
+        var kept = ClipboardImages.Keep(new CopiedImage(Dib(400, 100, 24, Bands), png: false), Limits.MaxImageReadBytes)!;
         Assert.Equal(ClipboardImages.ThumbWidth * ClipboardImages.ThumbHeight * 4, ClipboardImages.Thumbnail(kept.Thumb, ClipboardImages.ThumbWidth, ClipboardImages.ThumbHeight).Length);
 
         foreach (double scale in (double[])[1, 1.25, 1.5])
@@ -474,16 +474,16 @@ public sealed class ClipboardTests : IDisposable
     [Fact]
     public void AnImageWhoseBitmapIsOverTheSizeOrThatDoesNotDecodeIsNotKept()
     {
-        var copied = new CopiedImage(Dib(64, 64, 24, Colour), Png: false);
+        var copied = new CopiedImage(Dib(64, 64, 24, Colour), png: false);
         Assert.Null(ClipboardImages.Keep(copied, 64 * 64 * 4 - 1));
         Assert.NotNull(ClipboardImages.Keep(copied, 64 * 64 * 4));
 
-        Assert.ThrowsAny<Exception>(() => ClipboardImages.Keep(new CopiedImage([1, 2, 3], Png: true), Limits.MaxImageReadBytes));
+        Assert.ThrowsAny<Exception>(() => ClipboardImages.Keep(new CopiedImage([1, 2, 3], png: true), Limits.MaxImageReadBytes));
         Assert.Throws<ArgumentException>(() => ClipboardImages.BmpHeader([40, 0, 0]));
 
         // Only the codec the format names reads it: a bitmap file put in the PNG format is not taken as one.
         var bitmap = Dib(4, 4, 24, Colour);
-        Assert.ThrowsAny<Exception>(() => ClipboardImages.Keep(new CopiedImage([.. ClipboardImages.BmpHeader(bitmap), .. bitmap], Png: true), Limits.MaxImageReadBytes));
+        Assert.ThrowsAny<Exception>(() => ClipboardImages.Keep(new CopiedImage([.. ClipboardImages.BmpHeader(bitmap), .. bitmap], png: true), Limits.MaxImageReadBytes));
     }
 
     [Fact]
@@ -499,7 +499,7 @@ public sealed class ClipboardTests : IDisposable
 
         // Windows' bitmap codec refuses this header itself; either way nothing is kept and memory is not the reason.
         KeptImage? kept = null;
-        var thrown = Record.Exception(() => kept = ClipboardImages.Keep(new CopiedImage(header, Png: false), Limits.MaxImageReadBytes));
+        var thrown = Record.Exception(() => kept = ClipboardImages.Keep(new CopiedImage(header, png: false), Limits.MaxImageReadBytes));
         Assert.Null(kept);
         Assert.False(thrown is OutOfMemoryException);
 
@@ -585,6 +585,8 @@ public sealed class ClipboardTests : IDisposable
         var watch = Watch(listeners);
         watch.Apply(true);
         Assert.Empty(await watch.RowsAsync(Now));
+        var replaced = new CopiedImage(Dib(5, 3, 24, Colour), png: false);
+        var stored = new CopiedImage(Dib(7, 2, 24, Colour), png: false);
 
         // Another connection holds the write lock, so the text copy waits on the worker and the images queue behind it.
         using (var holder = new TomteDb(DbPath).Open("holder", []))
@@ -596,12 +598,16 @@ public sealed class ClipboardTests : IDisposable
             }
 
             listeners[0].Copy("first");
-            listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
-            listeners[0].Copy(new CopiedImage(Dib(7, 2, 24, Colour), Png: false));
+            listeners[0].Copy(replaced);
+            listeners[0].Copy(stored);
+            // The copy that was replaced is freed at once, while the worker is still held.
+            Assert.Throws<ObjectDisposedException>(() => replaced.ToArray());
         }
 
         Assert.Equal(["Image · 7 x 2", "first"], (await watch.RowsAsync(Now.AddMinutes(1))).Select(r => r.Display));
         Assert.Single(log, line => line.StartsWith("clipboard: store an image took", StringComparison.Ordinal));
+        // And the stored one once its PNG was made.
+        Assert.Throws<ObjectDisposedException>(() => stored.ToArray());
     }
 
     [Fact]
@@ -610,9 +616,9 @@ public sealed class ClipboardTests : IDisposable
         var listeners = new List<FakeListener>();
         var watch = Watch(listeners);
         watch.Apply(true);
-        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), png: false));
         await watch.RowsAsync(Now);
-        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), png: false));
         Assert.Single(await watch.RowsAsync(Now));
         Assert.Equal(2, log.Count(line => line.StartsWith("clipboard: store an image took", StringComparison.Ordinal)));
     }
@@ -623,7 +629,7 @@ public sealed class ClipboardTests : IDisposable
         var listeners = new List<FakeListener>();
         var watch = Watch(listeners, new ClipboardRetention(MaxImageBytes: 50));
         watch.Apply(true);
-        listeners[0].Copy(new CopiedImage(Dib(64, 64, 24, (x, y) => ((byte)(x * 7), (byte)(y * 13), (byte)(x * y))), Png: false));
+        listeners[0].Copy(new CopiedImage(Dib(64, 64, 24, (x, y) => ((byte)(x * 7), (byte)(y * 13), (byte)(x * y))), png: false));
 
         Assert.Empty(await watch.RowsAsync(Now));
         Assert.Contains(log, line => line.StartsWith("clipboard: skipped: an image of", StringComparison.Ordinal) && line.EndsWith("as a PNG, over the 50 kept", StringComparison.Ordinal));
@@ -644,9 +650,9 @@ public sealed class ClipboardTests : IDisposable
         var listeners = new List<FakeListener>();
         var watch = Watch(listeners);
         watch.Apply(true);
-        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), png: false));
         await watch.RowsAsync(Now);
-        listeners[0].Copy(new CopiedImage([1, 2, 3], Png: true));
+        listeners[0].Copy(new CopiedImage([1, 2, 3], png: true));
 
         var row = Assert.Single(await watch.RowsAsync(Now));
         Assert.Equal("Image · 5 x 3", row.Display);
@@ -666,7 +672,7 @@ public sealed class ClipboardTests : IDisposable
         var listeners = new List<FakeListener>();
         var watch = Watch(listeners);
         watch.Apply(true);
-        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), Png: false));
+        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), png: false));
         var row = Assert.Single(await watch.RowsAsync(Now));
 
         await watch.PickAsync(row.Id);
@@ -839,12 +845,12 @@ public sealed class ClipboardTests : IDisposable
             }
         }
 
-        public byte[] ReadImage(bool png)
+        public CopiedImage ReadImage(bool png)
         {
             Held();
             Assert.Equal(ImageIsPng, png);
             ImageTouched = true;
-            return ImageBytes!;
+            return new CopiedImage(ImageBytes!, png);
         }
 
         private void Held() => Assert.Equal(1, OpenNow);

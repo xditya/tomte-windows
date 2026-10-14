@@ -319,18 +319,18 @@ internal sealed unsafe class ClipboardListener : IClipboardListener
             : Size(CF_DIB) is > 0 and var dib ? (false, dib)
             : null;
 
-        public byte[] ReadImage(bool png)
+        public CopiedImage ReadImage(bool png)
         {
             var data = (HGLOBAL)PInvoke.GetClipboardData(png ? Id(ClipboardReader.PngFormat) : CF_DIB).Value;
             byte* p = data.IsNull ? null : (byte*)PInvoke.GlobalLock(data);
             if (p == null)
             {
-                return [];
+                return new CopiedImage([], png);
             }
 
             try
             {
-                return new ReadOnlySpan<byte>(p, (int)Math.Min(int.MaxValue, PInvoke.GlobalSize(data))).ToArray();
+                return new CopiedImage(new ReadOnlySpan<byte>(p, (int)Math.Min(int.MaxValue, PInvoke.GlobalSize(data))), png);
             }
             finally
             {

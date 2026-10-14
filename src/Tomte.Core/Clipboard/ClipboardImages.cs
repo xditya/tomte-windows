@@ -1,26 +1,107 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Foundation;
 using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
+using Windows.Win32;
+using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Imaging;
+using Windows.Win32.System.Com;
+using Windows.Win32.System.Com.StructuredStorage;
+using Windows.Win32.System.Memory;
 
 namespace Tomte.Core.Clipboard;
 
 /// <summary>
-/// An image as the listener copied it off the clipboard: the bytes of the "PNG" format, or a packed
-/// device-independent bitmap (a BITMAPINFO header, any masks and colour table, then the pixels).
+/// An image as the listener copied it off the clipboard, in one block of global memory until disposed: the bytes
+/// of the "PNG" format, or a packed device-independent bitmap (a BITMAPINFO header, any masks and colour table, then
+/// the pixels) with 14 bytes free in front of it for the header that makes it a .bmp file. The codec reads the block
+/// where it is, so the copy is never copied again.
 /// </summary>
-public sealed record CopiedImage(byte[] Bytes, bool Png);
+public sealed unsafe class CopiedImage : IDisposable
+{
+    private const int FileHeader = 14;
+    private HGLOBAL block;
+
+    public CopiedImage(ReadOnlySpan<byte> bytes, bool png)
+    {
+        (Png, Length) = (png, bytes.Length);
+        block = PInvoke.GlobalAlloc(GLOBAL_ALLOC_FLAGS.GMEM_MOVEABLE, (nuint)(Front + bytes.Length));
+        if (block.IsNull)
+        {
+            throw new OutOfMemoryException();
+        }
+
+        bytes.CopyTo(new Span<byte>((byte*)PInvoke.GlobalLock(block) + Front, bytes.Length));
+        PInvoke.GlobalUnlock(block);
+    }
+
+    ~CopiedImage() => Free();
+
+    public bool Png { get; }
+
+    /// <summary>How many bytes the format held.</summary>
+    public int Length { get; }
+
+    /// <summary>A copy of the format's bytes in managed memory.</summary>
+    public byte[] ToArray() => Read(span => span.ToArray());
+
+    public void Dispose()
+    {
+        Free();
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>The format's bytes, held still while <paramref name="use"/> runs.</summary>
+    internal T Read<T>(Func<ReadOnlySpan<byte>, T> use)
+    {
+        ObjectDisposedException.ThrowIf(block.IsNull, this);
+        try
+        {
+            return use(new ReadOnlySpan<byte>((byte*)PInvoke.GlobalLock(block) + Front, Length));
+        }
+        finally
+        {
+            PInvoke.GlobalUnlock(block);
+        }
+    }
+
+    /// <summary>A stream over the block as a file: for a bitmap, its file header is written into the free bytes first.</summary>
+    internal IStream File()
+    {
+        ObjectDisposedException.ThrowIf(block.IsNull, this);
+        if (!Png)
+        {
+            var header = Read(ClipboardImages.BmpHeader);
+            header.CopyTo(new Span<byte>(PInvoke.GlobalLock(block), FileHeader));
+            PInvoke.GlobalUnlock(block);
+        }
+
+        // The block stays this object's; the stream only reads it.
+        PInvoke.CreateStreamOnHGlobal(block, false, out var stream).ThrowOnFailure();
+        return stream;
+    }
+
+    private int Front => Png ? 0 : FileHeader;
+
+    private void Free()
+    {
+        if (!block.IsNull)
+        {
+            PInvoke.GlobalFree(block);
+            block = default;
+        }
+    }
+}
 
 /// <summary>An image as history keeps it: a PNG, its size in pixels, and a small PNG for the panel's row.</summary>
 public sealed record KeptImage(byte[] Png, int Width, int Height, byte[] Thumb);
 
 /// <summary>
-/// Clipboard images through WinRT imaging: what history keeps of a copy, the bitmap a pick puts back, and
-/// a row's thumbnail at the panel's scale. Each decodes or encodes, a few hundred milliseconds for a
-/// large image, so call them on a worker, never on the listener's thread or the island's. The pixels stay
-/// in native bitmaps that are freed when each call ends, so the only large managed arrays are the copy
-/// and the result.
+/// Clipboard images: what history keeps of a copy (WIC, from the copy straight to the PNG), the bitmap a pick puts
+/// back and a row's thumbnail at the panel's scale (WinRT imaging). Each decodes or encodes, up to a few hundred
+/// milliseconds for a large image, so call them on a worker, never on the listener's thread or the island's.
 /// </summary>
 public static class ClipboardImages
 {
@@ -37,28 +118,41 @@ public static class ClipboardImages
     /// back) would be over <paramref name="maxBytes"/>. A PNG is kept as it came; a bitmap becomes one.
     /// Throws when the bytes are not a PNG or a bitmap, as each says it is.
     /// </summary>
-    public static KeptImage? Keep(CopiedImage copied, long maxBytes)
+    public static unsafe KeptImage? Keep(CopiedImage copied, long maxBytes)
     {
-        // The header and the copy written one after the other, so the copy is not copied again in managed memory.
-        using var stream = new InMemoryRandomAccessStream();
-        if (!copied.Png)
+        // Straight through WIC: the decoder reads the copy where it is, the PNG encoder and the thumbnail's scaler
+        // pull rows from the decoder a band at a time, so no whole-image bitmap is ever made.
+        var made = new Stack<object>();
+        try
         {
-            Wait(stream.WriteAsync(BmpHeader(copied.Bytes).AsBuffer()));
-        }
+            var factory = Made(made, Factory());
+            var file = Made(made, copied.File());
+            // The codec named, so no other one installed on the PC parses what an app put on the clipboard.
+            var format = copied.Png ? PInvoke.GUID_ContainerFormatPng : PInvoke.GUID_ContainerFormatBmp;
+            var decoder = Made(made, factory.CreateDecoder(&format, null));
+            decoder.Initialize(file, WICDecodeOptions.WICDecodeMetadataCacheOnDemand);
+            decoder.GetFrame(0, out var frame);
+            Made(made, frame);
+            frame.GetSize(out uint width, out uint height);
+            if (!BitmapFits(width, height, maxBytes))
+            {
+                return null;
+            }
 
-        Wait(stream.WriteAsync(copied.Bytes.AsBuffer()));
-        stream.Seek(0);
-        // The codec named, so no other one installed on the PC parses what an app put on the clipboard.
-        var decoder = Wait(BitmapDecoder.CreateAsync(copied.Png ? BitmapDecoder.PngDecoderId : BitmapDecoder.BmpDecoderId, stream));
-        if (!BitmapFits(decoder.PixelWidth, decoder.PixelHeight, maxBytes))
+            frame.GetPixelFormat(out Guid pixels);
+            bool alpha = pixels == PInvoke.GUID_WICPixelFormat32bppBGRA || pixels == PInvoke.GUID_WICPixelFormat32bppPBGRA;
+            // A bitmap without alpha (most are) stays without it.
+            byte[] png = copied.Png ? copied.Read(Trimmed) : Encode(factory, frame, width, height, alpha);
+            return new KeptImage(png, (int)width, (int)height, Encode(factory, Cover(factory, made, frame, width, height), ThumbWidth, ThumbHeight, alpha: true));
+        }
+        finally
         {
-            return null;
+            // Each stage let go now, in reverse, rather than when a finalizer gets to it.
+            while (made.TryPop(out var item))
+            {
+                Marshal.FinalReleaseComObject(item);
+            }
         }
-
-        int width = (int)decoder.PixelWidth, height = (int)decoder.PixelHeight;
-        byte[] png = copied.Png ? Trimmed(copied.Bytes) : WholeAsPng(decoder);
-        using var thumb = Bitmap(decoder, BitmapAlphaMode.Straight, Cover(decoder, ThumbWidth, ThumbHeight));
-        return new KeptImage(png, width, height, Png(thumb));
     }
 
     /// <summary>Whether the image as a 32-bit bitmap is at most <paramref name="maxBytes"/>, for any size a header can claim.</summary>
@@ -97,7 +191,7 @@ public static class ClipboardImages
     }
 
     /// <summary>The 14-byte file header that makes a packed bitmap a .bmp file: its size, and where its pixels start.</summary>
-    public static byte[] BmpHeader(byte[] dib)
+    public static byte[] BmpHeader(ReadOnlySpan<byte> dib)
     {
         int size = dib.Length >= InfoHeader ? BinaryPrimitives.ReadInt32LittleEndian(dib) : 0;
         if (size < InfoHeader || size > dib.Length)
@@ -105,8 +199,8 @@ public static class ClipboardImages
             throw new ArgumentException("Not a device-independent bitmap.", nameof(dib));
         }
 
-        int bits = BinaryPrimitives.ReadUInt16LittleEndian(dib.AsSpan(14)), compression = BinaryPrimitives.ReadInt32LittleEndian(dib.AsSpan(16));
-        int used = BinaryPrimitives.ReadInt32LittleEndian(dib.AsSpan(32));
+        int bits = BinaryPrimitives.ReadUInt16LittleEndian(dib[14..]), compression = BinaryPrimitives.ReadInt32LittleEndian(dib[16..]);
+        int used = BinaryPrimitives.ReadInt32LittleEndian(dib[32..]);
         // Only the oldest header has the colour masks after it (BI_BITFIELDS, BI_ALPHABITFIELDS); later ones hold them.
         int masks = size == InfoHeader ? compression switch { 3 => 12, 6 => 16, _ => 0 } : 0;
         int colours = used > 0 ? used : bits <= 8 ? 1 << bits : 0;
@@ -126,17 +220,86 @@ public static class ClipboardImages
 
     // The clipboard's memory can run past the file it holds; what follows the end is dropped, so the same image
     // copied twice is the same bytes.
-    private static byte[] Trimmed(byte[] png)
+    private static byte[] Trimmed(ReadOnlySpan<byte> png)
     {
-        int end = png.AsSpan().LastIndexOf(PngEnd) + PngEnd.Length;
-        return end < PngEnd.Length || end == png.Length ? png : png[..end];
+        int end = png.LastIndexOf(PngEnd) + PngEnd.Length;
+        return (end < PngEnd.Length ? png : png[..end]).ToArray();
     }
 
-    // The whole image as a PNG; a bitmap without alpha (most are) stays without it.
-    private static byte[] WholeAsPng(BitmapDecoder decoder)
+    private static IWICImagingFactory Factory()
     {
-        using var bitmap = Bitmap(decoder, decoder.BitmapAlphaMode == BitmapAlphaMode.Ignore ? BitmapAlphaMode.Ignore : BitmapAlphaMode.Straight, new BitmapTransform());
-        return Png(bitmap);
+        PInvoke.CoCreateInstance(PInvoke.CLSID_WICImagingFactory, null, CLSCTX.CLSCTX_INPROC_SERVER, out IWICImagingFactory factory).ThrowOnFailure();
+        return factory;
+    }
+
+    private static T Made<T>(Stack<object> made, T item)
+        where T : class
+    {
+        made.Push(item);
+        return item;
+    }
+
+    // The source scaled to cover the stored thumbnail, centred, and cut to it; both steps pull rows as asked.
+    private static unsafe IWICBitmapSource Cover(IWICImagingFactory factory, Stack<object> made, IWICBitmapSource source, uint width, uint height)
+    {
+        double k = Math.Max((double)ThumbWidth / width, (double)ThumbHeight / height);
+        uint scaledWidth = Math.Max(ThumbWidth, (uint)Math.Round(width * k)), scaledHeight = Math.Max(ThumbHeight, (uint)Math.Round(height * k));
+        factory.CreateBitmapScaler(out var scaler);
+        Made(made, scaler).Initialize(source, scaledWidth, scaledHeight, WICBitmapInterpolationMode.WICBitmapInterpolationModeFant);
+        factory.CreateBitmapClipper(out var clipper);
+        var cut = new WICRect { X = (int)(scaledWidth - ThumbWidth) / 2, Y = (int)(scaledHeight - ThumbHeight) / 2, Width = ThumbWidth, Height = ThumbHeight };
+        Made(made, clipper).Initialize(scaler, &cut);
+        return clipper;
+    }
+
+    // A PNG of the source, encoded as the encoder pulls its rows; the only whole buffer is the PNG itself.
+    private static unsafe byte[] Encode(IWICImagingFactory factory, IWICBitmapSource source, uint width, uint height, bool alpha)
+    {
+        var made = new Stack<object>();
+        try
+        {
+            PInvoke.CreateStreamOnHGlobal(default, true, out var output).ThrowOnFailure();
+            Made(made, output);
+            var container = PInvoke.GUID_ContainerFormatPng;
+            var encoder = Made(made, factory.CreateEncoder(&container, null));
+            encoder.Initialize(output, WICBitmapEncoderCacheOption.WICBitmapEncoderNoCache);
+            IPropertyBag2 options = null!;
+            encoder.CreateNewFrame(out var frame, ref options);
+            Made(made, frame);
+            if (options is not null)
+            {
+                Made(made, options);
+            }
+
+            frame.Initialize(options);
+            frame.SetSize(width, height);
+            var format = alpha ? PInvoke.GUID_WICPixelFormat32bppBGRA : PInvoke.GUID_WICPixelFormat24bppBGR;
+            frame.SetPixelFormat(ref format);
+            source.GetPixelFormat(out Guid from);
+            if (from != format)
+            {
+                factory.CreateFormatConverter(out var converter);
+                Made(made, converter).Initialize(source, &format, WICBitmapDitherType.WICBitmapDitherTypeNone, null, 0, WICBitmapPaletteType.WICBitmapPaletteTypeCustom);
+                source = converter;
+            }
+
+            frame.WriteSource(source, null);
+            frame.Commit();
+            encoder.Commit();
+            output.Stat(out var stat, STATFLAG.STATFLAG_NONAME);
+            PInvoke.GetHGlobalFromStream(output, out var memory).ThrowOnFailure();
+            var bytes = new byte[stat.cbSize];
+            new ReadOnlySpan<byte>(PInvoke.GlobalLock(memory), bytes.Length).CopyTo(bytes);
+            PInvoke.GlobalUnlock(memory);
+            return bytes;
+        }
+        finally
+        {
+            while (made.TryPop(out var item))
+            {
+                Marshal.FinalReleaseComObject(item);
+            }
+        }
     }
 
     private static SoftwareBitmap Bitmap(BitmapDecoder decoder, BitmapAlphaMode alpha, BitmapTransform transform) =>
@@ -157,23 +320,6 @@ public static class ClipboardImages
         };
     }
 
-    private static byte[] Png(SoftwareBitmap bitmap)
-    {
-        using var stream = new InMemoryRandomAccessStream();
-        var encoder = Wait(BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream));
-        encoder.SetSoftwareBitmap(bitmap);
-        Wait(encoder.FlushAsync());
-        var bytes = new byte[stream.Size];
-        using var reader = new DataReader(stream.GetInputStreamAt(0));
-        Wait(reader.LoadAsync((uint)stream.Size));
-        reader.ReadBytes(bytes);
-        return bytes;
-    }
-
     // Callers are already on a worker, and the work is in order there, so each step is waited for.
     private static T Wait<T>(IAsyncOperation<T> operation) => operation.AsTask().GetAwaiter().GetResult();
-
-    private static T Wait<T, TProgress>(IAsyncOperationWithProgress<T, TProgress> operation) => operation.AsTask().GetAwaiter().GetResult();
-
-    private static void Wait(IAsyncAction action) => action.AsTask().GetAwaiter().GetResult();
 }

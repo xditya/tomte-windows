@@ -246,6 +246,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
             }
             else
             {
+                pendingImage?.Image.Dispose();
                 pendingImage = null;
                 _ = Enqueue(() => Logged("clear the history", history.Clear));
             }
@@ -355,6 +356,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
         {
             if (from != generation || listener is null)
             {
+                read.Image?.Dispose();
                 return;
             }
 
@@ -363,11 +365,12 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
                 // One slot: copies that land while the worker is busy replace each other, so only the latest is
                 // decoded and at most two copies are held, the one being decoded and the one waiting.
                 bool waiting = pendingImage is not null;
+                pendingImage?.Image.Dispose();
                 pendingImage = (image, at);
                 if (!waiting)
                 {
                     _ = Enqueue(() => Logged("store an image", StoreImage));
-                    // A step of its own, so the copy is no longer held by the step that stored it.
+                    // A step of its own, so the PNG is no longer held by the step that stored it.
                     _ = Enqueue(GiveBackImageMemory);
                 }
             }
@@ -379,17 +382,11 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
     }
 
     /// <summary>
-    /// After image work, which holds the image several times over in managed and native memory: the imaging objects
-    /// let go of theirs only when their finalizers run, so one collection runs those, then a full, compacting one
-    /// returns what is free to Windows. Without it the memory stays committed, tens of megabytes, for as long as the
-    /// hidden shell allocates nothing more. Every thread pauses for a few milliseconds.
+    /// After image work: the copy and the codec's buffers are native and already freed, but the PNG's managed bytes
+    /// (up to 20 MB for a PNG copied as one) would stay committed for as long as the hidden shell allocates nothing
+    /// more. A full, compacting collection returns them to Windows; every thread pauses for about a millisecond.
     /// </summary>
-    private static void GiveBackImageMemory()
-    {
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-    }
+    private static void GiveBackImageMemory() => GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 
     // The decode and the encode run here, on the worker, never on the listener's thread. Takes the waiting copy.
     private void StoreImage()
@@ -415,6 +412,11 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
         {
             log?.Invoke($"clipboard: an image could not be read ({e.GetType().Name})");
             return;
+        }
+        finally
+        {
+            // The copy goes as soon as the PNG is made, before the database is written.
+            image.Dispose();
         }
 
         if (kept is null)
