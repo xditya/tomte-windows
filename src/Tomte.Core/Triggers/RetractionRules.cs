@@ -28,6 +28,12 @@ public static class RetractionRules
     public static bool OpensPanels(IslandState state, IslandActivity activity) =>
         state == IslandState.Compact && !activity.HasFlag(IslandActivity.Rambling);
 
+    /// <summary>
+    /// What is left when a state the user asked for takes the island over: the peek pill's "retract when a window
+    /// comes under" rule and the rambler's hold on the pill end, so a hold that ends later cannot retract it.
+    /// </summary>
+    public static IslandActivity TakenOver(IslandActivity activity) => activity & ~(IslandActivity.Peek | IslandActivity.Rambling);
+
     /// <summary>Pointer inside a window rectangle grown by the margin on every side, in physical pixels.</summary>
     public static bool Inside(int x, int y, int left, int top, int right, int bottom, int margin) =>
         x >= left - margin && x <= right + margin && y >= top - margin && y <= bottom + margin;

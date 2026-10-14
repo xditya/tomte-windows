@@ -803,8 +803,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         if (state != IslandState.Hidden)
         {
-            // Whatever shows now was asked for; the peek pill's "retract when a window comes under" rule ends here.
-            activity &= ~IslandActivity.Peek;
+            // Whatever shows now was asked for: the peek pill's window rule and the rambler's hold on the island end here.
+            activity = RetractionRules.TakenOver(activity);
         }
 
         if (state == IslandState.Panels)

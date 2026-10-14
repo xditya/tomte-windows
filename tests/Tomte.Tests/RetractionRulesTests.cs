@@ -4,6 +4,18 @@ using Xunit;
 
 namespace Tomte.Tests;
 
+// The hold on the island ends when the user opens something else, so the rambler's end cannot retract it.
+public class TakenOverTests
+{
+    [Fact]
+    public void AStateTheUserOpensEndsPeekAndTheRamblersHold()
+    {
+        var all = IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Pinned | IslandActivity.DragInProgress;
+        Assert.Equal(IslandActivity.Pinned | IslandActivity.DragInProgress, RetractionRules.TakenOver(all));
+        Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Rambling));
+    }
+}
+
 public class RetractionRulesTests
 {
     [Theory]
