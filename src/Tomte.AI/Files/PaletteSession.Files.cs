@@ -19,8 +19,11 @@ public sealed partial class PaletteSession
     private int _part;
     private bool _filesInPlay;
 
-    /// <summary>The model as the provider's list gave it: its context size and whether it reads images. Null uses the provider's defaults.</summary>
-    public ModelInfo? Model { get; init; }
+    /// <summary>
+    /// The model as the provider's list gave it: its context size and whether it reads images. Null uses the provider's
+    /// defaults. Read when a send starts and at each file read, so it may be set after the session is made.
+    /// </summary>
+    public ModelInfo? Model { get; set; }
 
     public FileLimits FileLimits { get; init; } = new();
 
@@ -34,7 +37,7 @@ public sealed partial class PaletteSession
 
     public TokenEstimate? Estimate { get; private set; }
 
-    internal ModelFacts Facts => ModelFacts.For(_config, _provider.Capabilities, Model);
+    internal ModelFacts Facts => ModelFacts.For(_config with { DefaultModel = ModelId }, _provider.Capabilities, Model);
 
     // Making a job has its own prompt. A job run has the unattended rule instead of skills and automation, and gets the
     // file paragraph, like any session, once a file is in the send: for a job only through read_shelf_item, which it is
@@ -62,7 +65,7 @@ public sealed partial class PaletteSession
         var facts = Facts;
         if (!facts.Vision && parts.OfType<ImagePart>().Any())
         {
-            Finish(PaletteStatus.Failed, $"{_model} does not take images, so nothing was sent. Turn the screenshot off, or pick a model that reads images.");
+            Finish(PaletteStatus.Failed, $"{ModelId} does not take images, so nothing was sent. Turn the screenshot off, or pick a model that reads images.");
             return null;
         }
 

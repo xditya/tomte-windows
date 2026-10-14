@@ -13,7 +13,8 @@ namespace Tomte.AI.Jobs;
 /// its result for the palette. "Running job: name" comes before a run and "Job done: name" or "Job failed: name" after
 /// it; each device action a run made raises its own line, as device actions do in the palette.
 /// </summary>
-public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConfig, IChatProvider> provider, BuiltInTools tools, SendLog log, PaletteOptions options)
+/// <param name="options">Asked at each run with the job's provider, so the cap and prices settings hold then apply.</param>
+public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConfig, IChatProvider> provider, BuiltInTools tools, SendLog log, Func<ProviderConfig, PaletteOptions> options)
 {
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.Now;
 
@@ -90,7 +91,7 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
         PaletteSession session;
         try
         {
-            session = new PaletteSession(provider(job.Provider), job.Provider, options, log, tools, new PermissionGrants(), [])
+            session = new PaletteSession(provider(job.Provider), job.Provider, options(job.Provider), log, tools, new PermissionGrants(), [])
             {
                 Job = job,
                 Prompt = job.Prompt,

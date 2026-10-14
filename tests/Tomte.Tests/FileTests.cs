@@ -580,6 +580,11 @@ public sealed class FileTests : IDisposable
         await shot.SendAsync();
         Assert.Equal("m does not take images, so nothing was sent. Turn the screenshot off, or pick a model that reads images.", shot.Error);
         Assert.Empty(handler.Bodies);
+
+        // What Ollama said about the model can arrive after the session was made, as the hotkey palette's does.
+        shot.Model = new ModelInfo("m", 8192, Vision: true);
+        await shot.SendAsync();
+        Assert.Contains("image_url", Assert.Single(handler.Bodies));
     }
 
     [Fact]

@@ -461,7 +461,7 @@ public class McpToolsTests
 
     // The one MCP test that uses the real Credential Manager: it checks that the default reader is the
     // vault entry under "mcp/<name>" and that the value arrives in the request. The others pass a reader.
-    [Fact]
+    [VaultFact]
     public async Task HttpServersGetTheHeaderFromCredentialManager()
     {
         var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);

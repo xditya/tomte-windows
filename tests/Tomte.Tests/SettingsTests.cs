@@ -65,6 +65,23 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void TheProviderComesBackWithItsCapAndAFileWithoutACapGetsTheDefault()
+    {
+        var provider = new ProviderConfig("localhost:11434", ProviderKind.OpenAICompatible, "http://localhost:11434/v1", "llama3.2:3b", DailyCapUsd: null);
+        using (var store = new SettingsStore(File))
+        {
+            store.Save(new TomteSettings { Provider = provider });
+        }
+
+        Assert.Equal(provider, SettingsStore.Load(File).Provider);
+        Assert.Contains("\"kind\": \"OpenAICompatible\"", System.IO.File.ReadAllText(File));
+
+        System.IO.File.WriteAllText(File, """{ "provider": { "id": "api.anthropic.com", "kind": "Anthropic", "defaultModel": "m" } }""");
+        Assert.Equal(new ProviderConfig("api.anthropic.com", ProviderKind.Anthropic, DefaultModel: "m", DailyCapUsd: 2m), SettingsStore.Load(File).Provider);
+        Assert.Null(new TomteSettings().Provider);
+    }
+
+    [Fact]
     public void FieldsMissingFromTheFileKeepTheirDefaults()
     {
         Directory.CreateDirectory(dir);

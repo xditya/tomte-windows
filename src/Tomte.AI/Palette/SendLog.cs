@@ -2,9 +2,6 @@ using System.Text.Json;
 
 namespace Tomte.AI.Palette;
 
-/// <summary>Price per million tokens, as the user's editable table stores it.</summary>
-public sealed record ModelPrice(decimal InputPerMillion, decimal OutputPerMillion);
-
 /// <summary>
 /// One send: time, provider, model, tokens, cost and the attached item names. Content only when the user turned that on.
 /// Job is the scheduled job's name when a job sent it, null when the user did.
@@ -56,7 +53,10 @@ public sealed class SendLog(string path)
             File.Delete(Path);
     }
 
-    /// <summary>Estimated from the usage fields and the price table; a model with no price costs 0 (local models).</summary>
-    public static decimal Estimate(IReadOnlyDictionary<string, ModelPrice> prices, string model, int inputTokens, int outputTokens) =>
-        prices.TryGetValue(model, out var p) ? (inputTokens * p.InputPerMillion + outputTokens * p.OutputPerMillion) / 1_000_000m : 0m;
+    /// <summary>
+    /// Estimated from the usage fields and the model's price (<see cref="PaletteOptions.PriceFor"/>), which counts an
+    /// unknown cloud model at the highest known price; a model with no price costs 0 (a server on this PC).
+    /// </summary>
+    public static decimal Estimate(PaletteOptions options, string model, int inputTokens, int outputTokens) =>
+        options.PriceFor(model) is { } p ? (inputTokens * p.InputPerMillion + outputTokens * p.OutputPerMillion) / 1_000_000m : 0m;
 }

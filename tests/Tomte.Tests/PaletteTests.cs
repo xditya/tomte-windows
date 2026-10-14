@@ -288,7 +288,7 @@ public class PaletteTests : IDisposable
         await session.SendAsync();
         Assert.Equal(0.45m, session.SpentTodayUsd);
         Assert.Equal(0.45m, Assert.Single(new SendLog(_logPath).ReadAll()).CostUsd);
-        Assert.Equal(0m, SendLog.Estimate(options.Prices, "unpriced", 1000, 1000));
+        Assert.Equal(0m, SendLog.Estimate(options, "unpriced", 1000, 1000));
     }
 
     [Fact]

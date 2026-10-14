@@ -40,7 +40,11 @@ public class OllamaEndToEndTests
         var provider = ProviderSetup.Create(Config, http, null);
 
         Assert.Contains((await provider.ListModelsAsync()).Select(m => m.Id), id => id == OllamaFactAttribute.Model);
-        Assert.Equal(OllamaFactAttribute.Model, await ProviderSetup.TestAndSaveAsync(Config, null, http));
+        // The settings page's path: the form check, then the test call; a local server needs no key, so nothing is saved.
+        var form = Config with { Id = ProviderSetup.IdFor(ProviderKind.OpenAICompatible, Config.BaseUrl) };
+        Assert.Null(ProviderSetup.Check(null, form, "", _ => null, out var key));
+        var saved = await ProviderSetup.TestAndSaveAsync(null, form, key, http, (_, _) => Assert.Fail("saved a key"), _ => Assert.Fail("deleted a key"));
+        Assert.Equal(new ProviderConfig("127.0.0.1:11434", ProviderKind.OpenAICompatible, Config.BaseUrl, OllamaFactAttribute.Model), saved);
     }
 
     [OllamaFact]

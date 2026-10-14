@@ -579,13 +579,14 @@ internal static partial class Program
     }
 
     /// <summary>
-    /// --rambler: the hold-to-talk session Win+Alt+V drives. The provider comes from the command line until
-    /// settings carry it (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential
-    /// Manager under the id). Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or
-    /// the provider's /audio/transcriptions with --stt-provider and --stt-model; --debug-transcript "text" or
-    /// --debug-wav file.wav stands in for what the microphone heard. Without a provider the note is the raw
-    /// transcript; with one the transcript is a voice command the model reads with the voice tools, and --dry keeps
-    /// device tools from changing anything. Kept out of Main so Tomte.AI loads only for this switch.
+    /// --rambler: the hold-to-talk session Win+Alt+V drives. The provider comes from the command line
+    /// (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential Manager under the id),
+    /// else from settings as the palette gets it, read once at start. Speech to text is local whisper.cpp when
+    /// tools/whisper/Get-Whisper.ps1 has run, or the provider's /audio/transcriptions with --stt-provider and
+    /// --stt-model; --debug-transcript "text" or --debug-wav file.wav stands in for what the microphone heard. Without
+    /// a provider the note is the raw transcript; with one the transcript is a voice command the model reads with the
+    /// voice tools, and --dry keeps device tools from changing anything. Kept out of Main so Tomte.AI loads only for
+    /// this switch.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, ShortcutStore shortcuts, TextWriter log)
@@ -593,8 +594,11 @@ internal static partial class Program
         ProviderConfig? config = Arg(args, "--provider-id") is { } id
             ? new ProviderConfig(id, Enum.Parse<ProviderKind>(Arg(args, "--provider-kind") ?? nameof(ProviderKind.OpenAICompatible)), Arg(args, "--base-url"), Arg(args, "--model"))
             : null;
-        // Only a configured provider needs HTTP; local whisper with raw notes never opens a connection.
-        var http = config is null ? null : new HttpClient();
+        // Only a provider needs HTTP; local whisper with raw notes never opens a connection.
+        var configured = config is null ? Configured(store, log.WriteLine) : null;
+        config ??= configured?.Config;
+        var http = config is null ? null : paletteHttp ??= ProviderSetup.NewHttp();
+        var options = configured?.Options ?? new PaletteOptions();
         ISpeechToText? speech = null;
         ProviderSend? speechSend = null;
         if (args.Contains("--stt-provider") && config is { Kind: ProviderKind.OpenAICompatible, BaseUrl: { } url })
@@ -628,7 +632,7 @@ internal static partial class Program
         Func<Task<PaletteSession>>? voice = null;
         if (config is { DefaultModel: not null })
         {
-            var provider = ProviderSetup.Load(config, http!);
+            var provider = configured?.Provider ?? ProviderSetup.Load(config, http!);
             // One per store, kept as long as the store. A voice command asks every time, so the grants change nothing for it.
             var grants = new PermissionGrants(store);
             // An in-memory shelf until the shelf store lands. The tiles open by name; that way never runs a script tile.
@@ -638,14 +642,14 @@ internal static partial class Program
             {
                 // Voice is offered no skill. The turned-on ones are still read, so open_app keeps refusing their scripts.
                 var skills = await Task.Run(() => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills));
-                var command = new PaletteSession(provider, config, new PaletteOptions(), sendLog, tools, grants, []) { Voice = true, Skills = skills };
+                var command = new PaletteSession(provider, config, options, sendLog, tools, grants, []) { Voice = true, Skills = skills };
                 // Raised while the palette is up, the event waits in the triggers' queue and shows once the palette hides.
                 command.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
                 return command;
             };
         }
 
-        var session = new Rambler(island, triggers.Machine, speech, speechSend, voice, scratchpad, sendLog, log.WriteLine);
+        var session = new Rambler(island, triggers.Machine, speech, speechSend, voice, scratchpad, sendLog, options, log.WriteLine);
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
         session.CommandDone += command =>
