@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Device;
 using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
@@ -219,6 +220,7 @@ internal static class Program
     /// prompt against local Ollama with the window chip on and an in-memory shelf and scratchpad, logs the
     /// stream and the tool steps, retracts, raises each device action as an island event and undoes it, then
     /// quits. Confirmations are allowed once each, as a user would; --dry keeps device tools from changing anything.
+    /// Destructive requests (lock, sleep, restart, shut down) are denied without --dry: nobody is there to answer.
     /// Circle-to-ask passes its lasso chip and the foreground it saw before the overlay took focus.
     /// </summary>
     private static async Task PaletteRun(IslandWindow island, TriggerController triggers, SettingsStore store, TextWriter log, string prompt, ContextChip? lasso = null, nint foreground = 0)
@@ -264,8 +266,9 @@ internal static class Program
                 Prompt = prompt,
                 ConfirmTool = (request, _) =>
                 {
-                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette confirm {request.Tier}: {request.Summary} -> allow once");
-                    return Task.FromResult(PermissionAnswer.AllowOnce);
+                    bool deny = request.Tier == ActionTier.Destructive && !dry;
+                    log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} palette confirm {request.Tier}: {request.Summary} -> {(deny ? "deny, needs --dry" : "allow once")}");
+                    return Task.FromResult(deny ? PermissionAnswer.Deny : PermissionAnswer.AllowOnce);
                 },
             };
             int steps = 0;
