@@ -105,7 +105,7 @@ public sealed partial class SettingsWindow : Window
         page.Children.Add(Card(
             Row("Keep a history of AI answers on this PC",
                 Note($"The History tab shows your last {AiHistory.MaxItems} AI conversations and drop zone results, for up to {AiHistory.MaxDays} days: what you asked, the names of what you attached, the answers, the model and the cost. Attached content is never kept, and nothing leaves this PC. Turning it off deletes the history."),
-                Toggle(s => s.KeepAiHistory, (s, v) => s with { KeepAiHistory = v })),
+                KeepHistory()),
             Row("Clear history", clearedNote, ClearHistory())));
 
         page.Children.Add(Header("AI tools"));
@@ -170,22 +170,41 @@ public sealed partial class SettingsWindow : Window
         return box;
     }
 
-    // Deletes every kept conversation and drop zone result in the tomte.db beside the settings file, off the UI thread.
+    // Turning the history off deletes it here too, so it is gone even when the shell is not running.
+    private ToggleSwitch KeepHistory()
+    {
+        var keep = Toggle(s => s.KeepAiHistory, (s, v) => s with { KeepAiHistory = v });
+        keep.Toggled += async (_, _) =>
+        {
+            if (!keep.IsOn)
+            {
+                await ClearAiHistory();
+            }
+        };
+        return keep;
+    }
+
     private Button ClearHistory()
     {
         var clear = new Button { Content = "Clear history" };
         clear.Click += async (_, _) =>
         {
             clear.IsEnabled = false;
-            var db = new Tomte.Core.Storage.TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db"));
-            // The failure line comes from the pool; the note is set back on this thread.
-            string? failed = null;
-            await new AiHistory(db, () => true, line => failed = line).Clear();
-            clearedNote.Text = failed is null ? "Cleared." : "Not cleared: tomte.db could not be opened. Try again in a moment.";
-            clearedNote.Visibility = Visibility.Visible;
+            await ClearAiHistory();
             clear.IsEnabled = true;
         };
         return clear;
+    }
+
+    // Deletes every kept conversation and drop zone result in the tomte.db beside the settings file, off the UI thread.
+    private async Task ClearAiHistory()
+    {
+        var db = new Tomte.Core.Storage.TomteDb(Path.Combine(Path.GetDirectoryName(store.FilePath)!, "tomte.db"));
+        // The failure line comes from the pool; the note is set back on this thread.
+        string? failed = null;
+        await new AiHistory(db, () => true, line => failed = line).Clear();
+        clearedNote.Text = failed is null ? "Cleared." : "Not cleared: tomte.db could not be opened. Try again in a moment.";
+        clearedNote.Visibility = Visibility.Visible;
     }
 
     private Button ResetPosition()

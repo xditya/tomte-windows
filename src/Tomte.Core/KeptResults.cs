@@ -22,10 +22,10 @@ public sealed record KeptResult(DropZone Zone, string? Skill, string SourceName,
 /// same file on the same zone shows the kept one first. The same file is the same path, ignoring case, with the size
 /// and the last write time it had just before it was sent; a file changed since is a new file. Work runs on the pool,
 /// never on the island's thread; trouble with the disk or the database is logged and loses only that one result.
-/// The results are part of the AI history (<see cref="AiHistory"/>): with it off (<paramref name="on"/>) nothing is kept
-/// or found, and each keep prunes both by the history's limits.
+/// The results are part of the AI history (<paramref name="history"/>): a keep goes through its queue, in order with a
+/// clear, and with it off nothing is kept or found; each keep prunes both by the history's limits.
 /// </summary>
-public sealed class KeptResults(TomteDb db, Action<string>? log = null, Func<bool>? on = null)
+public sealed class KeptResults(TomteDb db, Action<string>? log = null, AiHistory? history = null)
 {
     internal const string Feature = "results";
 
@@ -40,13 +40,14 @@ public sealed class KeptResults(TomteDb db, Action<string>? log = null, Func<boo
     ];
 
     /// <param name="stamp">The file's <see cref="Stamp"/> from just before the send, so an edit during the send makes it a new file.</param>
-    public Task Keep(KeptResult result, string? stamp) => Task.Run(() =>
+    public Task Keep(KeptResult result, string? stamp)
     {
-        if (on?.Invoke() == false)
-        {
-            return;
-        }
+        void Write() => Store(result, stamp);
+        return history?.Queue(Write) ?? Task.Run(Write);
+    }
 
+    private void Store(KeptResult result, string? stamp)
+    {
         try
         {
             using var connection = db.Open(Feature, Schema);
@@ -75,12 +76,12 @@ public sealed class KeptResults(TomteDb db, Action<string>? log = null, Func<boo
         {
             log?.Invoke($"results: could not keep the {result.Zone} result for {result.SourceName}: {e.Message}");
         }
-    });
+    }
 
     /// <summary>The newest result kept for this zone (and skill) and this file as it is now, or null.</summary>
     public Task<KeptResult?> Last(DropZone zone, string? skill, string sourcePath) => Task.Run(() =>
     {
-        if (on?.Invoke() == false)
+        if (history?.On == false)
         {
             return null;
         }

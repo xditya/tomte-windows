@@ -52,10 +52,15 @@ public sealed class AiHistory(TomteDb db, Func<bool> on, Action<string>? log = n
     /// <summary>Whether the setting keeps a history now; a read of settings, not of the database.</summary>
     public bool On => on();
 
-    /// <summary>Writes the conversation under its key: a new row the first time, the same row with every turn after that.</summary>
-    public Task Keep(AiExchange exchange) => Enqueue(() =>
+    /// <summary>
+    /// Adds <paramref name="added"/>'s turns and cost to the conversation under its key, with its time, provider and
+    /// model. A key with no row starts a conversation with just these turns, so turns cleared or pruned meanwhile never
+    /// come back; one that goes on from a drop zone result (<paramref name="from"/>) starts with that result's turn while
+    /// the result is still kept.
+    /// </summary>
+    public Task Add(AiExchange added, AiExchange? from = null) => Enqueue(() =>
     {
-        if (!on() || exchange.Source == AiSource.DropZone)
+        if (!on() || added.Source == AiSource.DropZone)
         {
             return;
         }
@@ -64,16 +69,42 @@ public sealed class AiHistory(TomteDb db, Func<bool> on, Action<string>? log = n
         {
             using var connection = db.Open(KeptResults.Feature, KeptResults.Schema);
             using var transaction = connection.BeginTransaction();
+            List<AiTurn> turns = [];
+            decimal cost = 0;
+            using (var row = Command(connection, "SELECT turns, cost_usd FROM results_history WHERE key = $key", ("$key", added.Key)))
+            using (var read = row.ExecuteReader())
+            {
+                if (read.Read())
+                {
+                    turns = JsonSerializer.Deserialize<List<AiTurn>>(read.GetString(0), Json) ?? [];
+                    cost = Cost(read.GetString(1));
+                }
+                else if (from is { Source: AiSource.DropZone } drop && long.TryParse(drop.Key.AsSpan(KeptKey.Length), CultureInfo.InvariantCulture, out long id))
+                {
+                    using var kept = Command(connection, "SELECT 1 FROM results_kept WHERE id = $id", ("$id", id));
+                    turns = kept.ExecuteScalar() is null ? [] : [.. drop.Turns];
+                }
+            }
+
             Run(connection, """
                 INSERT INTO results_history(key, source, provider, model, cost_usd, at, turns) VALUES ($key, $source, $provider, $model, $cost, $at, $turns)
                 ON CONFLICT(key) DO UPDATE SET provider = excluded.provider, model = excluded.model, cost_usd = excluded.cost_usd, at = excluded.at, turns = excluded.turns
                 """,
-                ("$key", exchange.Key), ("$source", exchange.Source.ToString()), ("$provider", exchange.Provider), ("$model", exchange.Model),
-                ("$cost", exchange.CostUsd.ToString(CultureInfo.InvariantCulture)), ("$at", exchange.At.ToUnixTimeMilliseconds()),
-                ("$turns", JsonSerializer.Serialize(exchange.Turns, Json)));
-            Prune(connection, exchange.At);
+                ("$key", added.Key), ("$source", added.Source.ToString()), ("$provider", added.Provider), ("$model", added.Model),
+                ("$cost", (cost + added.CostUsd).ToString(CultureInfo.InvariantCulture)), ("$at", added.At.ToUnixTimeMilliseconds()),
+                ("$turns", JsonSerializer.Serialize<List<AiTurn>>([.. turns, .. added.Turns], Json)));
+            Prune(connection, added.At);
             transaction.Commit();
         });
+    });
+
+    /// <summary>A drop zone result's write, in order with every other write and clear, and only while history is on.</summary>
+    internal Task Queue(Action write) => Enqueue(() =>
+    {
+        if (on())
+        {
+            write();
+        }
     });
 
     /// <summary>Newest first, conversations and drop zone results together. Off, there are none, and anything still stored is cleared.</summary>

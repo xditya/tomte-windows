@@ -34,8 +34,8 @@ public class AiHistoryTests : IDisposable
     {
         var history = History();
         await new KeptResults(Db).Keep(Kept(Morning.AddHours(1)), "stamp");
-        await history.Keep(Talk("a", Morning));
-        await history.Keep(Talk("b", Morning.AddHours(2), "Second question"));
+        await history.Add(Talk("a", Morning));
+        await history.Add(Talk("b", Morning.AddHours(2), "Second question"));
 
         var all = await history.All(Morning.AddHours(3));
 
@@ -51,16 +51,44 @@ public class AiHistoryTests : IDisposable
     }
 
     [Fact]
-    public async Task TheSameConversationKeptAgainReplacesItsRow()
+    public async Task MoreTurnsUnderTheSameKeyGoOnItsRow()
     {
         var history = History();
         var first = Talk("a", Morning);
-        await history.Keep(first);
-        await history.Keep(first with { At = Morning.AddMinutes(5), CostUsd = 0.03m, Turns = [.. first.Turns, new AiTurn("And then?", [], [], "Then this.")] });
+        await history.Add(first);
+        await history.Add(first with { At = Morning.AddMinutes(5), CostUsd = 0.02m, Turns = [new AiTurn("And then?", [], [], "Then this.")] });
 
         var kept = Assert.Single(await history.All(Morning.AddHours(1)));
         Assert.Equal(2, kept.Turns.Count);
         Assert.Equal((Morning.AddMinutes(5), 0.03m, "Then this."), (kept.At, kept.CostUsd, kept.LastAnswer));
+    }
+
+    [Fact]
+    public async Task ADropZoneResultKeptBeforeAClearIsClearedWithTheRest()
+    {
+        var history = History();
+
+        // Through the history's queue: a keep asked for before the clear is done before it, never after.
+        var keep = new KeptResults(Db, history: history).Keep(Kept(Morning), "stamp");
+        var clear = history.Clear();
+        await Task.WhenAll(keep, clear);
+
+        Assert.Empty(await history.All(Morning));
+    }
+
+    [Fact]
+    public async Task ATurnAddedAfterAClearStartsAgainWithoutTheTurnsBefore()
+    {
+        var history = History();
+        await history.Add(Talk("a", Morning));
+        await history.Clear();
+
+        // A palette still open after Clear history adds its next turn; the cleared ones stay gone.
+        await history.Add(Talk("a", Morning.AddMinutes(5), "After the clear") with { CostUsd = 0.02m });
+
+        var kept = Assert.Single(await history.All(Morning.AddHours(1)));
+        Assert.Equal(["After the clear"], kept.Turns.Select(t => t.Prompt));
+        Assert.Equal(0.02m, kept.CostUsd);
     }
 
     [Fact]
@@ -71,7 +99,7 @@ public class AiHistoryTests : IDisposable
         await new KeptResults(Db).Keep(Kept(Morning.AddMinutes(-1)), "stamp");
         for (int i = 0; i < AiHistory.MaxItems; i++)
         {
-            await history.Keep(Talk($"k{i}", Morning.AddMinutes(i)));
+            await history.Add(Talk($"k{i}", Morning.AddMinutes(i)));
         }
 
         var all = await history.All(Morning.AddDays(1));
@@ -87,9 +115,9 @@ public class AiHistoryTests : IDisposable
     {
         var history = History();
         await new KeptResults(Db).Keep(Kept(Morning.AddDays(-100)), "stamp");
-        await history.Keep(Talk("old", Morning.AddDays(-91)));
-        await history.Keep(Talk("recent", Morning.AddDays(-89)));
-        await history.Keep(Talk("now", Morning));
+        await history.Add(Talk("old", Morning.AddDays(-91)));
+        await history.Add(Talk("recent", Morning.AddDays(-89)));
+        await history.Add(Talk("now", Morning));
 
         Assert.Equal(["now", "recent"], (await history.All(Morning)).Select(e => e.Key));
     }
@@ -99,7 +127,7 @@ public class AiHistoryTests : IDisposable
     {
         var history = History();
         await new KeptResults(Db).Keep(Kept(Morning), "stamp");
-        await history.Keep(Talk("a", Morning));
+        await history.Add(Talk("a", Morning));
 
         await history.Clear();
 
@@ -112,13 +140,13 @@ public class AiHistoryTests : IDisposable
     {
         var history = History();
         await new KeptResults(Db).Keep(Kept(Morning), "stamp");
-        await history.Keep(Talk("a", Morning));
+        await history.Add(Talk("a", Morning));
 
         _on = false;
-        await history.Keep(Talk("b", Morning));
-        await new KeptResults(Db, on: () => _on).Keep(Kept(Morning.AddHours(1)), "stamp");
+        await history.Add(Talk("b", Morning));
+        await new KeptResults(Db, history: history).Keep(Kept(Morning.AddHours(1)), "stamp");
         Assert.Empty(await history.All(Morning));
-        Assert.Null(await new KeptResults(Db, on: () => _on).Last(DropZone.Summarize, null, @"C:\Shelf\report.pdf"));
+        Assert.Null(await new KeptResults(Db, history: history).Last(DropZone.Summarize, null, @"C:\Shelf\report.pdf"));
 
         // Turned on again, what was there before is gone.
         _on = true;
@@ -139,7 +167,7 @@ public class AiHistoryTests : IDisposable
         }
 
         var history = History();
-        await history.Keep(Talk("a", Morning.AddHours(1)));
+        await history.Add(Talk("a", Morning.AddHours(1)));
         var all = await history.All(Morning.AddHours(2));
 
         Assert.Equal(["a", "kept:1"], all.Select(e => e.Key));

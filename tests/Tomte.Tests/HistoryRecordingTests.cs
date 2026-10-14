@@ -60,8 +60,12 @@ public class HistoryRecordingTests : IDisposable
 
         session.Prompt = "What is in the circle?";
         await session.SendAsync();
+        // Each chip is opt-in per request: after a finished send they are all off again.
+        Assert.False(lasso.On);
         session.Prompt = "What colour is it?";
         await session.SendAsync();
+        Assert.Contains(_provider.Requests[0].Messages[^1].Parts, p => p is TextPart { Text: "pixels" });
+        Assert.DoesNotContain(_provider.Requests[1].Messages.SelectMany(m => m.Parts), p => p is TextPart { Text: "pixels" });
 
         var kept = Assert.Single(await history.All(Morning));
         Assert.Equal(AiSource.CircleToAsk, kept.Source);
@@ -80,6 +84,46 @@ public class HistoryRecordingTests : IDisposable
         Assert.Equal(ChatRole.Assistant, second.Messages[1].Role);
         Assert.Equal("It is a lasso.", ((TextPart)second.Messages[1].Parts[0]).Text);
         Assert.Contains("text of 1 earlier turn", new SendLog(LogPath).ReadAll()[1].Attached);
+    }
+
+    [Fact]
+    public async Task AFollowUpCountsTheEarlierTextInItsSize()
+    {
+        var earlier = new AiExchange("old", AiSource.Palette, Morning, "Ollama", "m", 0, [new AiTurn("Tell me a long story", [], [], string.Join(' ', Enumerable.Repeat("word", 2000)))]);
+        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "Done."));
+        var history = History();
+        var fresh = Session(history);
+        var going = Session(history, continuing: earlier);
+        fresh.Prompt = going.Prompt = "And then?";
+
+        await fresh.SendAsync();
+        await going.SendAsync();
+
+        // The earlier text goes in front of the question, so the estimate (and the fit check behind it) counts it.
+        Assert.InRange(going.Estimate!.Tokens - fresh.Estimate!.Tokens, 1000, 3000);
+        // The writes are done before the folder goes.
+        await history.All(Morning);
+    }
+
+    [Fact]
+    public async Task APaletteStillOpenAfterAClearKeepsOnlyItsNewTurns()
+    {
+        var history = History();
+        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "First answer."));
+        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "Second answer."));
+        var session = Session(history);
+        session.Prompt = "First";
+        await session.SendAsync();
+
+        await history.Clear();
+        session.Prompt = "Second";
+        await session.SendAsync();
+
+        // The model still has the whole conversation; the history keeps only what came after the clear.
+        Assert.Equal(3, _provider.Requests[1].Messages.Count);
+        var kept = Assert.Single(await history.All(Morning));
+        Assert.Equal(["Second"], kept.Turns.Select(t => t.Prompt));
+        Assert.Equal(0.015m, kept.CostUsd);
     }
 
     [Fact]
@@ -109,7 +153,7 @@ public class HistoryRecordingTests : IDisposable
         var history = History();
         var earlier = new AiExchange("old", AiSource.Voice, Morning.AddHours(-1), "Ollama", "m", 0.02m,
             [new AiTurn("Remind me what the dentist said", [], ["Saved a note"], ""), new AiTurn("And the time?", ["lasso"], [], "Monday at 10.")]);
-        await history.Keep(earlier);
+        await history.Add(earlier);
         _provider.Turns.Add(ScriptedProvider.Text(10, 5, "Yes, Monday."));
         var session = Session(history, continuing: earlier);
 

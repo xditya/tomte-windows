@@ -155,7 +155,6 @@ public sealed partial class PaletteSession : IPaletteSession
     private string _indicator = "Nothing sent";
     private List<AiTurn>? _conversation;
     private string? _historyKey;
-    private decimal _spent;
 
     public PaletteSession(IChatProvider provider, ProviderConfig config, PaletteOptions options, SendLog log, BuiltInTools tools, PermissionGrants grants, IReadOnlyList<ContextChip> chips)
     {
@@ -419,21 +418,13 @@ public sealed partial class PaletteSession : IPaletteSession
 
     public void Cancel() => _userCancel?.Cancel();
 
-    // The conversation so far as text, a user turn and an answer each; what the chips attached then is not sent again.
-    private List<ChatMessage> Earlier()
-    {
-        var messages = new List<ChatMessage>();
-        foreach (var turn in Conversation)
-        {
-            string answer = turn.Answer.Length > 0 ? turn.Answer
-                : turn.Steps.Count > 0 ? string.Join('\n', turn.Steps)
-                : turn.Error ?? "(no answer)";
-            messages.Add(ChatMessage.User(turn.Prompt));
-            messages.Add(new ChatMessage(ChatRole.Assistant, [new TextPart(answer)]));
-        }
+    // The conversation so far as text, a question and an answer each; what the chips attached then is not sent again. An
+    // answer-less turn gives its tool lines, or its error.
+    private IEnumerable<(string Prompt, string Answer)> EarlierText() => Conversation.Select(turn => (turn.Prompt,
+        turn.Answer.Length > 0 ? turn.Answer : turn.Steps.Count > 0 ? string.Join('\n', turn.Steps) : turn.Error ?? "(no answer)"));
 
-        return messages;
-    }
+    private List<ChatMessage> Earlier() =>
+        [.. EarlierText().SelectMany(t => new[] { ChatMessage.User(t.Prompt), new ChatMessage(ChatRole.Assistant, [new TextPart(t.Answer)]) })];
 
     // The finished turn joins the conversation, and the whole of it goes to the history. Each tool call is one line: what
     // was asked, and what came of it unless that is what a read brought back, which stays out like the chips' content.
@@ -452,18 +443,24 @@ public sealed partial class PaletteSession : IPaletteSession
         var chips = Chips.Where(c => c.On && c.Available).Select(c => c.AttachedName).ToList();
         var turn = new AiTurn(Job is { } job ? $"{job.Name}: {Prompt}" : Prompt, chips, steps, AnswerText.Trim(),
             Status == PaletteStatus.Done ? null : Error ?? "Cancelled.");
-        var conversation = Turns;
-        conversation.Add(turn);
-        _spent += cost;
+        Turns.Add(turn);
+        // What the chips attached went with this turn only: a follow-up attaches again only what the user turns on again.
+        if (Converses)
+        {
+            foreach (var chip in Chips)
+                chip.On = false;
+        }
+
         if (History is null)
             return;
 
-        // Going on with a conversation from the history keeps it under its own row; a drop zone result's stays as it was.
+        // Going on with a conversation from the history adds to its row; a drop zone result's stays as it was, and the
+        // conversation that goes on from it starts with it. Only this turn is written, so a clear meanwhile stays cleared.
         var earlier = Continuing is { Source: not AiSource.DropZone } row ? row : null;
         _historyKey ??= earlier?.Key ?? AiExchange.NewKey();
         var source = earlier?.Source ?? (Voice ? AiSource.Voice : Job is not null ? AiSource.Job
             : Chips.Any(c => c.Kind == ContextKind.Region) ? AiSource.CircleToAsk : AiSource.Palette);
-        _ = History.Keep(new AiExchange(_historyKey, source, Now(), ProviderName, ModelId, (earlier?.CostUsd ?? 0) + _spent, [.. conversation]));
+        _ = History.Add(new AiExchange(_historyKey, source, Now(), ProviderName, ModelId, cost, [turn]), Continuing);
     }
 
     private async Task<(List<ContentPart> Assistant, List<ToolCallPart> Calls, TurnDone Usage)> StreamTurnAsync(List<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, CancellationToken ct)

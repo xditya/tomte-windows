@@ -77,7 +77,9 @@ public sealed partial class PaletteSession
         }
 
         _filesInPlay = prepared.OfType<PreparedFilePart>().Any();
-        var plan = new SendPlan(prepared, SystemText, tools, facts, _options, SpentTodayUsd, _config.Id);
+        // The conversation's earlier text goes in front of these parts, so it counts toward the size and the cost too.
+        var plan = new SendPlan(prepared, SystemText, tools, facts, _options, SpentTodayUsd, _config.Id,
+            Converses ? string.Concat(EarlierText().Select(t => t.Prompt + "\n" + t.Answer + "\n")) : null);
         Estimate = plan.Estimate;
         Changed?.Invoke();
 
