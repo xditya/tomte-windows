@@ -1,13 +1,13 @@
 using System.Drawing;
 using System.Numerics;
+using Tomte.Core.Text;
 
 namespace Tomte.Core;
 
 /// <summary>
 /// Where the shelf's parts sit, in DIPs. The panel body's origin is its top-left corner under the
 /// tab strip; the drop surface is in island space (x = 0 on the island's centre line, y = 0 at its top edge). Also
-/// the strings each part would show: there is no text renderer on the island yet, so the views draw a neutral bar
-/// where each one goes and these are what a renderer will draw.
+/// the text each part shows and where it goes.
 /// </summary>
 public static class ShelfLayout
 {
@@ -90,6 +90,51 @@ public static class ShelfLayout
     /// <summary>The drop surface's target in island space, for a shape this wide and deep.</summary>
     public static RectangleF DropTarget(double width, double depth) =>
         new(-(float)width / 2 + DropLeft, DropPadY, (float)width - DropLeft - DropRight, (float)depth - 2 * DropPadY);
+
+    /// <summary>A tile's name, its meta line, the empty box's two lines and the drop target's word.</summary>
+    public static readonly TextStyle NameStyle = new(12.5f, 600);
+    public static readonly TextStyle MetaStyle = TextStyle.Small;
+    public static readonly TextStyle EmptyStyle = new(13, Color: TextStyle.TertiaryColor, Align: TextAlign.Center);
+    public static readonly TextStyle DropStyle = new(13, 600, Color: TextStyle.SecondaryColor);
+
+    /// <summary>The head row in body DIPs: the title, the count beside it, and the hint at the right end.</summary>
+    public static IReadOnlyList<TextSlot> HeadText(Vector2 body, int count)
+    {
+        float after = PadX + TextSlot.Measure(Title, TextStyle.Title, body.X) + 10;
+        float hint = MathF.Ceiling(TextSlot.Measure(Hint, TextStyle.Secondary, body.X));
+        float hintLeft = body.X - PadX - hint;
+        return
+        [
+            new(Title, TextStyle.Title, new(PadX, PadY, body.X - 2 * PadX, HeadHeight)),
+            new(Head(count), TextStyle.Secondary, new(after, PadY, Math.Max(0, hintLeft - 10 - after), HeadHeight)),
+            new(Hint, TextStyle.Secondary with { Align = TextAlign.Trailing }, new(hintLeft, PadY, hint, HeadHeight)),
+        ];
+    }
+
+    /// <summary>The empty shelf's two lines, centred one under the other in the dashed box, in the box's own DIPs.</summary>
+    public static IReadOnlyList<TextSlot> EmptyText(SizeF box)
+    {
+        const float line = 19.5f;
+        var lines = Empty.Split('\n');
+        float top = (box.Height - lines.Length * line) / 2;
+        return [.. lines.Select((text, i) => new TextSlot(text, EmptyStyle, new(20, top + i * line, box.Width - 40, line)))];
+    }
+
+    /// <summary>A tile's name under its icon and its size, kind or "File moved or deleted" under that, in the tile's own DIPs.</summary>
+    public static IReadOnlyList<TextSlot> TileText(ShelfItem item, SizeF tile) =>
+    [
+        new(item.Name, NameStyle, new(TilePad, TilePad + Icon + 6, tile.Width - 2 * TilePad, 14)),
+        new(Meta(item), item.Missing ? MetaStyle with { Color = TextStyle.WarnColor } : MetaStyle, new(TilePad, TilePad + Icon + 24, tile.Width - 2 * TilePad, 12)),
+    ];
+
+    /// <summary>The drop target's folder glyph and its word, centred together in the target, in the target's own DIPs.</summary>
+    public static (float GlyphX, TextSlot Label) DropLabel(SizeF target)
+    {
+        const float glyph = 16, gap = 8;
+        float label = MathF.Ceiling(TextSlot.Measure(DropHere, DropStyle, target.Width));
+        float x = (target.Width - glyph - gap - label) / 2;
+        return (x, new(DropHere, DropStyle, new(x + glyph + gap, target.Height / 2 - 8, label, 16)));
+    }
 
     public static string Head(int count) => FormattableString.Invariant($"{count} item{(count == 1 ? "" : "s")} · references by default");
 

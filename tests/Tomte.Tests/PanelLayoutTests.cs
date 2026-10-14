@@ -155,6 +155,36 @@ public sealed class PanelLayoutTests
     }
 
     [Fact]
+    public void ShelfWordsFitTheirPlaces()
+    {
+        var body = new Vector2(560, 260 - PanelSpace.TabStripHeight);
+        var head = ShelfLayout.HeadText(body, 12);
+
+        // The count runs up to the hint, which ends at the right padding; neither is cut.
+        Assert.True(head[1].Slot.Right <= head[2].Slot.Left);
+        Assert.Equal(body.X - ShelfLayout.PadX, head[2].Slot.Right, 0.01);
+        foreach (var line in head.Skip(1))
+        {
+            using var laid = TextLayout.Of(new TextRun(line.Text, line.Style, line.Slot.Width));
+            Assert.False(laid.Trimmed, line.Text);
+        }
+
+        // The drop target's glyph and word are centred together, and the word is whole.
+        var target = ShelfLayout.DropTarget(IslandGeometry.ShelfDrop.Width, IslandGeometry.ShelfDrop.Depth);
+        var (x, label) = ShelfLayout.DropLabel(target.Size);
+        Assert.Equal(target.Width - label.Slot.Right, x, 0.5);
+        using var word = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
+        Assert.False(word.Trimmed);
+
+        // A missing item's meta line is in the warn colour; the lines stay inside the tile.
+        var tile = ShelfLayout.Tile(0, body);
+        var item = new ShelfItem(1, "Q3-report.pdf", @"C:\Users\me\Q3-report.pdf", ShelfKind.Reference, DateTimeOffset.Now) { Missing = true };
+        var lines = ShelfLayout.TileText(item, tile.Size);
+        Assert.Equal(TextStyle.WarnColor, lines[1].Style.Color);
+        Assert.All(lines, line => Assert.True(line.Slot.Right <= tile.Width && line.Slot.Bottom <= tile.Height, line.Text));
+    }
+
+    [Fact]
     public void ScratchpadWordsFollowTheTitle()
     {
         var layout = new ScratchpadPanelLayout(new Vector2(520, 278));

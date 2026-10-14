@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Text;
 using Windows.System;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
@@ -26,10 +27,11 @@ internal static class ShelfColors
 }
 
 /// <summary>
-/// The composition objects of one built part, taken off their parents and disposed together when the part goes.
-/// Every shape is in DIPs: the part hangs under a container that carries the island's scale.
+/// The composition objects of one built part, its text visuals among them, taken off their parents and disposed
+/// together when the part goes. Every shape is in DIPs: the part hangs under a container that carries the island's
+/// scale.
 /// </summary>
-internal sealed class Parts(Compositor compositor) : IDisposable
+internal sealed class Parts(Compositor compositor, TextRenderer text) : IDisposable
 {
     private readonly List<IDisposable> made = [];
     private readonly List<(ContainerVisual Parent, Visual Child)> attached = [];
@@ -90,15 +92,8 @@ internal sealed class Parts(Compositor compositor) : IDisposable
         into.Shapes.Add(shape);
     }
 
-    /// <summary>
-    /// Where a label goes. On-island text has no renderer yet and which text surface to use is an open owner decision,
-    /// so this draws a neutral bar over the slot instead. The string is passed so the renderer has one place to start.
-    /// </summary>
-    public void TextSlot(ShapeVisual into, string text, RectangleF slot, Color tone)
-    {
-        _ = text;
-        Box(into, new RectangleF(slot.X, slot.Y + slot.Height * 0.2f, slot.Width, slot.Height * 0.6f), slot.Height * 0.3f, Brush(Color.FromArgb((byte)(tone.A / 3), tone.R, tone.G, tone.B)));
-    }
+    /// <summary>A line of text in a slot of <paramref name="host"/>, which goes with the part.</summary>
+    public void Text(ContainerVisual host, TextSlot line) => Keep(text.Create(host)).Show(line);
 
     public void Dispose()
     {
@@ -136,15 +131,17 @@ internal static class Fades
 internal sealed class ShelfDropSurface
 {
     private readonly IslandWindow island;
+    private readonly TextRenderer text;
     private readonly DispatcherQueueTimer release;
     private Parts? parts, leaving;
     private ContainerVisual? space;
     private CompositionColorBrush? fill, stroke;
     private bool fadeInPending;
 
-    public ShelfDropSurface(IslandWindow island, IslandStateMachine machine, DropTarget drops)
+    public ShelfDropSurface(IslandWindow island, IslandStateMachine machine, DropTarget drops, TextRenderer text)
     {
         this.island = island;
+        this.text = text;
         release = island.Queue.CreateTimer();
         release.IsRepeating = false;
         release.Interval = TimeSpan.FromMilliseconds(100);
@@ -176,7 +173,7 @@ internal sealed class ShelfDropSurface
     private void Show()
     {
         Release();
-        var p = parts = new Parts(island.Compositor);
+        var p = parts = new Parts(island.Compositor, text);
         // Island space: DIPs from the island's centre line and top edge, scaled and kept centred by the island.
         space = p.Attach(island.Dips, island.Compositor.CreateContainerVisual());
         space.Opacity = 0;
@@ -191,12 +188,12 @@ internal sealed class ShelfDropSurface
         target.StrokeDashArray.Add(2);
 
         // A folder and the label, centred together.
-        const float glyph = 16, gap = 8, label = 84;
-        float x = (r.Width - glyph - gap - label) / 2, y = r.Height / 2;
+        var (x, label) = ShelfLayout.DropLabel(new SizeF(r.Width, r.Height));
+        float y = r.Height / 2;
         var ink = p.Brush(ShelfColors.Ink2);
         p.Box(shapes, new RectangleF(x, y - 7, 7, 4), 1.5f, null, ink, 1.4f);
-        p.Box(shapes, new RectangleF(x, y - 5, glyph, 12), 2, null, ink, 1.4f);
-        p.TextSlot(shapes, ShelfLayout.DropHere, new RectangleF(x + glyph + gap, y - 6, label, 12), ShelfColors.Ink);
+        p.Box(shapes, new RectangleF(x, y - 5, 16, 12), 2, null, ink, 1.4f);
+        p.Text(shapes, label);
     }
 
     private void Hot(bool on)
