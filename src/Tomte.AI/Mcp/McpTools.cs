@@ -55,6 +55,10 @@ public sealed class McpTools : IAsyncDisposable
     private readonly Func<string, string?> _readSecret;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    // Cancelled first thing in dispose: a start in progress holds the gate until the server answers, and
+    // the SDK waits 60 s for one that never does.
+    private readonly CancellationTokenSource _closing = new();
+
     // Written under the gate; the idle timer's thread and Running read it without.
     private readonly ConcurrentDictionary<string, Connection> _clients = new();
 
@@ -454,6 +458,7 @@ public sealed class McpTools : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         await _idle.DisposeAsync();
+        _closing.Cancel();
         await _gate.WaitAsync();
         try
         {
@@ -536,6 +541,9 @@ public sealed class McpTools : IAsyncDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_invalid is not null)
             throw new InvalidOperationException(_invalid);
+
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct, _closing.Token);
+        ct = stop.Token;
 
         // On the pool: starting a process blocks for a while before the first await, and the caller is the island's thread.
         var started = await Task.WhenAll(servers.Where(s => !_clients.ContainsKey(s.Name)).Select(s => Task.Run(() => StartAsync(s, ct))));

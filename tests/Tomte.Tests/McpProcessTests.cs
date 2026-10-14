@@ -222,6 +222,23 @@ public sealed class McpProcessTests : IDisposable
     }
 
     [Fact]
+    public async Task DisposeCancelsAStartThatNeverAnswers()
+    {
+        // "sleep" never answers the first request. With nothing to cancel the start, the SDK waits 60 s
+        // for it, and dispose used to wait with it.
+        var tools = new McpTools([new McpServerSettings { Name = "Echo", Command = Exe, Arguments = ["sleep", InFolder("sleeper.json")] }]);
+        var listing = tools.ListAsync(CancellationToken.None);
+        int sleeper = await PidAsync("sleeper.json");
+
+        var watch = Stopwatch.StartNew();
+        await tools.DisposeAsync();
+        Assert.InRange(watch.ElapsedMilliseconds, 0, 5000);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => listing);
+        Assert.True(await GoneAsync(sleeper));
+        Assert.Equal(0, tools.Running);
+    }
+
+    [Fact]
     public async Task ACancelledStartEndsTheProcess()
     {
         // "sleep" never answers the first request, like a command that is not an MCP server but keeps running.
