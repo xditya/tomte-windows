@@ -116,20 +116,19 @@ public sealed partial class SettingsWindow
             {
                 var tiers = server.AllowedTiers;
                 var box = new ComboBox { ItemsSource = tiers.Select(TierName).ToArray(), SelectedIndex = IndexOf(tiers, server.TierFor(tool.Key)), MinWidth = 200 };
-                box.SelectionChanged += (_, _) => SaveMcp(s => s.Name == name
-                    ? s with { ToolTiers = new Dictionary<string, ActionTier>(s.ToolTiers) { [tool.Key] = tiers[box.SelectedIndex] } }
-                    : s);
+                box.SelectionChanged += (_, _) => SaveMcp(s => s.Name == name ? s.WithTier(tool.Key, tiers[box.SelectedIndex]) : s);
                 panel.Children.Add(Row(tool.Name, tool.Description.Length == 0 ? null : Note(FirstSentence(tool.Description)), box));
             }
 
-            // A tier or an always-allow for a tool the server no longer has, or has since changed, applies to nothing.
+            // A tier or an always-allow for a tool the server no longer has, or has since changed, applies to
+            // nothing. A Destructive mark is the exception and stays: a changed tool keeps it by name.
             var keys = tools.Select(t => t.Key).ToHashSet();
-            bool Stale(string key) => McpTools.IsKeyOf(server, key) && !keys.Contains(key);
-            if (server.ToolTiers.Keys.Any(k => !keys.Contains(k)) || store.Current.AlwaysAllowedTools.Any(Stale))
+            bool Stale(string key) => server.OwnsKey(key) && !keys.Contains(key);
+            if (server.WithTiersFor(keys).ToolTiers.Count != server.ToolTiers.Count || store.Current.AlwaysAllowedTools.Any(Stale))
             {
                 Save(s => s with
                 {
-                    McpServers = [.. s.McpServers.Select(o => o.Name == name ? o with { ToolTiers = o.ToolTiers.Where(t => keys.Contains(t.Key)).ToDictionary() } : o)],
+                    McpServers = [.. s.McpServers.Select(o => o.Name == name ? o.WithTiersFor(keys) : o)],
                     AlwaysAllowedTools = [.. s.AlwaysAllowedTools.Where(g => !Stale(g))],
                 });
                 RenderGrants();

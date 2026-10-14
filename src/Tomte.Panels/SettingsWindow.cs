@@ -6,7 +6,6 @@ using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.XamlTypeInfo;
 using Tomte.AI;
-using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
@@ -252,7 +251,7 @@ public sealed partial class SettingsWindow : Window
                 RenderGrants();
             };
             // An MCP tool's grant is stored with a hash of what the tool was; the row shows the name only.
-            grantsList.Children.Add(Row(McpTools.NameOf(tool), Note("Runs without asking."), remove));
+            grantsList.Children.Add(Row(McpServerSettings.NameOf(tool), Note("Runs without asking."), remove));
         }
     }
 

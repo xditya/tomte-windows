@@ -174,6 +174,39 @@ public class McpToolsTests
     }
 
     [Fact]
+    public async Task AChangeNeverMakesADestructiveToolEasierToRun()
+    {
+        // Destructive asks every time and never offers "always allow". Falling back to External effect
+        // when the tool changes would hand the server a way to lose that mark.
+        string key = (await KeysAsync(Files))["files__echo"];
+        var files = Files with { ToolTiers = new Dictionary<string, ActionTier> { [key] = ActionTier.Destructive } };
+
+        async Task<ActionTier> TierAsync(McpServerSettings server)
+        {
+            await using var tools = Tools(null, server);
+            await tools.ListAsync(default);
+            return tools.TierOf(ModelNameOfEcho(server));
+        }
+
+        static string ModelNameOfEcho(McpServerSettings server) => McpTools.ModelName(server, "echo");
+
+        Assert.Equal(ActionTier.Destructive, await TierAsync(files));
+        Assert.Equal(ActionTier.Destructive, await TierAsync(files with { Command = "another-server" }));
+
+        // What Settings does on an edit of the target, on a rename and when it lists the tools again.
+        Assert.Equal(ActionTier.Destructive, await TierAsync((Files with { Arguments = ["--other"] }).After(files)));
+        Assert.Equal(ActionTier.Destructive, await TierAsync((Files with { Name = "Docs" }).After(files)));
+        _fake.EchoDescription = "Repeat the text, in a new way.";
+        string changed = (await KeysAsync(Files))["files__echo"];
+        Assert.NotEqual(key, changed);
+        Assert.Equal(ActionTier.Destructive, await TierAsync(files));
+        Assert.Equal(ActionTier.Destructive, await TierAsync(files.WithTiersFor(new HashSet<string> { changed })));
+
+        // Only the user's own choice for that tool takes the mark away.
+        Assert.Equal(ActionTier.ExternalEffect, await TierAsync(files.WithTier(changed, ActionTier.ExternalEffect)));
+    }
+
+    [Fact]
     public async Task ToolsThatWouldShareANameMakeTheServerUnusable()
     {
         // Both become files__read_file. Taking the first one listed would let the server choose which tool a permission belongs to.
@@ -549,8 +582,8 @@ public class McpPaletteTests : IDisposable
         string key = Assert.Single(_grants.AlwaysAllowed);
         Assert.StartsWith("files__echo#", key);
         // What Settings does with a stored grant: shows the name, and drops it with its server.
-        Assert.Equal("files__echo", McpTools.NameOf(key));
-        Assert.True(McpTools.IsKeyOf(new McpServerSettings { Name = "Files" }, key));
+        Assert.Equal("files__echo", McpServerSettings.NameOf(key));
+        Assert.True(new McpServerSettings { Name = "Files" }.OwnsKey(key));
         Assert.Equal(2, _fake.Calls.Count);
 
         _asked.Clear();
@@ -710,6 +743,42 @@ public class McpSettingsTests
     }
 
     [Fact]
+    public void TiersGetStricterNeverWeakerWhenAToolChanges()
+    {
+        var files = new McpServerSettings
+        {
+            Name = "Files",
+            Command = "npx",
+            ToolTiers = new Dictionary<string, ActionTier> { ["files__read#1"] = ActionTier.Read, ["files__wipe#1"] = ActionTier.Destructive },
+        };
+
+        // The same tool under another key is the tool after a change.
+        Assert.Equal(ActionTier.Read, files.TierFor("files__read#1"));
+        Assert.Equal(ActionTier.ExternalEffect, files.TierFor("files__read#2"));
+        Assert.Equal(ActionTier.Destructive, files.TierFor("files__wipe#1"));
+        Assert.Equal(ActionTier.Destructive, files.TierFor("files__wipe#2"));
+        Assert.Equal(ActionTier.ExternalEffect, files.TierFor("files__wipe_all#1"));
+
+        // An edit of the target drops Read and keeps Destructive; a rename moves the mark to the new name.
+        var moved = new McpServerSettings { Name = "Files", Command = "uvx" }.After(files);
+        Assert.Equal(["files__wipe#1"], moved.ToolTiers.Keys);
+        var renamed = new McpServerSettings { Name = "My Docs", Command = "npx" }.After(files);
+        Assert.Equal(["my_docs__wipe#1"], renamed.ToolTiers.Keys);
+        Assert.Equal(ActionTier.Destructive, renamed.TierFor("my_docs__wipe#9"));
+
+        // Listing the tools again drops the stale Read and keeps the Destructive mark.
+        var listed = files.WithTiersFor(new HashSet<string> { "files__read#2", "files__wipe#2" });
+        Assert.Equal(["files__wipe#1"], listed.ToolTiers.Keys);
+        Assert.Equal(ActionTier.Destructive, listed.TierFor("files__wipe#2"));
+
+        // The user's own choice for the changed tool replaces the mark.
+        var chosen = listed.WithTier("files__wipe#2", ActionTier.ExternalEffect);
+        Assert.Equal(["files__wipe#2"], chosen.ToolTiers.Keys);
+        Assert.Equal(ActionTier.ExternalEffect, chosen.TierFor("files__wipe#2"));
+        Assert.Equal(ActionTier.ExternalEffect, chosen.TierFor("files__wipe#3"));
+    }
+
+    [Fact]
     public void AlwaysAllowGrantsGoWithAServerThatIsRemovedRenamedOrPointedElsewhere()
     {
         var files = new McpServerSettings { Name = "Files", Command = "npx", Arguments = ["a"] };
@@ -748,11 +817,11 @@ public class McpSettingsTests
     [Fact]
     public void AGrantIsShownByNameWithoutItsHash()
     {
-        Assert.Equal("files__echo", McpTools.NameOf("files__echo#0123456789abcdef"));
-        Assert.Equal("open_url", McpTools.NameOf("open_url"));
-        Assert.True(McpTools.IsKeyOf(new McpServerSettings { Name = "Files" }, "files__echo#0123456789abcdef"));
-        Assert.False(McpTools.IsKeyOf(new McpServerSettings { Name = "Files" }, "files_2__echo#0123456789abcdef"));
-        Assert.False(McpTools.IsKeyOf(new McpServerSettings { Name = "Files" }, "open_url"));
+        Assert.Equal("files__echo", McpServerSettings.NameOf("files__echo#0123456789abcdef"));
+        Assert.Equal("open_url", McpServerSettings.NameOf("open_url"));
+        Assert.True(new McpServerSettings { Name = "Files" }.OwnsKey("files__echo#0123456789abcdef"));
+        Assert.False(new McpServerSettings { Name = "Files" }.OwnsKey("files_2__echo#0123456789abcdef"));
+        Assert.False(new McpServerSettings { Name = "Files" }.OwnsKey("open_url"));
     }
 
     [Fact]

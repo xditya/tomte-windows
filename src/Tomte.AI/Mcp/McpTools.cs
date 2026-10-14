@@ -25,7 +25,7 @@ public sealed record McpToolInfo(string Key, string Name, string Description);
 /// </summary>
 public sealed class McpTools : IAsyncDisposable
 {
-    public const string Separator = "__";
+    public const string Separator = McpServerSettings.Separator;
 
     /// <summary>Longest server or tool name shown in a prompt or in Settings.</summary>
     public const int MaxName = 64;
@@ -212,12 +212,6 @@ public sealed class McpTools : IAsyncDisposable
         return name.Length > 64 ? name[..64] : name;
     }
 
-    /// <summary>Whether a stored key (a tier override or an always-allow grant) is for a tool of this server.</summary>
-    public static bool IsKeyOf(McpServerSettings server, string key) => key.StartsWith(server.Prefix + Separator, StringComparison.Ordinal);
-
-    /// <summary>A stored key as Settings shows it: the name the model sees, without the hash behind the # sign.</summary>
-    public static string NameOf(string key) => key.Split('#')[0];
-
     /// <summary>
     /// The settings with one server added (no <paramref name="before"/>), edited, or removed (no
     /// <paramref name="now"/>). The always-allow grants for the server's tools go with it unless it
@@ -231,7 +225,7 @@ public sealed class McpTools : IAsyncDisposable
         return settings with
         {
             McpServers = [.. settings.McpServers.Where(s => now is not null || s.Name != before.Name).Select(s => s.Name == before.Name ? now! : s)],
-            AlwaysAllowedTools = same ? settings.AlwaysAllowedTools : [.. settings.AlwaysAllowedTools.Where(g => !IsKeyOf(before, g))],
+            AlwaysAllowedTools = same ? settings.AlwaysAllowedTools : [.. settings.AlwaysAllowedTools.Where(g => !before.OwnsKey(g))],
         };
     }
 

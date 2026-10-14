@@ -30,9 +30,12 @@ public sealed record McpServerSettings
 
     /// <summary>
     /// Tier overrides by tool key: the name the model sees plus a hash of what the tool is (the AI layer
-    /// makes the key). A tool not listed, or one that changed since the user chose, is an External effect.
+    /// makes the key). A tool not listed is an External effect; see <see cref="TierFor"/> for one that changed.
     /// </summary>
     public IReadOnlyDictionary<string, ActionTier> ToolTiers { get; init; } = new Dictionary<string, ActionTier>();
+
+    /// <summary>Stands between a server's prefix and a tool's own name in the name the model sees.</summary>
+    public const string Separator = "__";
 
     [JsonIgnore]
     public string CredentialId => "mcp/" + Name;
@@ -50,8 +53,24 @@ public sealed record McpServerSettings
         ? [ActionTier.Read, ActionTier.ExternalEffect, ActionTier.Destructive]
         : [ActionTier.ExternalEffect, ActionTier.Destructive];
 
-    public ActionTier TierFor(string toolKey) =>
-        ToolTiers.TryGetValue(toolKey, out var tier) && AllowedTiers.Contains(tier) ? tier : ActionTier.ExternalEffect;
+    /// <summary>
+    /// The tier of a tool. A choice holds for the tool as it was when the user chose. When the tool has
+    /// changed since (another key under the same name), Read falls back to External effect, but a tool
+    /// once marked Destructive stays Destructive: a change may make a tier stricter, never weaker.
+    /// </summary>
+    public ActionTier TierFor(string toolKey)
+    {
+        if (ToolTiers.TryGetValue(toolKey, out var tier) && AllowedTiers.Contains(tier))
+            return tier;
+        string name = NameOf(toolKey);
+        return ToolTiers.Any(t => t.Value == ActionTier.Destructive && NameOf(t.Key) == name) ? ActionTier.Destructive : ActionTier.ExternalEffect;
+    }
+
+    /// <summary>A tool key as Settings shows it: the name the model sees, without the hash behind the # sign.</summary>
+    public static string NameOf(string toolKey) => toolKey.Split('#')[0];
+
+    /// <summary>Whether a stored key (a tier override or an always-allow grant) is for a tool of this server.</summary>
+    public bool OwnsKey(string toolKey) => toolKey.StartsWith(Prefix + Separator, StringComparison.Ordinal);
 
     /// <summary>What Tomte starts or connects to. A tool's permissions hold only while this stays the same.</summary>
     [JsonIgnore]
@@ -60,14 +79,40 @@ public sealed record McpServerSettings
         : "http:" + Url;
 
     /// <summary>
-    /// This server as an edit of <paramref name="previous"/>: the on/off switch stays, and the per-tool
-    /// tiers stay only when the name and the target did not change, since they were chosen for those tools.
+    /// This server as an edit of <paramref name="previous"/>: the on/off switch stays. The per-tool tiers
+    /// stay only when the name and the target did not change, since they were chosen for those tools,
+    /// except Destructive marks, which always stay (under the new name after a rename): an edit never
+    /// makes a tool easier to run.
     /// </summary>
-    public McpServerSettings After(McpServerSettings? previous) => previous is null ? this : this with
+    public McpServerSettings After(McpServerSettings? previous)
     {
-        Enabled = previous.Enabled,
-        ToolTiers = previous.Name == Name && previous.Target == Target ? previous.ToolTiers : new Dictionary<string, ActionTier>(),
-    };
+        if (previous is null)
+            return this;
+        var tiers = previous.Name == Name && previous.Target == Target
+            ? previous.ToolTiers
+            : previous.ToolTiers.Where(t => t.Value == ActionTier.Destructive)
+                .ToDictionary(t => previous.OwnsKey(t.Key) ? Prefix + t.Key[previous.Prefix.Length..] : t.Key, t => t.Value);
+        return this with { Enabled = previous.Enabled, ToolTiers = tiers };
+    }
+
+    /// <summary>
+    /// The user's choice for one tool. It replaces whatever was stored under that tool's name, a
+    /// Destructive mark kept from before a change included.
+    /// </summary>
+    public McpServerSettings WithTier(string toolKey, ActionTier tier)
+    {
+        string name = NameOf(toolKey);
+        var tiers = ToolTiers.Where(t => NameOf(t.Key) != name).ToDictionary();
+        tiers[toolKey] = tier;
+        return this with { ToolTiers = tiers };
+    }
+
+    /// <summary>
+    /// Drops the choices for tools the server no longer has as they were when the user chose.
+    /// Destructive marks stay, because <see cref="TierFor"/> still applies them by name.
+    /// </summary>
+    public McpServerSettings WithTiersFor(IReadOnlySet<string> toolKeys) =>
+        this with { ToolTiers = ToolTiers.Where(t => toolKeys.Contains(t.Key) || t.Value == ActionTier.Destructive).ToDictionary() };
 
     [JsonIgnore]
     public string Summary => Transport == McpTransport.Stdio
