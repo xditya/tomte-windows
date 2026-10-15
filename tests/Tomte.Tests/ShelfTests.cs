@@ -1003,10 +1003,14 @@ public sealed class ShelfTests : IDisposable
         (long, string?, System.Numerics.Vector2)[] stopped = [(0, "tile:1", new(60, 90)), (20, "tile:1", new(130, 79)), (30, null, new(150, 76))];
         Assert.Equal(1L, Band(30 + ShelfLayout.BandAimMs - 1, stopped));
         Assert.Null(Band(30 + ShelfLayout.BandAimMs, stopped));
-        // Across another tile it stays while the pointer moves, and follows once it has rested there.
+        // Across another tile it stays while the pointer moves up toward the band, and follows once it has rested there.
         (long, string?, System.Numerics.Vector2)[] across = [(0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (100, "tile:2", new(180, 85)), (200, "tile:2", new(200, 80)), (300, "tile:2", new(220, 75))];
         Assert.Equal(1L, Band(550, across));
         Assert.Equal(2L, Band(650, across));
+        // Moving sideways or down on that tile is no way to the band: it follows after the grace, so the button the
+        // pointer then goes up to acts on that tile.
+        Assert.Equal(2L, Band(400, (0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (100, "tile:2", new(190, 90)), (200, "tile:2", new(220, 90)), (300, "tile:2", new(250, 90)), (400, "act:CopyPath", new(250, 20))));
+        Assert.Equal(2L, Band(330, (0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 80)), (100, "tile:2", new(170, 90)), (200, "tile:2", new(180, 100)), (300, "tile:2", new(190, 110))));
     }
 
     // The band's owner at time `at`, driven as the shelf panel drives it: each report steps the band as the move it is

@@ -134,9 +134,9 @@ public static class ShelfLayout
     /// <summary>
     /// What the hovered target (or the focused one) changing does to the band showing <paramref name="shown"/>'s actions:
     /// a first tile shows at once; another tile takes over after <see cref="BandGraceMs"/> (<see cref="Step"/> starts that
-    /// wait over while the pointer moves on the tile, so only a rest there takes the band); the band's own buttons or the
-    /// tile it is for keep it, and cancel what was waiting; nothing takes it after the wait (<see cref="Wait"/>), unless a
-    /// target is hovered by then. The owner is an item id.
+    /// wait over while the pointer moves on the tile toward the band, so only a rest there or a move another way takes the
+    /// band); the band's own buttons or the tile it is for keep it, and cancel what was waiting; nothing takes it after the
+    /// wait (<see cref="Wait"/>), unless a target is hovered by then. The owner is an item id.
     /// </summary>
     public static (BandChange Change, long? Owner) Hover(long? shown, string? hovered)
     {
@@ -179,7 +179,9 @@ public static class ShelfLayout
     /// <paramref name="now"/> ms. A change due by then is made first, unless it takes the band away while a target is
     /// hovered. A new target asks <see cref="Hover"/>: Later waits (<see cref="Wait"/>, the aim's when the pointer left the
     /// targets heading for the band), anything else cancels what waited. A move on the tile the band waits to go to
-    /// starts the wait over. Gives the item the band is for, the one waiting to take it and when it is due, in ms.
+    /// starts the wait over when it heads for the band from <paramref name="last"/>; sideways or down it does not, so
+    /// the band goes there after the grace. Gives the item the band is for, the one waiting to take it and when it is
+    /// due, in ms.
     /// </summary>
     public static (long? Shown, long? Pending, long? Due) Step(long? shown, long? pending, long? due, long now, string? was, string? id, Vector2? last, Vector2 at, Vector2 body)
     {
@@ -200,7 +202,8 @@ public static class ShelfLayout
             };
         }
 
-        return due is not null && pending is long next && id == TileId(next) ? (shown, pending, now + BandGraceMs) : (shown, pending, due);
+        bool restart = due is not null && pending is long next && id == TileId(next) && last is { } prev && Aiming(prev, at, BandRow(body));
+        return (shown, pending, restart ? now + BandGraceMs : due);
     }
 
     /// <summary>A tile's tooltip: the item's full name, and the folder it is in or that the shelf keeps it itself.</summary>
