@@ -132,29 +132,31 @@ internal sealed class Rambler(
         question.Answer(allow: false);
     }
 
-    public void Begin()
+    /// <summary>
+    /// A hold may start: none is recording, and no words wait on the card or run in the palette. A spoken reply's hold
+    /// gives way to the new recording.
+    /// </summary>
+    public bool CanBegin => capture is null && (!transcribing || replyHold is not null);
+
+    /// <summary>
+    /// The hold starts: the microphone opens and the island grows into the rambler's pill. The triggers have taken down
+    /// whatever showed, so the state comes from Hidden while the shape morphs from where it is. <paramref name="backTo"/>
+    /// is the app the keys go back to when the island had them (the AI box, the note): Insert types there.
+    /// </summary>
+    public void Begin(nint backTo)
     {
-        // A new hold during a spoken reply's hold ends that hold: the reply gives way to the new recording.
-        var hold = replyHold;
-        if (capture is not null || (transcribing && hold is null))
+        if (!CanBegin)
             return;
         clock.Restart();
-        // Where Insert types: the window in front as the hold starts, which the island never takes the keys from.
-        spokenInto = WindowContext.Foreground() is var front && front != (nint)island.Hwnd ? front : 0;
+        // Where Insert types: the window in front as the hold starts, or the app the island's keys go back to.
+        nint front = WindowContext.Foreground();
+        spokenInto = front != 0 && front != (nint)island.Hwnd ? front : backTo;
         spokenField = DesktopEffects.FocusIn(spokenInto);
         // The capture thread posts each packet's level; the bars change when a packet arrives, with no timer.
         capture = MicCapture.Start(rms => island.Queue.TryEnqueue(() => Level(rms)));
         ShowView();
         var from = machine.State;
-        if (hold is not null && from == IslandState.Palette)
-        {
-            // The table has no Palette to Compact edge; the state passes through Hidden while the shape morphs across.
-            machine.TransitionTo(IslandState.Hidden);
-            island.PanelLook = false;
-            InputThread.SetEscape(false);
-        }
-
-        if (IslandStateMachine.CanTransition(machine.State, IslandState.Compact))
+        if (IslandStateMachine.CanTransition(from, IslandState.Compact))
         {
             machine.TransitionTo(IslandState.Compact);
             island.Mascot.Follow(from, IslandState.Compact);
@@ -163,8 +165,6 @@ internal sealed class Rambler(
 
         island.Mascot.Set(MascotState.Rambler);
         log($"{DateTime.Now:HH:mm:ss.fff} rambler: recording");
-        // Last, so the reply's End sees this recording and leaves the island to it.
-        hold?.TrySetResult();
     }
 
     public async void End(bool keep)

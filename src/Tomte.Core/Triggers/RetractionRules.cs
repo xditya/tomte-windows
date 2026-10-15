@@ -85,6 +85,13 @@ public static class RetractionRules
     public static IslandActivity TakenOver(IslandActivity activity) => activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result);
 
     /// <summary>
+    /// The voice key turns the island into the rambler's pill from every state but Shelf-drop, where a file is being
+    /// dragged onto it and a drop on the pill would open the shelf over the recording. From an open state the state
+    /// passes through Hidden (what shows leaves as on a retract) on its way to Compact.
+    /// </summary>
+    public static bool VoiceOpens(IslandState state) => state != IslandState.ShelfDrop;
+
+    /// <summary>
     /// Whether Esc is taken as a global hotkey: in the states the user opened on purpose, except that a drop zone's
     /// result or a pinned island, which can stay up a long time, takes it only while the pointer is on the island, so Esc
     /// in the user's own app after Alt+Tab stays theirs. While the island has the keys Esc reaches it as a key, where an

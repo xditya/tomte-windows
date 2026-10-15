@@ -16,6 +16,26 @@ public class TakenOverTests
         // A drop zone's result gives way to whatever the user opens next.
         Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Result));
     }
+
+    [Fact]
+    public void TheVoiceKeyTurnsEveryStateButADragIntoTheRamblersPillThroughHidden()
+    {
+        foreach (var state in Enum.GetValues<IslandState>())
+        {
+            var machine = new IslandStateMachine();
+            if (state != IslandState.Hidden)
+                machine.TransitionTo(state);
+            Assert.Equal(state != IslandState.ShelfDrop, RetractionRules.VoiceOpens(state));
+            if (!RetractionRules.VoiceOpens(state))
+                continue;
+
+            // The triggers' hide, then the rambler's pill: the same two steps from every open state.
+            if (machine.State != IslandState.Hidden)
+                machine.TransitionTo(IslandState.Hidden);
+            machine.TransitionTo(IslandState.Compact);
+            Assert.Equal(IslandState.Compact, machine.State);
+        }
+    }
 }
 
 public class RetractionRulesTests

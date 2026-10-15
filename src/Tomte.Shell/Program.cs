@@ -182,6 +182,21 @@ internal static partial class Program
             triggers.Rambler = CreateRambler(args, island, triggers, store, timer, shortcuts, log!);
             if (triggers.Rambler is { } hold && int.TryParse(Arg(args, "--debug-hold"), out int holdMs))
             {
+                // --debug-open panels|palette|event: the island open before the hold, as the tray's Open island and Ask AI
+                // or an event open it. Ask AI takes the keys only with a provider set up.
+                switch (Arg(args, "--debug-open"))
+                {
+                    case "panels":
+                        triggers.Toggle();
+                        break;
+                    case "palette":
+                        AskFromTray(island, triggers, store, logLine);
+                        break;
+                    case "event":
+                        triggers.Raise(new IslandEvent("Debug event", DateTimeOffset.Now));
+                        break;
+                }
+
                 DebugHold(island, hold, holdMs, Arg(args, "--debug-choice"), Arg(args, "--debug-answer"), args.Contains("--dry"), log!);
             }
         }
