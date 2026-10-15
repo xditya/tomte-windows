@@ -42,7 +42,8 @@ public readonly record struct Launches(int Count, long LastTicks);
 
 /// <summary>
 /// How well a name matches what was typed, in tiers: the whole name, its start, the start of each typed word in any
-/// order, its initials, each word somewhere in it, its letters in order, and one typo in a word of four letters or more.
+/// order, its initials or the starts of its words run together ("vsc", "vscode"), each word somewhere in it, its letters
+/// in order and close together, and one typo in a word of four letters or more.
 /// A tier is worth 100; inside it shorter names and earlier matches score up to 59 more, which leaves room for the
 /// launch boost without reaching the next tier. 0 is no match.
 /// </summary>
@@ -81,7 +82,7 @@ public static class SearchMatch
             return WordStarts + extra;
         }
 
-        if (qJoined.Length >= 2 && string.Concat(nameWords.Select(w => w[0])).StartsWith(qJoined, StringComparison.Ordinal))
+        if (qJoined.Length >= 2 && Pieces(qJoined, 0, nameWords, 0))
         {
             return Initials + extra;
         }
@@ -91,9 +92,10 @@ public static class SearchMatch
             return Substring + Math.Max(0, 20 - n.IndexOf(typed[0], StringComparison.Ordinal)) + (extra / 2);
         }
 
-        if (qJoined.Length >= 2 && InOrder(string.Concat(nameWords), qJoined, WordStartsOf(nameWords)) is var (gaps, starts))
+        // Letters in order count only when they sit close together: "chrm" is Chrome, but "report" is not Mixed Reality
+        // Portal, whose r, e, p, o, r and t are spread over two words.
+        if (qJoined.Length >= 2 && InOrder(string.Concat(nameWords), qJoined, WordStartsOf(nameWords)) is var (gaps, starts) && gaps <= Math.Max(1, qJoined.Length / 2))
         {
-            // Letters close together ("chrm" in Chrome) beat letters spread over the name ("chrm" in Character Map).
             return Subsequence + Math.Clamp(40 - (4 * gaps) + (5 * starts), 0, 49) + (extra / 4);
         }
 
@@ -189,23 +191,71 @@ public static class SearchMatch
         return starts;
     }
 
-    // The typed letters in order in the name's letters, first place each: how many letters lie between the first and the
-    // last one found that were not typed, and how many found letters start a word. Null when they are not all there.
-    private static (int Gaps, int Starts)? InOrder(string letters, string typed, HashSet<int> starts)
+    // The typed text as the starts of the name's words in order, from its first word, later words skipped allowed: "vsc"
+    // and "vscode" are Visual Studio Code ("v" + "s" + "c", "v" + "s" + "code"), "gchrome" is Google Chrome. Each
+    // (letter, word) pair that led nowhere is remembered, so a long name of many short words costs letters times words,
+    // not every way to split it.
+    private static bool Pieces(string typed, int at, IReadOnlyList<string> words, int word, HashSet<(int, int)>? failed = null)
     {
-        int found = 0, onStarts = 0, first = -1, last = -1;
-        for (int i = 0; i < letters.Length && found < typed.Length; i++)
+        if (at == typed.Length)
         {
-            if (letters[i] == typed[found])
+            return true;
+        }
+
+        failed ??= [];
+        if (failed.Contains((at, word)))
+        {
+            return false;
+        }
+
+        // The first piece starts the name ("re" + "port" is not Mixed Reality Portal); later ones may skip words.
+        for (int w = word; w < words.Count && (at > 0 || w == word); w++)
+        {
+            for (int take = Math.Min(words[w].Length, typed.Length - at); take >= 1; take--)
             {
-                first = first < 0 ? i : first;
-                last = i;
-                onStarts += starts.Contains(i) ? 1 : 0;
-                found++;
+                if (string.CompareOrdinal(typed, at, words[w], 0, take) == 0 && Pieces(typed, at + take, words, w + 1, failed))
+                {
+                    return true;
+                }
             }
         }
 
-        return found == typed.Length ? (last - first + 1 - typed.Length, onStarts) : null;
+        failed.Add((at, word));
+        return false;
+    }
+
+    // The typed letters in order in the name's letters, in the tightest place they fit (each start tried, then the first
+    // match of each letter after it): how many letters lie between the first and the last one found that were not typed,
+    // and how many found letters start a word. Null when they are not all there.
+    private static (int Gaps, int Starts)? InOrder(string letters, string typed, HashSet<int> starts)
+    {
+        (int Gaps, int Starts)? best = null;
+        for (int first = letters.IndexOf(typed[0], StringComparison.Ordinal); first >= 0; first = letters.IndexOf(typed[0], first + 1))
+        {
+            int found = 1, last = first, onStarts = starts.Contains(first) ? 1 : 0;
+            for (int i = first + 1; i < letters.Length && found < typed.Length; i++)
+            {
+                if (letters[i] == typed[found])
+                {
+                    last = i;
+                    onStarts += starts.Contains(i) ? 1 : 0;
+                    found++;
+                }
+            }
+
+            if (found < typed.Length)
+            {
+                break;
+            }
+
+            int gaps = last - first + 1 - typed.Length;
+            if (best is not { } b || gaps < b.Gaps || (gaps == b.Gaps && onStarts > b.Starts))
+            {
+                best = (gaps, onStarts);
+            }
+        }
+
+        return best;
     }
 
     // One edit or one swap away from the start of the word, a letter shorter, as long or a letter longer.

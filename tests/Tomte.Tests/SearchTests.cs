@@ -57,7 +57,25 @@ public sealed class SearchTests
     }
 
     [Theory]
+    [InlineData("Visual Studio Code", "vscode", SearchMatch.Initials)]
+    [InlineData("Google Chrome", "gchrome", SearchMatch.Initials)]
+    public void TheStartsOfWordsInOrderMatchAsInitialsDo(string name, string query, int tier) =>
+        Assert.InRange(SearchMatch.Score(name, query), tier, tier + 99);
+
+    [Fact]
+    public void ALongNameOfShortWordsIsQuick()
+    {
+        string name = string.Join(' ', Enumerable.Repeat("a", 60));
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Equal(0, SearchMatch.Score(name, new string('a', 40) + "b"));
+        Assert.True(watch.ElapsedMilliseconds < 200, $"{watch.ElapsedMilliseconds} ms");
+    }
+
+    [Theory]
     [InlineData("Google Chrome", "crh")] // a typo needs four letters
+    [InlineData("Mixed Reality Portal", "report")] // letters in order, but spread over two words
+    [InlineData("Visit Java.com", "vsc")]
+    [InlineData("Windows Defender Firewall with Advanced Security", "vsc")]
     [InlineData("Google Chrome", "xyz")]
     [InlineData("Spotify", "sptofyx")] // two edits
     [InlineData("Terminal", "")]
