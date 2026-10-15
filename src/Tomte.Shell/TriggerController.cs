@@ -1212,7 +1212,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         firstRunShowing = Reveal(RevealTrigger.Peek, IslandState.Compact);
         if (firstRunShowing)
         {
-            PInvoke.SetTimer(island.Hwnd, FirstRunTimer, FirstRunHintMs, null);
+            // The ten seconds count from when the words show, so a pill held for the launch flight keeps them all.
+            island.ContentReady += ArmFirstRun;
             settings = settings with { FirstRunHintShown = true };
             store.Save(settings);
             // The hint's pill is settled only now; it carries no ring.
@@ -1220,6 +1221,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
 
         return firstRunShowing;
+    }
+
+    private void ArmFirstRun()
+    {
+        island.ContentReady -= ArmFirstRun;
+        if (firstRunShowing && machine.State == IslandState.Compact)
+        {
+            PInvoke.SetTimer(island.Hwnd, FirstRunTimer, FirstRunHintMs, null);
+        }
     }
 
     /// <summary>The pause, then the suppression check, then the morph. False when nothing was shown.</summary>
