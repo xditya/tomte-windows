@@ -6,9 +6,11 @@ namespace Tomte.Core.Interaction;
 
 /// <summary>
 /// What a clickable part of a view is, which says how the host treats it (a tab, say, switches as focus reaches it). A
-/// slider draws its own hover (its knob), so the host draws no state layer over it.
+/// slider draws its own hover (its knob), so the host draws no state layer over it. A box is a text box's place in the
+/// Tab order: focus arriving there gives the box the keys, and the pointer never hits it, since the box takes its own
+/// presses.
 /// </summary>
-public enum TargetKind { Button, Toggle, Tile, Row, Tab, Link, Slider }
+public enum TargetKind { Button, Toggle, Tile, Row, Tab, Link, Slider, Box }
 
 /// <summary>How a target was activated, for a view where a click, a double click and a key mean different things.</summary>
 public enum ActivateBy { Click, DoubleClick, Key }
@@ -35,7 +37,7 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
     /// <summary>
     /// The target under an island point: the views in the order they registered, each with its list and the function
     /// from island space to its own space. A later view sits on top of an earlier one, and within a view a later target
-    /// on top of an earlier one. Disabled targets count, so a press on one is nobody else's. Null over none.
+    /// on top of an earlier one. Disabled targets count, so a press on one is nobody else's; a box does not. Null over none.
     /// </summary>
     public static (int View, int Index)? Hit(IReadOnlyList<(IReadOnlyList<Target> Targets, Func<Vector2, Vector2> ToView)> views, Vector2 at)
     {
@@ -46,7 +48,7 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
             for (int i = targets.Count - 1; i >= 0; i--)
             {
                 var b = targets[i].Bounds;
-                if (p.X >= b.Left && p.X < b.Right && p.Y >= b.Top && p.Y < b.Bottom)
+                if (targets[i].Kind != TargetKind.Box && p.X >= b.Left && p.X < b.Right && p.Y >= b.Top && p.Y < b.Bottom)
                 {
                     return (v, i);
                 }
@@ -59,14 +61,21 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
     /// <summary>
     /// Tab (+1) or Shift+Tab (-1) from <paramref name="from"/>: the next Tab stop in list order, wrapping at both ends.
     /// A target in no group is a stop of its own; a group is one stop, entered at its first enabled member (the host may
-    /// put focus on the member last focused instead) and left by Tab, while the arrows move inside it. From -1, nothing
-    /// focused yet, Tab goes to the first stop and Shift+Tab to the last. -1 when none is enabled.
+    /// put focus on the member last focused instead) and left by Tab, while the arrows move inside it. A member's own
+    /// buttons, listed right after it and of another kind than the group's first member (a row's remove button), are one
+    /// Tab further before the group is left, and Shift+Tab from one goes back to its member. From -1, nothing focused
+    /// yet, Tab goes to the first stop and Shift+Tab to the last. -1 when none is enabled.
     /// </summary>
     public static int Next(IReadOnlyList<Target> targets, int from, int direction)
     {
         int n = targets.Count, step = direction < 0 ? -1 : 1;
         int i = from < 0 ? (step > 0 ? -1 : n) : from;
         int group = from >= 0 && from < n ? targets[from].Group : 0;
+        if (group != 0 && Own(targets, from, step) is int own and >= 0)
+        {
+            return own;
+        }
+
         for (int k = 0; k < n; k++)
         {
             i = (((i + step) % n) + n) % n;
@@ -91,6 +100,128 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
         for (int i = 0; i < targets.Count; i++)
         {
             if (targets[i].Group == group && targets[i].Enabled)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    // What a group holds: the kind of its first member (rows, tiles, tabs); a member of another kind is a button of one.
+    private static TargetKind ItemKind(IReadOnlyList<Target> targets, int group)
+    {
+        for (int i = 0; i < targets.Count; i++)
+        {
+            if (targets[i].Group == group)
+            {
+                return targets[i].Kind;
+            }
+        }
+
+        return TargetKind.Button;
+    }
+
+    // Tab from a member to its own button right after it, or Shift+Tab from such a button back to its member; -1 otherwise.
+    private static int Own(IReadOnlyList<Target> targets, int from, int step)
+    {
+        var at = targets[from];
+        var kind = ItemKind(targets, at.Group);
+        if (step > 0)
+        {
+            int next = from + 1;
+            return next < targets.Count && targets[next] is { Enabled: true } t && t.Group == at.Group && t.Kind != kind ? next : -1;
+        }
+
+        for (int i = from - 1; i >= 0 && at.Kind != kind; i--)
+        {
+            if (targets[i].Group == at.Group && targets[i].Kind == kind)
+            {
+                return targets[i].Enabled ? i : -1;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Left (-1) or Right (+1) from <paramref name="from"/> when its view did not take the key: in a grid of tiles the
+    /// previous or next tile in list order, which runs on across rows; among the other members of a group (chips, a band
+    /// of buttons) the nearest one that way (<see cref="Arrow"/>). -1 where Left and Right have nothing to do here: past
+    /// the first or last tile or member, on a tab, on a list's rows and their buttons, on a target in no group. The host
+    /// moves to the previous or next panel tab then.
+    /// </summary>
+    public static int Sideways(IReadOnlyList<Target> targets, int from, int step)
+    {
+        if (from < 0 || from >= targets.Count || targets[from].Group == 0)
+        {
+            return -1;
+        }
+
+        int group = targets[from].Group;
+        var kind = ItemKind(targets, group);
+        if (kind is TargetKind.Row or TargetKind.Tab)
+        {
+            return -1;
+        }
+
+        if (kind != TargetKind.Tile)
+        {
+            return Arrow(targets, from, new Vector2(Math.Sign(step), 0));
+        }
+
+        for (int i = from + Math.Sign(step); i >= 0 && i < targets.Count; i += Math.Sign(step))
+        {
+            if (targets[i] is { Enabled: true, Kind: TargetKind.Tile } t && t.Group == group)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// Where focus goes when the focused target <paramref name="was"/>, at <paramref name="at"/> in its view's list, is
+    /// no longer in it (a removed row, the buttons of a conversation that closed): an enabled target of its group and
+    /// kind at that place or after it, else the nearest one before it; failing that, the nearest enabled target at or
+    /// after the place, else before it, entered at the member <paramref name="lastIn"/> names for its group when that is
+    /// there. -1 when nothing is enabled.
+    /// </summary>
+    public static int Refocus(IReadOnlyList<Target> targets, int at, Target was, Func<int, string?> lastIn)
+    {
+        int pick = was.Group == 0 ? -1 : Near(targets, at, t => t.Enabled && t.Group == was.Group && t.Kind == was.Kind);
+        if (pick >= 0)
+        {
+            return pick;
+        }
+
+        pick = Near(targets, at, t => t.Enabled);
+        if (pick < 0 || targets[pick].Group == 0)
+        {
+            return pick;
+        }
+
+        int group = targets[pick].Group;
+        string? last = lastIn(group);
+        int remembered = Index(targets, t => t.Group == group && t.Enabled && t.Id == last);
+        return remembered >= 0 ? remembered : pick;
+    }
+
+    // The first match from `at` on, else the last one before it.
+    private static int Near(IReadOnlyList<Target> targets, int at, Func<Target, bool> match)
+    {
+        for (int i = Math.Max(0, at); i < targets.Count; i++)
+        {
+            if (match(targets[i]))
+            {
+                return i;
+            }
+        }
+
+        for (int i = Math.Min(at, targets.Count) - 1; i >= 0; i--)
+        {
+            if (match(targets[i]))
             {
                 return i;
             }
@@ -167,9 +298,10 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
 
     /// <summary>
     /// Tab (+1) or Shift+Tab (-1) across several views' lists in the order they registered: <see cref="Next"/> over them
-    /// as one list, each view's groups its own. A group is entered at a checked member (the current tab), else at the one
-    /// <paramref name="lastIn"/> names for it (the one last focused there), else at its first enabled member. Null when
-    /// nothing is enabled.
+    /// as one list, each view's groups its own. A group is entered at a checked member (the current tab, the open row) but
+    /// not at a checked toggle (a chip that is on), else at the one <paramref name="lastIn"/> names for it (the one last
+    /// focused there), else at its first enabled member; Shift+Tab enters at that member's own button when it has one.
+    /// Null when nothing is enabled.
     /// </summary>
     public static (int View, int Index)? Stop(IReadOnlyList<IReadOnlyList<Target>> views, (int View, int Index)? from, int direction, Func<int, int, string?> lastIn)
     {
@@ -208,9 +340,44 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
         }
 
         string? last = lastIn(view, group);
-        int pick = Index(list, m => m.Group == group && m.Enabled && m.Checked);
+        int pick = Index(list, m => m.Group == group && m.Enabled && m.Checked && m.Kind != TargetKind.Toggle);
         pick = pick >= 0 ? pick : Index(list, m => m.Group == group && m.Enabled && m.Id == last);
-        return (view, pick >= 0 ? pick : index);
+        pick = pick >= 0 ? pick : index;
+        // Tab comes into a row at the row, even when its button was focused last; Shift+Tab at its own button first, as
+        // Tab leaves the row through it.
+        if (direction > 0 && Own(list, pick, -1) is int member and >= 0)
+        {
+            pick = member;
+        }
+
+        return (view, direction < 0 && Own(list, pick, 1) is int own and >= 0 ? own : pick);
+    }
+
+    /// <summary>
+    /// Where focus lands coming into a view backwards (Left past the first item of the tab after it): the last item of
+    /// its first group (the last row, the last tile), else its last stop. -1 when nothing is enabled.
+    /// </summary>
+    public static int Last(IReadOnlyList<Target> targets)
+    {
+        int group = Index(targets, t => t.Group != 0 && t.Enabled) is int i and >= 0 ? targets[i].Group : 0;
+        return group != 0 ? Edge(targets, First(targets, group), last: true) : Next(targets, -1, -1);
+    }
+
+    /// <summary>
+    /// Up from <paramref name="from"/> has nowhere to go in its view: none of its group lies above it (the first row of a
+    /// list or a grid), or, in no group, no enabled target of the view lies wholly above it. The host goes up to the
+    /// tab labels then.
+    /// </summary>
+    public static bool AtTop(IReadOnlyList<Target> targets, int from)
+    {
+        if (from < 0 || from >= targets.Count)
+        {
+            return false;
+        }
+
+        var at = targets[from];
+        return at.Group != 0 ? Arrow(targets, from, new Vector2(0, -1)) < 0
+            : Index(targets, t => t.Enabled && t.Bounds.Bottom <= at.Bounds.Top && t.Id != at.Id) < 0;
     }
 
     private static int Index(IReadOnlyList<Target> targets, Func<Target, bool> match)
@@ -351,7 +518,7 @@ public static class NavKeys
 
     /// <summary>
     /// A key down in a text box that the box gives up to the targets: Ctrl+Tab and Ctrl+1 to Ctrl+6 from any box, which
-    /// switch panel tabs, and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note is a tab.
+    /// switch panel tabs, and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note indents.
     /// </summary>
     public static bool LeavesBox(NavKey key, bool tabLeaves) =>
         key is NavKey.NextTab or NavKey.PreviousTab or (>= NavKey.Tab1 and <= NavKey.Tab6) || (tabLeaves && key is NavKey.Next or NavKey.Previous);

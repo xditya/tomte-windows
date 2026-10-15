@@ -108,6 +108,9 @@ internal sealed unsafe class EditorView : IDisposable
     /// <summary>Raised once, as the box is disposed.</summary>
     public event Action? Disposing;
 
+    /// <summary>The box took the keys or let them go (<see cref="Focus"/>, <see cref="Blur"/>).</summary>
+    public event Action? FocusChanged;
+
     /// <summary>Sees every key, character and input method message first; true swallows it (the palette's Enter).</summary>
     public Func<uint, nuint, nint, bool>? BeforeKey { get; set; }
 
@@ -189,6 +192,7 @@ internal sealed unsafe class EditorView : IDisposable
         Services.Focus();
         caretMoved = true;
         Queue();
+        FocusChanged?.Invoke();
     }
 
     public void Blur()
@@ -196,6 +200,7 @@ internal sealed unsafe class EditorView : IDisposable
         Focused = false;
         Services.Blur();
         HideCaret();
+        FocusChanged?.Invoke();
     }
 
     /// <summary>Enter hands the text to <paramref name="send"/> and adds nothing; Shift+Enter is a new line. The palette's prompt.</summary>

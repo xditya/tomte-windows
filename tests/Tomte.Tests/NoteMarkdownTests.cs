@@ -92,5 +92,59 @@ public class NoteMarkdownTests
         }
 
         Assert.Equal(NoteKey.Pass, NoteKeys.Of(Char, 0x02, ctrl: true, shift: false, alt: false));
+
+        // Tab indents and Shift+Tab outdents; the tab character the key types after that is dropped. Ctrl+Tab is the
+        // panels' and passes here (the island takes it before the box).
+        Assert.Equal(NoteKey.Indent, NoteKeys.Of(KeyDown, '\t', ctrl: false, shift: false, alt: false));
+        Assert.Equal(NoteKey.Outdent, NoteKeys.Of(KeyDown, '\t', ctrl: false, shift: true, alt: false));
+        Assert.Equal(NoteKey.Ignore, NoteKeys.Of(Char, '\t', ctrl: false, shift: true, alt: false));
+        Assert.Equal(NoteKey.Pass, NoteKeys.Of(KeyDown, '\t', ctrl: true, shift: false, alt: false));
+    }
+
+    // The text after an indent change, with the selection marked as [ and ].
+    private static string Indented(string text, int start, int end, bool outdent = false)
+    {
+        if (NoteMarkdown.Indent(text, start, end, outdent) is not var (change, from, to))
+        {
+            return "unchanged";
+        }
+
+        string now = text[..change.Start] + change.Text + text[change.End..];
+        return now[..from] + "[" + now[from..to] + "]" + now[to..];
+    }
+
+    [Fact]
+    public void TabNestsAListItemAndIndentsAnywhereElse()
+    {
+        // No indent in the note yet: four spaces. On a list line the item nests, the caret moving with its text.
+        Assert.Equal("- a\n    - b[]", Indented("- a\n- b", 7, 7));
+        Assert.Equal("- a\n    - [b]", Indented("- a\n- b", 6, 7));
+        Assert.Equal("1. a\n    []2. b", Indented("1. a\n2. b", 5, 5));
+        // A task item nests too; plain text gets the indent where the caret is, in place of a selection.
+        Assert.Equal("    - [x] done[]", Indented("- [x] done", 10, 10));
+        Assert.Equal("ab    []cd", Indented("abcd", 2, 2));
+        Assert.Equal("a    []d", Indented("abcd", 1, 3));
+        // Lines selected across a line break are each indented; a selection ending at a line's start leaves that line.
+        Assert.Equal("    [one\n    two\n]three", Indented("one\ntwo\nthree", 0, 8));
+        Assert.Equal("    [a\n]b", Indented("a\nb", 0, 2));
+        Assert.Equal("    [a\n\n    b]", Indented("a\n\nb", 0, 4));
+    }
+
+    [Fact]
+    public void ShiftTabTakesOneIndentOffAndTheIndentIsTheNotesOwn()
+    {
+        Assert.Equal("- a\n- b[]", Indented("- a\n    - b", 11, 11, outdent: true));
+        Assert.Equal("- a\n    - b\n[]  - c", Indented("- a\n    - b\n      - c", 12, 12, outdent: true));
+        Assert.Equal("[- a\n  - b]", Indented("    - a\n      - b", 0, 17, outdent: true));
+        Assert.Equal("a\n[]b", Indented("a\n\tb", 2, 2, outdent: true));
+        Assert.Equal("    x[]", Indented("\t    x", 6, 6, outdent: true));
+        // Nothing to take off: no change.
+        Assert.Equal("unchanged", Indented("- a", 3, 3, outdent: true));
+
+        // The note's own indent: two spaces, a tab, or the fewest spaces it uses (at least two).
+        Assert.Equal("- a\n  - b\n  - []", Indented("- a\n  - b\n- ", 12, 12));
+        Assert.Equal("- a\n\t- b\n\t- []", Indented("- a\n\t- b\n- ", 11, 11));
+        Assert.Equal("x\n   y\nab   []", Indented("x\n   y\nab", 9, 9));
+        Assert.Equal("x\n y\nab  []", Indented("x\n y\nab", 7, 7));
     }
 }

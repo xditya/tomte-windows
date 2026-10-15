@@ -71,7 +71,11 @@ internal sealed unsafe class NoteEditor : IDisposable
                 return false;
             }
 
-            if (key != NoteKey.Ignore)
+            if (key is NoteKey.Indent or NoteKey.Outdent)
+            {
+                Indent(key == NoteKey.Outdent);
+            }
+            else if (key != NoteKey.Ignore)
             {
                 Clipboard(key);
             }
@@ -318,6 +322,21 @@ internal sealed unsafe class NoteEditor : IDisposable
                 services.Send(PInvoke.EM_REPLACESEL, 1, (nint)nothing);
             }
         }
+    }
+
+    // Tab and Shift+Tab, as the user's own edit (one undo step), with the selection kept on what it was on.
+    private void Indent(bool outdent)
+    {
+        var services = editor.Services;
+        var (start, end) = services.Selection;
+        if (NoteMarkdown.Indent(services.Text, start, end, outdent) is not var (change, from, to))
+        {
+            return;
+        }
+
+        services.Selection = (change.Start, change.End);
+        services.Insert(change.Text);
+        services.Selection = (from, to);
     }
 
     private static bool Put(HWND owner, string text)

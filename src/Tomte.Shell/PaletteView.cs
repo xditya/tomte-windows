@@ -186,8 +186,10 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         if (prompt is not null)
         {
-            // An open question's line drops "Enter runs it" once the box no longer has the keys.
+            // An open question's line drops "Enter runs it" once the box no longer has the keys, and the card's outline
+            // stops saying it has them once Tab moved on to a chip.
             focus!.Lost += Update;
+            prompt.FocusChanged += () => island.Queue.TryEnqueue(Update);
         }
 
         Update();
@@ -604,16 +606,17 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         targeted = from;
         var list = new List<Target>();
+        // In the order they are drawn: Send at the prompt's right end, then the chips under it.
+        if (sendVisual is not null)
+        {
+            list.Add(new Target(SendId, layout.Send, PaletteLayout.SendCorner, TargetKind.Button, canSend, PaletteLayout.SendTip, Key: "Enter"));
+        }
+
         for (int i = 0; i < layout.Chips.Count && session is not null; i++)
         {
             var chip = layout.Chips[i];
             list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, shownChips[i].Tip, Group: 1, Checked: chip.On,
                 Key: NavKeys.ChipKey(shownChips[i].Spec.Icon)));
-        }
-
-        if (sendVisual is not null)
-        {
-            list.Add(new Target(SendId, layout.Send, PaletteLayout.SendCorner, TargetKind.Button, canSend, PaletteLayout.SendTip, Key: "Enter"));
         }
 
         foreach (var (button, at, _) in layout.Ask(Height)?.Buttons ?? [])

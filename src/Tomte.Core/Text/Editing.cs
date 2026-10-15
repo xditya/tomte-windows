@@ -197,22 +197,34 @@ public enum NoteKey
     Copy,
     Cut,
     Paste,
+
+    /// <summary>Tab: an indent, or a list item nested (<see cref="NoteMarkdown.Indent"/>).</summary>
+    Indent,
+
+    /// <summary>Shift+Tab: one indent off each line the selection touches.</summary>
+    Outdent,
 }
 
 /// <summary>
 /// The note's keys while its box is rich text, so the note only ever looks like its Markdown: copy, cut and paste
 /// carry plain text (rich text would bring a web page's fonts in and carry the box's white text into Word), and the
 /// box's own formatting shortcuts (Ctrl+B, Ctrl+E, Ctrl+Shift+L, Ctrl+1 and the rest) do nothing. Ctrl with Alt is
-/// AltGr on many layouts, which types, so it passes.
+/// AltGr on many layouts, which types, so it passes. Tab and Shift+Tab indent and outdent as an editor does, and the tab
+/// character their key would type after that is dropped.
 /// </summary>
 public static class NoteKeys
 {
-    public const uint KeyDown = 0x0100;
+    public const uint KeyDown = 0x0100, Char = 0x0102;
     private const int Back = 0x08, Tab = 0x09, Return = 0x0D, Shift = 0x10, Control = 0x11, Menu = 0x12, Escape = 0x1B;
     private const int PageUp = 0x21, Down = 0x28, Insert = 0x2D, Delete = 0x2E, LeftShift = 0xA0, RightAlt = 0xA5, ProcessKey = 0xE5;
 
     public static NoteKey Of(uint message, nuint wParam, bool ctrl, bool shift, bool alt)
     {
+        if (message == Char && wParam == Tab && !alt)
+        {
+            return NoteKey.Ignore;
+        }
+
         if (message != KeyDown || alt)
         {
             return NoteKey.Pass;
@@ -221,7 +233,8 @@ public static class NoteKeys
         int key = (int)(wParam & 0xFFFF);
         if (!ctrl)
         {
-            return !shift ? NoteKey.Pass : key == Insert ? NoteKey.Paste : key == Delete ? NoteKey.Cut : NoteKey.Pass;
+            return key == Tab ? (shift ? NoteKey.Outdent : NoteKey.Indent)
+                : !shift ? NoteKey.Pass : key == Insert ? NoteKey.Paste : key == Delete ? NoteKey.Cut : NoteKey.Pass;
         }
 
         return key switch

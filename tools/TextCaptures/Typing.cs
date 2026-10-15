@@ -364,6 +364,23 @@ internal static unsafe class Typing
         Pump();
         Check("undoing it makes them plain again", s.Text == text && Look(s, At("after")) == plain, $"{Look(s, At("after"))}");
 
+        // Tab on a list line nests the item, with no tab typed and the caret moving with its text; Shift+Tab takes it back
+        // out; each is one undo step.
+        int item = At("- [ ] open");
+        s.Selection = (item + 6, item + 6);
+        keys.Press(VIRTUAL_KEY.VK_TAB);
+        Pump();
+        string nested = text.Insert(item, "    ");
+        Check("Tab on a list line nests the item and moves the caret with it", s.Text == nested && note.Text == nested && s.Selection == (item + 10, item + 10) && Look(s, item + 10).Hang > open.Hang,
+            $"\"{Esc(s.Text[item..(item + 16)])}\" caret {s.Selection} {Look(s, item + 10)}");
+        keys.Press(VIRTUAL_KEY.VK_TAB, shift: true);
+        Pump();
+        Check("Shift+Tab takes it back out", s.Text == text && s.Selection == (item + 6, item + 6), $"\"{Esc(s.Text[item..(item + 12)])}\" caret {s.Selection}");
+        keys.Press(VIRTUAL_KEY.VK_TAB);
+        keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+        Pump();
+        Check("one Ctrl+Z takes a Tab out", s.Text == text, Esc(s.Text[item..(item + 12)]));
+
         // Nothing is restyled while an input method composes. Offscreen there is no input method: the services start a
         // composition on WM_IME_STARTCOMPOSITION, take no typed characters then and never end it, so the text changes
         // as a rambler note would change it, and the next key the input method did not take ends the composition.
@@ -779,6 +796,7 @@ internal static unsafe class Typing
             {
                 VIRTUAL_KEY.VK_RETURN => ctrl ? '\n' : '\r',
                 VIRTUAL_KEY.VK_BACK => '\b',
+                VIRTUAL_KEY.VK_TAB when !ctrl => '\t',
                 >= VIRTUAL_KEY.VK_A and <= VIRTUAL_KEY.VK_Z when ctrl => (char)(vk - VIRTUAL_KEY.VK_A + 1),
                 _ => null,
             };
