@@ -814,7 +814,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         // The shelf takes the drop first: a temporary file's copy then runs before the morph, not during its first frames.
         Dropped?.Invoke(drop);
-        if (machine.State is IslandState.ShelfDrop or IslandState.Compact or IslandState.Panels)
+        if (rambler?.Recording == true)
+        {
+            log?.Invoke("drop: on the shelf; the voice key is held, so the Shelf tab does not open");
+        }
+        else if (machine.State is IslandState.ShelfDrop or IslandState.Compact or IslandState.Panels)
         {
             // While Panels is open on another tab this is a tab switch.
             Panels?.Select(PanelId.Shelf);
@@ -1138,6 +1142,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private bool Allowed(RevealTrigger trigger, bool ignorePause = false)
     {
+        // Nothing opens over a recording; the voice key's own press checks CanBegin before it gets here.
+        if (rambler?.Recording == true)
+        {
+            log?.Invoke($"{trigger}: the voice key is held, nothing else opens");
+            return false;
+        }
+
         if (!ignorePause && pause.IsPaused(DateTimeOffset.Now))
         {
             log?.Invoke($"{trigger}: paused");

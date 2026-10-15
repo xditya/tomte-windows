@@ -139,6 +139,9 @@ internal sealed class Rambler(
     /// </summary>
     public bool CanBegin => capture is null && (!transcribing || replyHold is not null);
 
+    /// <summary>The voice key is held: the microphone records and the pill is the rambler's.</summary>
+    public bool Recording => capture is not null;
+
     /// <summary>
     /// The hold starts: the microphone opens and the island grows into the rambler's pill. The triggers have taken down
     /// whatever showed, so the state comes from Hidden while the shape morphs from where it is. <paramref name="backTo"/>
