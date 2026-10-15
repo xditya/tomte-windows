@@ -15,7 +15,10 @@ public sealed partial class SettingsWindow
     {
         getEverything.Click += async (_, _) => await GetEverythingAsync();
         _ = ShowFileSearchAsync();
-        return Card(Row("File search", fileSearchNote, getEverything));
+        var row = Row("File search", fileSearchNote, getEverything);
+        // The row names its control after the row; a screen reader should hear what the button does.
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(getEverything, "Get Everything");
+        return Card(row);
     }
 
     private async Task ShowFileSearchAsync()
