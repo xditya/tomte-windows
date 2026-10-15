@@ -1011,6 +1011,9 @@ public sealed class ShelfTests : IDisposable
         // pointer then goes up to acts on that tile.
         Assert.Equal(2L, Band(400, (0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (100, "tile:2", new(190, 90)), (200, "tile:2", new(220, 90)), (300, "tile:2", new(250, 90)), (400, "act:CopyPath", new(250, 20))));
         Assert.Equal(2L, Band(330, (0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 80)), (100, "tile:2", new(170, 90)), (200, "tile:2", new(180, 100)), (300, "tile:2", new(190, 110))));
+        // A slow sideways sweep wobbles a pixel up and down. Measured from where the pointer came onto the tile that is
+        // not a way to the band either, so the band follows after the grace.
+        Assert.Equal(2L, Band(400, (0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (60, "tile:2", new(163, 89)), (90, "tile:2", new(166, 90)), (120, "tile:2", new(169, 89)), (150, "tile:2", new(172, 90)), (180, "tile:2", new(175, 89)), (210, "tile:2", new(178, 90)), (240, "tile:2", new(181, 89)), (270, "tile:2", new(184, 90)), (300, "tile:2", new(187, 89)), (330, "tile:2", new(190, 90)), (400, "act:CopyPath", new(190, 20))));
     }
 
     // The band's owner at time `at`, driven as the shelf panel drives it: each report steps the band as the move it is
@@ -1023,11 +1026,14 @@ public sealed class ShelfTests : IDisposable
         foreach (var (time, id, where) in reports)
         {
             (shown, pending, due) = ShelfLayout.Step(shown, pending, due, time, hovered, id, last, where, Body);
-            hovered = id;
-            if (id is not null)
+            // As the panel does: the point the aim is measured from is where the pointer came onto its target, and it moves
+            // with the pointer only while no change waits.
+            if (id is not null && (id != hovered || due is null))
             {
                 last = where;
             }
+
+            hovered = id;
         }
 
         return ShelfLayout.Step(shown, pending, due, at, hovered, hovered, null, default, Body).Shown;

@@ -40,7 +40,8 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     // The item whose actions the band shows, the one it changes to once the wait is over, and when that is due, in ms.
     private long? shown, pending, due;
 
-    // Where the pointer was last seen on a tile or a button, in body DIPs: the point it heads for the band from.
+    // Where the pointer came onto the tile or button it is on, in body DIPs: the point it heads for the band from. It
+    // follows the pointer only while no change waits, so a wobble during a sweep across a tile is not an aim at the band.
     private Vector2? last;
 
     // The target the host says is hovered now, or null over empty grid.
@@ -203,7 +204,10 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     public void PointerMoved(string id, Vector2 at)
     {
         Step(id, id, at, Environment.TickCount64);
-        last = at;
+        if (due is null)
+        {
+            last = at;
+        }
     }
 
     public void Hovered(string? id)
@@ -211,7 +215,12 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         string? was = hovering;
         hovering = id;
         PInvoke.GetCursorPos(out var cursor);
-        Step(was, id, PanelSpace.ToBody(island.ScreenToIsland(cursor.X, cursor.Y), size.X), Environment.TickCount64);
+        var at = PanelSpace.ToBody(island.ScreenToIsland(cursor.X, cursor.Y), size.X);
+        Step(was, id, at, Environment.TickCount64);
+        if (id is not null)
+        {
+            last = at;
+        }
     }
 
     // The band's rules for the pointer, on `was` and now on `id` at `at` in body DIPs: the band follows the item they give,
