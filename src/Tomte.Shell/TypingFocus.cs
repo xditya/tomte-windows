@@ -86,8 +86,8 @@ internal sealed class TypingFocus
 
     /// <summary>
     /// A text box in <paramref name="host"/>, drawn on the text device. Dispose it with its view. A box with an
-    /// <paramref name="owner"/> (the palette's prompt) gives Tab and Shift+Tab to that view's targets, and takes the keys
-    /// back when Tab comes round to it again.
+    /// <paramref name="owner"/> (the palette's prompt, the note) hands Tab and Shift+Tab on to the targets
+    /// (<see cref="InteractionHost.FromBox"/>), and takes the keys back when Tab comes round to it again.
     /// </summary>
     public EditorView Create(ContainerVisual host, bool multiline, float fontDips, IInteractive? owner = null)
     {
@@ -325,15 +325,24 @@ internal sealed class TypingFocus
 
         if (focused is { } editor)
         {
-            // Tab out of the prompt moves to its view's targets, when there are any, and Ctrl+Tab switches the panel tab;
-            // either way the box lets go, and the island keeps the keys for the targets.
+            // Tab out of the prompt or the note moves to the targets, when there are any, and Ctrl+Tab switches the panel
+            // tab; either way the box lets go, and the island keeps the keys for the targets. With nowhere to go, Tab
+            // types nothing in such a box.
             var owner = owners.GetValueOrDefault(editor);
-            if (NavKeys.LeavesBox(nav, owner is not null)
-                && (ctrl ? island.Interaction.Key(nav, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor))))
+            if (NavKeys.LeavesBox(nav, owner is not null))
             {
-                focused = null;
-                editor.Blur();
-                return new LRESULT(0);
+                if (ctrl ? island.Interaction.Key(nav, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor)))
+                {
+                    focused = null;
+                    editor.Blur();
+                    return new LRESULT(0);
+                }
+
+                if (!ctrl)
+                {
+                    taken = true;
+                    return new LRESULT(0);
+                }
             }
 
             // The AI box's own keys reach its view first; the box keeps the keys either way.
