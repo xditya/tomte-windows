@@ -179,6 +179,15 @@ internal sealed class Rambler(
         capture = null;
         transcribing = true;
         island.Mascot.Set(MascotState.Compact);
+        // Anything else that opens while the words are turned into text has the island to itself: the dimmed bars
+        // leave at once, and the words go to the note below once they are ready.
+        void Covered(IslandState from, IslandState to)
+        {
+            if (to != IslandState.Compact)
+                RemoveView();
+        }
+
+        machine.Changed += Covered;
         try
         {
             float[] samples = await Task.Run(recording.Stop);
@@ -199,6 +208,7 @@ internal sealed class Rambler(
             }
             finally
             {
+                machine.Changed -= Covered;
                 // Local whisper sends nothing; a provider transcription is logged whether or not it succeeded.
                 if (speechSend is not null)
                     LogSend(speechSend, 0, 0, "audio");
@@ -285,6 +295,7 @@ internal sealed class Rambler(
         }
         finally
         {
+            machine.Changed -= Covered;
             transcribing = false;
             replyHold = null;
             // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill. A
