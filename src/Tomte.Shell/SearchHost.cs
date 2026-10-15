@@ -225,7 +225,8 @@ internal sealed class SearchHost
                 {
                     held = null;
                     Refresh();
-                    if (shown.Selected is { } top)
+                    // Never the AI row: a send needs the row chosen, not an Enter typed before the list was known.
+                    if (shown.Selected is { Kind: not SearchKind.AiSearch } top)
                     {
                         log?.Invoke("search: the app list is in; the held Enter opens the top row");
                         Chosen(top, folder);
@@ -418,7 +419,8 @@ internal sealed class SearchHost
     // progress, then the files it picked under its line on why, or what went wrong. Esc or typing goes back.
     private async Task RunAiAsync(string words)
     {
-        fileSearch?.Cancel();
+        // The local file search goes on: its files wait for Esc. An Enter held for the app list was for the local rows.
+        held = null;
         LeaveAi(refresh: false);
         aiShowing = true;
         var session = ai = AiSearch?.Invoke(words);
