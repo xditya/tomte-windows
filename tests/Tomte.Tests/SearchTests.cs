@@ -508,3 +508,52 @@ public sealed class FileFilterQueryTests
         Assert.Equal("", FileQuery.IndexSql(new FileFilter([], Folders: true), Excluded));
     }
 }
+
+public sealed class AiSearchRowTests
+{
+    private static readonly SearchItem Ai = new(SearchKind.AiSearch, SearchLayout.AiRow, "x");
+    private static readonly SearchItem Ask = new(SearchKind.Ask, "Ask Tomte", "x");
+
+    [Fact]
+    public void ASentenceWithNoGoodLocalMatchPutsAiSearchFirst()
+    {
+        string typed = "the invoices I got last month";
+        var app = new SearchItem(SearchKind.App, "Invoice Ninja", "a");
+        var ranked = SearchRank.Order([app, Ai, Ask], typed, new Dictionary<string, Launches>());
+
+        Assert.Equal([Ai, Ask], ranked);
+        Assert.Equal([Ai, Ask], SearchRank.AiFirst(ranked, typed));
+        // The AI row is a group of its own after files and before Ask, so Tab reaches it.
+        Assert.Equal((3, 4), (Ai.Group, Ask.Group));
+    }
+
+    [Fact]
+    public void AiSearchMovesUpOnlyForASentenceWithoutAGoodMatch()
+    {
+        var app = new SearchItem(SearchKind.App, "Visual Studio Code", "a");
+        var file = new FileHit(@"D:\Notes\notes from the meeting.txt", false).Item();
+        var none = new Dictionary<string, Launches>();
+
+        // A name that matches only loosely (one typo, the other words nowhere) is no good match.
+        var chrome = new SearchItem(SearchKind.App, "Chrome", "c");
+        Assert.Equal([Ai, chrome, Ask], SearchRank.AiFirst([chrome, Ai, Ask], "crhome web browser"));
+        // Two words read as a name.
+        Assert.Equal(Ask, SearchRank.AiFirst([app, Ask, Ai], "tax return")[1]);
+        Assert.Equal(app, SearchRank.AiFirst(SearchRank.Order([app, Ai, Ask], "visual studio code", none), "visual studio code")[0]);
+        Assert.Equal(file, SearchRank.AiFirst(SearchRank.Order([file, Ai, Ask], "notes from the meeting", none), "notes from the meeting")[0]);
+    }
+
+    [Fact]
+    public void TheWhyLineLeadsTheRowsWithoutGroupHeadings()
+    {
+        var rows = new[] { new FileHit(@"D:\a.pdf", false).Item(), new FileHit(@"D:\b", true).Item() };
+
+        var lines = SearchLayout.Lines(rows, "AI · Two files.");
+
+        Assert.Equal(["AI · Two files.", null, null], lines.Select(l => l.Heading));
+        Assert.Equal([-1, 0, 1], lines.Select(l => l.Row));
+        Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight), lines[^1].Top + lines[^1].Height);
+        Assert.Empty(SearchLayout.Lines([], "AI · nothing"));
+        Assert.Equal("AI", SearchLayout.KindLabel(SearchKind.AiSearch));
+    }
+}

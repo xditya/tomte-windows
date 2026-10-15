@@ -1,15 +1,94 @@
 using System.Diagnostics;
+using System.Text.Json;
+using Tomte.AI;
+using Tomte.AI.Palette;
+using Tomte.Core;
+using Tomte.Core.Search;
 
 namespace Tomte.Shell;
 
-/// <summary>The search box's debug driver.</summary>
+/// <summary>The search box's AI search and its debug driver.</summary>
 internal static partial class Program
 {
     /// <summary>
+    /// AI search's send: the AI box's provider, model, cap, prices and send log, kept in the AI history, with the file
+    /// finder over Everything or the Windows index as its only tools. Made when the row is chosen; null when no provider
+    /// can be used (the reason is logged).
+    /// </summary>
+    private static PaletteSession? AiSearchSession(SettingsStore store, string words, Action<string>? log)
+    {
+        if (Configured(store, log) is not { } configured)
+        {
+            return null;
+        }
+
+        // The session wants the palette's tools and grants; it offers neither, so empty ones do.
+        var unused = new BuiltInTools(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { });
+        return new PaletteSession(configured.Provider, configured.Config, configured.Options with { MaxToolSteps = FileFinder.MaxCalls + 3 }, new SendLog(SendLogPath), unused, new PermissionGrants(), [])
+        {
+            Prompt = words,
+            FileSearch = new FileFinder(FileFinder.Local),
+            History = History,
+        };
+    }
+
+    /// <summary>
+    /// --debug-find "json" with --debug-log=path: runs find_files with these arguments as the model would send them, with
+    /// no model, and logs the search Everything or the index is asked and what goes back. Nothing is sent anywhere.
+    /// </summary>
+    private static void DebugFind(string json, Action<string> log)
+    {
+        var input = JsonDocument.Parse(json).RootElement;
+        if (FileFinder.Read(input, out var filter) is { } bad)
+        {
+            log($"debug find: {bad}");
+            return;
+        }
+
+        log($"debug find: Everything {(Everything.Running ? "runs" : "is not running")}; its search: {FileQuery.Everything(filter!, FileQuery.Excluded())}");
+        log($"debug find: the index's SQL: {FileQuery.IndexSql(filter!, FileQuery.Excluded(), FileFinder.PerCall)}");
+        var watch = Stopwatch.StartNew();
+        var (summary, result, error) = new FileFinder(FileFinder.Local).Run(new ToolCallPart("debug", FileFinder.FindFiles, input), CancellationToken.None);
+        log($"debug find: {summary} in {watch.ElapsedMilliseconds} ms{(error ? " (error)" : "")}:\n{result}");
+    }
+
+    /// <summary>
+    /// --debug-record folder: every provider answer is also written there whole, numbered, with the request beside it, to
+    /// make test fixtures and count tokens. Answers then arrive whole instead of streamed.
+    /// </summary>
+    private sealed class Recorder(string folder) : DelegatingHandler(new SocketsHttpHandler { AllowAutoRedirect = false })
+    {
+        private int count;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            int n = Interlocked.Increment(ref count);
+            Directory.CreateDirectory(folder);
+            if (request.Content is not null)
+            {
+                await File.WriteAllTextAsync(Path.Combine(folder, $"{n}.request.json"), await request.Content.ReadAsStringAsync(cancellationToken), cancellationToken);
+            }
+
+            var response = await base.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+            await File.WriteAllBytesAsync(Path.Combine(folder, $"{n}.sse"), body, cancellationToken);
+            var copy = new ByteArrayContent(body);
+            foreach (var header in response.Content.Headers)
+            {
+                copy.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+
+            response.Content = copy;
+            return response;
+        }
+    }
+
+    /// <summary>
     /// --debug-search "words" with --debug-log=path: opens the search box as its hotkey does, types the words a letter at a
     /// time as a person would, logs the rows after each letter and once the file search has answered, presses the keys in
-    /// --debug-keys (Down, Up, Tab, ShiftTab, Enter, CtrlEnter, Esc; comma separated) and logs the selection after each,
-    /// then hides the island. Opens nothing: a row Enter would open is logged instead. --debug-race types the words and
+    /// --debug-keys (Down, Up, Tab, ShiftTab, Enter, CtrlEnter, Esc; comma separated; WaitAi waits for an AI search to end and
+    /// logs what it shows) and logs the selection after each, then hides the island. Opens nothing: a row Enter would open
+    /// is logged instead; Enter on Search with AI does run the AI search. --debug-race types the words and
     /// presses Enter at once, before Start's app list has been read, to show Enter waiting for it. --debug-everything name
     /// searches a named Everything instance instead of the usual one, and --debug-quit ends Tomte half a second after the
     /// island hid.
@@ -53,6 +132,15 @@ internal static partial class Program
         Rows("after the file search");
         foreach (string key in (keys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
+            if (key == "WaitAi")
+            {
+                await Task.WhenAny(search.AiRun, Task.Delay(TimeSpan.FromSeconds(150)));
+                // The last answer reaches the view on the next turn.
+                await Task.Delay(100);
+                Rows($"after the AI search, line \"{view.Lead}\"");
+                continue;
+            }
+
             bool took = key switch
             {
                 "Esc" => view.OnEscape(),

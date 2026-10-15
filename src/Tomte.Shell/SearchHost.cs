@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Data.Common;
 using System.Diagnostics;
+using Tomte.AI;
+using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
 using Tomte.Core.Search;
@@ -70,6 +72,11 @@ internal sealed class SearchHost
     private CancellationTokenSource? fileSearch;
     private string filesFrom = "";
 
+    // AI search for the text in the box: showing in the list's place, and its send while it runs and after (null when no
+    // provider could be used).
+    private bool aiShowing;
+    private PaletteSession? ai;
+
     public SearchHost(IslandWindow island, TriggerController triggers, TextRenderer text, TypingFocus focus, SettingsStore store, TomteDb db, ShortcutStore shortcuts, Action<string>? log)
     {
         (this.island, this.triggers, this.text, this.focus, this.store, this.shortcuts, this.log) = (island, triggers, text, focus, store, shortcuts, log);
@@ -87,6 +94,15 @@ internal sealed class SearchHost
     /// <summary>The Ask row: the AI box opens with these words, and sends nothing until Enter there.</summary>
     public Action<string>? Ask { get; set; }
 
+    /// <summary>
+    /// The Search with AI row: a send of the typed sentence to the AI box's provider, with its cap, send log and history,
+    /// that picks files through the local file search. Null when no provider can be used. Made only when the row is chosen.
+    /// </summary>
+    public Func<string, PaletteSession?>? AiSearch { get; set; }
+
+    /// <summary>The latest AI search, for the debug driver to wait on.</summary>
+    public Task AiRun { get; private set; } = Task.CompletedTask;
+
     /// <summary>The view of the search showing now, for the debug driver; null with none.</summary>
     public SearchView? View => view;
 
@@ -102,6 +118,7 @@ internal sealed class SearchHost
         shown.Clicked += item => Chosen(item, folder: false);
         shown.Entered += Entered;
         shown.CardAnswered += Answered;
+        shown.Back += LeaveAi;
         shown.HeightChanged += () =>
         {
             if (view == shown && triggers.Searching)
@@ -124,6 +141,7 @@ internal sealed class SearchHost
             {
                 triggers.Machine.Changed -= Gone;
                 fileSearch?.Cancel();
+                LeaveAi(refresh: false);
                 held = null;
                 if (view == shown)
                 {
@@ -142,7 +160,7 @@ internal sealed class SearchHost
     // waits for it, then the list is ranked again and the top row opens; with the list known, the selected row opens.
     private void Entered(bool folder)
     {
-        if (appsPending)
+        if (appsPending && !aiShowing)
         {
             held = folder;
             log?.Invoke("search: Enter waits for the app list");
@@ -273,8 +291,9 @@ internal sealed class SearchHost
 
     private void Typed()
     {
-        // An Enter held for the first app list was meant for the old text.
+        // An Enter held for the first app list was meant for the old text, and AI search's answer was for it too.
         held = null;
+        LeaveAi(refresh: false);
         Refresh();
         fileSearch?.Cancel();
         fileSearch = null;
@@ -294,6 +313,13 @@ internal sealed class SearchHost
             return;
         }
 
+        // Lists that arrive while AI search shows (the app list, files) wait for Esc.
+        if (aiShowing)
+        {
+            ShowAi();
+            return;
+        }
+
         string typed = shown.Text;
         var words = FileQuery.Words(typed);
         if (words.Count == 0)
@@ -310,13 +336,15 @@ internal sealed class SearchHost
             candidates = candidates.Append(new SearchItem(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"));
         }
 
-        if (store.Current.Provider is not null)
+        if (store.Current.Provider is { } provider)
         {
-            candidates = candidates.Append(new SearchItem(SearchKind.Ask, "Ask Tomte", typed.Trim(), $"\"{typed.Trim()}\""));
+            candidates = candidates
+                .Append(new SearchItem(SearchKind.AiSearch, SearchLayout.AiRow, typed.Trim(), $"Sends file names to {ProviderSetup.NameOf(provider.Id)}, never what is in them"))
+                .Append(new SearchItem(SearchKind.Ask, "Ask Tomte", typed.Trim(), $"\"{typed.Trim()}\""));
         }
 
         long ranking = Stopwatch.GetTimestamp();
-        var ranked = SearchRank.Order(candidates, typed, launches);
+        var ranked = SearchRank.AiFirst(SearchRank.Order(candidates, typed, launches), typed);
         log?.Invoke($"search: ranked {apps.Count + tiles.Count + shelf.Count + files.Count} candidates in {Stopwatch.GetElapsedTime(ranking).TotalMilliseconds:F2} ms");
         shown.Show(ranked, Source(), SearchLayout.NoResults);
     }
@@ -362,15 +390,7 @@ internal sealed class SearchHost
         (IReadOnlyList<FileHit>? Hits, bool Everything) found;
         try
         {
-            found = await Task.Run<(IReadOnlyList<FileHit>?, bool)>(() =>
-            {
-                var excluded = FileQuery.Excluded();
-                var hits = everything ? Tomte.Core.Search.Everything.Search(FileQuery.Everything(words, excluded), FileQuery.Fetch, cancel) : null;
-                // A search a newer keystroke replaced does not go on to the index.
-                return hits is not null ? (hits, true)
-                    : cancel.IsCancellationRequested ? (null, false)
-                    : (WindowsIndex.Search(words, cancel), false);
-            });
+            found = await Task.Run(() => FileSearch.Run(new FileFilter(words), FileQuery.Fetch, cancel));
         }
         catch (Exception e) when (e is Win32Exception or InvalidOperationException or System.Runtime.InteropServices.COMException)
         {
@@ -394,12 +414,102 @@ internal sealed class SearchHost
         Refresh();
     }
 
+    // The Search with AI row was chosen: the sentence goes to the provider now, never before. The list shows the send's
+    // progress, then the files it picked under its line on why, or what went wrong. Esc or typing goes back.
+    private async Task RunAiAsync(string words)
+    {
+        fileSearch?.Cancel();
+        LeaveAi(refresh: false);
+        aiShowing = true;
+        var session = ai = AiSearch?.Invoke(words);
+        if (session is null)
+        {
+            log?.Invoke("search: AI search has no provider that can be used");
+            ShowAi();
+            return;
+        }
+
+        session.Changed += () =>
+        {
+            if (ai == session)
+            {
+                ShowAi();
+            }
+        };
+        ShowAi();
+        var watch = Stopwatch.StartNew();
+        await session.SendAsync();
+        var finder = session.FileSearch!;
+        log?.Invoke($"search: AI search {session.Status} in {watch.ElapsedMilliseconds} ms, {finder.Calls} file searches, {finder.Found.Count} files returned, "
+            + $"{finder.Picked?.Count ?? 0} picked{(session.Error is { } error ? ": " + error : "")}");
+        if (ai == session)
+        {
+            ShowAi();
+        }
+    }
+
+    // AI search's state in the list's place: progress while it runs, the picked files under the AI line once done, or a
+    // plain line on what went wrong. Footer: where the words went.
+    private void ShowAi()
+    {
+        if (view is not { } shown)
+        {
+            return;
+        }
+
+        if (ai is not { } session)
+        {
+            shown.Show([], "", "Search with AI needs an AI provider that works. Set one up in Settings, AI.", aiSearch: true);
+            return;
+        }
+
+        var finder = session.FileSearch!;
+        string sent = session.ProviderIndicator;
+        switch (session.Status)
+        {
+            case PaletteStatus.Idle or PaletteStatus.Sending:
+                string step = session.Answer.OfType<ToolStepSegment>().LastOrDefault()?.Summary is { } last ? $" {last}." : "";
+                shown.Show([], sent, $"Searching with AI.{step} Esc goes back.", aiSearch: true);
+                break;
+            case PaletteStatus.Done when finder.Picked is { Count: > 0 } picked:
+                shown.Show([.. picked.Select(f => new FileHit(f.Path, f.Folder).Item())], sent, "", aiSearch: true, why: finder.Reason.Length > 0 ? $"AI · {finder.Reason}" : "AI");
+                break;
+            case PaletteStatus.Done:
+                string said = finder.Picked is not null ? finder.Reason : session.AnswerText.Trim();
+                shown.Show([], sent, $"AI search found nothing that fits.{(said.Length > 0 ? " " + said : "")}", aiSearch: true);
+                break;
+            case PaletteStatus.Failed:
+                shown.Show([], sent, session.Error ?? "AI search stopped.", aiSearch: true);
+                break;
+        }
+    }
+
+    // Back to the results for the typed text; a send still running is cancelled.
+    private void LeaveAi() => LeaveAi(refresh: true);
+
+    private void LeaveAi(bool refresh)
+    {
+        ai?.Cancel();
+        ai = null;
+        if (aiShowing)
+        {
+            aiShowing = false;
+            if (refresh)
+            {
+                Refresh();
+            }
+        }
+    }
+
     private void Chosen(SearchItem item, bool folder)
     {
         switch (item.Kind)
         {
             case SearchKind.Ask when !Dry:
                 Ask?.Invoke(item.Target);
+                return;
+            case SearchKind.AiSearch:
+                AiRun = RunAiAsync(item.Target);
                 return;
             case SearchKind.GetEverything:
                 view?.ShowCard(Confirm);

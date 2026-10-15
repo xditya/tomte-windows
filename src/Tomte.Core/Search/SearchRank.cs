@@ -1,6 +1,9 @@
 namespace Tomte.Core.Search;
 
-/// <summary>What a search row is. Rows are grouped in this order: apps, then tiles and shelf items, then files and folders, then Ask.</summary>
+/// <summary>
+/// What a search row is. Rows are grouped in this order: apps, then tiles and shelf items, then files and folders, then
+/// AI search, then Ask.
+/// </summary>
 public enum SearchKind
 {
     App,
@@ -11,6 +14,9 @@ public enum SearchKind
 
     /// <summary>The row that offers to get Everything, last among the files.</summary>
     GetEverything,
+
+    /// <summary>The row that asks the AI provider to pick files for the typed words; a group of its own, so Tab reaches it.</summary>
+    AiSearch,
 
     /// <summary>The row that hands the typed words to the AI box.</summary>
     Ask,
@@ -30,7 +36,8 @@ public sealed record SearchItem(SearchKind Kind, string Name, string Target, str
         SearchKind.App => 0,
         SearchKind.Shortcut or SearchKind.Shelf => 1,
         SearchKind.Folder or SearchKind.File or SearchKind.GetEverything => 2,
-        _ => 3,
+        SearchKind.AiSearch => 3,
+        _ => 4,
     };
 
     /// <summary>What the launch counts are kept under: the kind and the target, case ignored, as Windows treats paths.</summary>
@@ -318,17 +325,33 @@ public static class SearchRank
     /// <summary>
     /// The candidates that match <paramref name="query"/>, grouped, ordered and capped. Files and folders came from a file
     /// search that already matched every typed word, so one this matcher does not follow (accents, say) still shows, last.
-    /// The offer and Ask rows are kept as they are, at the end of their groups.
+    /// The offer, AI search and Ask rows are kept as they are, at the end of their groups.
     /// </summary>
     public static IReadOnlyList<SearchItem> Order(IEnumerable<SearchItem> candidates, string query, IReadOnlyDictionary<string, Launches> launches) =>
         Grouped(candidates.Select(item => (Item: item, Score: item.Kind switch
         {
-            SearchKind.GetEverything or SearchKind.Ask => -1,
+            SearchKind.GetEverything or SearchKind.AiSearch or SearchKind.Ask => -1,
             SearchKind.File or SearchKind.Folder => Math.Max(1, SearchMatch.Score(item.Name, query)),
             _ => SearchMatch.Score(item.Name, query),
         }))
             .Where(scored => scored.Score != 0)
             .Select(scored => (scored.Item, Rank: scored.Score < 0 ? int.MinValue : scored.Score + Boost(launches, scored.Item))));
+
+    /// <summary>Typed text of this many words or more reads as a sentence, which AI search may answer better than names do.</summary>
+    public const int SentenceWords = 3;
+
+    /// <summary>
+    /// The rows with the AI search row moved first, so it is the one selected, when the text reads as a sentence and
+    /// nothing local matches it well: no file or folder (a file search found every word in their names) and no app, tile
+    /// or shelf item with every word in its name. Otherwise the rows as they are.
+    /// </summary>
+    public static IReadOnlyList<SearchItem> AiFirst(IReadOnlyList<SearchItem> ranked, string query)
+    {
+        int ai = ranked.ToList().FindIndex(r => r.Kind == SearchKind.AiSearch);
+        bool matched = ranked.Any(r => r.Kind is SearchKind.File or SearchKind.Folder
+            || (r.Kind is SearchKind.App or SearchKind.Shortcut or SearchKind.Shelf && SearchMatch.Score(r.Name, query) >= SearchMatch.Substring));
+        return ai <= 0 || matched || FileQuery.Words(query).Count < SentenceWords ? ranked : [ranked[ai], .. ranked.Where((_, i) => i != ai)];
+    }
 
     /// <summary>For an empty box: what was opened from search before, most often first, then most recently, grouped and capped.</summary>
     public static IReadOnlyList<SearchItem> Recent(IEnumerable<SearchItem> opened, IReadOnlyDictionary<string, Launches> launches)
@@ -361,7 +384,7 @@ public static class SearchRank
         int shown = 0;
         foreach (var item in items)
         {
-            bool fixedRow = item.Kind is SearchKind.GetEverything or SearchKind.Ask;
+            bool fixedRow = item.Kind is SearchKind.GetEverything or SearchKind.AiSearch or SearchKind.Ask;
             if (fixedRow || shown++ < cap)
             {
                 yield return item;

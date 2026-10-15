@@ -38,6 +38,8 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public const string KeysEmpty = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc closes";
     public const string NothingYet = "Type to search your apps, files and folders. What you open from here is listed first next time.";
     public const string NoResults = "Nothing found.";
+    public const string AiRow = "Search with AI";
+    public const string AiKeys = "Enter opens · Ctrl+Enter shows in folder · Esc back to all results";
 
     private readonly PaletteLayout prompt = new(width, mascot);
 
@@ -51,11 +53,11 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     /// The height that shows the list (or the hint with no rows, or the card), from the palette's smallest to
     /// <paramref name="tallest"/>; past that the list scrolls.
     /// </summary>
-    public static float Fit(float width, bool mascot, IReadOnlyList<SearchItem> rows, SearchCard? card, float tallest)
+    public static float Fit(float width, bool mascot, IReadOnlyList<SearchItem> rows, SearchCard? card, float tallest, string? lead = null)
     {
         var low = new SearchLayout(width, mascot, (float)PanelSize.PaletteMinHeight);
         float top = low.Band.Y, below = PaletteLayout.Gap + FootHeight + PaletteLayout.Bottom;
-        var lines = Lines(rows);
+        var lines = Lines(rows, lead);
         float needed = card is not null ? top + low.Card(card).Card.Height + (2 * PaletteLayout.Gap) + below
             : lines.Count > 0 ? top + lines[^1].Top + lines[^1].Height + below
             : top + EmptyRoom + below;
@@ -89,15 +91,24 @@ public sealed class SearchLayout(float width, bool mascot, float height)
             new(source, FootRight, new RectangleF(PaletteLayout.Pad + w - right, y, right, FootHeight)));
     }
 
-    /// <summary>The list's lines in band space: a heading before each group that has one, then its rows.</summary>
-    public static IReadOnlyList<SearchLine> Lines(IReadOnlyList<SearchItem> rows)
+    /// <summary>
+    /// The list's lines in band space: a heading before each group that has one, then its rows. With a
+    /// <paramref name="lead"/> (AI search's line on why it picked these) that line comes first, in the headings' place.
+    /// </summary>
+    public static IReadOnlyList<SearchLine> Lines(IReadOnlyList<SearchItem> rows, string? lead = null)
     {
         var lines = new List<SearchLine>();
         float y = 0;
         int group = -1;
+        if (lead is not null && rows.Count > 0)
+        {
+            lines.Add(new(y, HeadingHeight, lead, -1));
+            y += HeadingHeight;
+        }
+
         for (int i = 0; i < rows.Count; i++)
         {
-            if (rows[i].Group != group)
+            if (rows[i].Group != group && lead is null)
             {
                 group = rows[i].Group;
                 if (HeadingFor(group) is { } heading)
@@ -130,7 +141,7 @@ public sealed class SearchLayout(float width, bool mascot, float height)
         SearchKind.Shelf => "On the shelf",
         SearchKind.Folder => "Folder",
         SearchKind.File => "File",
-        SearchKind.Ask => "AI",
+        SearchKind.Ask or SearchKind.AiSearch => "AI",
         _ => "",
     };
 
