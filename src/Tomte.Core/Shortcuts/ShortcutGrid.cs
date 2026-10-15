@@ -43,6 +43,9 @@ public static class ShortcutGrid
 
     public const string AddId = "add", AddTip = "Add a shortcut in Settings";
 
+    /// <summary>The question Delete on a tile asks on its card before a second Delete removes it, and the keys on the head line.</summary>
+    public const string RemoveAsk = "Remove? Press Delete again", Keys = "Enter opens, Delete removes";
+
     public static string TileId(long id) => $"tile:{id}";
 
     /// <summary>
@@ -102,16 +105,18 @@ public static class ShortcutGrid
     /// <summary>The head line: the panel's title, then what a tile can be.</summary>
     public static RectangleF Head(Vector2 body) => new(Inset, Top, body.X - 2 * Inset, HeadHeight);
 
-    /// <summary>The panel's title, then what a tile can be, on the head line.</summary>
+    /// <summary>The panel's title, then what a tile can be, on the head line, and the keys at its right end.</summary>
     public static IReadOnlyList<TextSlot> HeadText(Vector2 body)
     {
         const string title = "Shortcuts";
         var head = Head(body);
         float after = TextSlot.Measure(title, TextStyle.Title, head.Width) + 10;
+        float keys = MathF.Ceiling(TextSlot.Measure(Keys, TextStyle.Secondary, head.Width));
         return
         [
             new(title, TextStyle.Title, head),
-            new("apps, files, folders, web pages, scripts", TextStyle.Secondary, new(head.X + after, head.Y, head.Width - after, head.Height)),
+            new("apps, files, folders, web pages, scripts", TextStyle.Secondary, new(head.X + after, head.Y, Math.Max(0, head.Width - after - keys - 10), head.Height)),
+            new(Keys, TextStyle.Secondary with { Align = TextAlign.Trailing }, new(head.Right - keys, head.Y, keys, head.Height)),
         ];
     }
 

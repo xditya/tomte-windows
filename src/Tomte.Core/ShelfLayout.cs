@@ -54,8 +54,9 @@ public static class ShelfLayout
 
     /// <summary>
     /// The shelf's clickable parts in Tab order: the visible tiles (group 1, draggable, the full name and folder as the
-    /// tip), then, while <paramref name="owner"/> is on the page, the band's actions for it (group 2; an icon-only one
-    /// carries its name as the tip). An action that none of <paramref name="acting"/> allows is disabled.
+    /// tip), then, while <paramref name="owner"/> is on the page, the band's actions for it (group 2, each tip naming its
+    /// key; an icon-only one without a key carries its name). An action that none of <paramref name="acting"/> allows is
+    /// disabled.
     /// </summary>
     public static IReadOnlyList<Target> Targets(Vector2 body, int first, IReadOnlyList<ShelfItem> items, ShelfItem? owner, IReadOnlyList<ShelfItem> acting, bool confirming)
     {
@@ -72,7 +73,7 @@ public static class ShelfLayout
             foreach (var slot in Actions(body, confirming))
             {
                 bool allowed = acting.Any(i => ShelfStore.Allows(slot.Action, i));
-                targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, slot.Label is null ? Name(slot.Action) : null, Group: 2));
+                targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, ActionTip(slot.Action, slot.Label is not null), Group: 2));
             }
         }
 
@@ -288,6 +289,31 @@ public static class ShelfLayout
         ShelfAction.Share => "Share",
         _ => "Remove",
     };
+
+    /// <summary>
+    /// An action button's tooltip: its name and the key that does the same on a focused tile; with no key, its name only
+    /// while the button shows no name (<paramref name="labelled"/> false).
+    /// </summary>
+    public static string? ActionTip(ShelfAction action, bool labelled) => action switch
+    {
+        ShelfAction.Open => "Open (Enter)",
+        ShelfAction.Reveal => "Show in folder (Ctrl+Shift+E)",
+        ShelfAction.CopyPath => "Copy path (Ctrl+C)",
+        ShelfAction.Remove => "Remove (Delete)",
+        _ => labelled ? null : Name(action),
+    };
+
+    /// <summary>
+    /// The first visible item after an arrow from <paramref name="index"/> by <paramref name="rows"/> rows (Down +1, Up
+    /// -1): a row further when the row it heads for has items and is off the page, so the arrow finds a tile there;
+    /// unchanged otherwise.
+    /// </summary>
+    public static int ScrollFor(int first, int index, int rows, int count, Vector2 body)
+    {
+        int row = (index / Columns) + rows, firstRow = first / Columns;
+        bool off = row < firstRow || row >= firstRow + Rows(body);
+        return off && row >= 0 && row <= (count - 1) / Columns ? Scroll(first, -rows, count, body) : first;
+    }
 
     /// <summary>One stroke of an action's icon, in its 16 DIP square: a line from A to B, or with a corner, an outlined box from A to B.</summary>
     public readonly record struct GlyphStroke(Vector2 A, Vector2 B, float Corner = -1);

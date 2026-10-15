@@ -76,8 +76,8 @@ public sealed class PanelLayoutTests
         Assert.Equal((TargetKind.Toggle, true, "Keep clipboard history: on"), (sw.Kind, sw.Checked, sw.Tip));
         Assert.Equal("Keep clipboard history: off", Clipboard.Targets(on: false, [], 0, asking: false)[0].Tip);
 
-        Assert.Equal((TargetKind.Row, "Copy again", 1), (targets[1].Kind, targets[1].Tip, targets[1].Group));
-        Assert.Equal((TargetKind.Button, "Remove", 1), (targets[2].Kind, targets[2].Tip, targets[2].Group));
+        Assert.Equal((TargetKind.Row, "Copy again (Enter)", 1), (targets[1].Kind, targets[1].Tip, targets[1].Group));
+        Assert.Equal((TargetKind.Button, "Remove (Delete)", 1), (targets[2].Kind, targets[2].Tip, targets[2].Group));
         Assert.Equal((24f, 24f), (targets[2].Bounds.Width, targets[2].Bounds.Height));
 
         // Clear all is a panel action, as tall as one, alone in its Tab stop, and grows to the left when it asks.

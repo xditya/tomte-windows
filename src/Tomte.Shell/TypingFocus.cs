@@ -295,7 +295,9 @@ internal sealed class TypingFocus
 
         bool pressed = down || message == IslandKeys.SysKeyDown;
         bool shift = Down(VIRTUAL_KEY.VK_SHIFT), repeat = (lParam & PromptKeys.WasDown) != 0;
-        var nav = pressed ? NavKeys.Of(key, shift, ctrl, Down(VIRTUAL_KEY.VK_MENU)) : NavKey.None;
+        // "/" is read as the character it types, which is "/" on every layout; in a box it is only typing.
+        var nav = pressed ? NavKeys.Of(key, shift, ctrl, Down(VIRTUAL_KEY.VK_MENU))
+            : message == PInvoke.WM_CHAR && focused is null ? NavKeys.Of((char)key) : NavKey.None;
         taken &= !pressed;
         if (focused is { } editor)
         {

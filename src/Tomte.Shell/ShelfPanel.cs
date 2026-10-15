@@ -154,10 +154,34 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         Rebuild();
     }
 
-    /// <summary>Delete on a focused tile or on the band asks to remove, as the Remove button does; a second Delete, not a repeat, removes.</summary>
+    /// <summary>
+    /// On a focused tile or the band, the band's actions by key: Delete asks to remove, as the Remove button does, and a
+    /// second Delete, not a repeat, removes; Ctrl+C copies the path; Ctrl+Shift+E shows it in its folder. Up or Down off
+    /// the page scrolls a row first, so the arrow finds the tile it heads for.
+    /// </summary>
     public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        if (key != NavKey.Remove || (Item(id) is null && ActionOf(id) is null))
+        if (key is NavKey.Up or NavKey.Down && Item(id) is { } from)
+        {
+            var items = shelf.Items;
+            int next = ShelfLayout.ScrollFor(first, items.ToList().IndexOf(from), key == NavKey.Down ? 1 : -1, items.Count, size);
+            if (next != first)
+            {
+                first = next;
+                Rebuild();
+            }
+
+            return false;
+        }
+
+        ShelfAction? action = key switch
+        {
+            NavKey.Remove => ShelfAction.Remove,
+            NavKey.Copy => ShelfAction.CopyPath,
+            NavKey.ShowInFolder => ShelfAction.Reveal,
+            _ => null,
+        };
+        if (action is null || (Item(id) is null && ActionOf(id) is null))
         {
             return false;
         }
@@ -169,9 +193,10 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             Show(item.Id);
         }
 
-        if (Owner() is { } owner)
+        // A held key copies or opens a folder once; Remove's question tells a repeat from a second press itself.
+        if (Owner() is { } owner && (!repeat || action == ShelfAction.Remove))
         {
-            Act(ShelfAction.Remove, owner, repeat);
+            Act(action.Value, owner, repeat);
         }
 
         return true;

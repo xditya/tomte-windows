@@ -264,6 +264,14 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// </summary>
     public static string ButtonId(ConfirmButton button, int question) => string.Create(CultureInfo.InvariantCulture, $"{button}:{question}");
 
+    /// <summary>A question's button's tooltip: the key that answers the same way.</summary>
+    public static string ButtonTip(ConfirmButton button) => button switch
+    {
+        ConfirmButton.Run => "Run (Enter)",
+        ConfirmButton.Cancel => "Cancel (Esc)",
+        _ => "Always allow (Alt+A)",
+    };
+
     /// <summary>The button an id names on question <paramref name="question"/>; null for another question's, or another target.</summary>
     public static ConfirmButton? ButtonFor(string id, int question) =>
         Enum.GetValues<ConfirmButton>().Cast<ConfirmButton?>().FirstOrDefault(b => ButtonId(b!.Value, question) == id);
@@ -284,7 +292,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     public Target HistoryTarget(float height) => new(HistoryId, History(height), 6, TargetKind.Button, Tip: HistoryTip);
 
-    public const string HistoryId = "history", HistoryTip = "AI history";
+    public const string HistoryId = "history", HistoryTip = "AI history (Ctrl+H)";
 
     /// <summary>The clock's ring radius and stroke, and its two hands as bars from the centre, in the button's own DIPs.</summary>
     public const float ClockRadius = 5.5f, ClockStroke = 1.5f;
@@ -352,6 +360,10 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     /// <summary>A wheel delta (120 a notch, positive away from the user) moves the answer three lines a notch, back toward its start.</summary>
     public float Scrolled(float scroll, int delta, float answer, float height) => Math.Clamp(scroll - delta / 120f * WheelStep, 0, MaxScroll(answer, height));
+
+    /// <summary>Page Down (+1) or Page Up (-1) moves the answer by its band less one line, which stays in view.</summary>
+    public float Paged(float scroll, int direction, float answer, float height) =>
+        Math.Clamp(scroll + (direction * Math.Max(WheelStep / 3, AnswerBand(height).Height - (WheelStep / 3))), 0, MaxScroll(answer, height));
 
     /// <summary>
     /// The scroll for an answer that changed: at its end while pinned there, so a streaming answer shows its newest

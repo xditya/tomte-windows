@@ -265,7 +265,8 @@ public class InteractionTests
         Assert.Equal(NavKey.NextTab, NavKeys.Of(NavKeys.Tab, shift: false, ctrl: true));
         Assert.Equal(NavKey.PreviousTab, NavKeys.Of(NavKeys.Tab, shift: true, ctrl: true));
         Assert.Equal(NavKey.Activate, NavKeys.Of(NavKeys.Return, false, false));
-        Assert.Equal(NavKey.Activate, NavKeys.Of(NavKeys.Space, true, false));
+        // Space clicks as Enter does, but stays its own key: on Media it plays or pauses.
+        Assert.Equal(NavKey.Space, NavKeys.Of(NavKeys.Space, true, false));
         Assert.Equal(NavKey.None, NavKeys.Of(NavKeys.Space, false, ctrl: true));
         Assert.Equal(NavKey.Left, NavKeys.Of(0x25, false, false));
         Assert.Equal(NavKey.Down, NavKeys.Of(0x28, false, false));
@@ -289,6 +290,91 @@ public class InteractionTests
         Assert.True(NavKeys.LeavesBox(NavKey.NextTab, tabLeaves: false));
         Assert.False(NavKeys.LeavesBox(NavKey.Activate, tabLeaves: true));
         Assert.False(NavKeys.LeavesBox(NavKey.Left, tabLeaves: true));
+        // Ctrl+1 to Ctrl+6 pick a tab from any box, the note included.
+        Assert.True(NavKeys.LeavesBox(NavKey.Tab1, tabLeaves: false));
+        Assert.True(NavKeys.LeavesBox(NavKey.Tab6, tabLeaves: false));
+        Assert.False(NavKeys.LeavesBox(NavKey.Ask, tabLeaves: true));
+    }
+
+    // Every key the panels and the AI box take, by panel.
+    [Theory]
+    // Panels: Ctrl+1 to Ctrl+6 pick a tab, Ctrl+K asks; a shifted or Alt one is nothing.
+    [InlineData((int)'1', false, true, false, NavKey.Tab1)]
+    [InlineData((int)'6', false, true, false, NavKey.Tab6)]
+    [InlineData((int)'7', false, true, false, NavKey.None)]
+    [InlineData((int)'1', true, true, false, NavKey.None)]
+    [InlineData((int)'1', false, false, false, NavKey.None)]
+    [InlineData((int)'K', false, true, false, NavKey.Ask)]
+    [InlineData(0x24, false, false, false, NavKey.Home)]
+    [InlineData(0x23, false, false, false, NavKey.End)]
+    // Items: Delete removes (Shelf, Clipboard, Shortcuts), Ctrl+C copies (Shelf, Clipboard, History), Ctrl+Shift+E shows
+    // a shelf item in its folder, Space plays and pauses (Media).
+    [InlineData(0x2E, false, false, false, NavKey.Remove)]
+    [InlineData((int)'C', false, true, false, NavKey.Copy)]
+    [InlineData((int)'C', true, true, false, NavKey.None)]
+    [InlineData((int)'E', true, true, false, NavKey.ShowInFolder)]
+    [InlineData((int)'E', false, true, false, NavKey.None)]
+    [InlineData(0x20, false, false, false, NavKey.Space)]
+    // The AI box: Ctrl+H, Alt+A, the chips' Alt keys, Page Up and Page Down, Alt+Left.
+    [InlineData((int)'H', false, true, false, NavKey.History)]
+    [InlineData((int)'A', false, false, true, NavKey.AlwaysAllow)]
+    [InlineData((int)'W', false, false, true, NavKey.WindowChip)]
+    [InlineData((int)'S', false, false, true, NavKey.ScreenshotChip)]
+    [InlineData((int)'H', false, false, true, NavKey.ShelfChip)]
+    [InlineData((int)'N', false, false, true, NavKey.NoteChip)]
+    [InlineData((int)'Q', false, false, true, NavKey.None)]
+    [InlineData((int)'W', false, true, true, NavKey.None)]
+    [InlineData(0x21, false, false, false, NavKey.PageUp)]
+    [InlineData(0x22, false, false, false, NavKey.PageDown)]
+    [InlineData(0x25, false, false, true, NavKey.Back)]
+    // Ctrl with an arrow or Enter is nothing of the island's.
+    [InlineData(0x25, false, true, false, NavKey.None)]
+    [InlineData(0x0D, false, true, false, NavKey.None)]
+    public void EveryKeyMapsToWhatItDoes(int key, bool shift, bool ctrl, bool alt, NavKey expected) =>
+        Assert.Equal(expected, NavKeys.Of(key, shift, ctrl, alt));
+
+    [Fact]
+    public void TheAiBoxKeysReachItsViewFromThePromptAndTheChipsSayTheirKeys()
+    {
+        // From the prompt, the AI box's own keys go to its view first; typing and moving keys stay the box's.
+        Assert.All(new[] { NavKey.Back, NavKey.History, NavKey.AlwaysAllow, NavKey.WindowChip, NavKey.NoteChip, NavKey.PageDown }, k => Assert.True(NavKeys.Offered(k), k.ToString()));
+        Assert.All(new[] { NavKey.Left, NavKey.Activate, NavKey.Copy, NavKey.Ask, NavKey.Remove, NavKey.Tab1 }, k => Assert.False(NavKeys.Offered(k), k.ToString()));
+
+        // The chip a key toggles and the key a chip's tooltip names are the same pair; the selection has none.
+        foreach (var icon in new[] { Tomte.Core.ChipIcon.Window, Tomte.Core.ChipIcon.Screenshot, Tomte.Core.ChipIcon.Shelf, Tomte.Core.ChipIcon.Note })
+        {
+            string key = NavKeys.ChipKey(icon)!;
+            Assert.Equal(icon, NavKeys.Chip(NavKeys.Of(key[^1], false, false, alt: true)));
+        }
+
+        Assert.Equal("Alt+W", NavKeys.ChipKey(Tomte.Core.ChipIcon.Window));
+        Assert.Null(NavKeys.ChipKey(Tomte.Core.ChipIcon.Selection));
+        Assert.Null(NavKeys.Chip(NavKey.Copy));
+
+        // "/" asks as Ctrl+K does, read as the character typed.
+        Assert.Equal(NavKey.Ask, NavKeys.Of('/'));
+        Assert.Equal(NavKey.None, NavKeys.Of('k'));
+    }
+
+    [Fact]
+    public void HomeAndEndJumpToTheEndsOfTheGroupOfTheSameKind()
+    {
+        // Rows with a remove button each in group 1, the last row's button disabled, and a button in no group.
+        static Target In(string id, float y, TargetKind kind, bool enabled = true) => new(id, new RectangleF(0, y, 20, 20), 4, kind, enabled, Group: 1);
+        Target[] list =
+        [
+            In("row1", 0, TargetKind.Row), In("x1", 0, TargetKind.Button), In("row2", 30, TargetKind.Row), In("x2", 30, TargetKind.Button),
+            In("row3", 60, TargetKind.Row), In("x3", 60, TargetKind.Button, enabled: false), At("clear", 0, 90),
+        ];
+
+        Assert.Equal(4, Target.Edge(list, 0, last: true));
+        Assert.Equal(0, Target.Edge(list, 4, last: false));
+        // From a remove button: the last enabled one.
+        Assert.Equal(3, Target.Edge(list, 1, last: true));
+        Assert.Equal(1, Target.Edge(list, 3, last: false));
+        // Outside a group, or nothing focused: nowhere.
+        Assert.Equal(-1, Target.Edge(list, 6, last: true));
+        Assert.Equal(-1, Target.Edge(list, -1, last: false));
     }
 
     [Fact]

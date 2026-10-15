@@ -6,6 +6,7 @@ using Tomte.Core;
 using Tomte.Core.Interaction;
 using Tomte.Core.Shortcuts;
 using Windows.UI.Composition;
+using Windows.Win32;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
@@ -18,7 +19,7 @@ namespace Tomte.Shell;
 /// (each source and size once a session, kept as pixels) and put on surfaces, which go when the view is rebuilt or
 /// the island hides. A click starts the tile on the thread pool, so a slow launch never holds the island's thread;
 /// a script that may not run yet opens Settings, where it is confirmed. Clicks and keys come through the island's
-/// interaction host: arrows move by the grid, Enter starts the tile.
+/// interaction host: arrows move by the grid, Enter starts the tile, Delete removes it after asking once.
 /// </summary>
 internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, Func<bool> scriptsOn, Action openSettings, TextRenderer text, Action<string>? log) : IPanel, IInteractive
 {
@@ -27,6 +28,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
 
     // kept for the session and never refreshed, so an app whose icon changed on update shows the old one until restart.
     private readonly Dictionary<(string Source, int Pixels), ShellImage?> icons = [];
+    private readonly RemoveQuestion question = new();
     private IReadOnlyList<Tile> tiles = [];
     private IReadOnlyList<Target> targets = [];
     private View? view;
@@ -89,6 +91,30 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         {
             _ = LaunchAsync(tile);
         }
+    }
+
+    /// <summary>
+    /// Delete on a tile asks on its card first; a second Delete within a few seconds, not a held key's repeat, removes the
+    /// tile, as Remove in Settings does.
+    /// </summary>
+    public bool KeyDown(string id, NavKey key, bool repeat)
+    {
+        if (key != NavKey.Remove || view is null || tiles.FirstOrDefault(tile => ShortcutGrid.TileId(tile.Row.Id) == id) is not { } tile)
+        {
+            return false;
+        }
+
+        switch (question.Click(tile.Row.Id, Environment.TickCount64, PInvoke.GetDoubleClickTime(), repeat))
+        {
+            case RemoveStep.Ask:
+                island.Interaction.Acknowledge(this, id, ShortcutGrid.RemoveAsk, tick: false, ms: RemoveQuestion.AskMs);
+                break;
+            case RemoveStep.Remove:
+                _ = RemoveAsync(tile.Row.Id);
+                break;
+        }
+
+        return true;
     }
 
     /// <summary>Focus that reaches a tile out of view (only the arrow keys can) scrolls the grid to show it.</summary>
@@ -162,6 +188,27 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
         {
             // The database is out of reach: the grid keeps what it drew.
             log?.Invoke($"shortcuts: load failed: {e.Message}");
+        }
+    }
+
+    // The tile goes from the store off this thread, then the grid is read again.
+    private async Task RemoveAsync(long id)
+    {
+        int generation = showing;
+        try
+        {
+            await Task.Run(() => store.Remove(id));
+        }
+        catch (Exception e) when (e is DbException or IOException or UnauthorizedAccessException)
+        {
+            log?.Invoke($"shortcuts: remove failed: {e.Message}");
+            return;
+        }
+
+        log?.Invoke("shortcuts: a tile removed with Delete");
+        if (generation == showing)
+        {
+            await LoadAsync(generation);
         }
     }
 

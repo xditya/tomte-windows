@@ -142,9 +142,23 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         }
     }
 
-    /// <summary>On the seek bar, Left and Right move 5 s and Home and End go to the ends; repeated keys add up before the app reports back.</summary>
+    /// <summary>
+    /// Space plays or pauses; on the transport buttons Left and Right skip tracks. On the seek bar, Left and Right move
+    /// 5 s and Home and End go to the ends; repeated keys add up before the app reports back.
+    /// </summary>
     public bool KeyDown(string id, NavKey key, bool repeat)
     {
+        // Space plays or pauses from any of them, and Left and Right skip on the transport buttons; a held key sends once.
+        if (MediaPanelLayout.KeyFor(id, key) is { } button)
+        {
+            if (!repeat)
+            {
+                Send(MediaPanelLayout.Command(button, tracker.Current));
+            }
+
+            return true;
+        }
+
         if (id != MediaPanelLayout.SeekId || tracker.Current is not { CanSeek: true, Timeline: { } timeline })
         {
             return false;

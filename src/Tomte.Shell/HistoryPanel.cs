@@ -99,9 +99,23 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
         Retarget();
     }
 
-    /// <summary>On a row, Right opens it and Left closes it; held keys do it once.</summary>
+    /// <summary>
+    /// On a row, Right opens it and Left closes it; Ctrl+C on a row copies its answer, and on the open conversation's
+    /// buttons the open one's, as Copy answer does. Held keys do it once.
+    /// </summary>
     public bool KeyDown(string id, NavKey key, bool repeat)
     {
+        if (key == NavKey.Copy)
+        {
+            var of = rows.FirstOrDefault(r => HistoryPanelLayout.RowId(r) == id) ?? (layout is { Opened: >= 0 } at ? rows[at.Opened] : null);
+            if (!repeat && of is { LastAnswer.Length: > 0 } && copy(of.LastAnswer))
+            {
+                island.Interaction.Acknowledge(this, id);
+            }
+
+            return of is not null;
+        }
+
         bool right = key == NavKey.Right;
         if ((!right && key != NavKey.Left) || rows.FirstOrDefault(row => HistoryPanelLayout.RowId(row) == id) is not { } row)
         {

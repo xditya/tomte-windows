@@ -102,17 +102,24 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         }
     }
 
-    /// <summary>Delete on a row or its remove button removes the row; a held Delete removes that one only.</summary>
+    /// <summary>
+    /// On a row or its remove button, Delete removes the row and Ctrl+C copies its entry again, as Enter on the row does;
+    /// a held key acts once.
+    /// </summary>
     public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        if (key != NavKey.Remove || Find(id) is not ({ } index, _))
+        if (key is not (NavKey.Remove or NavKey.Copy) || Find(id) is not ({ } index, _))
         {
             return false;
         }
 
-        if (!repeat)
+        if (!repeat && key == NavKey.Remove)
         {
             Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
+        }
+        else if (!repeat)
+        {
+            Pick(rows[index], ClipboardPanelLayout.RowId(rows[index].Id));
         }
 
         return true;

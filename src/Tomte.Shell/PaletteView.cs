@@ -289,12 +289,33 @@ internal sealed class PaletteView : IDisposable, IInteractive
         Update();
     }
 
-    /// <summary>Alt+Left goes back; Esc cancels an open question, else goes back, else leaves the island to hide.</summary>
+    /// <summary>
+    /// The AI box's keys, whatever has focus: Alt+W, Alt+S, Alt+H and Alt+N turn their chips on or off, Alt+A always
+    /// allows the open question, Ctrl+H opens History, Page Up and Page Down scroll the answer, Alt+Left goes back. Esc
+    /// cancels an open question, else goes back, else leaves the island to hide.
+    /// </summary>
     public bool Command(NavKey key)
     {
         if (disposed || machine.State != IslandState.Palette)
         {
             return false;
+        }
+
+        if (NavKeys.Chip(key) is { } icon)
+        {
+            return shownChips.FirstOrDefault(chip => chip.Spec.Icon == icon) is { } chip && Press(ChipId + chip.Label);
+        }
+
+        switch (key)
+        {
+            case NavKey.AlwaysAllow:
+                return Press(PaletteLayout.ButtonId(ConfirmButton.AlwaysAllow, questions));
+            case NavKey.History when openHistory is not null && session is not null:
+                openHistory();
+                return true;
+            case NavKey.PageUp or NavKey.PageDown when session is not null:
+                ScrollTo(layout.Paged(scroll, key == NavKey.PageDown ? 1 : -1, answerHeight, Height));
+                return true;
         }
 
         var step = key switch
@@ -593,7 +614,8 @@ internal sealed class PaletteView : IDisposable, IInteractive
         for (int i = 0; i < layout.Chips.Count && session is not null; i++)
         {
             var chip = layout.Chips[i];
-            list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, shownChips[i].Tip, Group: 1, Checked: chip.On));
+            string tip = NavKeys.ChipKey(shownChips[i].Spec.Icon) is { } key ? $"{shownChips[i].Tip} ({key})" : shownChips[i].Tip;
+            list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, tip, Group: 1, Checked: chip.On));
         }
 
         if (sendVisual is not null)
@@ -603,7 +625,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         foreach (var (button, at, _) in layout.Ask(Height)?.Buttons ?? [])
         {
-            list.Add(new Target(PaletteLayout.ButtonId(button, questions), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ready));
+            list.Add(new Target(PaletteLayout.ButtonId(button, questions), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ready, PaletteLayout.ButtonTip(button)));
         }
 
         if (openHistory is not null && session is not null)
@@ -909,18 +931,34 @@ internal sealed class PaletteView : IDisposable, IInteractive
         }
 
         var local = at - new Vector2(root.Offset.X, root.Offset.Y);
-        if (!layout.AnswerBand(Height).Contains(local.X, local.Y))
+        if (layout.AnswerBand(Height).Contains(local.X, local.Y))
         {
-            return;
+            ScrollTo(layout.Scrolled(scroll, delta, answerHeight, Height));
         }
+    }
 
-        scroll = layout.Scrolled(scroll, delta, answerHeight, Height);
+    // The answer at a new scroll; scrolled back to its end, it follows a streaming answer again.
+    private void ScrollTo(float to)
+    {
+        scroll = to;
         pinned = layout.AtEnd(scroll, answerHeight, Height);
         scrolled.Offset = new Vector3(0, -scroll, 0);
         foreach (var run in runs)
         {
             run.Refresh();
         }
+    }
+
+    // A key that clicks one of the targets (a chip, Always allow): taken while the target shows, done while it is enabled.
+    private bool Press(string id)
+    {
+        if (!targets.Any(t => t.Id == id))
+        {
+            return false;
+        }
+
+        Activate(id);
+        return true;
     }
 
     // The chips and buttons are the interaction host's. A press on the prompt's card is the typing focus's: the box

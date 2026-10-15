@@ -265,6 +265,8 @@ internal sealed class PanelHost
             {
                 float width = bodySize.X;
                 island.Interaction.Register(view, p => PanelSpace.ToBody(p, width), p => new(p.X - (width / 2), p.Y + PanelSpace.TabStripHeight));
+                // Opened, back or switched to from the keyboard: the tab's first item takes focus.
+                island.Interaction.FocusFirst(view);
             }
 
             if (stripFadePending && strip is not null)
@@ -428,13 +430,32 @@ internal sealed class PanelHost
             }
         }
 
+        /// <summary>Ctrl+1 to Ctrl+6 pick the tab in that place; Ctrl+K and "/" ask, as the Ask pill does.</summary>
+        public bool Command(NavKey key)
+        {
+            if (key == NavKey.Ask)
+            {
+                openAsk();
+                return true;
+            }
+
+            var tab = targets.Where(t => t.Kind == TargetKind.Tab).ElementAtOrDefault(key - NavKey.Tab1);
+            if (key is < NavKey.Tab1 or > NavKey.Tab6 || tab.Id is null)
+            {
+                return false;
+            }
+
+            Activate(tab.Id);
+            return true;
+        }
+
         public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot)
         {
             var lines = TabStrip.Labels(tabs, current, width, mascot);
             var list = new List<Target>();
             foreach (var (id, line) in tabs.Zip(lines))
             {
-                list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: id == current));
+                list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Tip: $"{TabStrip.Name(id)} (Ctrl+{list.Count + 1})", Group: 1, Checked: id == current));
             }
 
             Visual.Size = new Vector2(width, PanelSpace.TabStripHeight);
@@ -460,7 +481,7 @@ internal sealed class PanelHost
             var (card, glyph, word) = TabStrip.AskPill(width);
             askWidth = card.Width;
             askFor = (float)island.Current.Width;
-            list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything"));
+            list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything (Ctrl+K)"));
             targets = [.. list];
             askVisual.Size = new Vector2(card.Width, PanelSpace.TabStripHeight);
             askEdge.SetScalarParameter("right", width - card.X);

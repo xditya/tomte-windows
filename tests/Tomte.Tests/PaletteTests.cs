@@ -724,6 +724,21 @@ public class PaletteLayoutTests
     }
 
     [Fact]
+    public void PageDownAndPageUpMoveTheAnswerByItsBandLessALineAndStopAtItsEnds()
+    {
+        var layout = new PaletteLayout(640, mascot: true);
+        float height = (float)PanelSize.PaletteMaxHeight, answer = 2000, band = layout.AnswerBand(height).Height;
+        float page = band - (PaletteLayout.WheelStep / 3);
+
+        Assert.Equal(page, layout.Paged(0, 1, answer, height));
+        Assert.Equal(page, layout.Paged(2 * page, -1, answer, height));
+        Assert.Equal(0, layout.Paged(10, -1, answer, height));
+        Assert.Equal(layout.MaxScroll(answer, height), layout.Paged(layout.MaxScroll(answer, height) - 1, 1, answer, height));
+        // An answer that fits does not move.
+        Assert.Equal(0, layout.Paged(0, 1, 10, height));
+    }
+
+    [Fact]
     public void GlyphsStayInTheirBoxes()
     {
         foreach (var (figures, size) in Enum.GetValues<ChipIcon>().Select(i => (PaletteGlyphs.Icon(i), PaletteLayout.IconSize))
