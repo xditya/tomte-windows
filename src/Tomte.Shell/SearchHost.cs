@@ -273,6 +273,8 @@ internal sealed class SearchHost
 
     private void Typed()
     {
+        // An Enter held for the first app list was meant for the old text.
+        held = null;
         Refresh();
         fileSearch?.Cancel();
         fileSearch = null;
