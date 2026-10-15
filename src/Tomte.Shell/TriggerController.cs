@@ -814,7 +814,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         // The shelf takes the drop first: a temporary file's copy then runs before the morph, not during its first frames.
         Dropped?.Invoke(drop);
-        if (machine.State is IslandState.ShelfDrop or IslandState.Compact or IslandState.Panels)
+        if (rambler?.Recording == true)
+        {
+            log?.Invoke("drop: on the shelf; the voice key is held, so the Shelf tab does not open");
+        }
+        else if (machine.State is IslandState.ShelfDrop or IslandState.Compact or IslandState.Panels)
         {
             // While Panels is open on another tab this is a tab switch.
             Panels?.Select(PanelId.Shelf);
@@ -890,6 +894,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 }
 
                 break;
+            case HotkeyAction.Rambler when !RetractionRules.VoiceOpens(machine.State):
+                log?.Invoke("rambler: a file is being dragged onto the island, so the voice key does nothing");
+                break;
             case HotkeyAction.Rambler:
                 // Made on the first hold, so nothing of it loads while the island idles; tried again on a later hold
                 // while there is no speech to text yet.
@@ -898,14 +905,19 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     log?.Invoke("rambler: no speech to text; install whisper with tools/whisper/Get-Whisper.ps1");
                 }
-                else if (Allowed(RevealTrigger.Hotkey))
+                else if (rambler.CanBegin && Allowed(RevealTrigger.Hotkey))
                 {
+                    // On an open island what shows leaves as a retract takes it (its timers, the keys, a pin, a send
+                    // or a question in the AI box, the lasso), and the shape morphs from where it is to the pill.
+                    if (machine.State != IslandState.Hidden)
+                    {
+                        HideForNext();
+                    }
+
                     // Begin opens the 262 wide pill and sets the mascot itself.
-                    rambler.Begin();
-                    // A hold started on the peek pill is no longer peek: an event, a window under the zone or an edge
-                    // push would otherwise take the pill away mid-recording. A pin on the AI box it started from ends.
-                    activity = (activity & ~IslandActivity.Peek) | IslandActivity.Rambling;
-                    Unpin();
+                    rambler.Begin(watch.LastApp);
+                    // The pill is the rambler's now: no click, dwell, event or edge push takes it away mid-recording.
+                    activity |= IslandActivity.Rambling;
                     // The rambler's pill has no room for the ring, and it changes state without Go; nor does a click on it do anything.
                     UpdateRing();
                     compact.Changed();
@@ -1130,6 +1142,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private bool Allowed(RevealTrigger trigger, bool ignorePause = false)
     {
+        // Nothing opens over a recording; the voice key's own press checks CanBegin before it gets here.
+        if (rambler?.Recording == true)
+        {
+            log?.Invoke($"{trigger}: the voice key is held, nothing else opens");
+            return false;
+        }
+
         if (!ignorePause && pause.IsPaused(DateTimeOffset.Now))
         {
             log?.Invoke($"{trigger}: paused");
@@ -1346,6 +1365,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
         // Events that arrived while the island was showing something waited for this.
         ReleaseEvents();
     }
+
+    /// <summary>A hide for a state that opens right after it: a waiting event must not show in between.</summary>
+    private void HideForNext()
+    {
+        holdEvents = true;
+        try
+        {
+            Hide();
+        }
+        finally
+        {
+            holdEvents = false;
+        }
+    }
 }
 
 // Await is not allowed in an unsafe context, so the capture flow lives in a part without the modifier.
@@ -1362,18 +1395,8 @@ internal sealed partial class TriggerController
         try
         {
             nint foreground = (nint)PInvoke.GetForegroundWindow();
-            // This hide must not show a waiting event: the overlay comes next, and Compact cannot go to Capture.
-            // The capture's own exits release the queue.
-            holdEvents = true;
-            try
-            {
-                Hide();
-            }
-            finally
-            {
-                holdEvents = false;
-            }
-
+            // The overlay comes next, and Compact cannot go to Capture. The capture's own exits release the queue.
+            HideForNext();
             PInvoke.GetCursorPos(out var cursor);
             machine.TransitionTo(IslandState.Capture);
             island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);

@@ -13,7 +13,8 @@ namespace Tomte.Shell;
 /// Hold the chord, speak, release: the recording becomes a transcript, and the pill grows into a card that shows it
 /// with three choices (<see cref="VoiceCard"/>). Insert types it into the window that had the keys when the hold
 /// started; Add to note puts it on the scratchpad; Ask Tomte turns the card into the palette, where the model reads it
-/// as a command or a note and asks before anything runs. Nothing is typed, sent or saved before a choice. Runs on the
+/// as a command or a note and asks before anything runs; Ask keeps the raw words as a note only when nothing could be
+/// sent, not after an answer. Nothing is typed, sent or saved before a choice. Runs on the
 /// UI thread. The microphone is open only between the press and the release; the hold is the visible user action that
 /// lets audio go to a speech-to-text provider, and Ask the one that lets the transcript go to the AI provider.
 /// </summary>
@@ -132,29 +133,34 @@ internal sealed class Rambler(
         question.Answer(allow: false);
     }
 
-    public void Begin()
+    /// <summary>
+    /// A hold may start: none is recording, and no words wait on the card or run in the palette. A spoken reply's hold
+    /// gives way to the new recording.
+    /// </summary>
+    public bool CanBegin => capture is null && (!transcribing || replyHold is not null);
+
+    /// <summary>The voice key is held: the microphone records and the pill is the rambler's.</summary>
+    public bool Recording => capture is not null;
+
+    /// <summary>
+    /// The hold starts: the microphone opens and the island grows into the rambler's pill. The triggers have taken down
+    /// whatever showed, so the state comes from Hidden while the shape morphs from where it is. <paramref name="backTo"/>
+    /// is the app the keys go back to when the island had them (the AI box, the note): Insert types there.
+    /// </summary>
+    public void Begin(nint backTo)
     {
-        // A new hold during a spoken reply's hold ends that hold: the reply gives way to the new recording.
-        var hold = replyHold;
-        if (capture is not null || (transcribing && hold is null))
+        if (!CanBegin)
             return;
         clock.Restart();
-        // Where Insert types: the window in front as the hold starts, which the island never takes the keys from.
-        spokenInto = WindowContext.Foreground() is var front && front != (nint)island.Hwnd ? front : 0;
+        // Where Insert types: the window in front as the hold starts, or the app the island's keys go back to.
+        nint front = WindowContext.Foreground();
+        spokenInto = front != 0 && front != (nint)island.Hwnd ? front : backTo;
         spokenField = DesktopEffects.FocusIn(spokenInto);
         // The capture thread posts each packet's level; the bars change when a packet arrives, with no timer.
         capture = MicCapture.Start(rms => island.Queue.TryEnqueue(() => Level(rms)));
         ShowView();
         var from = machine.State;
-        if (hold is not null && from == IslandState.Palette)
-        {
-            // The table has no Palette to Compact edge; the state passes through Hidden while the shape morphs across.
-            machine.TransitionTo(IslandState.Hidden);
-            island.PanelLook = false;
-            InputThread.SetEscape(false);
-        }
-
-        if (IslandStateMachine.CanTransition(machine.State, IslandState.Compact))
+        if (IslandStateMachine.CanTransition(from, IslandState.Compact))
         {
             machine.TransitionTo(IslandState.Compact);
             island.Mascot.Follow(from, IslandState.Compact);
@@ -163,8 +169,6 @@ internal sealed class Rambler(
 
         island.Mascot.Set(MascotState.Rambler);
         log($"{DateTime.Now:HH:mm:ss.fff} rambler: recording");
-        // Last, so the reply's End sees this recording and leaves the island to it.
-        hold?.TrySetResult();
     }
 
     public async void End(bool keep)
@@ -175,6 +179,15 @@ internal sealed class Rambler(
         capture = null;
         transcribing = true;
         island.Mascot.Set(MascotState.Compact);
+        // Anything else that opens while the words are turned into text has the island to itself: the dimmed bars
+        // leave at once, and the words go to the note below once they are ready.
+        void Covered(IslandState from, IslandState to)
+        {
+            if (to != IslandState.Compact)
+                RemoveView();
+        }
+
+        machine.Changed += Covered;
         try
         {
             float[] samples = await Task.Run(recording.Stop);
@@ -195,6 +208,7 @@ internal sealed class Rambler(
             }
             finally
             {
+                machine.Changed -= Covered;
                 // Local whisper sends nothing; a provider transcription is logged whether or not it succeeded.
                 if (speechSend is not null)
                     LogSend(speechSend, 0, 0, "audio");
@@ -281,6 +295,7 @@ internal sealed class Rambler(
         }
         finally
         {
+            machine.Changed -= Covered;
             transcribing = false;
             replyHold = null;
             // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill. A
@@ -343,7 +358,8 @@ internal sealed class Rambler(
 
     /// <summary>
     /// Ask's session, made only once Ask is picked, so nothing reaches a provider before. The note tool reads and writes
-    /// the loaded note; when it cannot be read, or no session can be made, the words go in as the raw note.
+    /// the loaded note; when it cannot be read, or no session can be made, the words go in as the raw note, as they do
+    /// when the send fails.
     /// </summary>
     private async Task<PaletteSession?> StartAsync()
     {
@@ -514,7 +530,10 @@ internal sealed class Rambler(
             gone.Dispose();
         }
 
-        Retracted?.Invoke();
+        // A hold that began during the morph (still recording, or already transcribing) has the pill now: its own end
+        // releases the island.
+        if (capture is null && !transcribing)
+            Retracted?.Invoke();
     }
 
     /// <summary>The microphone and the bars leave at once when the pill turns into the palette.</summary>
