@@ -14,9 +14,10 @@ public readonly record struct FileHit(string Path, bool Folder)
 /// <summary>
 /// What a file search asks, beyond the words that must each be in the name: the folder the hits are under (a full
 /// path), files only (false) or folders only (true), the extensions a file may have (without the dot), and the days of
-/// last change, local and both included. AI search fills these in; the search box asks with words only.
+/// last change, local and both included. With <paramref name="InPath"/> a word may also be in the names of the folders
+/// above (Everything only; the index keeps to names). AI search fills these in; the search box asks with words only.
 /// </summary>
-public sealed record FileFilter(IReadOnlyList<string> Words, string? Folder = null, bool? Folders = null, IReadOnlyList<string>? Extensions = null, DateOnly? From = null, DateOnly? To = null)
+public sealed record FileFilter(IReadOnlyList<string> Words, string? Folder = null, bool? Folders = null, IReadOnlyList<string>? Extensions = null, DateOnly? From = null, DateOnly? To = null, bool InPath = false)
 {
     /// <summary>Asks nothing that narrows the search: no words, folder, extension or day.</summary>
     public bool Empty => Words.Count == 0 && Folder is null && Extensions is not { Count: > 0 } && From is null && To is null;
@@ -62,7 +63,8 @@ public static class FileQuery
     public static string Everything(IReadOnlyList<string> words, IReadOnlyList<string> excluded) => Everything(new FileFilter(words), excluded);
 
     /// <summary>
-    /// Everything's search for a filter: the words quoted, the folder as a quoted path (which matches every path under
+    /// Everything's search for a filter: the words quoted (with path: when they may match the folders above too), the
+    /// folder as a quoted path (which matches every path under
     /// it), file: or folder:, ext: with the extensions, dm: from the first day and before the day after the last (ISO
     /// dates), then the folders left out. Empty for an empty filter.
     /// </summary>
@@ -73,7 +75,7 @@ public static class FileQuery
             return "";
         }
 
-        var terms = filter.Words.Select(word => $"\"{word}\"").ToList();
+        var terms = filter.Words.Select(word => filter.InPath ? $"path:\"{word}\"" : $"\"{word}\"").ToList();
         if (filter.Folder is { } folder)
         {
             terms.Add($"\"{folder.TrimEnd('\\')}\\\"");

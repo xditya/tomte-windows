@@ -492,6 +492,15 @@ public sealed class FileFilterQueryTests
             FileQuery.Everything(Full, Excluded));
 
     [Fact]
+    public void WordsInThePathAreForEverythingOnly()
+    {
+        var inPath = Full with { InPath = true };
+        Assert.StartsWith("path:\"invoice\" \"D:\\Work\\\" file:", FileQuery.Everything(inPath, Excluded));
+        // The index keeps to names: a path match there scans the whole index.
+        Assert.Equal(FileQuery.IndexSql(Full, Excluded, 50, India), FileQuery.IndexSql(inPath, Excluded, 50, India));
+    }
+
+    [Fact]
     public void TheIndexGetsTheScopeTypeExtensionsAndUtcDays() =>
         Assert.Equal("SELECT TOP 50 System.ItemPathDisplay, System.ItemType FROM SystemIndex WHERE SCOPE='file:D:/Work' AND CONTAINS(System.FileName, '\"invoice*\"')"
             + " AND System.ItemType <> 'Directory' AND (System.FileExtension = '.pdf' OR System.FileExtension = '.docx')"
