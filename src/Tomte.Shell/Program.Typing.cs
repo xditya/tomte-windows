@@ -89,15 +89,29 @@ internal static partial class Program
         continuing = null;
     }
 
-    // The AI box goes back to the tab it came from. Back by a key (Esc, Alt+Left, Enter on the arrow) keeps the keys the
-    // island had, for that tab's targets; back by a click lets them go with the prompt, so the tab retracts as usual.
+    // The AI box goes back to the tab it came from.
     private static void GoBack(IslandWindow island, TriggerController triggers)
     {
-        bool keys = focus?.HasKeys == true && island.Interaction.UsingKeys;
         triggers.Back();
-        if (keys)
+        KeysToPanels(island);
+    }
+
+    // The AI box gave way to the panels (back, History). A key that did it (Esc, Alt+Left, Ctrl+H, Enter) keeps the keys
+    // the island had, for the tab's targets, with focus showing; a click lets them go, so the tab retracts as usual.
+    private static void KeysToPanels(IslandWindow island)
+    {
+        if (focus?.HasKeys != true)
         {
-            focus!.TakeKeys();
+            return;
+        }
+
+        if (island.Interaction.UsingKeys)
+        {
+            focus.TakeKeys();
+        }
+        else
+        {
+            focus.Release();
         }
     }
 
@@ -207,7 +221,11 @@ internal static partial class Program
     private static PaletteHost NewPaletteHost(IslandWindow island, TriggerController triggers, Action<string>? log) =>
         new(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.FocusLost)
         {
-            OpenHistory = () => island.Queue.TryEnqueue(() => triggers.OpenPanel(PanelId.History)),
+            OpenHistory = () => island.Queue.TryEnqueue(() =>
+            {
+                triggers.OpenPanel(PanelId.History);
+                KeysToPanels(island);
+            }),
         };
 
     private static (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) DebugProvider()

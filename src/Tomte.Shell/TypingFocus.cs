@@ -49,12 +49,20 @@ internal sealed class TypingFocus
                 editor.Place(editor.Box, island.Scale);
             }
         };
-        // Leaving the typing states ends typing at once, before the panel is released after its fade.
-        machine.Changed += (_, to) =>
+        // Leaving the typing states ends typing at once, before the panel is released after its fade. The AI box giving
+        // way to the panels (back, History, the summon hotkey) takes its prompt's keys with it at once, not after the
+        // fade, so nothing typed meanwhile goes into a box that is going; the island keeps the keys for whoever moved it
+        // to decide (a key keeps them for the targets, a click lets them go).
+        machine.Changed += (from, to) =>
         {
             if (to is not (IslandState.Panels or IslandState.Palette))
             {
                 Release();
+            }
+            else if ((from, to) == (IslandState.Palette, IslandState.Panels) && focused is { } prompt)
+            {
+                focused = null;
+                prompt.Blur();
             }
         };
     }
