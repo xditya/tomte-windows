@@ -516,7 +516,10 @@ internal sealed class Rambler(
             gone.Dispose();
         }
 
-        Retracted?.Invoke();
+        // A hold that began during the morph (still recording, or already transcribing) has the pill now: its own end
+        // releases the island.
+        if (capture is null && !transcribing)
+            Retracted?.Invoke();
     }
 
     /// <summary>The microphone and the bars leave at once when the pill turns into the palette.</summary>
