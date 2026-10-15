@@ -392,7 +392,8 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
                     break;
                 case ShelfAction.Reveal:
-                    Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{allowed[0].Path}\"") { UseShellExecute = true })?.Dispose();
+                    // Explorer by its full path, never a name looked up where something else could stand in for it.
+                    Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"), $"/select,\"{allowed[0].Path}\"") { UseShellExecute = true })?.Dispose();
                     break;
                 case ShelfAction.CopyPath:
                     CopyText(ShelfStore.PathsText(allowed));
