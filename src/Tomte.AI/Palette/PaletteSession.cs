@@ -436,9 +436,9 @@ public sealed partial class PaletteSession : IPaletteSession
     }
 
     // The conversation so far as text, a question and an answer each; what the chips attached then is not sent again. An
-    // answer-less turn gives its tool lines, or its error.
+    // answer is its tool lines, then its text, so a follow-up knows what the tools did; a turn with neither gives its error.
     private IEnumerable<(string Prompt, string Answer)> EarlierText() => Conversation.Select(turn => (turn.Prompt,
-        turn.Answer.Length > 0 ? turn.Answer : turn.Steps.Count > 0 ? string.Join('\n', turn.Steps) : turn.Error ?? "(no answer)"));
+        string.Join('\n', [.. turn.Steps, turn.Answer]).Trim() is { Length: > 0 } text ? text : turn.Error ?? "(no answer)"));
 
     private List<ChatMessage> Earlier() =>
         [.. EarlierText().SelectMany(t => new[] { ChatMessage.User(t.Prompt), new ChatMessage(ChatRole.Assistant, [new TextPart(t.Answer)]) })];
