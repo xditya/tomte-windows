@@ -305,6 +305,7 @@ internal static unsafe partial class Program
             new("palette-ai-off-back", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0, back: true)),
             .. DropZoneScenes(),
             .. HistoryScenes(),
+            .. SearchScenes(),
             CaptureHint(),
         ];
     }
