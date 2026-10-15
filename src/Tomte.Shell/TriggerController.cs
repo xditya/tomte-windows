@@ -888,8 +888,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
                     // Begin opens the 262 wide pill and sets the mascot itself.
                     rambler.Begin();
                     // A hold started on the peek pill is no longer peek: an event, a window under the zone or an edge
-                    // push would otherwise take the pill away mid-recording.
+                    // push would otherwise take the pill away mid-recording. A pin on the AI box it started from ends.
                     activity = (activity & ~IslandActivity.Peek) | IslandActivity.Rambling;
+                    Unpin();
                     // The rambler's pill has no room for the ring, and it changes state without Go; nor does a click on it do anything.
                     UpdateRing();
                     compact.Changed();
@@ -1170,6 +1171,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
             activity = RetractionRules.TakenOver(activity);
         }
 
+        if (state is not (IslandState.Panels or IslandState.Palette))
+        {
+            // A pin holds Panels and the AI box only, from one to the other included.
+            Unpin();
+        }
+
         if (state == IslandState.Panels)
         {
             // The current panel decides the size; a tab switch comes through here again with another one.
@@ -1226,6 +1233,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
+    private void Unpin()
+    {
+        activity &= ~IslandActivity.Pinned;
+        island.Pinned = false;
+    }
+
     /// <summary>The AI box lost the keys while nothing was being sent: it retracts, unless the island is pinned.</summary>
     internal void FocusLost()
     {
@@ -1278,7 +1291,6 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         bool wasPeek = activity.HasFlag(IslandActivity.Peek);
         activity = IslandActivity.None;
-        island.Pinned = false;
         if (eventShowing && showing.Any(IsTimerDone))
         {
             // The finished timer keeps its full ring until its done pill has been shown. A hide of anything else,

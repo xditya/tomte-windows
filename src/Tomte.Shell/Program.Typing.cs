@@ -153,11 +153,11 @@ internal static partial class Program
         var earlier = continuing;
         hotkeyPalette ??= NewPaletteHost(island, triggers, log);
         // Opened from the panels, the AI box has a back arrow to the tab it came from; on the next turn, after the key or click.
-        hotkeyPalette.Back = triggers.FromPanels ? () => island.Queue.TryEnqueue(() => GoBack(triggers)) : null;
+        Action? back = triggers.FromPanels ? () => island.Queue.TryEnqueue(() => GoBack(triggers)) : null;
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
         if ((debug ? DebugProvider() : Configured(store, log)) is not { } configured)
         {
-            hotkeyPalette.Type(null);
+            hotkeyPalette.Type(null, back);
             return;
         }
 
@@ -193,7 +193,7 @@ internal static partial class Program
             _ = DescribeAsync(session, configured.Provider, configured.Config);
         }
 
-        hotkeyPalette.Type(session);
+        hotkeyPalette.Type(session, back);
     }
 
     /// <summary>

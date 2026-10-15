@@ -1011,16 +1011,17 @@ internal sealed partial class PaletteHost
     /// puts that skill's command in the box, and the next Enter sends it. Esc and focus loss while nothing is being sent
     /// hide the island; leaving the palette cancels what is in flight (an open question is answered no), then stops the
     /// MCP servers and the UI Automation thread the session started. With no session, because no provider is set up,
-    /// the palette says the AI layer is off and takes no keys.
+    /// the palette says the AI layer is off and takes no keys. <paramref name="back"/> is the back arrow's action, for a
+    /// palette opened from the panels; with none, Esc hides the island as before.
     /// </summary>
-    public void Type(PaletteSession? session)
+    public void Type(PaletteSession? session, Action? back = null)
     {
         // The triggers opened the palette at its smallest; growth starts from there.
         _targetHeight = PanelSize.PaletteMinHeight;
         var question = new ToolQuestion();
         Task sending = Task.CompletedTask;
         PaletteView? view = null;
-        view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question) { OpenHistory = OpenHistory, Back = Back };
+        view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question) { OpenHistory = OpenHistory, Back = back };
         typed = view;
         view.HeightChanged += () => Grow(view.Height);
         if (hide is not null)
