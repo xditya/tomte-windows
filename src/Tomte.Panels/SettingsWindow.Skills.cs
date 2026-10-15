@@ -25,7 +25,7 @@ public sealed partial class SettingsWindow
         var refresh = new Button { Content = "Look again" };
         refresh.Click += async (_, _) => await RenderSkillsAsync();
         return Card(
-            Note($"A skill is a folder with a SKILL.md file in {SkillsFolder}. A new skill starts off. While it is on, every palette request carries its name and description, and the model reads the rest of its folder, without asking, when the skill fits. Its text goes to your provider only with a request you send. A skill cannot approve tools."),
+            Note($"A skill is a folder with a SKILL.md file in {SkillsFolder}. A new skill starts off. While it is on, every palette request carries its name and description, and the model reads the rest of its folder, without asking, only when the skill fits. Its text goes to your provider only with a request you send. A skill cannot approve tools."),
             skillsList,
             new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { open, refresh } },
             skillsNote);

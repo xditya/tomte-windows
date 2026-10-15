@@ -45,7 +45,7 @@ public sealed partial class SettingsWindow
             Row("Add an app, a file or a folder", Note("Apps as Start lists them. Browse in the list for any file, folder or script."), app),
             Row("Add a web address", null, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { webAddress, web } }),
             shortcutsNote,
-            Row("Script shortcuts", Note("Off: script tiles do nothing. On: a script shows its full command and asks before its first run, and again when it changes. Scripts are batch, PowerShell and Windows Script Host files, and shortcuts (.lnk) that pass arguments to a program, except apps added from Start's list."), scripts));
+            Row("Script shortcuts", Note("Off: script tiles do nothing. On: a script shows its full command and asks before its first run, and again when it changes. Scripts are batch, PowerShell and Windows Script Host files, and shortcuts (.lnk) that pass arguments to a program, browser web apps included, except apps added from Start's list."), scripts));
     }
 
     /// <summary>
