@@ -151,6 +151,25 @@ public sealed partial class SettingsWindow : Window
             IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
             IsSettingsVisible = false,
         };
+        // Up and Down in the page list open each page as they reach it, so Tab goes on into the page that shows. Tab and
+        // Shift+Tab come back into the list at the open page, not at the first one, and open nothing; Windows does not
+        // let every such move be redirected (Tab past the last control comes back in from outside), so that one hops on.
+        nav.GettingFocus += (_, e) =>
+        {
+            if (e.FocusState != FocusState.Keyboard || e.NewFocusedElement is not NavigationViewItem to || nav.SelectedItem is not NavigationViewItem page)
+            {
+                return;
+            }
+
+            if (e.OldFocusedElement is NavigationViewItem)
+            {
+                nav.SelectedItem = to;
+            }
+            else if (!ReferenceEquals(to, page) && !e.TrySetNewFocusedElement(page))
+            {
+                DispatcherQueue.TryEnqueue(() => page.Focus(FocusState.Keyboard));
+            }
+        };
         NavigationViewItem? open = null;
         TextBlock? section = null;
         foreach (var (name, glyph, parts) in pages)
@@ -174,6 +193,8 @@ public sealed partial class SettingsWindow : Window
         open ??= (NavigationViewItem)nav.MenuItems[0];
         nav.SelectedItem = open;
         nav.Content = open.Tag;
+        // The open page's item has focus from the start, so the arrow keys move through the pages at once.
+        nav.Loaded += (_, _) => open.Focus(FocusState.Programmatic);
         Content = nav;
         if (section is not null)
         {
