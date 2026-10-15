@@ -10,8 +10,8 @@ namespace Tomte.Core;
 /// </summary>
 public static class Arrival
 {
-    /// <summary>How much larger than in the pill the tomte pops in.</summary>
-    public const double PopScale = 1.6;
+    /// <summary>How much larger than in the pill the tomte pops in: a splash. The art is vector, so it stays sharp.</summary>
+    public const double PopScale = 3;
 
     /// <summary>Seconds after it appears that the tomte sets off for the pill.</summary>
     public const double SetOffSeconds = 0.55;

@@ -71,8 +71,9 @@ internal sealed unsafe class ArrivalFlight
         var work = info.rcWork;
         var start = new Vector2((work.left + work.right) / 2f, (work.top + work.bottom) / 2f);
         double half = tomte * Arrival.PopScale / 2 + Room * scale;
-        int left = (int)Math.Floor(Math.Min(start.X - half, land.X - Room * scale));
-        int right = (int)Math.Ceiling(Math.Max(start.X + half, land.X + tomte + Room * scale));
+        // Its popped size at both ends, since it lines up under its place before it has shrunk.
+        int left = (int)Math.Floor(Math.Min(start.X, land.X + tomte / 2) - half);
+        int right = (int)Math.Ceiling(Math.Max(start.X, land.X + tomte / 2) + half);
         int bottom = (int)Math.Ceiling(start.Y + half);
 
         // The springs work on the tomte's centre in window pixels; the window's top is the screen's.
@@ -216,13 +217,14 @@ internal sealed unsafe class ArrivalFlight
         last = now;
         if (!setOff && now >= Arrival.SetOffSeconds)
         {
-            // Across on the snappy spring and up on the gentle one: it lines up under its place and rises into the pill.
+            // Across and back to its pill size on the snappy spring, up on the gentle one: it lines up under its place,
+            // is its own size again before it reaches the pill, and rises into it.
             setOff = true;
             x.Use(SpringPreset.Snappy);
             x.Target = toX;
             y.Use(SpringPreset.Gentle);
             y.Target = toY;
-            size.Use(SpringPreset.Gentle);
+            size.Use(SpringPreset.Snappy);
             size.Target = 1;
         }
 
