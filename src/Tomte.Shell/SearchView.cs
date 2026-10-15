@@ -27,7 +27,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     private const string RowId = "row:", CardId = "card:";
     private const int MaxImages = 512;
     private const float WheelStep = 3 * SearchLayout.RowHeight;
-    private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
+    private static readonly Color CardFill = Color.FromArgb(15, 255, 255, 255);
 
     // Shell icons as pixels, by source and size, for the session: a new search shows them at once.
     // dropped all at once when full; an LRU if a session's searches ever need more.
@@ -40,7 +40,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     private readonly float width, tallest;
     private readonly ContainerVisual root, band, scrolled, cardLayer;
     private readonly ShapeVisual shapes, selection, cardShapes;
-    private readonly CompositionRoundedRectangleGeometry box, selected, cardBox;
+    private readonly CompositionRoundedRectangleGeometry cardBox;
     private readonly CompositionColorBrush boxLine;
     private readonly EditorView editor;
     private readonly TextVisual placeholder, footLeft, footRight, empty, cardTitle, cardBody;
@@ -55,6 +55,9 @@ internal sealed class SearchView : IDisposable, IInteractive
     private PixelSurfaces? surfaces;
     private SearchLayout layout;
     private string typed = "", source = "", hint = "";
+
+    // The text the rows on show were found for.
+    private string? shownFor;
     private int select;
     private float scroll, content;
     private bool fadeInPending = true, disposed, loadingIcons, iconsAgain;
@@ -74,7 +77,7 @@ internal sealed class SearchView : IDisposable, IInteractive
         root.Offset = new Vector3(-width / 2, 0, 0);
         root.Opacity = 0;
         shapes = Shapes(root, new Vector2(width, tallest));
-        box = Rounded(shapes, layout.Box, PaletteLayout.PromptCorner, c.CreateColorBrush(Card));
+        Rounded(shapes, layout.Box, PaletteLayout.PromptCorner, c.CreateColorBrush(CardFill));
         boxLine = c.CreateColorBrush(Argb(PaletteLayout.PromptFocusLine));
         ((CompositionSpriteShape)shapes.Shapes[^1]).StrokeBrush = boxLine;
         ((CompositionSpriteShape)shapes.Shapes[^1]).StrokeThickness = 1;
@@ -89,7 +92,7 @@ internal sealed class SearchView : IDisposable, IInteractive
         band.Children.InsertAtTop(scrolled);
         root.Children.InsertAtTop(band);
         selection = Shapes(scrolled, new Vector2(area.Width, SearchLayout.RowHeight));
-        selected = Rounded(selection, new RectangleF(0.5f, 0.5f, area.Width - 1, SearchLayout.RowHeight - 1), SearchLayout.RowCorner, c.CreateColorBrush(Argb(SearchLayout.SelectedFill)));
+        Rounded(selection, new RectangleF(0.5f, 0.5f, area.Width - 1, SearchLayout.RowHeight - 1), SearchLayout.RowCorner, c.CreateColorBrush(Argb(SearchLayout.SelectedFill)));
         ((CompositionSpriteShape)selection.Shapes[^1]).StrokeBrush = c.CreateColorBrush(Argb(SearchLayout.SelectedLine));
         ((CompositionSpriteShape)selection.Shapes[^1]).StrokeThickness = 1;
         selection.IsVisible = false;
@@ -98,7 +101,7 @@ internal sealed class SearchView : IDisposable, IInteractive
         cardLayer = c.CreateContainerVisual();
         root.Children.InsertAtTop(cardLayer);
         cardShapes = Shapes(cardLayer, new Vector2(width, tallest));
-        cardBox = Rounded(cardShapes, RectangleF.Empty, PaletteLayout.PromptCorner, c.CreateColorBrush(Card));
+        cardBox = Rounded(cardShapes, RectangleF.Empty, PaletteLayout.PromptCorner, c.CreateColorBrush(CardFill));
         ((CompositionSpriteShape)cardShapes.Shapes[^1]).StrokeBrush = c.CreateColorBrush(Argb(PaletteLayout.AskOutline));
         ((CompositionSpriteShape)cardShapes.Shapes[^1]).StrokeThickness = 1;
         cardTitle = text.Create(cardLayer);
@@ -146,6 +149,9 @@ internal sealed class SearchView : IDisposable, IInteractive
 
     public SearchItem? Selected => select >= 0 && select < rows.Count ? rows[select] : null;
 
+    /// <summary>The card in the list's place; null with none.</summary>
+    public SearchCard? Card => card;
+
     public IReadOnlyList<Target> Targets => targets;
 
     public event Action? TargetsChanged;
@@ -163,7 +169,11 @@ internal sealed class SearchView : IDisposable, IInteractive
         }
     }
 
-    /// <summary>New results: the first row is selected, so Enter opens the best match. <paramref name="note"/> shows when there are none.</summary>
+    /// <summary>
+    /// New results. For new text the first row is selected, so Enter opens the best match; results that arrive later for
+    /// the same text (files, the app list) keep the row the user moved to, wherever it now is, so Enter never opens
+    /// something else than what is highlighted. <paramref name="note"/> shows when there are none.
+    /// </summary>
     public void Show(IReadOnlyList<SearchItem> results, string files, string note)
     {
         if (disposed)
@@ -171,15 +181,19 @@ internal sealed class SearchView : IDisposable, IInteractive
             return;
         }
 
+        string? kept = shownFor == typed ? Selected?.Key : null;
         bool same = results.SequenceEqual(rows);
         rows = results;
         source = files;
         hint = note;
         if (!same)
         {
-            select = rows.Count > 0 ? 0 : -1;
-            scroll = 0;
+            int at = kept is null ? -1 : rows.ToList().FindIndex(r => r.Key == kept);
+            select = at >= 0 ? at : rows.Count > 0 ? 0 : -1;
+            scroll = at >= 0 ? scroll : 0;
         }
+
+        shownFor = typed;
 
         lines = SearchLayout.Lines(rows);
         content = lines.Count > 0 ? lines[^1].Top + lines[^1].Height : 0;
@@ -530,7 +544,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     }
 
     // Esc closes a card first, then clears the box, then leaves the island to hide.
-    private bool OnEscape()
+    internal bool OnEscape()
     {
         if (card is not null)
         {
@@ -558,6 +572,12 @@ internal sealed class SearchView : IDisposable, IInteractive
         if (now != typed)
         {
             typed = now;
+            // Typing goes back to the results: a card in their place is closed, as Esc closes it.
+            if (card is not null)
+            {
+                CardAnswered?.Invoke(null);
+            }
+
             Draw();
             Typed?.Invoke(now);
         }

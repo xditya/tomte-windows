@@ -222,7 +222,10 @@ internal sealed class SearchHost
             candidates = candidates.Append(new SearchItem(SearchKind.Ask, "Ask Tomte", typed.Trim(), $"\"{typed.Trim()}\""));
         }
 
-        shown.Show(SearchRank.Order(candidates, typed, launches), Source(), SearchLayout.NoResults);
+        long ranking = Stopwatch.GetTimestamp();
+        var ranked = SearchRank.Order(candidates, typed, launches);
+        log?.Invoke($"search: ranked {apps.Count + tiles.Count + shelf.Count + files.Count} candidates in {Stopwatch.GetElapsedTime(ranking).TotalMilliseconds:F2} ms");
+        shown.Show(ranked, Source(), SearchLayout.NoResults);
     }
 
     // What was opened before, as it is now: an app still installed, a tile still there with its current name, a shelf

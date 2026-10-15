@@ -9,7 +9,8 @@ internal static partial class Program
     /// <summary>
     /// --debug-search "words" with --debug-log=path: opens the search box as its hotkey does, types the words a letter at a
     /// time as a person would, logs the rows after each letter and once the file search has answered, presses the keys in
-    /// --debug-keys (Down, Up, Tab, ShiftTab, comma separated) and logs the selection after each, then hides the island.
+    /// --debug-keys (Down, Up, Tab, ShiftTab, Esc, and Enter on the Get Everything row only; comma separated) and logs the
+    /// selection after each, then hides the island.
     /// Opens nothing. --debug-everything name searches a named Everything instance instead of the usual one, and
     /// --debug-quit ends Tomte half a second after the island hid.
     /// </summary>
@@ -39,9 +40,16 @@ internal static partial class Program
         Rows("after the file search");
         foreach (string key in (keys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            int code = key switch { "Down" => 0x28, "Up" => 0x26, "Tab" or "ShiftTab" => 0x09, _ => 0 };
-            bool took = view.Press(code, ctrl: false, shift: key == "ShiftTab");
-            log($"debug search: {key} {(took ? "taken" : "not taken")}, selected {view.Selected?.Kind} \"{view.Selected?.Name}\"");
+            // Enter only on rows that open nothing outside Tomte: the Get Everything row's card, which Esc closes again.
+            bool took = key switch
+            {
+                "Esc" => view.OnEscape(),
+                "Enter" when view.Card is null && view.Selected?.Kind == SearchKind.GetEverything => view.Press(0x0D, ctrl: false, shift: false),
+                "Enter" => false,
+                _ => view.Press(key switch { "Down" => 0x28, "Up" => 0x26, "Tab" or "ShiftTab" => 0x09, _ => 0 }, ctrl: false, shift: key == "ShiftTab"),
+            };
+            await Task.Delay(50);
+            log($"debug search: {key} {(took ? "taken" : "not taken")}, selected {view.Selected?.Kind} \"{view.Selected?.Name}\", card \"{view.Card?.Title}\", text \"{view.Text}\"");
         }
 
         triggers.Hide();
