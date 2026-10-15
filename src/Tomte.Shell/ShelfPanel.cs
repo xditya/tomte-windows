@@ -37,8 +37,8 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     private int first, wheel;
     private IReadOnlyList<Target> targets = [];
 
-    // The item whose actions the band shows, and the one it changes to once the grace is over.
-    private long? shown, pending;
+    // The item whose actions the band shows, the one it changes to once the wait is over, and when that is due, in ms.
+    private long? shown, pending, due;
 
     // Where the pointer was last seen on a tile or a button, in body DIPs: the point it heads for the band from.
     private Vector2? last;
@@ -72,7 +72,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         (parts, band, body) = (null, null, null);
         selected.Clear();
         bandWait?.Stop();
-        (shown, last, hovering) = (null, null, null);
+        (shown, due, last, hovering) = (null, null, null, null);
         Drop();
         first = wheel = 0;
         targets = [];
@@ -170,6 +170,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         if (Item(id) is { } item && shown != item.Id)
         {
             bandWait?.Stop();
+            due = null;
             Show(item.Id);
         }
 
@@ -201,53 +202,51 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     public void PointerMoved(string id, Vector2 at)
     {
+        Step(id, id, at, Environment.TickCount64);
         last = at;
-        // Moving on the tile the band waits to go to starts the wait over: the band follows a pointer that rests there.
-        if (bandWait is { IsRunning: true } && pending is long next && id == ShelfLayout.TileId(next))
-        {
-            bandWait.Stop();
-            bandWait.Start();
-        }
     }
 
     public void Hovered(string? id)
     {
+        string? was = hovering;
         hovering = id;
-        // Off every target, onto empty grid: the band waits longer while the pointer is on its way to the buttons.
-        bool aiming = id is null && last is { } from && PInvoke.GetCursorPos(out var cursor)
-            && ShelfLayout.Aiming(from, PanelSpace.ToBody(island.ScreenToIsland(cursor.X, cursor.Y), size.X), ShelfLayout.BandRow(size));
-        var (change, owner) = ShelfLayout.Hover(shown, id);
-        switch (change)
-        {
-            case BandChange.Now:
-                bandWait?.Stop();
-                Show(owner);
-                Band();
-                break;
-            case BandChange.Later:
-                pending = owner;
-                if (bandWait is null)
-                {
-                    bandWait = island.Queue.CreateTimer();
-                    bandWait.IsRepeating = false;
-                    bandWait.Tick += (_, _) =>
-                    {
-                        // The band goes once the wait is over, unless the pointer is on one of the targets by then.
-                        if (pending is not null || hovering is null)
-                        {
-                            Show(pending);
-                            Band();
-                        }
-                    };
-                }
+        PInvoke.GetCursorPos(out var cursor);
+        Step(was, id, PanelSpace.ToBody(island.ScreenToIsland(cursor.X, cursor.Y), size.X), Environment.TickCount64);
+    }
 
-                bandWait.Stop();
-                bandWait.Interval = TimeSpan.FromMilliseconds(ShelfLayout.Wait(aiming));
+    // The band's rules for the pointer, on `was` and now on `id` at `at` in body DIPs: the band follows the item they give,
+    // and the timer fires when what waits is due.
+    private void Step(string? was, string? id, Vector2 at, long now)
+    {
+        (var owner, pending, var next) = ShelfLayout.Step(shown, pending, due, now, was, id, last, at, size);
+        if (next != due)
+        {
+            due = next;
+            if (bandWait is null)
+            {
+                bandWait = island.Queue.CreateTimer();
+                bandWait.IsRepeating = false;
+                bandWait.Tick += (_, _) =>
+                {
+                    if (due is long when)
+                    {
+                        Step(hovering, hovering, default, when);
+                    }
+                };
+            }
+
+            bandWait.Stop();
+            if (next is long d)
+            {
+                bandWait.Interval = TimeSpan.FromMilliseconds(d - now);
                 bandWait.Start();
-                break;
-            default:
-                bandWait?.Stop();
-                break;
+            }
+        }
+
+        if (owner != shown)
+        {
+            Show(owner);
+            Band();
         }
     }
 

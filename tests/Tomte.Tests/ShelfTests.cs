@@ -1000,56 +1000,33 @@ public sealed class ShelfTests : IDisposable
         // Down off the tile instead: the band goes after the grace.
         Assert.Null(Band(400, (0, "tile:1", new(60, 90)), (20, null, new(60, 130))));
         // Aimed at the buttons, then stopped on empty grid: the band stays for the one aim's wait, then goes.
-        (double, string?, System.Numerics.Vector2)[] stopped = [(0, "tile:1", new(60, 90)), (20, "tile:1", new(130, 79)), (30, null, new(150, 76))];
+        (long, string?, System.Numerics.Vector2)[] stopped = [(0, "tile:1", new(60, 90)), (20, "tile:1", new(130, 79)), (30, null, new(150, 76))];
         Assert.Equal(1L, Band(30 + ShelfLayout.BandAimMs - 1, stopped));
         Assert.Null(Band(30 + ShelfLayout.BandAimMs, stopped));
         // Across another tile it stays while the pointer moves, and follows once it has rested there.
-        (double, string?, System.Numerics.Vector2)[] across = [(0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (100, "tile:2", new(180, 85)), (200, "tile:2", new(200, 80)), (300, "tile:2", new(220, 75))];
+        (long, string?, System.Numerics.Vector2)[] across = [(0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (100, "tile:2", new(180, 85)), (200, "tile:2", new(200, 80)), (300, "tile:2", new(220, 75))];
         Assert.Equal(1L, Band(550, across));
         Assert.Equal(2L, Band(650, across));
     }
 
-    // The band's owner at time `at`, driven as the shelf panel drives it: a change of hovered target asks Hover, Later
-    // shows its owner after its wait (the aim's when the pointer left the targets heading for the band from where it was
-    // last seen on one) unless that is nothing and a target is hovered then, a move on the tile it waits for starts the
-    // wait over, and anything Keep or Now cancels what waited.
-    private static long? Band(double at, params (double At, string? Id, System.Numerics.Vector2 Where)[] reports)
+    // The band's owner at time `at`, driven as the shelf panel drives it: each report steps the band as the move it is
+    // (a change of target or a move on one), and the panel's timer steps it with nothing new once the wait is due.
+    private static long? Band(long at, params (long At, string? Id, System.Numerics.Vector2 Where)[] reports)
     {
-        long? shown = null, pending = null;
-        double? due = null;
+        long? shown = null, pending = null, due = null;
         string? hovered = "";
         System.Numerics.Vector2? last = null;
         foreach (var (time, id, where) in reports)
         {
-            if (due <= time)
-            {
-                (shown, due) = (pending is null && hovered is not null ? shown : pending, null);
-            }
-
-            if (id != hovered)
-            {
-                bool aiming = id is null && last is { } from && ShelfLayout.Aiming(from, where, ShelfLayout.BandRow(Body));
-                var (change, owner) = ShelfLayout.Hover(shown, id);
-                (shown, pending, due) = change switch
-                {
-                    BandChange.Now => (owner, pending, (double?)null),
-                    BandChange.Later => (shown, owner, time + ShelfLayout.Wait(aiming)),
-                    _ => (shown, pending, null),
-                };
-                hovered = id;
-            }
-            else if (due is not null && pending is long next && id == ShelfLayout.TileId(next))
-            {
-                due = time + ShelfLayout.BandGraceMs;
-            }
-
+            (shown, pending, due) = ShelfLayout.Step(shown, pending, due, time, hovered, id, last, where, Body);
+            hovered = id;
             if (id is not null)
             {
                 last = where;
             }
         }
 
-        return due <= at && (pending is not null || hovered is null) ? pending : shown;
+        return ShelfLayout.Step(shown, pending, due, at, hovered, hovered, null, default, Body).Shown;
     }
 
     [Fact]

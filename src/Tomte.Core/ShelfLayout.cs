@@ -133,10 +133,10 @@ public static class ShelfLayout
 
     /// <summary>
     /// What the hovered target (or the focused one) changing does to the band showing <paramref name="shown"/>'s actions:
-    /// a first tile shows at once; another tile takes over after <see cref="BandGraceMs"/> (the panel starts that wait over
-    /// while the pointer moves on the tile, so only a rest there takes the band); the band's own buttons or the tile it is
-    /// for keep it, and cancel what was waiting; nothing takes it after the wait (<see cref="Wait"/>), unless a target is
-    /// hovered by then. The owner is an item id.
+    /// a first tile shows at once; another tile takes over after <see cref="BandGraceMs"/> (<see cref="Step"/> starts that
+    /// wait over while the pointer moves on the tile, so only a rest there takes the band); the band's own buttons or the
+    /// tile it is for keep it, and cancel what was waiting; nothing takes it after the wait (<see cref="Wait"/>), unless a
+    /// target is hovered by then. The owner is an item id.
     /// </summary>
     public static (BandChange Change, long? Owner) Hover(long? shown, string? hovered)
     {
@@ -171,6 +171,36 @@ public static class ShelfLayout
         float d1 = Side(from, left, at), d2 = Side(left, right, at), d3 = Side(right, from, at);
         bool negative = d1 < 0 || d2 < 0 || d3 < 0, positive = d1 > 0 || d2 > 0 || d3 > 0;
         return !(negative && positive);
+    }
+
+    /// <summary>
+    /// The band after the pointer, last seen on a target at <paramref name="last"/>, was on <paramref name="was"/> and
+    /// is on <paramref name="id"/> (null: no target; the same id: a move on it) at <paramref name="at"/>, at
+    /// <paramref name="now"/> ms. A change due by then is made first, unless it takes the band away while a target is
+    /// hovered. A new target asks <see cref="Hover"/>: Later waits (<see cref="Wait"/>, the aim's when the pointer left the
+    /// targets heading for the band), anything else cancels what waited. A move on the tile the band waits to go to
+    /// starts the wait over. Gives the item the band is for, the one waiting to take it and when it is due, in ms.
+    /// </summary>
+    public static (long? Shown, long? Pending, long? Due) Step(long? shown, long? pending, long? due, long now, string? was, string? id, Vector2? last, Vector2 at, Vector2 body)
+    {
+        if (due <= now)
+        {
+            (shown, pending, due) = (pending is null && was is not null ? shown : pending, null, null);
+        }
+
+        if (id != was)
+        {
+            var (change, owner) = Hover(shown, id);
+            bool aiming = id is null && last is { } from && Aiming(from, at, BandRow(body));
+            return change switch
+            {
+                BandChange.Now => (owner, null, null),
+                BandChange.Later => (shown, owner, now + Wait(aiming)),
+                _ => (shown, null, null),
+            };
+        }
+
+        return due is not null && pending is long next && id == TileId(next) ? (shown, pending, now + BandGraceMs) : (shown, pending, due);
     }
 
     /// <summary>A tile's tooltip: the item's full name, and the folder it is in or that the shelf keeps it itself.</summary>
