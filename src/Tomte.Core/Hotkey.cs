@@ -148,14 +148,16 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
             return error;
         }
 
-        if ((hotkey.Modifiers & (HotkeyModifiers.Win | HotkeyModifiers.Ctrl | HotkeyModifiers.Alt)) == 0)
+        // Without Win a global shortcut takes a key other apps use: Ctrl+C, Alt+F4, AltGr's Ctrl+Alt.
+        if (!hotkey.Modifiers.HasFlag(HotkeyModifiers.Win))
         {
-            return "Start with Win, Ctrl or Alt, so the shortcut does not get in the way of typing.";
+            return "Add Win, for example Win+Alt+K, so the shortcut does not take a key other apps use.";
         }
 
-        if (hotkey.Modifiers.HasFlag(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt) && !hotkey.Modifiers.HasFlag(HotkeyModifiers.Win))
+        // Registered while a voice command waits for a yes; bound here, it could not be registered then and every ask would be a no.
+        if (hotkey == new Hotkey(HotkeyModifiers.Win | HotkeyModifiers.Alt, 0x0D))
         {
-            return "Ctrl+Alt shortcuts type characters on keyboards with AltGr. Add Win, or use Win+Alt.";
+            return "Win+Alt+Enter says yes to a voice command. Pick another shortcut.";
         }
 
         foreach (var other in Enum.GetValues<HotkeyAction>())

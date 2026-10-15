@@ -234,9 +234,14 @@ public sealed class SettingsTests : IDisposable
     [InlineData("Win+Alt+", "Add a key")]
     [InlineData("Win+Alt+Foo", "is not a key Tomte knows")]
     [InlineData("Win+Alt+I+J", "one key")]
-    [InlineData("Shift+I", "Start with Win, Ctrl or Alt")]
-    [InlineData("I", "Start with Win, Ctrl or Alt")]
-    [InlineData("Ctrl+Alt+I", "AltGr")]
+    [InlineData("Shift+I", "Add Win")]
+    [InlineData("I", "Add Win")]
+    [InlineData("Ctrl+Alt+I", "Add Win")]
+    [InlineData("Ctrl+C", "Add Win")]
+    [InlineData("Ctrl+Shift+T", "Add Win")]
+    [InlineData("Alt+F4", "Add Win")]
+    [InlineData("Alt+I", "Add Win")]
+    [InlineData("Win+Alt+Enter", "says yes to a voice command")]
     [InlineData("Alt+Win+N", "Scratchpad already uses Win+Alt+N.")]
     public void RebindingRejectsBadChords(string chord, string message)
     {
@@ -249,6 +254,8 @@ public sealed class SettingsTests : IDisposable
     [InlineData("Win+Alt+Shift+I")]
     [InlineData("Win+Ctrl+Alt+I")]
     [InlineData("Win+Alt+I")]
+    [InlineData("Win+Alt+K")]
+    [InlineData("Win+Alt+Shift+Enter")]
     [InlineData("")]
     public void RebindingAcceptsGoodChordsAndBlank(string chord) =>
         Assert.Null(Hotkey.Validate(new HotkeySettings(), HotkeyAction.Summon, chord));
