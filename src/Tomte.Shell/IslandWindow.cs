@@ -86,7 +86,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     private double lastTickMs = -1;
     private double morphStartMs;
     private bool islandMoving;
-    private double leadMs;
+    private double leadMs, heldLead;
     private IslandGeometry? anchor;
     private float mascotX;
     private double fromWidth, fromDepth;
@@ -397,6 +397,12 @@ internal sealed unsafe class IslandWindow : IDisposable
         set => mascotVisual.Visual.Opacity = value ? 0 : 1;
     }
 
+    /// <summary>
+    /// The next morph from rest shows the window at once but holds the shape still for this many seconds: the launch
+    /// arrival opens the pill while its tomte holds still, and the pill grows once the tomte is nearly up.
+    /// </summary>
+    public void HoldNextMorph(double seconds) => heldLead = seconds;
+
     /// <summary>Where the tomte rests in the Compact pill at the island's place: its box's top-left in screen pixels.</summary>
     public System.Drawing.PointF MascotLanding()
     {
@@ -478,7 +484,8 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         targetGeometry = to;
         swell = swellAimed = false;
-        double lead = Mascot.TakeIslandLead();
+        double lead = Math.Max(Mascot.TakeIslandLead(), heldLead);
+        heldLead = 0;
         if (to.Depth <= 0.5 && Dips.Children.Count > 0)
         {
             // Whatever shows inside fades out first; the shape follows.

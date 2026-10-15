@@ -41,7 +41,7 @@ internal sealed unsafe class ArrivalFlight
     private readonly DesktopWindowTarget? target;
     private readonly ContainerVisual? root;
     private readonly float tomte;
-    private readonly double fromY, toX, toY;
+    private readonly double toX, toY;
     private HWND hwnd;
     private volatile bool ending;
     private double last, longest, longestAt;
@@ -77,7 +77,7 @@ internal sealed unsafe class ArrivalFlight
 
         // The springs work on the tomte's centre in window pixels; the window's top is the screen's.
         x.Jump(start.X - left);
-        y.Jump(fromY = start.Y);
+        y.Jump(start.Y);
         (toX, toY) = (land.X - left + tomte / 2, land.Y + tomte / 2);
         size.Jump(0);
         size.Target = Arrival.PopScale;
@@ -223,11 +223,14 @@ internal sealed unsafe class ArrivalFlight
         x.Step(dt);
         y.Step(dt);
         size.Step(dt);
-        if (setOff && !pillOpen && fromY - y.Value >= Arrival.PillAt * (fromY - toY))
+        if (!pillOpen && now >= Arrival.OpenPillSeconds)
         {
+            // The pill opens while the tomte holds still, and its shape waits until the tomte is nearly up.
             pillOpen = true;
+            island.HoldNextMorph(Arrival.PillGrowsSeconds - now);
             if (!openPill())
             {
+                island.HoldNextMorph(0);
                 End();
                 return;
             }

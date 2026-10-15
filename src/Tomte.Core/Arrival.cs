@@ -17,10 +17,16 @@ public static class Arrival
     public const double SetOffSeconds = 0.55;
 
     /// <summary>
-    /// The pill starts to grow out of the edge once the tomte has come this much of the way up, so it is there to take
-    /// the tomte in, and its content starts when the tomte is slowing down, not at full speed.
+    /// Seconds after it appears that the pill is opened, while the tomte still holds: the first reveal after launch
+    /// costs the UI thread a frame or more, which a moving tomte would show as a jump.
     /// </summary>
-    public const double PillAt = 0.75;
+    public const double OpenPillSeconds = 0.4;
+
+    /// <summary>
+    /// Seconds after it appears that the opened pill starts to grow out of the edge: when the tomte, on the gentle
+    /// spring from <see cref="SetOffSeconds"/>, is three quarters of the way up, so the pill is there to take it in.
+    /// </summary>
+    public const double PillGrowsSeconds = 0.74;
 
     /// <summary>
     /// Whether it plays: Windows animation effects on, a tomte to show, and a desktop that would let an event show now,
