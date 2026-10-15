@@ -26,7 +26,7 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
     /// <summary>Hits per find_files, finds per search, picks shown, words, extensions.</summary>
     public const int PerCall = 50, MaxCalls = 3, MaxPicks = 8, MaxWords = 6, MaxExtensions = 10;
 
-    private const int MaxReason = 200;
+    private const int MaxReason = 200, FirstYear = 1980;
 
     // The folder names the model may give instead of a path.
     private static readonly Dictionary<string, Func<string>> Named = new(StringComparer.OrdinalIgnoreCase)
@@ -46,10 +46,10 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
     public static readonly IReadOnlyList<ToolDefinition> Definitions =
     [
         new(FindFiles,
-            "Search file and folder names on this PC. Every word must be in the name. Returns up to 50 matches, newest first, numbered, with folder, size and date modified.",
+            "Search file and folder names on this PC. Every word must be in the name or, where Everything runs, in a folder above it. Returns up to 50 matches, newest first, numbered, with folder, size and date modified.",
             JsonDocument.Parse("""
                 {"type":"object","properties":{
-                "words":{"type":"array","items":{"type":"string"},"description":"Words that must all be in the name. Short stems match more: invoice, not invoices."},
+                "words":{"type":"array","items":{"type":"string"},"description":"Words that must all match. Short stems match more: invoice, not invoices."},
                 "folder":{"type":"string","description":"Only under this folder: a full path, or Desktop, Documents, Downloads, Pictures, Music or Videos."},
                 "kind":{"type":"string","enum":["file","folder","any"]},
                 "extensions":{"type":"array","items":{"type":"string"},"description":"Extensions without the dot, such as pdf."},
@@ -57,7 +57,7 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
                 "modified_to":{"type":"string","description":"Last day modified, YYYY-MM-DD."}}}
                 """).RootElement),
         new(ShowResults,
-            "Show the user the files that fit, by their numbers from find_files, best first, with one short plain sentence on why. Ends the search.",
+            "Show the user the files that fit, by their numbers from find_files, best first, with a plain reason under 60 characters. Ends the search.",
             JsonDocument.Parse("""
                 {"type":"object","properties":{
                 "numbers":{"type":"array","items":{"type":"integer"}},
@@ -81,7 +81,7 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
     public static string Prompt(DateTimeOffset now) =>
         "You find files on the user's Windows PC from what they describe. Call find_files to search file and folder names; " +
         "you see names, folders, sizes and dates, never what is in a file. Search at most 3 times, then call show_results " +
-        $"once with the numbers of the files that fit best, best first, at most {MaxPicks}, and one short plain sentence on why. " +
+        $"once with the numbers of the files that fit best, best first, at most {MaxPicks}, and a plain reason under 60 characters. " +
         "If none fit, call show_results with no numbers and say so. " +
         $"Today is {now.ToString("dddd d MMMM yyyy", CultureInfo.InvariantCulture)}.";
 
@@ -140,7 +140,7 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
             folder = Folder(given);
             if (folder is null)
             {
-                return "folder must be a full path, such as D:\\Work, or one of Desktop, Documents, Downloads, Pictures, Music, Videos.";
+                return "folder must be a path on a local drive, such as D:\\Work, or one of Desktop, Documents, Downloads, Pictures, Music, Videos.";
             }
         }
 
@@ -182,7 +182,7 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
             return "modified_from is after modified_to.";
         }
 
-        filter = new FileFilter(words, folder, extensions.Count > 0 ? false : folders, extensions, from, to);
+        filter = new FileFilter(words, folder, extensions.Count > 0 ? false : folders, extensions, from, to, InPath: true);
         if (filter.Empty)
         {
             filter = null;
@@ -267,7 +267,9 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
         return picked;
     }
 
-    // A full path, or a named folder's; a drive letter alone is its root. Null for anything else.
+    // A named folder's path, or a path from a drive letter on a fixed drive (a drive letter alone is its root). Never a
+    // share, a device or a \\?\ path: the model's words do not get to point the search off this PC's own disks. Null for
+    // anything else.
     private static string? Folder(string given)
     {
         if (Named.TryGetValue(given, out var named))
@@ -275,12 +277,18 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
             return named() is { Length: > 0 } path ? path : null;
         }
 
-        given = given.Length == 2 && given[1] == ':' ? given + "\\" : given;
+        given = given.Length == 2 ? given + "\\" : given;
+        if (given.Length < 3 || !char.IsAsciiLetter(given[0]) || given[1] != ':' || given[2] is not ('\\' or '/') || given.Any(c => c == '"' || char.IsControl(c)))
+        {
+            return null;
+        }
+
         try
         {
-            return Path.IsPathFullyQualified(given) && !given.Any(c => c == '"' || char.IsControl(c)) ? Path.GetFullPath(given) : null;
+            string full = Path.GetFullPath(given);
+            return full.StartsWith(given[..2], StringComparison.OrdinalIgnoreCase) && new DriveInfo(full[..1]).DriveType == DriveType.Fixed ? full : null;
         }
-        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException)
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException or IOException)
         {
             return null;
         }
@@ -320,13 +328,15 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
             return null;
         }
 
-        if (value.ValueKind == JsonValueKind.String && DateOnly.TryParseExact(value.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        // Years outside 1980 to next year are no file's date, and the day after 9999-12-31 cannot be asked.
+        if (value.ValueKind == JsonValueKind.String && DateOnly.TryParseExact(value.GetString(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+            && parsed.Year >= FirstYear && parsed.Year <= DateTime.Today.Year + 1)
         {
             day = parsed;
             return null;
         }
 
-        return $"{name} must be a day as YYYY-MM-DD.";
+        return $"{name} must be a day as YYYY-MM-DD, from {FirstYear} to next year.";
     }
 
     private static string Size(long? bytes) => bytes switch

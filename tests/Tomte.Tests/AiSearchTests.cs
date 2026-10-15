@@ -50,9 +50,11 @@ public sealed class AiSearchTests : IDisposable
     [Fact]
     public void ArgumentsBecomeAFilter()
     {
-        Assert.Null(FileFinder.Read(Json("""{"words":["Invoice","2026"],"folder":"D:","kind":"file","extensions":[".PDF","docx"],"modified_from":"2026-09-01","modified_to":"2026-09-30"}"""), out var filter));
+        Assert.Null(FileFinder.Read(Json("""{"words":["Invoice","2026"],"folder":"c:","kind":"file","extensions":[".PDF","docx"],"modified_from":"2026-09-01","modified_to":"2026-09-30"}"""), out var filter));
         Assert.Equal(["Invoice", "2026"], filter!.Words);
-        Assert.Equal(@"D:\", filter.Folder);
+        // A drive letter alone is its root; AI search's words may match the folders above a file too.
+        Assert.Equal(@"C:\", filter.Folder, ignoreCase: true);
+        Assert.True(filter.InPath);
         Assert.False(filter.Folders);
         Assert.Equal(["pdf", "docx"], filter.Extensions!);
         Assert.Equal((new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30)), (filter.From!.Value, filter.To!.Value));
@@ -81,11 +83,19 @@ public sealed class AiSearchTests : IDisposable
 
     [Theory]
     [InlineData("[]", "Arguments must be a JSON object.")]
-    [InlineData("""{"folder":"Work\\Taxes"}""", "folder must be a full path")]
-    [InlineData("""{"folder":"C:\\a\"b"}""", "folder must be a full path")]
+    [InlineData("""{"folder":"Work\\Taxes"}""", "folder must be a path on a local drive")]
+    [InlineData("""{"folder":"C:\\a\"b"}""", "folder must be a path on a local drive")]
+    // A share, a device and a \\?\ path never: only drive letters on fixed drives, or the named folders.
+    [InlineData("""{"folder":"\\\\host\\share\\docs"}""", "folder must be a path on a local drive")]
+    [InlineData("""{"folder":"\\\\.\\PhysicalDrive0"}""", "folder must be a path on a local drive")]
+    [InlineData("""{"folder":"\\\\?\\C:\\Users"}""", "folder must be a path on a local drive")]
+    [InlineData("""{"folder":"//host/share"}""", "folder must be a path on a local drive")]
     [InlineData("""{"words":["x"],"kind":"photo"}""", "kind must be")]
     [InlineData("""{"extensions":["p.df"]}""", "extensions must be")]
     [InlineData("""{"words":["x"],"modified_from":"last week"}""", "modified_from must be a day")]
+    // The day after the last day is asked, so 9999-12-31 must never get that far.
+    [InlineData("""{"words":["x"],"modified_to":"9999-12-31"}""", "modified_to must be a day")]
+    [InlineData("""{"words":["x"],"modified_from":"1970-01-01"}""", "modified_from must be a day")]
     [InlineData("""{"modified_from":"2026-10-02","modified_to":"2026-10-01"}""", "modified_from is after")]
     [InlineData("""{"kind":"file","words":[]}""", "Give at least one")]
     public void BadArgumentsSayWhatToFix(string json, string message)
@@ -177,6 +187,7 @@ public sealed class AiSearchTests : IDisposable
         string prompt = FileFinder.Prompt(Friday);
         Assert.EndsWith("Today is Friday 16 October 2026.", prompt);
         Assert.Contains("never what is in a file", prompt);
+        Assert.Contains("a plain reason under 60 characters", prompt);
         Assert.True(prompt.Length < 600, $"{prompt.Length} characters");
         Assert.Equal([FileFinder.FindFiles, FileFinder.ShowResults], FileFinder.Definitions.Select(d => d.Name));
     }
