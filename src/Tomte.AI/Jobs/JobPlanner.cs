@@ -8,11 +8,11 @@ using Tomte.Core.Jobs;
 namespace Tomte.AI.Jobs;
 
 /// <summary>
-/// Turns a request such as "every weekday at 9, summarise notes.txt" into a stored job. The model gets one tool,
-/// schedule_job, and fills in a strict structure: a name, the prompt each run sends, a time with days or a date, and
-/// the tools the job needs. Tomte checks it, shows it to the user in plain words, and stores it (and its Task Scheduler
-/// entry) only after the user says yes. That yes is the pre-approval each later run relies on: a run may use those
-/// tools and no others, and never a destructive one.
+/// Turns a request such as "every weekday at 9, summarise notes.txt" into a stored job. The model gets schedule_job
+/// beside its other tools, with <see cref="Guidance"/> in its system prompt, and fills in a strict structure: a name,
+/// the prompt each run sends, a time with days or a date, and the tools the job needs. Tomte checks it, shows it to the
+/// user in plain words, and stores it (and its Task Scheduler entry) only after the user says yes. That yes is the
+/// pre-approval each later run relies on: a run may use those tools and no others, and never a destructive one.
 /// </summary>
 public sealed class JobPlanner(JobStore store, IJobTasks tasks)
 {
@@ -35,18 +35,21 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
     /// <summary>The tools a job may ask for: the typed palette's, without the destructive ones.</summary>
     public static IReadOnlyList<ToolDefinition> JobTools { get; } = [.. BuiltInTools.Definitions.Where(d => BuiltInTools.AllowedInScheduledJobs(d.Name))];
 
-    public string Prompt
+    /// <summary>
+    /// Added to the system prompt of a session that offers schedule_job beside its other tools: the local date and time,
+    /// so "in one minute" and "tomorrow" can be worked out, when to make a job instead of acting now, and its rules. The
+    /// tools are not listed: the session offers them, and schedule_job's own list names those a job may use.
+    /// </summary>
+    public string Guidance
     {
         get
         {
             var now = TimeZoneInfo.ConvertTime(Now(), Zone);
-            return "You are Tomte, a quiet helper on the user's Windows PC. The user wants something done later, once or " +
-                "on a repeating schedule. Turn the request into one call of schedule_job. " +
-                $"It is now {now.ToString("dddd d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture)} local time. " +
-                "prompt is the instruction Tomte follows at each run with nobody at the keyboard, so write it in full. " +
-                "tools lists every tool that instruction needs, and only those, by name: " +
-                string.Join("; ", JobTools.Select(t => $"{t.Name} ({t.Description.TrimEnd('.')})")) + ". " +
-                "Tools that lock, sleep, restart or shut down the PC never run in a job. If the request does not say when, " +
+            return $" It is now {now.ToString("dddd d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture)} local time. " +
+                "When the user wants something done later, once or on a repeating schedule, do not do it now: turn the request " +
+                "into one call of schedule_job. Its prompt is the instruction Tomte follows at each run with nobody at the " +
+                "keyboard, so write it in full. Its tools lists every tool that instruction needs, and only those, by name. " +
+                "Tools that lock, sleep, restart or shut down the PC never run in a job. If such a request does not say when, " +
                 "or you are not sure, call no tool and ask one short question.";
         }
     }

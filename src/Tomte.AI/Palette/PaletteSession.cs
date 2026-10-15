@@ -170,10 +170,10 @@ public sealed partial class PaletteSession : IPaletteSession
     }
 
     /// <summary>
-    /// The model this session calls: the fast one, when settings name one, for the two small calls (routing a voice
-    /// command and reading a schedule into a job); the default model for everything else.
+    /// The model this session calls: the fast one, when settings name one, for routing a voice command (and a job made
+    /// by voice); the default model for everything else.
     /// </summary>
-    public string ModelId => (Voice || Scheduling is not null) && _config.FastModel is { Length: > 0 } fast ? fast : _defaultModel;
+    public string ModelId => Voice && _config.FastModel is { Length: > 0 } fast ? fast : _defaultModel;
 
     // What the user reads: "Anthropic" rather than the host its key goes to.
     private string ProviderName => ProviderSetup.NameOf(_config.Id);
@@ -214,7 +214,11 @@ public sealed partial class PaletteSession : IPaletteSession
     /// </summary>
     public ScheduledJob? Job { get; init; }
 
-    /// <summary>Making a job from the prompt: the model is offered only schedule_job, and nothing is stored before the user says yes.</summary>
+    /// <summary>
+    /// Making a job from the prompt: schedule_job is offered beside the session's other tools, the planner's guidance
+    /// (with the local time) joins the system prompt, and nothing is stored before the user says yes on the same card
+    /// the other tools ask with.
+    /// </summary>
     public JobPlanner? Scheduling { get; init; }
 
     /// <summary>
@@ -229,8 +233,8 @@ public sealed partial class PaletteSession : IPaletteSession
 
     private List<AiTurn> Turns => _conversation ??= [.. Continuing?.Turns ?? []];
 
-    // A typed send goes on with the conversation; a drop zone, a job, a voice command and making a job are each one request.
-    private bool Converses => !FromDropZone && Job is null && Scheduling is null && !Voice;
+    // A typed send goes on with the conversation; a drop zone, a job and a voice command are each one request.
+    private bool Converses => !FromDropZone && Job is null && !Voice;
 
     /// <summary>Clock for the daily cap; tests set it.</summary>
     public Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.Now;
@@ -300,13 +304,14 @@ public sealed partial class PaletteSession : IPaletteSession
             if (Converses && Conversation.Count > 0)
                 attached.Add($"text of {Conversation.Count} earlier turn{(Conversation.Count == 1 ? "" : "s")}");
             // A transcript reaches the device tools and the shell's own actions only: no skill and no MCP server.
-            IReadOnlyList<ToolDefinition> tools = Scheduling is not null ? [Scheduling.Definition]
-                : Job is not null ? [.. BuiltInTools.Definitions.Where(d => Job.Tools.Contains(d.Name) && BuiltInTools.AllowedInScheduledJobs(d.Name))]
+            IReadOnlyList<ToolDefinition> tools = Job is not null ? [.. BuiltInTools.Definitions.Where(d => Job.Tools.Contains(d.Name) && BuiltInTools.AllowedInScheduledJobs(d.Name))]
                 : Voice ? _tools.VoiceDefinitions
                 : Skills?.Tool is { } read ? [.. BuiltInTools.Definitions, read] : BuiltInTools.Definitions;
-            if (Automation is not null && !Voice && Job is null && Scheduling is null)
+            if (Scheduling is not null)
+                tools = [.. tools, Scheduling.Definition];
+            if (Automation is not null && !Voice && Job is null)
                 tools = [.. tools, .. AutomationTools.Definitions];
-            if (Mcp is not null && !Voice && Job is null && Scheduling is null)
+            if (Mcp is not null && !Voice && Job is null)
             {
                 // Starting or connecting a server sends it data (an HTTP server gets its header), so the user sees which ones.
                 if (Mcp.NotRunning is { Count: > 0 } starting)
@@ -317,7 +322,7 @@ public sealed partial class PaletteSession : IPaletteSession
                 }
 
                 // A built-in name always means the built-in tool.
-                tools = [.. tools, .. (await Mcp.ListAsync(ct)).Where(d => !BuiltInTools.Tiers.ContainsKey(d.Name))];
+                tools = [.. tools, .. (await Mcp.ListAsync(ct)).Where(d => !BuiltInTools.Tiers.ContainsKey(d.Name) && d.Name != JobPlanner.Tool)];
             }
 
             tools = OfferShelf(tools);
@@ -549,7 +554,7 @@ public sealed partial class PaletteSession : IPaletteSession
             return Step(call, call.Name, $"There is no tool named {call.Name}.", isError: true);
         }
 
-        if (Scheduling is not null)
+        if (Scheduling is not null && call.Name == JobPlanner.Tool)
         {
             var (planned, outcome, failed) = await Scheduling.ScheduleAsync(call, _config, AskAsync, ct);
             return Step(call, planned, outcome, failed);
