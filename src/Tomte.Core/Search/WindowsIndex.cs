@@ -20,9 +20,12 @@ public static class WindowsIndex
     /// the index refuses (only words it ignores, such as "the"); null when the index cannot be reached (the Windows Search
     /// service is off).
     /// </summary>
-    public static IReadOnlyList<FileHit>? Search(IReadOnlyList<string> words, CancellationToken cancel)
+    public static IReadOnlyList<FileHit>? Search(IReadOnlyList<string> words, CancellationToken cancel) => Search(new FileFilter(words), FileQuery.Fetch, cancel);
+
+    /// <summary>The newest <paramref name="top"/> hits for a filter, as <see cref="Search(IReadOnlyList{string}, CancellationToken)"/> answers.</summary>
+    public static IReadOnlyList<FileHit>? Search(FileFilter filter, int top, CancellationToken cancel)
     {
-        string sql = FileQuery.IndexSql(words, FileQuery.Excluded());
+        string sql = FileQuery.IndexSql(filter, FileQuery.Excluded(), top);
         // A search already replaced by a newer one opens no connection.
         if (sql.Length == 0 || cancel.IsCancellationRequested)
         {

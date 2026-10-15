@@ -12,6 +12,17 @@ public readonly record struct FileHit(string Path, bool Folder)
 }
 
 /// <summary>
+/// What a file search asks, beyond the words that must each be in the name: the folder the hits are under (a full
+/// path), files only (false) or folders only (true), the extensions a file may have (without the dot), and the days of
+/// last change, local and both included. AI search fills these in; the search box asks with words only.
+/// </summary>
+public sealed record FileFilter(IReadOnlyList<string> Words, string? Folder = null, bool? Folders = null, IReadOnlyList<string>? Extensions = null, DateOnly? From = null, DateOnly? To = null)
+{
+    /// <summary>Asks nothing that narrows the search: no words, folder, extension or day.</summary>
+    public bool Empty => Words.Count == 0 && Folder is null && Extensions is not { Count: > 0 } && From is null && To is null;
+}
+
+/// <summary>
 /// What the two file searches are asked. Neither matches fuzzily, so the typed text is split into words and a name must
 /// hold every word, in any order: Everything gets each word quoted, so its operators and functions are typed text; the
 /// Windows index gets each word as the start of a word in the name, since a match inside a word scans the whole index
@@ -48,27 +59,129 @@ public static class FileQuery
     /// Everything's search: every word quoted, so "|", "!", "&lt;" and "name:" are only text, then each excluded folder
     /// and the recycle bins as a quoted path to leave out (a term with a backslash matches the full path). Empty for no words.
     /// </summary>
-    public static string Everything(IReadOnlyList<string> words, IReadOnlyList<string> excluded) =>
-        words.Count == 0 ? "" : string.Join(' ', words.Select(word => $"\"{word}\"")
+    public static string Everything(IReadOnlyList<string> words, IReadOnlyList<string> excluded) => Everything(new FileFilter(words), excluded);
+
+    /// <summary>
+    /// Everything's search for a filter: the words quoted, the folder as a quoted path (which matches every path under
+    /// it), file: or folder:, ext: with the extensions, dm: from the first day and before the day after the last (ISO
+    /// dates), then the folders left out. Empty for an empty filter.
+    /// </summary>
+    public static string Everything(FileFilter filter, IReadOnlyList<string> excluded)
+    {
+        if (filter.Empty)
+        {
+            return "";
+        }
+
+        var terms = filter.Words.Select(word => $"\"{word}\"").ToList();
+        if (filter.Folder is { } folder)
+        {
+            terms.Add($"\"{folder.TrimEnd('\\')}\\\"");
+        }
+
+        if (filter.Folders is { } folders)
+        {
+            terms.Add(folders ? "folder:" : "file:");
+        }
+
+        if (filter.Extensions is { Count: > 0 } extensions)
+        {
+            terms.Add("ext:" + string.Join(';', extensions));
+        }
+
+        if (filter.From is { } from)
+        {
+            terms.Add($"dm:>={Iso(from)}");
+        }
+
+        if (filter.To is { } to)
+        {
+            terms.Add($"dm:<{Iso(to.AddDays(1))}");
+        }
+
+        return string.Join(' ', terms
             .Concat(excluded.Select(folder => $"!\"{folder.TrimEnd('\\')}\\\""))
             .Append("!\"\\$Recycle.Bin\\\""));
+    }
 
     /// <summary>
     /// The Windows index's SQL: the newest <paramref name="top"/> files and folders whose name has a word starting with
     /// each typed word, outside the excluded folders. Quotes in a word are doubled for the SQL string; the words have no
     /// double quotes left (<see cref="Words"/>). Empty for no words.
     /// </summary>
-    public static string IndexSql(IReadOnlyList<string> words, IReadOnlyList<string> excluded, int top = Fetch)
+    public static string IndexSql(IReadOnlyList<string> words, IReadOnlyList<string> excluded, int top = Fetch) => IndexSql(new FileFilter(words), excluded, top);
+
+    /// <summary>
+    /// The Windows index's SQL for a filter: the folder as the scope, each word as a word start in the name, the item
+    /// type, the extensions, and the days as UTC times from the first local midnight to the one after the last day (the
+    /// index keeps UTC). <paramref name="zone"/> is the local zone; tests set it. Empty for an empty filter.
+    /// </summary>
+    public static string IndexSql(FileFilter filter, IReadOnlyList<string> excluded, int top = Fetch, TimeZoneInfo? zone = null)
     {
-        if (words.Count == 0)
+        if (filter.Empty)
         {
             return "";
         }
 
-        string contains = string.Join(" AND ", words.Select(word => $"\"{Sql(word)}*\""));
-        string outside = string.Concat(excluded.Select(folder => $" AND NOT SCOPE='file:{Sql(folder.TrimEnd('\\').Replace('\\', '/'))}'"));
-        return $"SELECT TOP {top} System.ItemPathDisplay, System.ItemType FROM SystemIndex WHERE SCOPE='file:' AND CONTAINS(System.FileName, '{contains}'){outside} ORDER BY System.DateModified DESC";
+        zone ??= TimeZoneInfo.Local;
+        var where = new List<string> { $"SCOPE='file:{(filter.Folder is { } folder ? Sql(Slashed(folder)) : "")}'" };
+        if (filter.Words.Count > 0)
+        {
+            where.Add($"CONTAINS(System.FileName, '{string.Join(" AND ", filter.Words.Select(word => $"\"{Sql(word)}*\""))}')");
+        }
+
+        if (filter.Folders is { } folders)
+        {
+            where.Add(folders ? "System.ItemType = 'Directory'" : "System.ItemType <> 'Directory'");
+        }
+
+        if (filter.Extensions is { Count: > 0 } extensions)
+        {
+            where.Add($"({string.Join(" OR ", extensions.Select(e => $"System.FileExtension = '.{Sql(e)}'"))})");
+        }
+
+        if (filter.From is { } from)
+        {
+            where.Add($"System.DateModified >= '{Utc(from, zone)}'");
+        }
+
+        if (filter.To is { } to)
+        {
+            where.Add($"System.DateModified < '{Utc(to.AddDays(1), zone)}'");
+        }
+
+        where.AddRange(excluded.Select(folder => $"NOT SCOPE='file:{Sql(Slashed(folder))}'"));
+        return $"SELECT TOP {top} System.ItemPathDisplay, System.ItemType FROM SystemIndex WHERE {string.Join(" AND ", where)} ORDER BY System.DateModified DESC";
     }
 
     private static string Sql(string text) => text.Replace("'", "''", StringComparison.Ordinal);
+
+    private static string Slashed(string folder) => folder.TrimEnd('\\').Replace('\\', '/');
+
+    private static string Iso(DateOnly day) => day.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+    // Local midnight in UTC; where a clock change skips midnight, the day starts an hour later.
+    private static string Utc(DateOnly day, TimeZoneInfo zone)
+    {
+        var midnight = day.ToDateTime(TimeOnly.MinValue);
+        midnight = zone.IsInvalidTime(midnight) ? midnight.AddHours(1) : midnight;
+        return TimeZoneInfo.ConvertTimeToUtc(midnight, zone).ToString("yyyy-MM-dd HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture);
+    }
+}
+
+/// <summary>A file search on this PC: Everything when it runs, else the Windows index. Blocks: worker threads only.</summary>
+public static class FileSearch
+{
+    /// <summary>
+    /// The hits, newest first, and whether Everything gave them. Null hits when the Windows index cannot be reached, or
+    /// for a search cancelled before it went on to the index.
+    /// </summary>
+    public static (IReadOnlyList<FileHit>? Hits, bool Everything) Run(FileFilter filter, int max, CancellationToken cancel)
+    {
+        var hits = Everything.Running ? Everything.Search(FileQuery.Everything(filter, FileQuery.Excluded()), max, cancel) : null;
+        // A search a newer keystroke replaced does not go on to the index.
+        return hits is not null ? (hits, true)
+            : cancel.IsCancellationRequested ? (null, false)
+            : (WindowsIndex.Search(filter, max, cancel), false);
+    }
 }

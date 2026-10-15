@@ -476,3 +476,35 @@ public sealed class SearchHistoryTests : IDisposable
         Assert.False(launches.ContainsKey(code.Key));
     }
 }
+
+public sealed class FileFilterQueryTests
+{
+    private static readonly string[] Excluded = [@"C:\Windows"];
+
+    // India: a day starts at 18:30 UTC the day before.
+    private static readonly TimeZoneInfo India = TimeZoneInfo.CreateCustomTimeZone("test", TimeSpan.FromHours(5.5), "test", "test");
+
+    private static readonly FileFilter Full = new(["invoice"], @"D:\Work\", false, ["pdf", "docx"], new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30));
+
+    [Fact]
+    public void EverythingGetsTheFolderKindExtensionsAndDays() =>
+        Assert.Equal("\"invoice\" \"D:\\Work\\\" file: ext:pdf;docx dm:>=2026-09-01 dm:<2026-10-01 !\"C:\\Windows\\\" !\"\\$Recycle.Bin\\\"",
+            FileQuery.Everything(Full, Excluded));
+
+    [Fact]
+    public void TheIndexGetsTheScopeTypeExtensionsAndUtcDays() =>
+        Assert.Equal("SELECT TOP 50 System.ItemPathDisplay, System.ItemType FROM SystemIndex WHERE SCOPE='file:D:/Work' AND CONTAINS(System.FileName, '\"invoice*\"')"
+            + " AND System.ItemType <> 'Directory' AND (System.FileExtension = '.pdf' OR System.FileExtension = '.docx')"
+            + " AND System.DateModified >= '2026-08-31 18:30:00' AND System.DateModified < '2026-09-30 18:30:00' AND NOT SCOPE='file:C:/Windows' ORDER BY System.DateModified DESC",
+            FileQuery.IndexSql(Full, Excluded, 50, India));
+
+    [Fact]
+    public void FoldersOnlyAndNoWords()
+    {
+        var folders = new FileFilter([], @"C:\Users\o'brien", true);
+        Assert.Equal("\"C:\\Users\\o'brien\\\" folder: !\"C:\\Windows\\\" !\"\\$Recycle.Bin\\\"", FileQuery.Everything(folders, Excluded));
+        Assert.Equal("SELECT TOP 60 System.ItemPathDisplay, System.ItemType FROM SystemIndex WHERE SCOPE='file:C:/Users/o''brien' AND System.ItemType = 'Directory'"
+            + " AND NOT SCOPE='file:C:/Windows' ORDER BY System.DateModified DESC", FileQuery.IndexSql(folders, Excluded));
+        Assert.Equal("", FileQuery.IndexSql(new FileFilter([], Folders: true), Excluded));
+    }
+}
