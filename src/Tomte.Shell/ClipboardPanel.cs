@@ -6,7 +6,6 @@ using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Windows.Win32;
-using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
@@ -104,9 +103,9 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
     }
 
     /// <summary>Delete on a row or its remove button removes the row; a held Delete removes that one only.</summary>
-    public bool KeyDown(string id, int virtualKey, bool repeat)
+    public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        if (virtualKey != (int)VIRTUAL_KEY.VK_DELETE || Find(id) is not ({ } index, _))
+        if (key != NavKey.Remove || Find(id) is not ({ } index, _))
         {
             return false;
         }

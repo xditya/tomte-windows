@@ -51,14 +51,10 @@ internal interface IInteractive
     /// <summary>
     /// A key while the island has the keys and one of this view's targets has focus, before the host's own Tab, arrow,
     /// Enter and Space handling. True when the view took it: Delete on a row, Left and Right on a seek bar.
+    /// <paramref name="repeat"/> is the keyboard's own repeat while the key is held, which must not act twice where a
+    /// second press means more (Delete on a row).
     /// </summary>
-    bool KeyDown(string id, int virtualKey) => false;
-
-    /// <summary>
-    /// The same, saying whether the key is the keyboard's own repeat while it is held: the host calls this one. A view
-    /// where a repeat must not act twice (Delete on a row) answers it; any other leaves it to the two-argument one.
-    /// </summary>
-    bool KeyDown(string id, int virtualKey, bool repeat) => KeyDown(id, virtualKey);
+    bool KeyDown(string id, NavKey key, bool repeat) => false;
 
     /// <summary>
     /// The pointer moved over one of this view's targets, at this point of the view's own space. Not called during a
@@ -181,22 +177,22 @@ internal sealed class InteractionHost
     /// Shift+Tab between stops, the arrows inside a group (a tab switches as focus reaches it), Enter and Space, and
     /// Ctrl+Tab between panel tabs. True when it was used.
     /// </summary>
-    public bool Key(int virtualKey, bool shift, bool ctrl, bool repeat)
+    public bool Key(NavKey key, bool repeat)
     {
-        if (views.Count == 0)
+        if (views.Count == 0 || key == NavKey.None)
         {
             return false;
         }
 
-        if (focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, virtualKey, repeat))
+        if (focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, key, repeat))
         {
             ring = true;
             Update();
             return true;
         }
 
-        var key = NavKeys.Of(virtualKey, shift, ctrl);
-        if (key == NavKey.None || (key == NavKey.Activate && focus is null))
+        if (key is not (NavKey.NextTab or NavKey.PreviousTab or NavKey.Next or NavKey.Previous or NavKey.Activate
+            or NavKey.Left or NavKey.Right or NavKey.Up or NavKey.Down) || (key == NavKey.Activate && focus is null))
         {
             return false;
         }

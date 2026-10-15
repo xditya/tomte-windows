@@ -199,17 +199,20 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
 /// <summary>One target of one registered view, by the view and the target's id, which outlive a change of its list.</summary>
 public readonly record struct TargetRef(object View, string Id);
 
-/// <summary>What a key does to the island's targets.</summary>
-public enum NavKey { None, Next, Previous, Left, Right, Up, Down, Activate, NextTab, PreviousTab }
+/// <summary>What a key does on the island: moves between its targets, or acts on the focused one.</summary>
+public enum NavKey { None, Next, Previous, Left, Right, Up, Down, Home, End, Activate, NextTab, PreviousTab, Remove }
 
 /// <summary>Which keys move between the island's targets, and which ones a text box gives up.</summary>
 public static class NavKeys
 {
     public const int Tab = 0x09, Return = 0x0D, Escape = 0x1B, Space = 0x20;
-    private const int VkLeft = 0x25, VkUp = 0x26, VkRight = 0x27, VkDown = 0x28;
+    private const int VkEnd = 0x23, VkHome = 0x24, VkLeft = 0x25, VkUp = 0x26, VkRight = 0x27, VkDown = 0x28, VkDelete = 0x2E;
 
-    /// <summary>Tab and Shift+Tab move between stops, the arrows inside a group, Enter and Space click, Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs.</summary>
-    public static NavKey Of(int virtualKey, bool shift, bool ctrl) => virtualKey switch
+    /// <summary>
+    /// Tab and Shift+Tab move between stops, the arrows inside a group, Home and End to its ends, Enter and Space click,
+    /// Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs, Delete removes the focused item.
+    /// </summary>
+    public static NavKey Of(int virtualKey, bool shift, bool ctrl, bool alt = false) => alt ? NavKey.None : virtualKey switch
     {
         Tab when ctrl => shift ? NavKey.PreviousTab : NavKey.NextTab,
         Tab => shift ? NavKey.Previous : NavKey.Next,
@@ -217,6 +220,9 @@ public static class NavKeys
         VkRight => NavKey.Right,
         VkUp => NavKey.Up,
         VkDown => NavKey.Down,
+        VkHome => NavKey.Home,
+        VkEnd => NavKey.End,
+        VkDelete => NavKey.Remove,
         Return or Space when !ctrl => NavKey.Activate,
         _ => NavKey.None,
     };
@@ -235,7 +241,7 @@ public static class NavKeys
     /// A key down in a text box that the box gives up to the targets: Ctrl+Tab from any box, which switches panel tabs,
     /// and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note is a tab.
     /// </summary>
-    public static bool LeavesBox(int virtualKey, bool ctrl, bool tabLeaves) => virtualKey == Tab && (ctrl || tabLeaves);
+    public static bool LeavesBox(NavKey key, bool tabLeaves) => key is NavKey.NextTab or NavKey.PreviousTab || (tabLeaves && key is NavKey.Next or NavKey.Previous);
 }
 
 /// <summary>

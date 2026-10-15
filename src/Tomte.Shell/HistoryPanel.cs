@@ -4,7 +4,6 @@ using Tomte.Core;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
-using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
@@ -75,10 +74,10 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
     }
 
     /// <summary>On a row, Right opens it and Left closes it; held keys do it once.</summary>
-    public bool KeyDown(string id, int virtualKey, bool repeat)
+    public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        bool right = virtualKey == (int)VIRTUAL_KEY.VK_RIGHT;
-        if ((!right && virtualKey != (int)VIRTUAL_KEY.VK_LEFT) || rows.FirstOrDefault(row => HistoryPanelLayout.RowId(row) == id) is not { } row)
+        bool right = key == NavKey.Right;
+        if ((!right && key != NavKey.Left) || rows.FirstOrDefault(row => HistoryPanelLayout.RowId(row) == id) is not { } row)
         {
             return false;
         }

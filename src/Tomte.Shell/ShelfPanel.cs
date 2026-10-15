@@ -154,16 +154,10 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         Rebuild();
     }
 
-    /// <summary>
-    /// A caller that cannot say whether the key repeats: a Delete while the question shows counts as one held down, so
-    /// Delete only asks, and a click or Enter on the question removes. The host calls the one below.
-    /// </summary>
-    public bool KeyDown(string id, int virtualKey) => KeyDown(id, virtualKey, repeat: question.Asks(Item(id)?.Id ?? shown, Environment.TickCount64));
-
     /// <summary>Delete on a focused tile or on the band asks to remove, as the Remove button does; a second Delete, not a repeat, removes.</summary>
-    public bool KeyDown(string id, int virtualKey, bool repeat)
+    public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        if (virtualKey != (int)VIRTUAL_KEY.VK_DELETE || (Item(id) is null && ActionOf(id) is null))
+        if (key != NavKey.Remove || (Item(id) is null && ActionOf(id) is null))
         {
             return false;
         }

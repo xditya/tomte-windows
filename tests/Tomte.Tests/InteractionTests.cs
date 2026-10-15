@@ -271,15 +271,18 @@ public class InteractionTests
         Assert.Equal(NavKey.Down, NavKeys.Of(0x28, false, false));
         Assert.Equal(NavKey.None, NavKeys.Of(NavKeys.Escape, false, false));
         Assert.Equal(NavKey.None, NavKeys.Of('A', false, false));
+        Assert.Equal(NavKey.Home, NavKeys.Of(0x24, false, false));
+        Assert.Equal(NavKey.End, NavKeys.Of(0x23, false, false));
+        Assert.Equal(NavKey.Remove, NavKeys.Of(0x2E, false, false));
         Assert.Equal(new Vector2(0, -1), NavKeys.Direction(NavKey.Up));
         Assert.Equal(Vector2.Zero, NavKeys.Direction(NavKey.Next));
 
         // The prompt gives up Tab; the note keeps it and gives up only Ctrl+Tab; other keys are typing in both.
-        Assert.True(NavKeys.LeavesBox(NavKeys.Tab, ctrl: false, tabLeaves: true));
-        Assert.False(NavKeys.LeavesBox(NavKeys.Tab, ctrl: false, tabLeaves: false));
-        Assert.True(NavKeys.LeavesBox(NavKeys.Tab, ctrl: true, tabLeaves: false));
-        Assert.False(NavKeys.LeavesBox(NavKeys.Return, ctrl: false, tabLeaves: true));
-        Assert.False(NavKeys.LeavesBox(0x25, ctrl: true, tabLeaves: true));
+        Assert.True(NavKeys.LeavesBox(NavKey.Next, tabLeaves: true));
+        Assert.False(NavKeys.LeavesBox(NavKey.Next, tabLeaves: false));
+        Assert.True(NavKeys.LeavesBox(NavKey.NextTab, tabLeaves: false));
+        Assert.False(NavKeys.LeavesBox(NavKey.Activate, tabLeaves: true));
+        Assert.False(NavKeys.LeavesBox(NavKey.Left, tabLeaves: true));
     }
 
     [Fact]

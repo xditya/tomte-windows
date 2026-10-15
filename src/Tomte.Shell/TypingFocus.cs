@@ -273,7 +273,7 @@ internal sealed class TypingFocus
         {
             // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel. With no box, the
             // focused target's view may take it.
-            if (!down || (focused is { } box ? box.Escape?.Invoke() != true : !island.Interaction.Key(key, false, ctrl, false)))
+            if (!down || (focused is { } box ? box.Escape?.Invoke() != true : !island.Interaction.Key(NavKeys.Of(key, false, ctrl), false)))
             {
                 Escape?.Invoke();
             }
@@ -282,13 +282,14 @@ internal sealed class TypingFocus
         }
 
         bool shift = Down(VIRTUAL_KEY.VK_SHIFT), repeat = (lParam & PromptKeys.WasDown) != 0;
+        var nav = down ? NavKeys.Of(key, shift, ctrl) : NavKey.None;
         if (focused is { } editor)
         {
             // Tab out of the prompt moves to its view's targets, when there are any, and Ctrl+Tab switches the panel tab;
             // either way the box lets go, and the island keeps the keys for the targets.
             var owner = owners.GetValueOrDefault(editor);
-            if (down && NavKeys.LeavesBox(key, ctrl, owner is not null)
-                && (ctrl ? island.Interaction.Key(key, shift, ctrl, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor))))
+            if (NavKeys.LeavesBox(nav, owner is not null)
+                && (ctrl ? island.Interaction.Key(nav, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor))))
             {
                 focused = null;
                 editor.Blur();
@@ -303,7 +304,7 @@ internal sealed class TypingFocus
             return editor.Key(message, wParam, lParam, out var result) ? result : null;
         }
 
-        return keys && down && island.Interaction.Key(key, shift, ctrl, repeat) ? new LRESULT(0) : null;
+        return keys && island.Interaction.Key(nav, repeat) ? new LRESULT(0) : null;
     }
 
     private static bool Down(VIRTUAL_KEY key) => PInvoke.GetKeyState((int)key) < 0;
