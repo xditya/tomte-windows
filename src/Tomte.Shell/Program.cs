@@ -90,6 +90,13 @@ internal static partial class Program
             return 2;
         }
 
+        // Recorded answers hold what the user's own searches sent back: only from a run with its own data folder.
+        if (Arg(args, "--debug-record") is not null && Arg(args, "--debug-settings") is null)
+        {
+            Console.Error.WriteLine("usage: --debug-record <folder> needs --debug-settings <file>, so a recorded run never uses the user's own settings");
+            return 2;
+        }
+
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null || args.Contains("--debug-job");
 
@@ -215,6 +222,16 @@ internal static partial class Program
 
         // A named Everything instance (one indexing a scratch folder) for a test run.
         Tomte.Core.Search.Everything.Instance = Arg(args, "--debug-everything");
+        if (Arg(args, "--debug-record") is { } record)
+        {
+            paletteHttp = new HttpClient(new Recorder(record));
+        }
+
+        if (Arg(args, "--debug-find") is { } find && logLine is not null)
+        {
+            _ = Task.Run(() => DebugFind(find, logLine));
+        }
+
         if (Arg(args, "--debug-search") is { } searched && logLine is not null)
         {
             _ = DebugSearch(triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
@@ -390,6 +407,7 @@ internal static partial class Program
         search = new SearchHost(island, triggers, text, typing, store, db, shortcuts, log)
         {
             Ask = words => AskFromSearch(island, triggers, store, log, words),
+            AiSearch = words => AiSearchSession(store, words, log),
         };
         triggers.SearchOpened = search.Open;
         var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels, Ask = triggers.AskClicked };

@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-94","object":"chat.completion.chunk","created":1792090557,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"The system can only search for these exact words in file and folder names as given.\nIf you provide less filters then it might give 8 more options"},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-94","object":"chat.completion.chunk","created":1792090557,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":208,"completion_tokens":31,"total_tokens":239}}
+
+data: [DONE]
+

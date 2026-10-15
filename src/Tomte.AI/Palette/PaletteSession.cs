@@ -222,6 +222,13 @@ public sealed partial class PaletteSession : IPaletteSession
     public JobPlanner? Scheduling { get; init; }
 
     /// <summary>
+    /// AI search from the search box: the prompt is the typed sentence, the model is offered find_files and show_results
+    /// only, under the finder's own system prompt, and the send ends once show_results ran. One request, kept in the
+    /// history as a search, with the picked paths as its answer. The caller sets no chips, skills, MCP, automation or jobs.
+    /// </summary>
+    public FileFinder? FileSearch { get; init; }
+
+    /// <summary>
     /// Where each finished turn goes, with the whole conversation, once it is done or once it cost money; null keeps
     /// nothing. A drop zone's send is never kept here: its result is kept with the zone's.
     /// </summary>
@@ -233,8 +240,8 @@ public sealed partial class PaletteSession : IPaletteSession
 
     private List<AiTurn> Turns => _conversation ??= [.. Continuing?.Turns ?? []];
 
-    // A typed send goes on with the conversation; a drop zone, a job and a voice command are each one request.
-    private bool Converses => !FromDropZone && Job is null && !Voice;
+    // A typed send goes on with the conversation; a drop zone, a job, a voice command and a search are each one request.
+    private bool Converses => !FromDropZone && Job is null && !Voice && FileSearch is null;
 
     /// <summary>Clock for the daily cap; tests set it.</summary>
     public Func<DateTimeOffset> Now { get; set; } = () => DateTimeOffset.Now;
@@ -304,7 +311,8 @@ public sealed partial class PaletteSession : IPaletteSession
             if (Converses && Conversation.Count > 0)
                 attached.Add($"text of {Conversation.Count} earlier turn{(Conversation.Count == 1 ? "" : "s")}");
             // A transcript reaches the device tools and the shell's own actions only: no skill and no MCP server.
-            IReadOnlyList<ToolDefinition> tools = Job is not null ? [.. BuiltInTools.Definitions.Where(d => Job.Tools.Contains(d.Name) && BuiltInTools.AllowedInScheduledJobs(d.Name))]
+            IReadOnlyList<ToolDefinition> tools = FileSearch is not null ? FileFinder.Definitions
+                : Job is not null ? [.. BuiltInTools.Definitions.Where(d => Job.Tools.Contains(d.Name) && BuiltInTools.AllowedInScheduledJobs(d.Name))]
                 : Voice ? _tools.VoiceDefinitions
                 : Skills?.Tool is { } read ? [.. BuiltInTools.Definitions, read] : BuiltInTools.Definitions;
             if (Scheduling is not null)
@@ -378,7 +386,8 @@ public sealed partial class PaletteSession : IPaletteSession
                     results.Add(await RunToolAsync(call, ct));
                 }
 
-                if (capped)
+                // show_results is the search's last word: nothing is sent after it.
+                if (capped || FileSearch?.Picked is not null)
                     break;
                 messages.Add(new ChatMessage(ChatRole.User, [.. results, .. TakeReadFiles()]));
             }
@@ -400,6 +409,8 @@ public sealed partial class PaletteSession : IPaletteSession
             _userCancel.Dispose();
             _userCancel = null;
             var cost = sent ? SendLog.Estimate(_options, ModelId, inputTokens, outputTokens) : 0;
+            if (FileSearch is { Found.Count: > 0 } finder)
+                attached.Add($"names, sizes and dates of {finder.Found.Count} files");
             if (sent)
             {
                 _log.Append(new SendLogEntry(Now(), _config.Id, ModelId, inputTokens, outputTokens, cost, [.. attached, .. _skillFiles, .. _fileReads],
@@ -480,7 +491,7 @@ public sealed partial class PaletteSession : IPaletteSession
         // conversation that goes on from it starts with it. Only this turn is written, so a clear meanwhile stays cleared.
         var earlier = Continuing is { Source: not AiSource.DropZone } row ? row : null;
         _historyKey ??= earlier?.Key ?? AiExchange.NewKey();
-        var source = earlier?.Source ?? (Voice ? AiSource.Voice : Job is not null ? AiSource.Job
+        var source = earlier?.Source ?? (Voice ? AiSource.Voice : Job is not null ? AiSource.Job : FileSearch is not null ? AiSource.Search
             : Chips.Any(c => c.Kind == ContextKind.Region) ? AiSource.CircleToAsk : AiSource.Palette);
         _ = History.Add(new AiExchange(_historyKey, source, Now(), ProviderName, ModelId, cost, [turn]), Continuing);
     }
@@ -552,6 +563,16 @@ public sealed partial class PaletteSession : IPaletteSession
             if (Job is not null)
                 throw new InvalidOperationException($"The job called {call.Name}, which it was not approved to use, so the run stopped.");
             return Step(call, call.Name, $"There is no tool named {call.Name}.", isError: true);
+        }
+
+        // AI search: the file search blocks, so the pool runs it. The pick is kept as the answer, for the history.
+        if (FileSearch is not null)
+        {
+            var (searched, found, failed) = await Task.Run(() => FileSearch.Run(call, ct), ct);
+            var part = Step(call, searched, found, failed);
+            if (call.Name == FileFinder.ShowResults && FileSearch.Picked is { } picked)
+                Note(string.Join('\n', [FileSearch.Reason, .. picked.Select(p => p.Path)]).Trim());
+            return part;
         }
 
         if (Scheduling is not null && call.Name == JobPlanner.Tool)

@@ -58,6 +58,10 @@ internal sealed class SearchView : IDisposable, IInteractive
     private SearchLayout layout;
     private string typed = "", source = "", hint = "";
 
+    // AI search's results, or its progress or error, are showing; lead is its line on why above the rows.
+    private bool ai;
+    private string? lead;
+
     // The text the rows on show were found for.
     private string? shownFor;
 
@@ -151,6 +155,12 @@ internal sealed class SearchView : IDisposable, IInteractive
     /// <summary>A card's button, by its id: a click, or Enter on the focused one. Esc says null.</summary>
     public event Action<string?>? CardAnswered;
 
+    /// <summary>Esc while AI search shows: back to the results for the typed text.</summary>
+    public event Action? Back;
+
+    /// <summary>The line above AI search's rows; null when AI search is not showing.</summary>
+    public string? Lead => ai ? lead ?? hint : null;
+
     public string Text => typed;
 
     public IReadOnlyList<SearchItem> Rows => rows;
@@ -184,15 +194,17 @@ internal sealed class SearchView : IDisposable, IInteractive
     /// New results. The first row is selected, so Enter opens the best match, never the row that offers Everything; once
     /// the user has moved the selection, results that arrive later for the same text (files, the app list) keep that row,
     /// wherever it now is, so Enter never opens something else than what is highlighted. <paramref name="note"/> shows
-    /// when there are none.
+    /// when there are none. With <paramref name="aiSearch"/> the rows are AI search's picks (or none, with its progress or
+    /// error as the note), under <paramref name="why"/>; Esc then goes back.
     /// </summary>
-    public void Show(IReadOnlyList<SearchItem> results, string files, string note)
+    public void Show(IReadOnlyList<SearchItem> results, string files, string note, bool aiSearch = false, string? why = null)
     {
         if (disposed)
         {
             return;
         }
 
+        (ai, lead) = (aiSearch, why);
         moved &= shownFor == typed;
         string? kept = moved ? Selected?.Key : null;
         bool same = results.SequenceEqual(rows);
@@ -209,7 +221,7 @@ internal sealed class SearchView : IDisposable, IInteractive
 
         shownFor = typed;
 
-        lines = SearchLayout.Lines(rows);
+        lines = SearchLayout.Lines(rows, lead);
         content = lines.Count > 0 ? lines[^1].Top + lines[^1].Height : 0;
         Draw();
         _ = IconsAsync();
@@ -327,7 +339,7 @@ internal sealed class SearchView : IDisposable, IInteractive
         Grow();
         placeholder.Show(typed.Length == 0 ? SearchLayout.Placeholder : "", PaletteLayout.Placeholder, layout.Editor);
         boxLine.Color = Argb(focus.Focused == editor ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine);
-        var (left, right) = layout.Footer(card is not null ? "" : typed.Length > 0 ? SearchLayout.Keys : SearchLayout.KeysEmpty, card is null ? source : "");
+        var (left, right) = layout.Footer(card is not null ? "" : ai ? SearchLayout.AiKeys : typed.Length > 0 ? SearchLayout.Keys : SearchLayout.KeysEmpty, card is null ? source : "");
         footLeft.Show(left);
         footRight.Show(right);
         band.IsVisible = card is null;
@@ -381,7 +393,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     // typed letter that shortens the list does not move the shape back and forth.
     private void Grow()
     {
-        float next = SearchLayout.Fit(width, island.Mascot.Enabled, rows, card, tallest);
+        float next = SearchLayout.Fit(width, island.Mascot.Enabled, rows, card, tallest, lead);
         if (next <= layout.Height)
         {
             return;
@@ -567,12 +579,19 @@ internal sealed class SearchView : IDisposable, IInteractive
             : firsts[(at - 1 + firsts.Count) % firsts.Count];
     }
 
-    // Esc closes a card first, then clears the box, then leaves the island to hide.
+    // Esc closes a card first, then leaves AI search for the results it came from, then clears the box, then leaves the
+    // island to hide.
     internal bool OnEscape()
     {
         if (card is not null)
         {
             CardAnswered?.Invoke(null);
+            return true;
+        }
+
+        if (ai)
+        {
+            Back?.Invoke();
             return true;
         }
 

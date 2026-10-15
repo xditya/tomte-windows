@@ -299,6 +299,15 @@ public sealed class HistoryPanelLayout
         ],
         // A file with its corner folded: something dropped on a zone.
         AiSource.DropZone => [Polygon(3.5f, 1.5f, 9.5f, 1.5f, 12.5f, 4.5f, 12.5f, 14.5f, 3.5f, 14.5f)],
+        // A magnifying glass: files picked by AI search.
+        AiSource.Search =>
+        [
+            [
+                OutlineSegment.Move(new(6.5f, 2)), OutlineSegment.Quadratic(new(11, 2), new(11, 6.5f)), OutlineSegment.Quadratic(new(11, 11), new(6.5f, 11)),
+                OutlineSegment.Quadratic(new(2, 11), new(2, 6.5f)), OutlineSegment.Quadratic(new(2, 2), new(6.5f, 2)),
+            ],
+            Polygon(9.5f, 10.75f, 10.75f, 9.5f, 14.5f, 13.25f, 13.25f, 14.5f),
+        ],
         // A calendar page: a scheduled job.
         _ => [Polygon(2, 4, 14, 4, 14, 14.5f, 2, 14.5f), Polygon(4.5f, 1.5f, 6, 1.5f, 6, 5, 4.5f, 5), Polygon(10, 1.5f, 11.5f, 1.5f, 11.5f, 5, 10, 5)],
     };

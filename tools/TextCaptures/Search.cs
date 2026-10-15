@@ -50,18 +50,39 @@ internal static partial class Program
         SearchScene("search-get-everything", "code", CodeRows, 7, SearchLayout.NoResults, "", GetEverything, grown: CodeRows),
         // The tallest at 150% on a 1080p screen: half of 720 DIPs.
         SearchScene("search-results-short", "code", CodeRows, 6, SearchLayout.NoResults, "Files: Windows index", tallest: SearchLayout.HeightFor(720)),
+        // AI search: its row first for a sentence, its progress, and what it picked under its line on why.
+        SearchScene("search-ai-row", Sentence, AiRows, 0, SearchLayout.NoResults, "Files: Everything"),
+        SearchScene("search-ai-running", Sentence, [], -1, "Searching with AI. Searched files: invoice, files, from 2026-09-01, to 2026-09-30. Esc goes back.",
+            "Sending to Anthropic · claude-haiku-5-5", grown: AiRows, ai: true),
+        SearchScene("search-ai-results", Sentence, AiPicked, 0, "", "Sent to Anthropic · claude-haiku-5-5", grown: AiRows, ai: true,
+            lead: "AI · The September invoice is invoice-2026-09-globex.pdf, and the Invoices folder in Work holds the rest of your invoices."),
+    ];
+
+    private const string Sentence = "the invoices I got last month";
+
+    private static readonly SearchItem[] AiRows =
+    [
+        new(SearchKind.AiSearch, SearchLayout.AiRow, Sentence, "Sends file names to Anthropic, never what is in them"),
+        new(SearchKind.Ask, "Ask Tomte", Sentence, $"\"{Sentence}\""),
+    ];
+
+    private static readonly SearchItem[] AiPicked =
+    [
+        new(SearchKind.File, "invoice-2026-09-globex.pdf", @"D:\Work\Invoices\invoice-2026-09-globex.pdf", @"D:\Work\Invoices", Path.Combine(WinDir, "win.ini")),
+        new(SearchKind.Folder, "Invoices", @"D:\Work\Invoices", @"D:\Work", Path.Combine(WinDir, "Web")),
     ];
 
     // A scene at the height the view grows to for these rows (or for <paramref name="grown"/>, shown earlier).
-    private static Scene SearchScene(string name, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, IReadOnlyList<SearchItem>? grown = null, float tallest = (float)PanelSize.PaletteMaxHeight)
+    private static Scene SearchScene(string name, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, IReadOnlyList<SearchItem>? grown = null, float tallest = (float)PanelSize.PaletteMaxHeight, bool ai = false, string? lead = null)
     {
-        float height = Math.Max(SearchLayout.Fit((float)PanelSize.PaletteWidth, true, rows, card, tallest), SearchLayout.Fit((float)PanelSize.PaletteWidth, true, grown ?? [], null, tallest));
-        return new(name, IslandGeometry.Panel(PanelSize.PaletteWidth, height), c => Search(c, typed, rows, select, hint, source, card, height));
+        float height = Math.Max(SearchLayout.Fit((float)PanelSize.PaletteWidth, true, rows, card, tallest, lead), SearchLayout.Fit((float)PanelSize.PaletteWidth, true, grown ?? [], null, tallest));
+        return new(name, IslandGeometry.Panel(PanelSize.PaletteWidth, height), c => Search(c, typed, rows, select, hint, source, card, height, ai, lead));
     }
 
     // The search box as SearchView builds it: the box with the typed text or the placeholder, the footer, then the list
-    // with a heading per group, the selected row filled and outlined and kept in view, or the card in the list's place.
-    private static void Search(Canvas c, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, float height = (float)PanelSize.PaletteMaxHeight)
+    // with a heading per group (or AI search's line above its rows), the selected row filled and outlined and kept in view,
+    // or the card in the list's place.
+    private static void Search(Canvas c, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, float height = (float)PanelSize.PaletteMaxHeight, bool ai = false, string? lead = null)
     {
         var origin = new Vector2(-(float)PanelSize.PaletteWidth / 2, 0);
         var layout = new SearchLayout((float)PanelSize.PaletteWidth, mascot: true, height);
@@ -82,7 +103,7 @@ internal static partial class Program
             editor.Dispose();
         }
 
-        var (left, right) = layout.Footer(card is not null ? "" : typed.Length > 0 ? SearchLayout.Keys : SearchLayout.KeysEmpty, card is null ? source : "");
+        var (left, right) = layout.Footer(card is not null ? "" : ai ? SearchLayout.AiKeys : typed.Length > 0 ? SearchLayout.Keys : SearchLayout.KeysEmpty, card is null ? source : "");
         c.Text(left, origin);
         c.Text(right, origin);
         var band = layout.Band;
@@ -108,7 +129,7 @@ internal static partial class Program
             return;
         }
 
-        var lines = SearchLayout.Lines(rows);
+        var lines = SearchLayout.Lines(rows, lead);
         var chosen = lines.First(l => l.Heading is null && l.Row == Math.Max(0, select));
         float content = lines[^1].Top + lines[^1].Height;
         float scroll = layout.ScrollTo(0, chosen.Top, chosen.Top + chosen.Height, content);

@@ -6,7 +6,7 @@ using Tomte.Core.Storage;
 namespace Tomte.Core;
 
 /// <summary>Where a conversation with the AI started.</summary>
-public enum AiSource { Palette, Voice, CircleToAsk, DropZone, Job }
+public enum AiSource { Palette, Voice, CircleToAsk, DropZone, Job, Search }
 
 /// <summary>
 /// One turn of a conversation: what the user typed or said, the names of the context chips that were on (never what

@@ -476,3 +476,93 @@ public sealed class SearchHistoryTests : IDisposable
         Assert.False(launches.ContainsKey(code.Key));
     }
 }
+
+public sealed class FileFilterQueryTests
+{
+    private static readonly string[] Excluded = [@"C:\Windows"];
+
+    // India: a day starts at 18:30 UTC the day before.
+    private static readonly TimeZoneInfo India = TimeZoneInfo.CreateCustomTimeZone("test", TimeSpan.FromHours(5.5), "test", "test");
+
+    private static readonly FileFilter Full = new(["invoice"], @"D:\Work\", false, ["pdf", "docx"], new DateOnly(2026, 9, 1), new DateOnly(2026, 9, 30));
+
+    [Fact]
+    public void EverythingGetsTheFolderKindExtensionsAndDays() =>
+        Assert.Equal("\"invoice\" \"D:\\Work\\\" file: ext:pdf;docx dm:>=2026-09-01 dm:<2026-10-01 !\"C:\\Windows\\\" !\"\\$Recycle.Bin\\\"",
+            FileQuery.Everything(Full, Excluded));
+
+    [Fact]
+    public void WordsInThePathAreForEverythingOnly()
+    {
+        var inPath = Full with { InPath = true };
+        Assert.StartsWith("path:\"invoice\" \"D:\\Work\\\" file:", FileQuery.Everything(inPath, Excluded));
+        // The index keeps to names: a path match there scans the whole index.
+        Assert.Equal(FileQuery.IndexSql(Full, Excluded, 50, India), FileQuery.IndexSql(inPath, Excluded, 50, India));
+    }
+
+    [Fact]
+    public void TheIndexGetsTheScopeTypeExtensionsAndUtcDays() =>
+        Assert.Equal("SELECT TOP 50 System.ItemPathDisplay, System.ItemType FROM SystemIndex WHERE SCOPE='file:D:/Work' AND CONTAINS(System.FileName, '\"invoice*\"')"
+            + " AND System.ItemType <> 'Directory' AND (System.FileExtension = '.pdf' OR System.FileExtension = '.docx')"
+            + " AND System.DateModified >= '2026-08-31 18:30:00' AND System.DateModified < '2026-09-30 18:30:00' AND NOT SCOPE='file:C:/Windows' ORDER BY System.DateModified DESC",
+            FileQuery.IndexSql(Full, Excluded, 50, India));
+
+    [Fact]
+    public void FoldersOnlyAndNoWords()
+    {
+        var folders = new FileFilter([], @"C:\Users\o'brien", true);
+        Assert.Equal("\"C:\\Users\\o'brien\\\" folder: !\"C:\\Windows\\\" !\"\\$Recycle.Bin\\\"", FileQuery.Everything(folders, Excluded));
+        Assert.Equal("SELECT TOP 60 System.ItemPathDisplay, System.ItemType FROM SystemIndex WHERE SCOPE='file:C:/Users/o''brien' AND System.ItemType = 'Directory'"
+            + " AND NOT SCOPE='file:C:/Windows' ORDER BY System.DateModified DESC", FileQuery.IndexSql(folders, Excluded));
+        Assert.Equal("", FileQuery.IndexSql(new FileFilter([], Folders: true), Excluded));
+    }
+}
+
+public sealed class AiSearchRowTests
+{
+    private static readonly SearchItem Ai = new(SearchKind.AiSearch, SearchLayout.AiRow, "x");
+    private static readonly SearchItem Ask = new(SearchKind.Ask, "Ask Tomte", "x");
+
+    [Fact]
+    public void ASentenceWithNoGoodLocalMatchPutsAiSearchFirst()
+    {
+        string typed = "the invoices I got last month";
+        var app = new SearchItem(SearchKind.App, "Invoice Ninja", "a");
+        var ranked = SearchRank.Order([app, Ai, Ask], typed, new Dictionary<string, Launches>());
+
+        Assert.Equal([Ai, Ask], ranked);
+        Assert.Equal([Ai, Ask], SearchRank.AiFirst(ranked, typed));
+        // The AI row is a group of its own after files and before Ask, so Tab reaches it.
+        Assert.Equal((3, 4), (Ai.Group, Ask.Group));
+    }
+
+    [Fact]
+    public void AiSearchMovesUpOnlyForASentenceWithoutAGoodMatch()
+    {
+        var app = new SearchItem(SearchKind.App, "Visual Studio Code", "a");
+        var file = new FileHit(@"D:\Notes\notes from the meeting.txt", false).Item();
+        var none = new Dictionary<string, Launches>();
+
+        // A name that matches only loosely (one typo, the other words nowhere) is no good match.
+        var chrome = new SearchItem(SearchKind.App, "Chrome", "c");
+        Assert.Equal([Ai, chrome, Ask], SearchRank.AiFirst([chrome, Ai, Ask], "crhome web browser"));
+        // Two words read as a name.
+        Assert.Equal(Ask, SearchRank.AiFirst([app, Ask, Ai], "tax return")[1]);
+        Assert.Equal(app, SearchRank.AiFirst(SearchRank.Order([app, Ai, Ask], "visual studio code", none), "visual studio code")[0]);
+        Assert.Equal(file, SearchRank.AiFirst(SearchRank.Order([file, Ai, Ask], "notes from the meeting", none), "notes from the meeting")[0]);
+    }
+
+    [Fact]
+    public void TheWhyLineLeadsTheRowsWithoutGroupHeadings()
+    {
+        var rows = new[] { new FileHit(@"D:\a.pdf", false).Item(), new FileHit(@"D:\b", true).Item() };
+
+        var lines = SearchLayout.Lines(rows, "AI · Two files.");
+
+        Assert.Equal(["AI · Two files.", null, null], lines.Select(l => l.Heading));
+        Assert.Equal([-1, 0, 1], lines.Select(l => l.Row));
+        Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight), lines[^1].Top + lines[^1].Height);
+        Assert.Empty(SearchLayout.Lines([], "AI · nothing"));
+        Assert.Equal("AI", SearchLayout.KindLabel(SearchKind.AiSearch));
+    }
+}
