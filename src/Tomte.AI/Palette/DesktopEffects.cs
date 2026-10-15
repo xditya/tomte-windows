@@ -39,19 +39,33 @@ public static unsafe class DesktopEffects
         if (VoiceChoices.Refusal(window, open, (nint)PInvoke.GetForegroundWindow().Value, elevated) is { } refused)
             return refused;
 
-        var keys = new List<INPUT>(2 * text.Length + 2);
-        // Alt+I picked Insert and Alt is still held: let it go first, or the words arrive as Alt chords. The input thread
-        // tapped a key assigned to nothing as the hotkey came, so the release opens no menu.
-        foreach (var alt in (ReadOnlySpan<VIRTUAL_KEY>)[VIRTUAL_KEY.VK_LMENU, VIRTUAL_KEY.VK_RMENU])
-        {
-            if ((PInvoke.GetAsyncKeyState((int)alt) & 0x8000) != 0)
-                keys.Add(Key(alt, true));
-        }
-
-        foreach (char c in text)
-            keys.AddRange([Key(0, false, c), Key(0, true, c)]);
+        var keys = Keys(text, Held(VIRTUAL_KEY.VK_LMENU), Held(VIRTUAL_KEY.VK_RMENU));
         return PInvoke.SendInput(CollectionsMarshal.AsSpan(keys), sizeof(INPUT)) == keys.Count ? null : "Windows did not take the keys.";
     }
+
+    /// <summary>
+    /// The key events that type <paramref name="text"/>: first the release of each Alt still held from Alt+I, or the words
+    /// would arrive as Alt chords (the input thread tapped a key assigned to nothing as the hotkey came, so the release
+    /// opens no menu); then each UTF-16 unit as a Unicode key, down and up. A control character (a line break, a tab)
+    /// types a space, so no word ever acts as Enter or Tab.
+    /// </summary>
+    internal static List<INPUT> Keys(string text, bool leftAlt, bool rightAlt)
+    {
+        var keys = new List<INPUT>(2 * text.Length + 2);
+        if (leftAlt)
+            keys.Add(Key(VIRTUAL_KEY.VK_LMENU, true));
+        if (rightAlt)
+            keys.Add(Key(VIRTUAL_KEY.VK_RMENU, true));
+        foreach (char c in text)
+        {
+            char typed = char.IsControl(c) ? ' ' : c;
+            keys.AddRange([Key(0, false, typed), Key(0, true, typed)]);
+        }
+
+        return keys;
+    }
+
+    private static bool Held(VIRTUAL_KEY vk) => (PInvoke.GetAsyncKeyState((int)vk) & 0x8000) != 0;
 
     private static INPUT Key(VIRTUAL_KEY vk, bool up, char unicode = default) => new()
     {

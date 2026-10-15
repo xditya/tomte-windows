@@ -600,6 +600,27 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
+    public void InsertLetsAltGoFirstTypesControlCharactersAsSpacesAndBothHalvesOfAnEmoji()
+    {
+        const uint Up = 0x2, Unicode = 0x4;
+        const ushort LeftAlt = 0xA4;
+        var keys = DesktopEffects.Keys("a\n😀", leftAlt: true, rightAlt: false)
+            .Select(k => ((ushort)k.Anonymous.ki.wVk, (int)k.Anonymous.ki.wScan, (uint)k.Anonymous.ki.dwFlags));
+
+        (ushort, int, uint)[] expected =
+        [
+            (LeftAlt, 0, Up),
+            (0, 'a', Unicode), (0, 'a', Unicode | Up),
+            // The line break types a space: never Enter in the app.
+            (0, ' ', Unicode), (0, ' ', Unicode | Up),
+            (0, 0xD83D, Unicode), (0, 0xD83D, Unicode | Up),
+            (0, 0xDE00, Unicode), (0, 0xDE00, Unicode | Up),
+        ];
+        Assert.Equal(expected, keys);
+        Assert.All(DesktopEffects.Keys("\t\0", leftAlt: false, rightAlt: false), k => Assert.Equal(' ', k.Anonymous.ki.wScan));
+    }
+
+    [Fact]
     public async Task NothingReachesAProviderBeforeAskIsPicked()
     {
         int starts = 0;
