@@ -166,3 +166,31 @@ public sealed class SearchTests
     public void KeysIgnoreCaseAsWindowsPathsDo() =>
         Assert.Equal(File("A.TXT").Key, new SearchItem(SearchKind.File, "a.txt", @"d:\work\a.txt").Key);
 }
+
+public sealed class SearchHistoryTests : IDisposable
+{
+    private readonly string dir = Path.Combine(Path.GetTempPath(), "tomte-tests-" + Guid.NewGuid().ToString("N"));
+
+    public void Dispose() => Directory.Delete(dir, recursive: true);
+
+    [Fact]
+    public void OpeningARowCountsItAndKeepsTheNewestRows()
+    {
+        var history = new SearchHistory(new Tomte.Core.Storage.TomteDb(Path.Combine(dir, "tomte.db")));
+        var code = new SearchItem(SearchKind.App, "Visual Studio Code", @"shell:AppsFolder\Code");
+        var start = new DateTimeOffset(2026, 10, 15, 9, 0, 0, TimeSpan.Zero);
+        history.Record(code, start);
+        history.Record(code with { Name = "Code" }, start.AddMinutes(1));
+        Assert.Equal(new Launches(2, start.AddMinutes(1).UtcTicks), history.Load().Launches[code.Key]);
+        Assert.Equal("Code", Assert.Single(history.Load().Items).Name);
+
+        for (int i = 0; i < SearchHistory.MaxRows; i++)
+        {
+            history.Record(new SearchItem(SearchKind.File, $"f{i}.txt", $@"D:\f{i}.txt"), start.AddMinutes(2 + i));
+        }
+
+        var (items, launches) = history.Load();
+        Assert.Equal(SearchHistory.MaxRows, items.Count);
+        Assert.False(launches.ContainsKey(code.Key));
+    }
+}
