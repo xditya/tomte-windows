@@ -11,9 +11,9 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// The History tab: the AI conversations and drop zone results kept on this PC, newest first, or the off or empty state.
-/// A click on a row (or Enter or Right on it) opens its conversation under it (Left or Esc closes it), read as Markdown, with Continue, which opens the
-/// AI box with the conversation loaded and nothing sent, and Copy answer, which puts the last answer on the clipboard.
-/// The wheel scrolls the list. Rows come from the history's worker, so <see cref="Shown"/> returns at once and the rows
+/// A click on a row (or Enter or Right on it) opens its conversation under it (Left or Esc closes it), read as Markdown,
+/// with Continue, which opens the AI box with the conversation loaded and nothing sent, and Copy answer (Ctrl+C), which
+/// puts the last answer on the clipboard. The wheel scrolls the list. Rows come from the history's worker, so <see cref="Shown"/> returns at once and the rows
 /// are drawn when they land; only the rows in and near the list's view have visuals. Composition visuals in DIPs laid
 /// out by <see cref="HistoryPanelLayout"/>, built when the tab shows and released when it hides.
 /// </summary>
