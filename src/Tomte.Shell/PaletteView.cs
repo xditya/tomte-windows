@@ -1000,6 +1000,9 @@ internal sealed partial class PaletteHost
     /// <summary>The prompt of the palette <see cref="Type"/> last opened takes the keys again, while that palette is still up. False when it has none or Windows refused.</summary>
     public bool TakeKeys() => typed?.TakeKeys() == true;
 
+    /// <summary>Words in the prompt of the palette <see cref="Type"/> last opened, with the caret after them; nothing is sent.</summary>
+    public void Fill(string words) => typed?.Fill(words);
+
     /// <summary>
     /// The palette hotkey or a click on the tomte, once the triggers have opened the Palette state: the prompt box takes
     /// the keys at once, while that press is the last input, and Enter sends. A tool that asks shows its question with

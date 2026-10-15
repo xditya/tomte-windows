@@ -117,6 +117,12 @@ internal sealed unsafe class EditorView : IDisposable
     /// <summary>Esc while this box has the keys: true when something on the island used it (the palette's open question), so the island stays.</summary>
     public Func<bool>? Escape { get; set; }
 
+    /// <summary>
+    /// The box keeps every key, Tab, Ctrl+Tab and Ctrl+1 to Ctrl+6 included, for <see cref="BeforeKey"/> to take: the
+    /// search box, whose list lives under it and which has no panel tabs to switch to.
+    /// </summary>
+    public bool KeepsKeys { get; set; }
+
     /// <summary>Runs first in each paint; what it changes in the services is drawn by that same paint (the note's styling).</summary>
     public Action? BeforePaint { get; set; }
 

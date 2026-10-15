@@ -164,6 +164,57 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>After the scratchpad hotkey opened its tab: the note takes the keys.</summary>
     public Action? ScratchpadOpened { get; set; }
 
+    /// <summary>After the search hotkey opened the Palette state as the search box: its content, and its box takes the keys.</summary>
+    public Action? SearchOpened { get; set; }
+
+    /// <summary>The Palette state showing now is the search box, not the AI box. Anything else that takes the state ends it.</summary>
+    internal bool Searching { get; private set; }
+
+    /// <summary>The search box's size: the palette's width and its tallest, each capped by the monitor as every state is.</summary>
+    internal (double W, double H) SearchSize => PanelSize.Fit((PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight), island.MonitorSize);
+
+    /// <summary>
+    /// The search box's Ask row: the search goes and the AI box opens in its place, as the palette hotkey opens it, for the
+    /// shell to fill with the words. The island was up, so the pause has had its say. False when it did not open.
+    /// </summary>
+    internal bool AskFromSearch()
+    {
+        LeaveSearch();
+        return Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), ignorePause: true);
+    }
+
+    /// <summary>
+    /// The search hotkey (and the --debug-search driver): the Palette state as the search box. Over the AI box or a drop
+    /// zone's result, which share the state, the search takes their place. False when it did not open.
+    /// </summary>
+    internal bool OpenSearch()
+    {
+        if (machine.State == IslandState.Palette)
+        {
+            HideForNext();
+        }
+
+        // At the palette's smallest; the search grows to what it shows.
+        if (!Reveal(RevealTrigger.Hotkey, IslandState.Palette, (SearchSize.W, PanelSize.PaletteMinHeight)))
+        {
+            return false;
+        }
+
+        Searching = true;
+        SearchOpened?.Invoke();
+        return true;
+    }
+
+    // The search box and the AI box share the Palette state, and a view of one stays through Palette to Palette: the
+    // search goes first, so the other opens in its place instead of on top of it.
+    private void LeaveSearch()
+    {
+        if (Searching)
+        {
+            HideForNext();
+        }
+    }
+
     /// <summary>After the summon hotkey opened Panels: the island takes the keys, so Tab and the arrows reach its targets.</summary>
     public Action? SummonOpened { get; set; }
 
@@ -269,7 +320,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// The tray's "Ask AI", after the menu has closed: the Palette state at its smallest, as the palette hotkey opens it,
     /// for the shell to fill. Like "Open island" it ignores the pause, not the suppression. False when it did not open.
     /// </summary>
-    public bool Ask() => Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), ignorePause: true);
+    public bool Ask()
+    {
+        LeaveSearch();
+        return Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), ignorePause: true);
+    }
 
     /// <summary>The window the user last worked in, if it is still up, else 0 (<see cref="DesktopWatch.LastApp"/>).</summary>
     public nint LastApp => watch.LastApp;
@@ -865,8 +920,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         switch (action)
         {
             case HotkeyAction.Summon when machine.State == IslandState.Panels:
-            case HotkeyAction.Palette when machine.State == IslandState.Palette:
+            case HotkeyAction.Palette when machine.State == IslandState.Palette && !Searching:
+            case HotkeyAction.Search when Searching:
                 Hide();
+                break;
+            case HotkeyAction.Search:
+                OpenSearch();
                 break;
             case HotkeyAction.Summon:
                 if (Reveal(RevealTrigger.Hotkey, IslandState.Panels))
@@ -886,6 +945,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
                 break;
             case HotkeyAction.Palette:
+                LeaveSearch();
                 if (Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight)))
                 {
                     PaletteOpened?.Invoke();
@@ -1289,10 +1349,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         EndArrival();
         var from = machine.State;
-        // A palette growing keeps where it came from; any other change forgets it, and a panel action sets it again.
+        // A palette growing keeps where it came from; any other change forgets it, and a panel action sets it again. The
+        // same for search, which the search hotkey sets again after this.
         if ((from, state) != (IslandState.Palette, IslandState.Palette))
         {
-            (FromPanels, AskedByKey) = (false, false);
+            (FromPanels, AskedByKey, Searching) = (false, false, false);
         }
         if (from == IslandState.Capture)
         {

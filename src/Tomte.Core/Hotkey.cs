@@ -13,6 +13,7 @@ public enum HotkeyAction
     CircleToAsk,
     Rambler,
     Scratchpad,
+    Search,
 }
 
 /// <summary>Same bit values as RegisterHotKey's MOD_ALT, MOD_CONTROL, MOD_SHIFT and MOD_WIN.</summary>
@@ -75,6 +76,7 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
         HotkeyAction.CircleToAsk => "Circle to ask",
         HotkeyAction.Rambler => "Rambler (hold)",
         HotkeyAction.Scratchpad => "Scratchpad",
+        HotkeyAction.Search => "Search",
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 

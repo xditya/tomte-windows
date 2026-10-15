@@ -37,6 +37,9 @@ internal static partial class Program
     // The one scratchpad note: the rambler, the palette and the Scratchpad panel all use this instance.
     private static ScratchpadNote Scratchpad = null!;
 
+    // The search box's host, made with the panels.
+    private static SearchHost? search;
+
     /// <summary>The AI history beside the settings file in use: the palette, voice, jobs and the History tab share it.</summary>
     internal static AiHistory? History { get; private set; }
 
@@ -210,6 +213,13 @@ internal static partial class Program
             _ = PaletteRun(island, triggers, store, log!, palettePrompt);
         }
 
+        // A named Everything instance (one indexing a scratch folder) for a test run.
+        Tomte.Core.Search.Everything.Instance = Arg(args, "--debug-everything");
+        if (Arg(args, "--debug-search") is { } searched && logLine is not null)
+        {
+            _ = DebugSearch(triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
+        }
+
         // After the lasso the palette opens with the region on, for the user to type the question; the driver asks its own.
         triggers.Captured = captureQuestion is null
             ? (overlay, crop, foreground) => CaptureToPalette(island, triggers, store, logLine, overlay, crop, foreground)
@@ -376,6 +386,12 @@ internal static partial class Program
         island.Interaction.Text = text;
         island.Interaction.Pressing = triggers.Pressing;
         var typing = StartTyping(island, triggers, store, text, log);
+        // Search shares tomte.db for what was opened from it, and the tiles; nothing of it loads before its first open.
+        search = new SearchHost(island, triggers, text, typing, store, db, shortcuts, log)
+        {
+            Ask = words => AskFromSearch(island, triggers, store, log, words),
+        };
+        triggers.SearchOpened = search.Open;
         var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels, Ask = triggers.AskClicked };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.

@@ -40,6 +40,9 @@ public sealed record TomteSettings
     /// <summary>The ten-second "push your cursor up here" pill has been shown; replaying the tour clears it.</summary>
     public bool FirstRunHintShown { get; init; }
 
+    /// <summary>"Not now" on the search's Get Everything card: the "Search every drive" row is not offered again. Settings keeps its button.</summary>
+    public bool EverythingOfferDismissed { get; init; }
+
     /// <summary>
     /// "Attach to the top edge": draw the island as the notch joined to the screen edge instead of the floating
     /// pill. Read from the file only; the settings window does not show it yet.
@@ -108,6 +111,8 @@ public sealed record HotkeySettings
 
     public string Scratchpad { get; init; } = "Win+Alt+N";
 
+    public string Search { get; init; } = "Win+Alt+Space";
+
     public string this[HotkeyAction action] => action switch
     {
         HotkeyAction.Summon => Summon,
@@ -115,6 +120,7 @@ public sealed record HotkeySettings
         HotkeyAction.CircleToAsk => CircleToAsk,
         HotkeyAction.Rambler => Rambler,
         HotkeyAction.Scratchpad => Scratchpad,
+        HotkeyAction.Search => Search,
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
@@ -125,6 +131,7 @@ public sealed record HotkeySettings
         HotkeyAction.CircleToAsk => this with { CircleToAsk = chord },
         HotkeyAction.Rambler => this with { Rambler = chord },
         HotkeyAction.Scratchpad => this with { Scratchpad = chord },
+        HotkeyAction.Search => this with { Search = chord },
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 }

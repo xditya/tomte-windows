@@ -1,0 +1,150 @@
+using System.Drawing;
+using System.Numerics;
+using Tomte.Core;
+using Tomte.Core.Search;
+using Tomte.Core.Shortcuts;
+using Tomte.Core.Text;
+using Tomte.Shell;
+
+namespace TextCaptures;
+
+/// <summary>The search box, from its own layout: empty, what was opened before, results with the first app selected, a selection scrolled to, and the Get Everything card.</summary>
+internal static partial class Program
+{
+    private static readonly string WinDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+
+    // Icons from real places on any Windows PC, so the captures show what the shell hands the rows.
+    private static readonly SearchItem[] CodeRows =
+    [
+        new(SearchKind.App, "Code Writer", "app:1", "", Path.Combine(WinDir, "notepad.exe")),
+        new(SearchKind.App, "Codec Settings", "app:2", "", Path.Combine(WinDir, "System32", "control.exe")),
+        new(SearchKind.App, "Command Prompt", "app:3", "", Path.Combine(WinDir, "System32", "cmd.exe")),
+        new(SearchKind.Shortcut, "Code projects", "4", @"D:\Projects\code", Path.Combine(WinDir, "Web")),
+        new(SearchKind.File, "code review notes.md", @"D:\Work\code review notes.md", @"D:\Work", Path.Combine(WinDir, "win.ini")),
+        new(SearchKind.Folder, "code", @"D:\Projects\code", @"D:\Projects", Path.Combine(WinDir, "Web")),
+        new(SearchKind.File, "Codes and passwords for the very long named family accounts spreadsheet.xlsx", @"D:\Home\Codes.xlsx", @"D:\Home\Paperwork\Accounts\Family\2026\Shared with everyone in the house", Path.Combine(WinDir, "win.ini")),
+        new(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"),
+        new(SearchKind.Ask, "Ask Tomte", "code", "\"code\""),
+    ];
+
+    private static readonly SearchItem[] OpenedRows =
+    [
+        new(SearchKind.App, "Notepad", "app:n", "", Path.Combine(WinDir, "notepad.exe")),
+        new(SearchKind.App, "Command Prompt", "app:3", "", Path.Combine(WinDir, "System32", "cmd.exe")),
+        new(SearchKind.Folder, "Web", Path.Combine(WinDir, "Web"), WinDir, Path.Combine(WinDir, "Web")),
+    ];
+
+    private static readonly SearchCard GetEverything = new(
+        "Get Everything for whole-disk search",
+        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in. Not now hides this row; Settings, Hotkeys keeps a Get Everything button.",
+        [("notnow", "Not now"), ("install", "Install")]);
+
+    private static List<Scene> SearchScenes() =>
+    [
+        SearchScene("search-empty", "", [], -1, SearchLayout.NothingYet, "Files: Windows index"),
+        SearchScene("search-opened-before", "", OpenedRows, 0, SearchLayout.NothingYet, "Files: Everything"),
+        SearchScene("search-results", "code", CodeRows, 0, SearchLayout.NoResults, "Files: Windows index"),
+        SearchScene("search-results-last", "code", CodeRows, CodeRows.Length - 1, SearchLayout.NoResults, "Files: Windows index"),
+        SearchScene("search-nothing", "qqzx", [], -1, SearchLayout.NoResults, "Files: Everything"),
+        // The card shows over a box that grew for the results first; it never shrinks while open.
+        SearchScene("search-get-everything", "code", CodeRows, 7, SearchLayout.NoResults, "", GetEverything, grown: CodeRows),
+        // The tallest at 150% on a 1080p screen: half of 720 DIPs.
+        SearchScene("search-results-short", "code", CodeRows, 6, SearchLayout.NoResults, "Files: Windows index", tallest: SearchLayout.HeightFor(720)),
+    ];
+
+    // A scene at the height the view grows to for these rows (or for <paramref name="grown"/>, shown earlier).
+    private static Scene SearchScene(string name, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, IReadOnlyList<SearchItem>? grown = null, float tallest = (float)PanelSize.PaletteMaxHeight)
+    {
+        float height = Math.Max(SearchLayout.Fit((float)PanelSize.PaletteWidth, true, rows, card, tallest), SearchLayout.Fit((float)PanelSize.PaletteWidth, true, grown ?? [], null, tallest));
+        return new(name, IslandGeometry.Panel(PanelSize.PaletteWidth, height), c => Search(c, typed, rows, select, hint, source, card, height));
+    }
+
+    // The search box as SearchView builds it: the box with the typed text or the placeholder, the footer, then the list
+    // with a heading per group, the selected row filled and outlined and kept in view, or the card in the list's place.
+    private static void Search(Canvas c, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, float height = (float)PanelSize.PaletteMaxHeight)
+    {
+        var origin = new Vector2(-(float)PanelSize.PaletteWidth / 2, 0);
+        var layout = new SearchLayout((float)PanelSize.PaletteWidth, mascot: true, height);
+        c.Pill();
+        c.Mascot();
+        c.RoundRect(Offset(layout.Box, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
+        c.Stroke(Offset(layout.Box, origin), PaletteLayout.PromptCorner, PaletteLayout.PromptFocusLine, 1);
+        var box = layout.Editor;
+        if (typed.Length == 0)
+        {
+            c.Text(SearchLayout.Placeholder, PaletteLayout.Placeholder, box, origin);
+        }
+        else
+        {
+            var editor = Typing.Captured(typed, PaletteLayout.PromptSize, box, c.Scale, typed.Length);
+            editor.Resize(PixelGrid.Cover(box.Width, c.Scale), PixelGrid.Cover(box.Height, c.Scale), EditorScale.Zoom(c.Scale, TextServices.SystemDpi));
+            c.Editor(editor, box, origin);
+            editor.Dispose();
+        }
+
+        var (left, right) = layout.Footer(card is not null ? "" : typed.Length > 0 ? SearchLayout.Keys : SearchLayout.KeysEmpty, card is null ? source : "");
+        c.Text(left, origin);
+        c.Text(right, origin);
+        var band = layout.Band;
+        if (card is not null)
+        {
+            var (at, title, body, bodyAt, buttons) = layout.Card(card);
+            c.RoundRect(Offset(at, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
+            c.Stroke(Offset(at, origin), PaletteLayout.PromptCorner, PaletteLayout.AskOutline, 1);
+            c.Text(title, origin);
+            c.Text(body, new Vector2(bodyAt.X, bodyAt.Y), origin);
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                c.RoundRect(Offset(buttons[i].Box, origin), PaletteLayout.ButtonCorner, i == card.Focus ? PaletteLayout.RunFill : PaletteLayout.ButtonFill);
+                c.Text(buttons[i].Label, origin);
+            }
+
+            return;
+        }
+
+        if (rows.Count == 0)
+        {
+            c.Text(new TextRun(hint, TextStyle.Secondary, band.Width - (2 * SearchLayout.RowPadX), 3), new Vector2(band.X + SearchLayout.RowPadX, band.Y + 8), origin);
+            return;
+        }
+
+        var lines = SearchLayout.Lines(rows);
+        var chosen = lines.First(l => l.Heading is null && l.Row == Math.Max(0, select));
+        float content = lines[^1].Top + lines[^1].Height;
+        float scroll = layout.ScrollTo(0, chosen.Top, chosen.Top + chosen.Height, content);
+        var list = origin + new Vector2(band.X, band.Y - scroll);
+        int pixels = (int)Math.Round(SearchLayout.IconSize * c.Scale);
+        foreach (var line in lines)
+        {
+            // Shapes are not clipped on the canvas, so only the lines the band shows whole are drawn.
+            if (line.Top < scroll || line.Top + line.Height > scroll + band.Height)
+            {
+                continue;
+            }
+
+            if (line.Heading is { } heading)
+            {
+                c.Text(heading, SearchLayout.Heading, new RectangleF(SearchLayout.RowPadX, line.Top, band.Width - (2 * SearchLayout.RowPadX), line.Height), list);
+                continue;
+            }
+
+            var item = rows[line.Row];
+            if (line.Row == select)
+            {
+                var fill = Offset(new RectangleF(0.5f, line.Top + 0.5f, band.Width - 1, SearchLayout.RowHeight - 1), list);
+                c.RoundRect(fill, SearchLayout.RowCorner, SearchLayout.SelectedFill);
+                c.Stroke(fill, SearchLayout.RowCorner, SearchLayout.SelectedLine, 1);
+            }
+
+            var (_, icon, name, detail, kind) = layout.Row(line.Top, item);
+            if (item.Icon is { } from && ShellIcon.For(from, pixels) is { } image)
+            {
+                c.Picture(Offset(icon, list), 0, image.Pixels, image.Width, image.Height);
+            }
+
+            c.Text(name, list);
+            c.Text(detail, list);
+            c.Text(kind, list);
+        }
+    }
+}

@@ -8,6 +8,8 @@
     <PackageReference Include="Microsoft.Windows.CsWin32" PrivateAssets="all" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="System.Management" />
+    <!-- File search through the Windows Search index's OLE DB provider; loaded on the first search without Everything. -->
+    <PackageReference Include="System.Data.OleDb" />
   </ItemGroup>
   <ItemGroup>
     <!-- The dark mode tests replace the registry and the broadcast with a recorder. -->

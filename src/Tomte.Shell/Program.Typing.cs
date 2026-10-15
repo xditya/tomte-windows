@@ -61,7 +61,7 @@ internal static partial class Program
         // An exception leaving an async void ends the process, so the whole of it is guarded.
         try
         {
-            if (triggers.Machine.State == IslandState.Palette)
+            if (triggers.Machine.State == IslandState.Palette && !triggers.Searching)
             {
                 hotkeyPalette?.TakeKeys();
                 return;
@@ -163,7 +163,7 @@ internal static partial class Program
     /// read then.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, ContextChip? lasso = null, nint? front = null)
+    private static async Task OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, ContextChip? lasso = null, nint? front = null, string? words = null)
     {
         // Read before the first wait: Continue sets it only for the open it starts.
         var earlier = continuing;
@@ -220,6 +220,33 @@ internal static partial class Program
         }
 
         hotkeyPalette.Type(session, back);
+        if (words is not null)
+        {
+            // From the search box's Ask row: the words wait in the prompt for Enter, with what the chips add.
+            hotkeyPalette.Fill(words);
+        }
+    }
+
+    /// <summary>
+    /// The search box's Ask row: the AI box in the search's place with the typed words in its prompt. The island keeps the
+    /// keys through the AI box's short wait, as for any open from the keyboard, so nothing typed meanwhile reaches the app
+    /// behind.
+    /// </summary>
+    private static async void AskFromSearch(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, string words)
+    {
+        // An exception leaving an async void ends the process, so the whole of it is guarded.
+        try
+        {
+            if (triggers.AskFromSearch())
+            {
+                focus?.TakeKeys();
+                await OpenPalette(island, triggers, store, log, words: words);
+            }
+        }
+        catch (Exception e)
+        {
+            NotOpened(triggers, log, e);
+        }
     }
 
     /// <summary>
