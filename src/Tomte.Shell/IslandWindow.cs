@@ -382,6 +382,29 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>Debug aid: crossfade even when Windows animation effects are on.</summary>
     public bool ForceReduceMotion { get; init; }
 
+    /// <summary>Windows animation effects are off, or the debug aid says so: no morphs, crossfades only.</summary>
+    public bool ReduceMotion => ForceReduceMotion || !uiSettings.AnimationsEnabled;
+
+    /// <summary>A driven run cloaked the island (<see cref="Cloak"/>); nothing of Tomte may reach the screen.</summary>
+    public bool Cloaked { get; private set; }
+
+    /// <summary>
+    /// The launch arrival flies a tomte of its own into the pill: the island's stays undrawn while it does, and shows
+    /// again where that one lands.
+    /// </summary>
+    public bool MascotAway
+    {
+        set => mascotVisual.Visual.Opacity = value ? 0 : 1;
+    }
+
+    /// <summary>Where the tomte rests in the Compact pill at the island's place: its box's top-left in screen pixels.</summary>
+    public System.Drawing.PointF MascotLanding()
+    {
+        Rescale(MonitorScale());
+        var shape = attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact;
+        return Arrival.Landing(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth, attached), attached);
+    }
+
     /// <summary>
     /// What the pointer is tracked against for the geometry the current morph is heading for, in physical pixels:
     /// the outline's box and, under the floating pill, the strip up to the screen edge. Not the shadow's room.
@@ -595,6 +618,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     {
         BOOL on = true;
         PInvoke.DwmSetWindowAttribute(Hwnd, DWMWINDOWATTRIBUTE.DWMWA_CLOAK, &on, (uint)sizeof(BOOL)).ThrowOnFailure();
+        Cloaked = true;
     }
 
     public void Dispose()

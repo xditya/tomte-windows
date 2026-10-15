@@ -44,6 +44,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, pointerOn, peekWanted, eventShowing, dragEntered, firstRunShowing;
+    private ArrivalFlight? arrival;
     private Task saving = Task.CompletedTask;
 
     public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
@@ -100,18 +101,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         log?.Invoke($"input: mouse hook {(InputThread.HookInstalled ? "on" : "off")}, ui thread {Environment.CurrentManagedThreadId}, all monitors={settings.AllMonitors} (primary only until the island window can move)");
 
         SchedulePeek();
-        if (!settings.FirstRunHintShown)
-        {
-            firstRunShowing = Reveal(RevealTrigger.Peek, IslandState.Compact);
-            if (firstRunShowing)
-            {
-                PInvoke.SetTimer(island.Hwnd, FirstRunTimer, FirstRunHintMs, null);
-                settings = settings with { FirstRunHintShown = true };
-                store.Save(settings);
-                // The hint's pill is settled only now; it carries no ring.
-                UpdateRing();
-            }
-        }
+        // Quiet hours and presenting are known only once the notification state has been read.
+        watch.ReadNotificationState(Start);
     }
 
     /// <summary>Chords another app holds. Windows says nothing, so the island and settings must.</summary>
@@ -957,6 +948,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
             overlay?.Dispose();
         }
 
+        // A launch flight goes too, also before its pill is up.
+        if (arrival is { } flight && (s.Fullscreen || s.Secure))
+        {
+            arrival = null;
+            flight.End();
+        }
+
         if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
         {
             // An event pill taken down by the lock screen was never seen: after a sleep the lock can land a moment
@@ -1028,7 +1026,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    private bool EventsWait() =>
+    // While the launch flight is in the air the island is still Hidden, but an event pill would cut it short.
+    private bool EventsWait() => arrival is not null ||
         TriggerQueue.Waits(pause.IsPaused(DateTimeOffset.Now), Suppression.Allows(RevealTrigger.Event, watch.State, settings.AppRules), machine.State, activity);
 
     /// <summary>
@@ -1115,7 +1114,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         peekWanted = under is null;
         if (peekWanted)
         {
-            if (machine.State == IslandState.Hidden && Reveal(RevealTrigger.Peek, IslandState.Compact, peek: tomte))
+            // Not during the launch flight: peek shows once the flight's pill has retracted.
+            if (machine.State == IslandState.Hidden && arrival is null && Reveal(RevealTrigger.Peek, IslandState.Compact, peek: tomte))
             {
                 activity |= IslandActivity.Peek;
                 // Peek is settled only now, after Go; the peek pill carries no ring.
@@ -1126,6 +1126,95 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             Hide();
         }
+    }
+
+    /// <summary>
+    /// At launch: the tomte flies in from the middle of the screen and lands in the pill, unless Windows animation effects
+    /// are off, the tomte is off or the desktop would hold an event back. Without the flight the island starts hidden, or
+    /// with the first-run hint on a first start. Something that opened the island first keeps it; the hint then waits
+    /// for the next start.
+    /// </summary>
+    private void Start()
+    {
+        if (machine.State != IslandState.Hidden)
+        {
+            return;
+        }
+
+        bool animations = !island.ReduceMotion, tomte = island.Mascot.Enabled && !island.Cloaked;
+        if (!Arrival.Plays(animations, tomte, watch.State, settings.AppRules))
+        {
+            log?.Invoke($"arrival: skipped (animations={animations} tomte={tomte} {watch.State})");
+        }
+        else
+        {
+            try
+            {
+                arrival = new ArrivalFlight(island, ArrivalPill, ArrivalEnded, log);
+                return;
+            }
+            catch (ExternalException e)
+            {
+                log?.Invoke($"arrival: not shown ({e.Message})");
+            }
+        }
+
+        if (!settings.FirstRunHintShown)
+        {
+            FirstRunHint();
+        }
+    }
+
+    /// <summary>The flying tomte nears the edge: the pill grows out of it to take the tomte in, as the first-run hint on a first start.</summary>
+    private bool ArrivalPill()
+    {
+        var flight = arrival;
+        // This morph is the flight's own, which must not end it.
+        arrival = null;
+        bool shown = machine.State == IslandState.Hidden && (settings.FirstRunHintShown ? Reveal(RevealTrigger.Event, IslandState.Compact) : FirstRunHint());
+        arrival = shown ? flight : null;
+        if (!shown)
+        {
+            // Events held back for the flight.
+            ReleaseEvents();
+        }
+
+        return shown;
+    }
+
+    /// <summary>
+    /// The tomte rests in the pill. It retracts as a pushed pill does once the pointer is away, and the hint keeps its
+    /// ten seconds. Events held back for the flight wait on for the pill as they would for any.
+    /// </summary>
+    private void ArrivalEnded()
+    {
+        arrival = null;
+        if (machine.State == IslandState.Compact && !firstRunShowing)
+        {
+            armed = true;
+            if (!pointerInside)
+            {
+                PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
+            }
+        }
+
+        ReleaseEvents();
+    }
+
+    /// <summary>The one-time hint: the pill says where to push for ten seconds. False when it could not show.</summary>
+    private bool FirstRunHint()
+    {
+        firstRunShowing = Reveal(RevealTrigger.Peek, IslandState.Compact);
+        if (firstRunShowing)
+        {
+            PInvoke.SetTimer(island.Hwnd, FirstRunTimer, FirstRunHintMs, null);
+            settings = settings with { FirstRunHintShown = true };
+            store.Save(settings);
+            // The hint's pill is settled only now; it carries no ring.
+            UpdateRing();
+        }
+
+        return firstRunShowing;
     }
 
     /// <summary>The pause, then the suppression check, then the morph. False when nothing was shown.</summary>
@@ -1179,6 +1268,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
     {
+        // Anything else that moves the island ends a launch flight still under way; the island's own tomte takes over.
+        if (arrival is { } flight)
+        {
+            arrival = null;
+            flight.End();
+        }
+
         var from = machine.State;
         // A palette growing keeps where it came from; any other change forgets it, and a panel action sets it again.
         if ((from, state) != (IslandState.Palette, IslandState.Palette))

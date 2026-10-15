@@ -307,3 +307,5 @@ WA_INACTIVE
 WM_LBUTTONDBLCLK
 GetSystemPowerStatus
 GetACP
+SetLayeredWindowAttributes
+UnregisterClass
