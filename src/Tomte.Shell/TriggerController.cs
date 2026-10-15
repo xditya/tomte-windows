@@ -292,8 +292,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    /// <summary>The palette showing now was opened from Panels (the Ask button, History's Continue), so it can go back there.</summary>
+    /// <summary>
+    /// The palette showing now was opened by a panel action (the Ask button, Ctrl+K, History's Continue), so it can go
+    /// back there. Not by a hotkey, the tray or anything else that opens it while Panels happen to show.
+    /// </summary>
     internal bool FromPanels { get; private set; }
+
+    /// <summary>That panel action was a key while the island had the keyboard: the AI box keeps the keyboard, prompt or not.</summary>
+    internal bool AskedByKey { get; private set; }
 
     /// <summary>The AI box opened from Panels goes back to the tab it was opened from, as that tab was left.</summary>
     internal void Back()
@@ -310,9 +316,19 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         if (OpensPalette())
         {
-            Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
-            PaletteOpened?.Invoke();
+            PaletteFromIsland();
         }
+    }
+
+    // The AI box from the open island (the pill's tomte, a panel action): one from a panel can go back there, and keeps
+    // the keyboard when a key asked. Read before the morph, whose hop through Hidden lets the keys go.
+    private void PaletteFromIsland()
+    {
+        bool panels = machine.State == IslandState.Panels;
+        bool keys = panels && island.Interaction.UsingKeys && activity.HasFlag(IslandActivity.Typing);
+        Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+        (FromPanels, AskedByKey) = (panels, keys);
+        PaletteOpened?.Invoke();
     }
 
     /// <summary>The current panel changed while Panels is open (a tab switch): Panels re-enters itself and the shape morphs to the new size.</summary>
@@ -494,8 +510,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             if (OpensPalette())
             {
                 // The island is up and was clicked: the pause and the suppression had their say when it showed.
-                Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
-                PaletteOpened?.Invoke();
+                PaletteFromIsland();
             }
         });
     }
@@ -1146,8 +1161,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
     {
         var from = machine.State;
-        // A palette growing keeps where it came from; one opened anew came from Panels or not.
-        FromPanels = state == IslandState.Palette && (from == IslandState.Palette ? FromPanels : from == IslandState.Panels);
+        // A palette growing keeps where it came from; any other change forgets it, and a panel action sets it again.
+        if ((from, state) != (IslandState.Palette, IslandState.Palette))
+        {
+            (FromPanels, AskedByKey) = (false, false);
+        }
         if (from == IslandState.Capture)
         {
             // A hotkey, the tray or the pause took over while the overlay was up; Capture() resumes as a cancel.

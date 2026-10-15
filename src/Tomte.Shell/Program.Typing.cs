@@ -174,6 +174,12 @@ internal static partial class Program
         if ((debug ? DebugProvider() : Configured(store, log)) is not { } configured)
         {
             hotkeyPalette.Type(null, back);
+            // No prompt to take the keys: asked by a key, the island keeps them for the back arrow and Esc.
+            if (triggers.AskedByKey)
+            {
+                focus?.TakeKeys();
+            }
+
             return;
         }
 
