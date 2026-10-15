@@ -38,7 +38,8 @@ public static class CompactLayout
     /// <summary>
     /// What a click on a pill of Compact's depth does, in island space for <paramref name="shape"/>: the whole pill opens
     /// Panels and the tomte on it, which comes later and so sits on top, asks Tomte. On the peek badge, where the tomte
-    /// is all there is, the badge is the tomte. A drag on either moves the island.
+    /// is all there is, the badge is the tomte, and a rest on it opens Panels as on the pill; it has no tip, since a card
+    /// kept inside the badge has no room for a word. A drag on either moves the island.
     /// </summary>
     public static IReadOnlyList<Target> Targets(in IslandGeometry shape, bool mascot)
     {
@@ -46,7 +47,7 @@ public static class CompactLayout
         var ask = new Target(TomteId, pill, (float)shape.Corner, TargetKind.Button, Tip: AskTip, Draggable: true);
         var open = new Target(PillId, pill, (float)shape.Corner, TargetKind.Button, Draggable: true);
         return !mascot ? [open]
-            : shape.Width <= IslandGeometry.Peek.Width ? [ask]
+            : shape.Width <= IslandGeometry.Peek.Width ? [ask with { Tip = null }]
             : [open, ask with { Bounds = MascotArt.Box(shape), Corner = MascotArt.SizeDips / 2 }];
     }
 

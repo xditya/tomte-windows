@@ -37,8 +37,15 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     private int first, wheel;
     private IReadOnlyList<Target> targets = [];
 
-    // The item whose actions the band shows, and the one it changes to once the grace is over.
-    private long? shown, pending;
+    // The item whose actions the band shows, the one it changes to once the wait is over, and when that is due, in ms.
+    private long? shown, pending, due;
+
+    // Where the pointer came onto the tile or button it is on, in body DIPs: the point it heads for the band from. It
+    // follows the pointer only while no change waits, so a wobble during a sweep across a tile is not an aim at the band.
+    private Vector2? last;
+
+    // The target the host says is hovered now, or null over empty grid.
+    private string? hovering;
 
     private readonly RemoveQuestion question = new();
 
@@ -66,7 +73,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         (parts, band, body) = (null, null, null);
         selected.Clear();
         bandWait?.Stop();
-        shown = null;
+        (shown, due, last, hovering) = (null, null, null, null);
         Drop();
         first = wheel = 0;
         targets = [];
@@ -164,6 +171,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         if (Item(id) is { } item && shown != item.Id)
         {
             bandWait?.Stop();
+            due = null;
             Show(item.Id);
         }
 
@@ -193,35 +201,61 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         return true;
     }
 
+    public void PointerMoved(string id, Vector2 at)
+    {
+        Step(id, id, at, Environment.TickCount64);
+        if (due is null)
+        {
+            last = at;
+        }
+    }
+
     public void Hovered(string? id)
     {
-        var (change, owner) = ShelfLayout.Hover(shown, id);
-        switch (change)
+        string? was = hovering;
+        hovering = id;
+        PInvoke.GetCursorPos(out var cursor);
+        var at = PanelSpace.ToBody(island.ScreenToIsland(cursor.X, cursor.Y), size.X);
+        Step(was, id, at, Environment.TickCount64);
+        if (id is not null)
         {
-            case BandChange.Now:
-                bandWait?.Stop();
-                Show(owner);
-                Band();
-                break;
-            case BandChange.Later:
-                pending = owner;
-                if (bandWait is null)
-                {
-                    bandWait = island.Queue.CreateTimer();
-                    bandWait.Interval = TimeSpan.FromMilliseconds(ShelfLayout.BandGraceMs);
-                    bandWait.IsRepeating = false;
-                    bandWait.Tick += (_, _) =>
-                    {
-                        Show(pending);
-                        Band();
-                    };
-                }
+            last = at;
+        }
+    }
 
+    // The band's rules for the pointer, on `was` and now on `id` at `at` in body DIPs: the band follows the item they give,
+    // and the timer fires when what waits is due.
+    private void Step(string? was, string? id, Vector2 at, long now)
+    {
+        (var owner, pending, var next) = ShelfLayout.Step(shown, pending, due, now, was, id, last, at, size);
+        if (next != due)
+        {
+            due = next;
+            if (bandWait is null)
+            {
+                bandWait = island.Queue.CreateTimer();
+                bandWait.IsRepeating = false;
+                bandWait.Tick += (_, _) =>
+                {
+                    if (due is long when)
+                    {
+                        Step(hovering, hovering, default, when);
+                    }
+                };
+            }
+
+            bandWait.Stop();
+            if (next is long d)
+            {
+                bandWait.Interval = TimeSpan.FromMilliseconds(d - now);
                 bandWait.Start();
-                break;
-            default:
-                bandWait?.Stop();
-                break;
+            }
+        }
+
+        if (owner != shown)
+        {
+            Show(owner);
+            Band();
         }
     }
 

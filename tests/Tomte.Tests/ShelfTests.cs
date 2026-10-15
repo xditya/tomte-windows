@@ -966,6 +966,77 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal((BandChange.Later, 9L), ShelfLayout.Hover(4, "tile:9"));
         Assert.Equal((BandChange.Later, (long?)null), ShelfLayout.Hover(4, null));
         Assert.Equal((BandChange.Later, (long?)null), ShelfLayout.Hover(null, null));
+        // Empty grid on the way to the band waits longer, once; anything else waits the grace.
+        Assert.Equal(ShelfLayout.BandAimMs, ShelfLayout.Wait(aiming: true));
+        Assert.Equal(ShelfLayout.BandGraceMs, ShelfLayout.Wait(aiming: false));
+        Assert.True(ShelfLayout.BandAimMs > ShelfLayout.BandGraceMs);
+    }
+
+    [Fact]
+    public void ThePointerAimsAtTheBandInsideTheTriangleToItsRow()
+    {
+        var band = ShelfLayout.BandRow(Body);
+        Assert.Equal(new System.Drawing.RectangleF(14, 6, 532, 28), band);
+        // Left the first tile at (60, 90): up and to the right, toward Remove at the far end, is on the way.
+        var from = new System.Numerics.Vector2(60, 90);
+        Assert.True(ShelfLayout.Aiming(from, new(300, 60), band));
+        Assert.True(ShelfLayout.Aiming(from, new(40, 50), band));
+        Assert.True(ShelfLayout.Aiming(from, new(500, 20), band));
+        // Down, along the row of tiles, or past the band's row: not.
+        Assert.False(ShelfLayout.Aiming(from, new(60, 120), band));
+        Assert.False(ShelfLayout.Aiming(from, new(200, 90), band));
+        Assert.False(ShelfLayout.Aiming(from, new(300, 66), band));
+        Assert.False(ShelfLayout.Aiming(from, new(300, 2), band));
+        // Last seen on a button: going back down into the grid is leaving the band.
+        Assert.False(ShelfLayout.Aiming(new(300, 20), new(300, 50), band));
+    }
+
+    [Fact]
+    public void TheBandStaysOnItsTileWhileThePointerHeadsForItsButtons()
+    {
+        // The report's path: from the only tile straight up and right to Remove, across empty grid the whole way.
+        var diagonal = Band(450, (0, "tile:1", new(60, 90)), (20, "tile:1", new(130, 79)), (30, null, new(150, 76)), (450, "act:Remove", new(520, 20)));
+        Assert.Equal(1L, diagonal);
+        // Down off the tile instead: the band goes after the grace.
+        Assert.Null(Band(400, (0, "tile:1", new(60, 90)), (20, null, new(60, 130))));
+        // Aimed at the buttons, then stopped on empty grid: the band stays for the one aim's wait, then goes.
+        (long, string?, System.Numerics.Vector2)[] stopped = [(0, "tile:1", new(60, 90)), (20, "tile:1", new(130, 79)), (30, null, new(150, 76))];
+        Assert.Equal(1L, Band(30 + ShelfLayout.BandAimMs - 1, stopped));
+        Assert.Null(Band(30 + ShelfLayout.BandAimMs, stopped));
+        // Across another tile it stays while the pointer moves up toward the band, and follows once it has rested there.
+        (long, string?, System.Numerics.Vector2)[] across = [(0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (100, "tile:2", new(180, 85)), (200, "tile:2", new(200, 80)), (300, "tile:2", new(220, 75))];
+        Assert.Equal(1L, Band(550, across));
+        Assert.Equal(2L, Band(650, across));
+        // Moving sideways or down on that tile is no way to the band: it follows after the grace, so the button the
+        // pointer then goes up to acts on that tile.
+        Assert.Equal(2L, Band(400, (0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (100, "tile:2", new(190, 90)), (200, "tile:2", new(220, 90)), (300, "tile:2", new(250, 90)), (400, "act:CopyPath", new(250, 20))));
+        Assert.Equal(2L, Band(330, (0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 80)), (100, "tile:2", new(170, 90)), (200, "tile:2", new(180, 100)), (300, "tile:2", new(190, 110))));
+        // A slow sideways sweep wobbles a pixel up and down. Measured from where the pointer came onto the tile that is
+        // not a way to the band either, so the band follows after the grace.
+        Assert.Equal(2L, Band(400, (0, "tile:1", new(60, 90)), (30, "tile:2", new(160, 90)), (60, "tile:2", new(163, 89)), (90, "tile:2", new(166, 90)), (120, "tile:2", new(169, 89)), (150, "tile:2", new(172, 90)), (180, "tile:2", new(175, 89)), (210, "tile:2", new(178, 90)), (240, "tile:2", new(181, 89)), (270, "tile:2", new(184, 90)), (300, "tile:2", new(187, 89)), (330, "tile:2", new(190, 90)), (400, "act:CopyPath", new(190, 20))));
+    }
+
+    // The band's owner at time `at`, driven as the shelf panel drives it: each report steps the band as the move it is
+    // (a change of target or a move on one), and the panel's timer steps it with nothing new once the wait is due.
+    private static long? Band(long at, params (long At, string? Id, System.Numerics.Vector2 Where)[] reports)
+    {
+        long? shown = null, pending = null, due = null;
+        string? hovered = "";
+        System.Numerics.Vector2? last = null;
+        foreach (var (time, id, where) in reports)
+        {
+            (shown, pending, due) = ShelfLayout.Step(shown, pending, due, time, hovered, id, last, where, Body);
+            // As the panel does: the point the aim is measured from is where the pointer came onto its target, and it moves
+            // with the pointer only while no change waits.
+            if (id is not null && (id != hovered || due is null))
+            {
+                last = where;
+            }
+
+            hovered = id;
+        }
+
+        return ShelfLayout.Step(shown, pending, due, at, hovered, hovered, null, default, Body).Shown;
     }
 
     [Fact]

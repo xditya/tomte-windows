@@ -250,14 +250,15 @@ public readonly record struct PendingSeek(TimeSpan To, MediaTimeline From, DateT
 }
 
 /// <summary>
-/// Where things sit in the Media panel's body (380 x 98 DIPs under the tab strip): art on the left,
-/// then title, artist, the progress row and the transport row. The text slots are where the text is
-/// drawn, each run as wide as its slot; the clocks have room for "99:59:59" either side of the
-/// bar. The buttons (32 DIP square) and the seek area (24 DIP tall, as far past each end of the bar as
-/// the knob reaches) are what a press is tested against; they touch and do not overlap.
+/// Where things sit in the Media panel's body, <paramref name="width"/> DIPs wide and 98 tall under the tab strip (560
+/// unless the monitor caps the panel): art on the left, then title, artist and the progress row out to the right
+/// padding, and the transport row centred under the bar. The bar takes what the clocks leave, 360 at the full width.
+/// The text slots are where the text is drawn, each run as wide as its slot; the clocks have room for "99:59:59" either
+/// side of the bar. The buttons (32 DIP square) and the seek area (24 DIP tall, as far past each end of the bar as the
+/// knob reaches) are what a press is tested against; they touch and do not overlap.
 /// a clock of 100 hours or more is cut with an ellipsis; measure it and move the bar if one shows up.
 /// </summary>
-public static class MediaPanelLayout
+public sealed class MediaPanelLayout(float width)
 {
     public const float ArtCorner = 8;
 
@@ -280,16 +281,29 @@ public static class MediaPanelLayout
     /// <summary>The time a seek would go to, on its card above the bar.</summary>
     public static readonly TextStyle SeekStyle = ElapsedStyle with { Color = TextStyle.WhiteColor, Align = TextAlign.Center };
 
+    // The room kept free on the right, and the gap between a clock and the bar.
+    private const float RightPad = 14, ClockGap = 2;
+
     public static readonly RectangleF Art = new(14, 16, 66, 66);
-    public static readonly RectangleF Title = new(94, 6, 272, 19);
-    public static readonly RectangleF Artist = new(94, 25, 272, 16);
     public static readonly RectangleF Elapsed = new(94, 43, 44, 14);
-    public static readonly RectangleF Bar = new(140, 48, 180, 4);
-    public static readonly RectangleF Total = new(322, 43, 44, 14);
-    public static readonly RectangleF Seek = new(Bar.X - Knob, Bar.Y + Bar.Height / 2 - 12, Bar.Width + 2 * Knob, 24);
-    public static readonly RectangleF Previous = new(94, 62, 32, 32);
-    public static readonly RectangleF PlayPause = new(130, 62, 32, 32);
-    public static readonly RectangleF Next = new(166, 62, 32, 32);
+
+    public float Width => width;
+
+    public RectangleF Title => new(Elapsed.X, 6, width - RightPad - Elapsed.X, 19);
+
+    public RectangleF Artist => new(Elapsed.X, 25, width - RightPad - Elapsed.X, 16);
+
+    public RectangleF Total => new(width - RightPad - Elapsed.Width, Elapsed.Y, Elapsed.Width, Elapsed.Height);
+
+    public RectangleF Bar => RectangleF.FromLTRB(Elapsed.Right + ClockGap, 48, Total.Left - ClockGap, 52);
+
+    public RectangleF Seek => new(Bar.X - Knob, Bar.Y + (Bar.Height / 2) - 12, Bar.Width + (2 * Knob), 24);
+
+    public RectangleF PlayPause => new(Bar.X + (Bar.Width / 2) - 16, 62, 32, 32);
+
+    public RectangleF Previous => PlayPause with { X = PlayPause.X - 36 };
+
+    public RectangleF Next => PlayPause with { X = PlayPause.X + 36 };
 
     public const string SeekId = "seek", PreviousId = "previous", PlayPauseId = "playpause", NextId = "next";
 
@@ -298,7 +312,7 @@ public static class MediaPanelLayout
     /// progress bar otherwise, and no target), then previous, play or pause and next, one arrow-key group. A button whose
     /// command the app does not accept is disabled.
     /// </summary>
-    public static IReadOnlyList<Target> Targets(NowPlaying now)
+    public IReadOnlyList<Target> Targets(NowPlaying now)
     {
         var buttons = new List<Target>();
         if (now.CanSeek)
@@ -322,11 +336,11 @@ public static class MediaPanelLayout
     };
 
     /// <summary>The position a point on the bar stands for, held to the track's ends.</summary>
-    public static TimeSpan SeekAt(float x, MediaTimeline timeline) =>
+    public TimeSpan SeekAt(float x, MediaTimeline timeline) =>
         timeline.Start + timeline.Duration * Math.Clamp((x - Bar.X) / Bar.Width, 0, 1);
 
     /// <summary>Where on the bar a position is, from its left end to its right one.</summary>
-    public static float BarX(TimeSpan position, MediaTimeline timeline) =>
+    public float BarX(TimeSpan position, MediaTimeline timeline) =>
         Bar.X + Bar.Width * (float)Math.Clamp((position - timeline.Start) / timeline.Duration, 0, 1);
 
     /// <summary>An arrow key's seek: <paramref name="steps"/> times <see cref="SeekStep"/> on from here, held to the track.</summary>
@@ -337,5 +351,5 @@ public static class MediaPanelLayout
     }
 
     /// <summary>The seek time's card: centred on <paramref name="x"/> held to the bar, just above it, over the artist's line.</summary>
-    public static RectangleF SeekLabel(float x) => new(Math.Clamp(x, Bar.Left, Bar.Right) - 22, Bar.Y - 20, 44, 16);
+    public RectangleF SeekLabel(float x) => new(Math.Clamp(x, Bar.Left, Bar.Right) - 22, Bar.Y - 20, 44, 16);
 }

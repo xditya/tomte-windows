@@ -769,7 +769,7 @@ public class McpPaletteTests : IDisposable
 
         string provider = "p " + (char)0xB7 + " m";
         Assert.Equal(
-            ["Nothing sent", "Connecting to MCP: Files", $"Sending to {provider}", "Sending to MCP: Files", $"Sending to {provider}", $"Sent to {provider} and MCP: Files"],
+            ["Nothing sent", "Connecting to MCP: Files", $"Sending to {provider}", "Waiting for you", $"Sending to {provider}", "Sending to MCP: Files", $"Sending to {provider}", $"Sent to {provider} and MCP: Files"],
             shown);
 
         // The server is running now, so a second send connects to nothing new.

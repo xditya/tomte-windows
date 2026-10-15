@@ -152,21 +152,22 @@ public class HistoryRecordingTests : IDisposable
     {
         var history = History();
         var earlier = new AiExchange("old", AiSource.Voice, Morning.AddHours(-1), "Ollama", "m", 0.02m,
-            [new AiTurn("Remind me what the dentist said", [], ["Saved a note"], ""), new AiTurn("And the time?", ["lasso"], [], "Monday at 10.")]);
+            [new AiTurn("Remind me what the dentist said", [], ["Saved a note"], ""), new AiTurn("And the time?", ["lasso"], [], "Monday at 10."),
+             new AiTurn("Remind me an hour before", [], ["Set a timer: Timer set; it ends at 09:00."], "Done.")]);
         await history.Add(earlier);
         _provider.Turns.Add(ScriptedProvider.Text(10, 5, "Yes, Monday."));
         var session = Session(history, continuing: earlier);
 
-        Assert.Equal(2, session.Conversation.Count);
+        Assert.Equal(3, session.Conversation.Count);
         session.Prompt = "Is that this week?";
         await session.SendAsync();
 
-        // Each earlier turn as text: the question, then the answer, or the tool lines when there was no answer.
+        // Each earlier turn as text: the question, then its tool lines and its answer.
         var request = Assert.Single(_provider.Requests);
-        Assert.Equal(["Remind me what the dentist said", "Saved a note", "And the time?", "Monday at 10.", "Is that this week?"],
-            request.Messages.Select(m => ((TextPart)m.Parts[^1]).Text));
+        Assert.Equal(["Remind me what the dentist said", "Saved a note", "And the time?", "Monday at 10.", "Remind me an hour before",
+            "Set a timer: Timer set; it ends at 09:00.\nDone.", "Is that this week?"], request.Messages.Select(m => ((TextPart)m.Parts[^1]).Text));
         var kept = Assert.Single(await history.All(Morning));
-        Assert.Equal(("old", AiSource.Voice, 3, 0.035m), (kept.Key, kept.Source, kept.Turns.Count, kept.CostUsd));
+        Assert.Equal(("old", AiSource.Voice, 4, 0.035m), (kept.Key, kept.Source, kept.Turns.Count, kept.CostUsd));
     }
 
     [Fact]

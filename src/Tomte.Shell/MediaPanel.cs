@@ -27,6 +27,9 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
 {
     private View? view;
     private float bodyWidth;
+
+    // The body's slots, for the width the panel shows at.
+    private MediaPanelLayout layout = new((float)PanelSize.Media.W);
     private IReadOnlyList<Target> targets = [];
     private Vector2? pressAt;
 
@@ -46,7 +49,8 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
-        view = new View(island, text, body, size, now, log);
+        layout = new MediaPanelLayout(size.X);
+        view = new View(island, text, body, size, layout, now, log);
         bodyWidth = size.X;
         // With no report 2 s after a seek, the bar goes back to the last position the app gave.
         settle ??= OneShot(PendingSeek.Wait, Update);
@@ -88,7 +92,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         }
         else if (pressAt is { } at && tracker.Current is { CanSeek: true, Timeline: { } timeline })
         {
-            Seek(MediaPanelLayout.SeekAt(at.X, timeline));
+            Seek(layout.SeekAt(at.X, timeline));
         }
 
         pressAt = null;
@@ -134,7 +138,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
     {
         if (id == MediaPanelLayout.SeekId && tracker.Current.Timeline is { } timeline)
         {
-            view?.Label(at.X, MediaPanelLayout.SeekAt(at.X, timeline));
+            view?.Label(at.X, layout.SeekAt(at.X, timeline));
         }
     }
 
@@ -160,7 +164,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             return false;
         }
 
-        view?.Label(MediaPanelLayout.BarX(position, timeline), position);
+        view?.Label(layout.BarX(position, timeline), position);
         if (Show(position))
         {
             // A held key sends at most one seek per gap; the last position wins.
@@ -205,13 +209,13 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
                 if (message.message is PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP && message.hwnd == hwnd)
                 {
                     int x = (short)(message.lParam.Value & 0xFFFF), y = (short)((message.lParam.Value >> 16) & 0xFFFF);
-                    var to = MediaPanelLayout.SeekAt(PanelSpace.ToBody(island.ToIsland(x, y), bodyWidth).X, timeline);
+                    var to = layout.SeekAt(PanelSpace.ToBody(island.ToIsland(x, y), bodyWidth).X, timeline);
                     if (message.message == PInvoke.WM_LBUTTONUP)
                     {
                         return to;
                     }
 
-                    view?.Scrub(MediaPanelLayout.BarX(to, timeline), to);
+                    view?.Scrub(layout.BarX(to, timeline), to);
                     continue;
                 }
 
@@ -255,7 +259,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         }
 
         sought = new PendingSeek(position, timeline, now());
-        view?.Hold(MediaPanelLayout.BarX(position, timeline));
+        view?.Hold(layout.BarX(position, timeline));
         settle?.Stop();
         settle?.Start();
         return true;
@@ -329,14 +333,14 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         // A seek the app has not reported yet keeps the fill where it was sent, for a while.
         if (sought is { } last && last.Holds(playing.Timeline, at))
         {
-            view?.Hold(MediaPanelLayout.BarX(last.To, last.From));
+            view?.Hold(layout.BarX(last.To, last.From));
         }
         else
         {
             sought = null;
         }
 
-        var next = MediaPanelLayout.Targets(playing);
+        var next = layout.Targets(playing);
         if (!next.SequenceEqual(targets))
         {
             targets = next;
@@ -361,6 +365,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         private static readonly Color Card = Color.FromArgb(255, 0x2A, 0x2A, 0x2F);
 
         private readonly Compositor compositor;
+        private readonly MediaPanelLayout layout;
         private readonly Func<DateTimeOffset> now;
         private readonly Action<string>? log;
         private readonly ArtVisual art;
@@ -376,9 +381,10 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         private readonly CompositionRoundedRectangleGeometry fillShape, cardShape;
         private readonly Vector2KeyFrameAnimation advance;
 
-        public View(IslandWindow island, TextRenderer text, ContainerVisual body, Vector2 size, Func<DateTimeOffset> now, Action<string>? log)
+        public View(IslandWindow island, TextRenderer text, ContainerVisual body, Vector2 size, MediaPanelLayout layout, Func<DateTimeOffset> now, Action<string>? log)
         {
             compositor = island.Compositor;
+            this.layout = layout;
             this.now = now;
             this.log = log;
             art = new ArtVisual(compositor, MediaPanelLayout.Art, MediaPanelLayout.ArtCorner);
@@ -393,7 +399,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             clock.IsRepeating = false;
             clock.Tick += (_, _) => ShowClocks();
 
-            var bar = MediaPanelLayout.Bar;
+            var bar = layout.Bar;
             track = Add(shapes.Shapes, Rounded(bar, bar.Height / 2), compositor.CreateColorBrush());
             fillShape = Rounded(bar with { Width = 0 }, bar.Height / 2);
             fill = Add(shapes.Shapes, fillShape, compositor.CreateColorBrush());
@@ -410,12 +416,12 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             dot.StartAnimation("Center", ride);
             knob = Add(shapes.Shapes, dot, compositor.CreateColorBrush());
 
-            var glyph = Glyph(MediaPanelLayout.Previous);
+            var glyph = Glyph(layout.Previous);
             previous = compositor.CreateColorBrush();
             Add(glyph.Shapes, Bar(6, 4, 2, 16), previous);
             Add(glyph.Shapes, Triangle(new(20, 4), new(9, 12), new(20, 20)), previous);
 
-            var button = MediaPanelLayout.PlayPause;
+            var button = layout.PlayPause;
             var disc = compositor.CreateEllipseGeometry();
             disc.Center = new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2);
             disc.Radius = new Vector2(MediaPanelLayout.Disc / 2);
@@ -426,7 +432,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             Add(glyph.Shapes, Bar(6, 4, 4, 16), pause);
             Add(glyph.Shapes, Bar(14, 4, 4, 16), pause);
 
-            glyph = Glyph(MediaPanelLayout.Next);
+            glyph = Glyph(layout.Next);
             next = compositor.CreateColorBrush();
             Add(glyph.Shapes, Bar(16, 4, 2, 16), next);
             Add(glyph.Shapes, Triangle(new(4, 4), new(15, 12), new(4, 20)), next);
@@ -474,7 +480,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         /// <summary>The fill stops at <paramref name="x"/>, where a seek went or a drag holds it, until the app reports again.</summary>
         public void Hold(float x)
         {
-            var bar = MediaPanelLayout.Bar;
+            var bar = layout.Bar;
             fillShape.StopAnimation("Size");
             fillShape.Size = new Vector2(Math.Clamp(x - bar.X, 0, bar.Width), bar.Height);
         }
@@ -491,7 +497,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             pause.Color = playing.IsPlaying ? Black : Clear;
 
             // An app with no timeline gets no bar at all, rather than an empty one that never moves. A drag keeps the fill where it holds it.
-            var bar = MediaPanelLayout.Bar;
+            var bar = layout.Bar;
             track.Color = playing.Timeline is null ? Clear : Color.FromArgb(41, 255, 255, 255);
             fill.Color = playing.Timeline is null ? Clear : White;
             shown = playing;
@@ -539,7 +545,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
                 return;
             }
 
-            var slot = MediaPanelLayout.SeekLabel(label.X);
+            var slot = layout.SeekLabel(label.X);
             cardShape.Offset = new Vector2(slot.X, slot.Y);
             cardShape.Size = new Vector2(slot.Width, slot.Height);
             card.Color = Card;
@@ -553,8 +559,8 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         /// </summary>
         private void DrawTextRuns(NowPlaying playing, string? failure)
         {
-            title.Show(playing.HasSession ? playing.Title : NowPlaying.NothingPlaying, MediaPanelLayout.TitleStyle, MediaPanelLayout.Title);
-            artist.Show(failure ?? (playing.Artist.Length > 0 ? playing.Artist : playing.App), failure is null ? MediaPanelLayout.ArtistStyle : MediaPanelLayout.FailedStyle, MediaPanelLayout.Artist);
+            title.Show(playing.HasSession ? playing.Title : NowPlaying.NothingPlaying, MediaPanelLayout.TitleStyle, layout.Title);
+            artist.Show(failure ?? (playing.Artist.Length > 0 ? playing.Artist : playing.App), failure is null ? MediaPanelLayout.ArtistStyle : MediaPanelLayout.FailedStyle, layout.Artist);
             shown = playing;
             ShowClocks();
         }
@@ -569,7 +575,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             var at = now();
             var timeline = shown.Timeline;
             elapsed.Show(timeline is { } t ? NowPlaying.Clock(t.PositionAt(at)) : "", MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed);
-            total.Show(timeline is { } d ? NowPlaying.Clock(d.Duration) : "", MediaPanelLayout.TotalStyle, MediaPanelLayout.Total);
+            total.Show(timeline is { } d ? NowPlaying.Clock(d.Duration) : "", MediaPanelLayout.TotalStyle, layout.Total);
             if (timeline is { Playing: true, Rate: > 0 } moving && moving.PositionAt(at) < moving.End)
             {
                 double seconds = moving.PositionAt(at).TotalSeconds;

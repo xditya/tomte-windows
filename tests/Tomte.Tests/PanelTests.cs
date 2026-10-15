@@ -92,12 +92,26 @@ public class PanelTests
     [Fact]
     public void EveryPanelHasItsSize()
     {
-        Assert.Equal((380, 140), PanelSize.Of(PanelId.Media));
-        Assert.Equal((520, 300), PanelSize.Of(PanelId.Shortcuts));
-        Assert.Equal((520, 320), PanelSize.Of(PanelId.Scratchpad));
+        Assert.Equal((560, 140), PanelSize.Of(PanelId.Media));
+        Assert.Equal((560, 300), PanelSize.Of(PanelId.Shortcuts));
+        Assert.Equal((560, 320), PanelSize.Of(PanelId.Scratchpad));
         Assert.Equal((560, 260), PanelSize.Of(PanelId.Shelf));
         Assert.Equal((560, 360), PanelSize.Of(PanelId.Clipboard));
-        Assert.All(Enum.GetValues<PanelId>(), id => Assert.True(PanelSize.Of(id).W > 0));
+        Assert.Equal((560, 400), PanelSize.Of(PanelId.History));
+    }
+
+    [Fact]
+    public void TheTabStripIsTheSameOnEveryTab()
+    {
+        // One width for every panel: a label is where it was on the tab before, so a click goes to the tab it was aimed at.
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
+        Assert.All(all, id => Assert.Equal(PanelSize.Width, PanelSize.Of(id).W));
+        foreach (bool mascot in new[] { true, false })
+        {
+            var onShelf = TabStrip.Labels(all, PanelId.Shelf, (float)PanelSize.Width, mascot).Select(l => (l.Text, l.Slot)).ToList();
+            Assert.Equal(all.Length, onShelf.Count);
+            Assert.All(all, current => Assert.Equal(onShelf, TabStrip.Labels(all, current, (float)PanelSize.Of(current).W, mascot).Select(l => (l.Text, l.Slot))));
+        }
     }
 
     [Fact]
@@ -210,7 +224,7 @@ public class PanelTests
             }
         }
 
-        // The Media panel is 380 wide: what does not fit is cut or left out, never past the right padding.
+        // A panel cut to a small monitor, here to 380 wide: what does not fit is cut or left out, never past the right padding.
         var narrow = TabStrip.Labels(all, PanelId.Media, 380, mascot: true);
         Assert.InRange(narrow.Count, 3, 6);
         Assert.All(narrow, label => Assert.True(label.Slot.Right <= 380 - TabStrip.RightPad + 0.01, $"{label.Text} ends at {label.Slot.Right}"));
@@ -298,8 +312,8 @@ public class PanelTests
     [Fact]
     public void TheAskPillFollowsTheLiveRightEdgeThroughAMorph()
     {
-        // From the Media panel to the Shelf one and back, a press just inside the live shape's right padding is on Ask.
-        foreach (double live in new[] { PanelSize.Media.W, 430, 470, 510, PanelSize.Shelf.W })
+        // Through a morph's live widths up to the panel's, a press just inside the live shape's right padding is on Ask.
+        foreach (double live in new[] { 380, 430, 470, 510, PanelSize.Width })
         {
             var shape = IslandGeometry.Panel(live, 200);
             float right = (float)live / 2 - TabStrip.RightPad;

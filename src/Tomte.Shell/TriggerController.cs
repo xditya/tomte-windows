@@ -246,12 +246,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         });
     }
 
-    /// <summary>A drag out of the island holds it open like any drag, and its end arms the retract like any drag's.</summary>
+    /// <summary>A drag out of the island lets the island retract once it has left it (<see cref="RetractionRules.DraggingOut"/>), and its end arms the retract like any drag's.</summary>
     public void DraggingOut(bool on)
     {
         if (on)
         {
-            activity |= IslandActivity.DragInProgress;
+            activity = RetractionRules.DraggingOut(activity);
         }
         else
         {
@@ -382,6 +382,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
                 return true;
             case InputThread.MsgPointer:
+                if ((wParam & 4) != 0)
+                {
+                    log?.Invoke($"pointer: a sample the window asked for changed it to inside={(wParam & 1) != 0} on={(wParam & 2) != 0}");
+                }
+
                 OnPointer((wParam & 1) != 0, (wParam & 2) != 0);
                 return true;
             case InputThread.MsgDragCandidate:
@@ -504,6 +509,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private sealed class CompactTargets(TriggerController owner) : IInteractive
     {
+        // Where the pointer was when the pill came up: a pill that came up under a still pointer was not come onto.
+        private System.Drawing.Point shownAt;
+
         public event Action? TargetsChanged;
 
         // Read on every pointer move, so built only when something changes.
@@ -517,6 +525,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 : [];
             if (owner.machine.State == IslandState.Compact)
             {
+                PInvoke.GetCursorPos(out shownAt);
                 owner.island.Interaction.Register(this, p => p, p => p);
             }
             else
@@ -542,7 +551,21 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         public bool TryDrag(string id, System.Numerics.Vector2 at) => owner.island.Drag(at);
 
-        public void Hovered(string? id) => owner.island.Mascot.Hover(id == CompactLayout.TomteId);
+        public void Hovered(string? id)
+        {
+            owner.island.Mascot.Hover(id == CompactLayout.TomteId);
+            // The window's own mouse messages put the pointer on the pill or the badge. The rest that opens Panels runs
+            // from the input thread's raw-input samples, which have been seen to miss a pointer resting on the peek
+            // badge, so that thread looks again now.
+            // guards a cause that was not found (an end-user test rested on the badge for 25 s with no rest
+            // started, while the window saw the pointer there). The "pointer: a sample the window asked for changed it"
+            // log line shows whether this ever fires; once the cause is found and fixed in the input thread's tracking
+            // (log its samples and bounds while the badge is up to see it), this sample and that line can go.
+            if (id is not null && PInvoke.GetCursorPos(out var at) && at != shownAt)
+            {
+                InputThread.SamplePointer();
+            }
+        }
     }
 
     /// <summary>
@@ -576,14 +599,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
         int margin = (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale);
         pointerInside = PInvoke.GetCursorPos(out var cursor) && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, margin);
         pointerOn = pointerInside && RetractionRules.Inside(cursor.X, cursor.Y, b.Left, b.Top, b.Right, b.Bottom, 0);
-        if (!pointerOn)
-        {
-            // A double click sent the island back to the middle, away from the pointer.
-            island.Swell(false);
-        }
-
         PushZone();
         EndDrag();
+        // A pointer that let go of the pill rests on it at its new place, and the dwell runs from now as for one that came
+        // onto it. A double click that sent the island back to the middle leaves the pointer off it.
+        Dwell(pointerOn ? HoverStep.Start : HoverStep.Cancel);
         // A window may be under the island's new place.
         SchedulePeek();
     }
@@ -676,21 +696,26 @@ internal sealed unsafe partial class TriggerController : IDisposable
             PInvoke.SetTimer(island.Hwnd, RetractTimer, (uint)settings.Reveal.RetractDelayMs, null);
         }
 
-        // Only a pointer coming onto the pill dwells; one that was on it already has just dragged it there.
-        if (hover == HoverStep.Start && RetractionRules.OpensPanels(machine.State, activity))
+        // Only a pointer coming onto the pill dwells; one moving about on it lets the dwell run.
+        Dwell(hover);
+        if (activity.HasFlag(IslandActivity.Result))
+        {
+            InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
+        }
+    }
+
+    /// <summary>The dwell that opens Panels from the pill starts, with the push pill's swell, or stops.</summary>
+    private void Dwell(HoverStep step)
+    {
+        if (step == HoverStep.Start && RetractionRules.OpensPanels(machine.State, activity))
         {
             PInvoke.SetTimer(island.Hwnd, HoverTimer, (uint)settings.Reveal.ExpandDwellHeldMs, null);
             island.Swell(Compact == CompactReason.Summary);
         }
-        else if (hover == HoverStep.Cancel)
+        else if (step == HoverStep.Cancel)
         {
             PInvoke.KillTimer(island.Hwnd, HoverTimer);
             island.Swell(false);
-        }
-
-        if (activity.HasFlag(IslandActivity.Result))
-        {
-            InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
         }
     }
 

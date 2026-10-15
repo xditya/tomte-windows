@@ -139,6 +139,36 @@ public class InteractionTests
     }
 
     [Fact]
+    public void APressHoldsTheIslandUntilItEndsAndLetsGoBeforeItsClickActs()
+    {
+        var p = new PointerPress();
+        var held = new List<bool>();
+        p.Holding += on =>
+        {
+            // Raised with the press already in its new state: a click on the pill opens the panels only when nothing
+            // holds the island, so the release must have let go by the time the click acts.
+            Assert.Equal(on, p.Pressed is not null);
+            held.Add(on);
+        };
+
+        Press(p, Ask);
+        Assert.Equal([true], held);
+        Assert.Equal((Ask, ActivateBy.Click), p.Up(Ask));
+        Assert.Equal([true, false], held);
+
+        // A release off the target, a cancel and a reset each end the hold once; with no press there is nothing to end.
+        Press(p, Ask, ms: 2000);
+        Assert.Null(p.Up(null));
+        Press(p, Ask, ms: 4000);
+        p.Cancel();
+        p.Cancel();
+        Press(p, Ask, ms: 6000);
+        p.Reset();
+        Assert.Null(p.Up(Ask));
+        Assert.Equal([true, false, true, false, true, false, true, false], held);
+    }
+
+    [Fact]
     public void MovingOffCancelsAndMovingBackOnClicksAgain()
     {
         var p = new PointerPress();
@@ -277,5 +307,45 @@ public class InteractionTests
         var ack = StateLook.Tip("Copied", tick: true, new RectangleF(-50, 50, 100, 40), island);
         Assert.Equal(StateLook.TickSize, ack.Tick.Width);
         Assert.Equal(ack.Tick.Right + StateLook.TickGap, ack.Label.Slot.X, 3);
+    }
+
+    /// <summary>
+    /// The tooltip's card drawn by the compositor, offscreen in tools/TextCaptures: one card shows a tip and then a
+    /// "Copied", as the island reuses it, and the acknowledgement's mark must be drawn. Nothing is shown on screen.
+    /// </summary>
+    [GraphicsCaptureFact]
+    public void AnAcknowledgementAfterATipDrawsItsTick()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "tomte-composition-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "TextCaptures.exe"), ["--composition", dir])
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var check = System.Diagnostics.Process.Start(start)!;
+            string output = check.StandardOutput.ReadToEnd();
+            Assert.True(check.WaitForExit(60_000));
+            Assert.True(check.ExitCode == 0, output);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+}
+
+/// <summary>Runs only where Windows.Graphics.Capture can draw a visual offscreen (not on some server images).</summary>
+public sealed class GraphicsCaptureFactAttribute : FactAttribute
+{
+    public GraphicsCaptureFactAttribute()
+    {
+        if (!Windows.Graphics.Capture.GraphicsCaptureSession.IsSupported())
+            Skip = "Windows.Graphics.Capture is not supported here, so a visual cannot be drawn offscreen.";
     }
 }

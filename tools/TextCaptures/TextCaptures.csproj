@@ -22,5 +22,7 @@
     <Compile Include="..\..\src\Tomte.Shell\NoteEditor.cs" Link="NoteEditor.cs" />
     <Compile Include="..\..\src\Tomte.Shell\NoteStyle.cs" Link="NoteStyle.cs" />
     <Compile Include="..\..\src\Tomte.Shell\PixelSurfaces.cs" Link="PixelSurfaces.cs" />
+    <!-- The tooltip's card, drawn by the compositor for the composition captures. -->
+    <Compile Include="..\..\src\Tomte.Shell\TipCard.cs" Link="TipCard.cs" />
   </ItemGroup>
 </Project>

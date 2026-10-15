@@ -256,6 +256,12 @@ public sealed class PointerPress
 
     public TargetRef? Pressed { get; private set; }
 
+    /// <summary>
+    /// True when the button goes down on a target, false when that press ends: released, cancelled or reset. Raised
+    /// before a release hands back its click, so whatever the click does finds the press already let go.
+    /// </summary>
+    public event Action<bool>? Holding;
+
     /// <summary>The pointer is on the pressed target, which then shows the pressed look; off it, a release cancels.</summary>
     public bool OnPressed { get; private set; }
 
@@ -299,7 +305,12 @@ public sealed class PointerPress
     {
         pending = IslandPlace.IsDoubleClick(lastClick == target, x - lastX, y - lastY, ms - lastAt, boxX, boxY, timeMs) ? ActivateBy.DoubleClick : ActivateBy.Click;
         (lastX, lastY, lastAt) = (x, y, ms);
+        bool was = Pressed is not null;
         (Pressed, Hovered, OnPressed) = (target, target, true);
+        if (!was)
+        {
+            Holding?.Invoke(true);
+        }
     }
 
     /// <summary>The button came up over <paramref name="under"/>: the pressed target and how it was clicked, or null when the press is cancelled.</summary>
@@ -307,6 +318,11 @@ public sealed class PointerPress
     {
         var pressed = Pressed;
         (Pressed, Hovered, OnPressed) = (null, under, false);
+        if (pressed is not null)
+        {
+            Holding?.Invoke(false);
+        }
+
         if (pressed is not { } target || under != target)
         {
             lastClick = null;
@@ -320,7 +336,12 @@ public sealed class PointerPress
     /// <summary>Capture went elsewhere, a drag took the press, or the island hid: nothing activates and no click waits for a second one.</summary>
     public void Cancel()
     {
+        bool was = Pressed is not null;
         (Pressed, OnPressed, lastClick) = (null, false, null);
+        if (was)
+        {
+            Holding?.Invoke(false);
+        }
     }
 
     /// <summary>The state layer: the pressed look on the pressed target while the pointer is on it, else the hover look on an enabled hovered one.</summary>

@@ -88,7 +88,7 @@ internal sealed class InteractionHost
     private TargetRef? focus, told, tipFor;
     private TipPhase tip;
     private string tipText = "";
-    private bool ring, tracking, dragging, tipBlocked, holding;
+    private bool ring, tracking, dragging, tipBlocked;
 
     // The view a text box with the keys belongs to (the palette's prompt), and how the box takes them back.
     private IInteractive? boxOwner;
@@ -100,6 +100,8 @@ internal sealed class InteractionHost
         tipTimer = island.Queue.CreateTimer();
         tipTimer.IsRepeating = false;
         tipTimer.Tick += (_, _) => TipTick();
+        // The hold follows the press itself, so a click acts with the island no longer held by its own press.
+        pointer.Holding += on => Pressing?.Invoke(on);
         island.Settled += Refresh;
         island.LayoutChanged += Refresh;
         // Targets are placed from the shape as it is now, which a morph changes every frame: nothing shows until it rests.
@@ -686,16 +688,9 @@ internal sealed class InteractionHost
         return true;
     }
 
-    // The state layer on the pressed or hovered target and the ring on the focused one, from where they are now; and the
-    // hold that keeps the island open while a press lasts.
+    // The state layer on the pressed or hovered target and the ring on the focused one, from where they are now.
     private void Update()
     {
-        if ((pointer.Pressed is not null) != holding)
-        {
-            holding = !holding;
-            Pressing?.Invoke(holding);
-        }
-
         RectangleF? layer = null, focused = null;
         float layerCorner = 0, focusCorner = 0;
         uint fill = 0;
@@ -731,19 +726,14 @@ internal sealed class InteractionHost
     // The island hid with every view: nothing is left over for the next show, and the tip's text lets the device go.
     private void Reset()
     {
-        if (pointer.Pressed is not null)
+        // A view's drag (a drag out of the shelf) may hide the island while it runs; the capture is the drag's then.
+        if (pointer.Pressed is not null && !dragging)
         {
             PInvoke.ReleaseCapture();
         }
 
         pointer.Reset();
         (focus, told, ring, tracking, tipBlocked, boxOwner, backToBox) = (null, null, false, false, false, null, null);
-        if (holding)
-        {
-            holding = false;
-            Pressing?.Invoke(false);
-        }
-
         lastInGroup.Clear();
         HideTip();
         overlay?.Release();
@@ -838,10 +828,10 @@ internal sealed class InteractionHost
     private sealed class Overlay
     {
         private readonly ContainerVisual root;
-        private readonly ShapeVisual layer, ring, card;
-        private readonly CompositionRoundedRectangleGeometry layerBox, ringBox, cardBox;
+        private readonly ShapeVisual layer, ring;
+        private readonly CompositionRoundedRectangleGeometry layerBox, ringBox;
         private readonly CompositionColorBrush layerFill, accent;
-        private readonly CompositionSpriteShape cardShape, tick;
+        private readonly TipCard card;
         private readonly ScalarKeyFrameAnimation fade;
         private TextVisual? label;
 
@@ -855,16 +845,11 @@ internal sealed class InteractionHost
             (ring, ringBox) = Box(compositor, out var ringShape);
             ringShape.StrokeBrush = accent;
             ringShape.StrokeThickness = StateLook.FocusWidth;
-            (card, cardBox) = Box(compositor, out cardShape);
-            cardBox.CornerRadius = new Vector2(StateLook.TipCorner);
-            cardShape.FillBrush = compositor.CreateColorBrush(Argb(StateLook.TipFill));
-            cardShape.StrokeBrush = compositor.CreateColorBrush(Argb(StateLook.TipLine));
-            tick = compositor.CreateSpriteShape(compositor.CreatePathGeometry(IslandWindow.BuildPath(StateLook.Tick, 1)));
-            card.Shapes.Add(tick);
+            card = new TipCard(compositor, accent, compositor.CreatePathGeometry(IslandWindow.BuildPath(StateLook.Tick, 1)));
             fade = PanelHost.Fade(compositor, 1, StateLook.FadeMs);
             root.Children.InsertAtTop(layer);
             root.Children.InsertAtTop(ring);
-            root.Children.InsertAtTop(card);
+            root.Children.InsertAtTop(card.Visual);
         }
 
         /// <summary>Moves the layer and the ring; true when either shows.</summary>
@@ -906,22 +891,17 @@ internal sealed class InteractionHost
         public void ShowCard(TextRenderer text, (RectangleF Card, RectangleF Tick, TextSlot Label) parts, double scale)
         {
             var (at, mark, line) = parts;
-            Place(card, cardBox, at, 0);
-            // A one-pixel hairline at any scale.
-            cardShape.StrokeThickness = (float)(1 / scale);
-            tick.Offset = new Vector2(mark.X - at.X, mark.Y - at.Y);
-            tick.FillBrush = mark.Width > 0 ? accent : null;
-            label ??= text.Create(card);
+            card.Show(at, mark, scale);
+            label ??= text.Create(card.Visual);
             label.Show(line.Text, line.Style, new RectangleF(line.Slot.X - at.X, line.Slot.Y - at.Y, line.Slot.Width, line.Slot.Height));
-            card.IsVisible = true;
         }
 
-        public void HideCard() => card.IsVisible = false;
+        public void HideCard() => card.Visual.IsVisible = false;
 
         public void HideAll()
         {
             layer.StopAnimation("Opacity");
-            layer.IsVisible = ring.IsVisible = card.IsVisible = false;
+            layer.IsVisible = ring.IsVisible = card.Visual.IsVisible = false;
         }
 
         /// <summary>Above whatever views put on top of island space since.</summary>

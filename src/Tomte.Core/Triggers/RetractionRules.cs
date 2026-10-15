@@ -49,6 +49,14 @@ public static class RetractionRules
     public static IslandActivity Released(IslandActivity activity, bool buttonDown) =>
         buttonDown ? activity : activity & ~IslandActivity.Pressing;
 
+    /// <summary>
+    /// What holds the island once a drag out of it is under way. Nothing on the island takes its own drag, so the press
+    /// that started it holds nothing more: the island retracts as for any pointer that left it, and is gone before the
+    /// drop, which can keep the island's thread for seconds (a target copying a file) with the island frozen until then.
+    /// A drop zone's result keeps its own hold.
+    /// </summary>
+    public static IslandActivity DraggingOut(IslandActivity activity) => activity & ~IslandActivity.Pressing;
+
     /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler holds the pill, a drag is moving it or a press holds the mouse.</summary>
     public static bool OpensPanels(IslandState state, IslandActivity activity) =>
         state == IslandState.Compact && (activity & (IslandActivity.Rambling | IslandActivity.DragInProgress | IslandActivity.Pressing)) == 0;
