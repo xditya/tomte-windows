@@ -174,6 +174,12 @@ internal sealed class TypingFocus
         return true;
     }
 
+    /// <summary>
+    /// The island opened something that comes to the front on its own (an app or file from search): when the keys go,
+    /// the foreground is not handed back to the window that had it, which would cover what was opened.
+    /// </summary>
+    public void Forget() => previous = default;
+
     /// <summary>No box has the keys any more; on the next turn the foreground goes back to the window that had it, unless another box took the keys meanwhile.</summary>
     public void Release()
     {
@@ -329,7 +335,8 @@ internal sealed class TypingFocus
             // either way the box lets go, and the island keeps the keys for the targets. With nowhere to go, Tab types
             // nothing in such a box.
             var owner = owners.GetValueOrDefault(editor);
-            if (NavKeys.LeavesBox(nav, owner is not null))
+            // A box that keeps every key (the search box) takes Tab and Ctrl+Tab through its BeforeKey below.
+            if (!editor.KeepsKeys && NavKeys.LeavesBox(nav, owner is not null))
             {
                 if (ctrl ? island.Interaction.Key(nav, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor)))
                 {

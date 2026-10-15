@@ -167,6 +167,64 @@ public sealed class SearchTests
         Assert.Equal(File("A.TXT").Key, new SearchItem(SearchKind.File, "a.txt", @"d:\work\a.txt").Key);
 }
 
+public sealed class SearchLayoutTests
+{
+    private static readonly SearchLayout Layout = new(640, mascot: true, 480);
+
+    [Fact]
+    public void EachGroupGetsItsHeadingAndAskNone()
+    {
+        SearchItem[] rows =
+        [
+            new(SearchKind.App, "Code", "a"), new(SearchKind.App, "Codex", "b"), new(SearchKind.File, "code.txt", @"C:\code.txt"),
+            new(SearchKind.GetEverything, "Search every drive", ""), new(SearchKind.Ask, "Ask Tomte", "code"),
+        ];
+        var lines = SearchLayout.Lines(rows);
+        Assert.Equal(["Apps", null, null, "Files and folders", null, null, null], lines.Select(l => l.Heading));
+        Assert.Equal([-1, 0, 1, -1, 2, 3, 4], lines.Select(l => l.Row));
+        Assert.Equal((2 * SearchLayout.HeadingHeight) + (5 * SearchLayout.RowHeight), lines[^1].Top + lines[^1].Height);
+    }
+
+    [Fact]
+    public void TheBandSitsBetweenTheBoxAndTheFooterInsideTheIsland()
+    {
+        var band = Layout.Band;
+        Assert.True(band.Top > Layout.Box.Bottom);
+        Assert.True(band.Bottom + SearchLayout.FootHeight < Layout.Height);
+        Assert.Equal(480, SearchLayout.HeightFor(1440));
+        Assert.Equal(360, SearchLayout.HeightFor(720)); // 1080p at 150%
+    }
+
+    [Fact]
+    public void ARowKeepsItsPartsInsideTheBand()
+    {
+        var item = new SearchItem(SearchKind.File, new string('x', 200), @"C:\x", new string('y', 300));
+        var (row, icon, name, detail, kind) = Layout.Row(36, item);
+        Assert.True(icon.Right < name.Slot.Left && name.Slot.Right <= detail.Slot.Left && detail.Slot.Right < kind.Slot.Left);
+        Assert.True(kind.Slot.Right <= row.Right);
+        Assert.Equal("File", kind.Text);
+    }
+
+    [Fact]
+    public void TheListScrollsAsLittleAsItCanToShowALine()
+    {
+        float band = Layout.Band.Height;
+        Assert.Equal(0, Layout.ScrollTo(0, 36, 72, 1000));
+        Assert.Equal(1000 - band - 100, Layout.ScrollTo(0, 1000 - 136, 1000 - 100, 1000), 3);
+        Assert.Equal(100, Layout.ScrollTo(300, 100, 136, 1000));
+        Assert.Equal(0, Layout.ScrollTo(50, 0, 36, 20));
+    }
+
+    [Fact]
+    public void ACardsMainButtonIsLastAndRightmost()
+    {
+        var card = Layout.Card(new SearchCard("Title", "Body", [("cancel", "Cancel"), ("install", "Install")]));
+        Assert.Equal(["cancel", "install"], card.Buttons.Select(b => b.Id));
+        Assert.True(card.Buttons[0].Box.Right < card.Buttons[1].Box.Left);
+        Assert.True(card.Card.Contains(card.Buttons[1].Box));
+    }
+}
+
 public sealed class FileQueryTests
 {
     private static readonly string[] Excluded = [@"C:\Windows", @"C:\Users\O'Brien\AppData\"];
