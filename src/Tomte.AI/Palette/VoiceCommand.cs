@@ -32,9 +32,10 @@ public static class VoiceCommand
     /// <summary>
     /// Without a session (the AI layer off, or no provider) the transcript is the raw note, which
     /// <paramref name="keep"/> puts on the scratchpad as the rambler has always done. With one, <paramref name="run"/>
-    /// shows the palette while the model picks a command or a note and the user confirms a command. Whenever nothing
-    /// ran the raw words are kept too, so a model that answers a dictated note in text, or a send that failed, never
-    /// loses what was said; only a cancel or the user's no keeps nothing. True when the raw words were kept.
+    /// shows the palette while the model picks a command or a note and the user confirms a command. The raw words are
+    /// kept only when nothing could be sent: no session, a palette taken down before the send, or a send that failed.
+    /// A finished answer, in text or with tools, is not also a note (the AI history has the question and the answer),
+    /// and a cancel keeps nothing. True when the raw words were kept.
     /// </summary>
     public static async Task<bool> RouteAsync(string transcript, Func<string, Task> keep, PaletteSession? session, Func<PaletteSession, Task> run)
     {
@@ -42,8 +43,7 @@ public static class VoiceCommand
         {
             session.Prompt = transcript;
             await run(session);
-            if (session.Status == PaletteStatus.Cancelled
-                || session.Answer.OfType<ToolStepSegment>().Any(s => !s.IsError || s.Result == PaletteSession.NotAllowed))
+            if (session.Status is PaletteStatus.Done or PaletteStatus.Cancelled)
                 return false;
         }
 

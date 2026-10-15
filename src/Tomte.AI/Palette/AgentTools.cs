@@ -164,7 +164,7 @@ public sealed class BuiltInTools(
             SetBrightness or SetVolume when Int(input.GetProperty("percent")) is < 0 or > 100 => "percent must be between 0 and 100.",
             SetTimer when Duration(input) is null =>
                 FormattableString.Invariant($"minutes must be between {TimerRun.MinDuration.TotalMinutes:0.###} (one second) and {TimerRun.MaxDuration.TotalMinutes:0} (one day)."),
-            // With nothing left inside its fence, the note says nothing; the transcript is kept as the raw note instead.
+            // With nothing left inside its fence, the note says nothing: the model is told so, and nothing is saved.
             SaveNote when NoteText(input).Length == 0 => "note is empty.",
             OpenApp => Apps.ValidateAppTarget(Arg(input, "name")),
             OpenSettingsPage when !Apps.IsSettingsUri(Arg(input, "uri")) => "A settings page looks like ms-settings:display.",

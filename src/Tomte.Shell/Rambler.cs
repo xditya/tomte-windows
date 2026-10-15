@@ -13,7 +13,8 @@ namespace Tomte.Shell;
 /// Hold the chord, speak, release: the recording becomes a transcript, and the pill grows into a card that shows it
 /// with three choices (<see cref="VoiceCard"/>). Insert types it into the window that had the keys when the hold
 /// started; Add to note puts it on the scratchpad; Ask Tomte turns the card into the palette, where the model reads it
-/// as a command or a note and asks before anything runs. Nothing is typed, sent or saved before a choice. Runs on the
+/// as a command or a note and asks before anything runs; Ask keeps the raw words as a note only when nothing could be
+/// sent, not after an answer. Nothing is typed, sent or saved before a choice. Runs on the
 /// UI thread. The microphone is open only between the press and the release; the hold is the visible user action that
 /// lets audio go to a speech-to-text provider, and Ask the one that lets the transcript go to the AI provider.
 /// </summary>
@@ -343,7 +344,8 @@ internal sealed class Rambler(
 
     /// <summary>
     /// Ask's session, made only once Ask is picked, so nothing reaches a provider before. The note tool reads and writes
-    /// the loaded note; when it cannot be read, or no session can be made, the words go in as the raw note.
+    /// the loaded note; when it cannot be read, or no session can be made, the words go in as the raw note, as they do
+    /// when the send fails.
     /// </summary>
     private async Task<PaletteSession?> StartAsync()
     {

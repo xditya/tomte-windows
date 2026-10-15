@@ -160,16 +160,20 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AnEmptyNoteKeepsTheTranscriptAsTheRawNote()
+    public async Task AnEmptyNoteIsRefusedAndTheAnswerAddsNoNote()
     {
         var provider = new ScriptedProvider();
         provider.Turns.Add(ScriptedProvider.Call(BuiltInTools.SaveNote, """{"note":"```\n```"}"""));
         provider.Turns.Add(ScriptedProvider.Text(1, 1, "Saved."));
+        var session = Session(provider);
 
-        Assert.True(await VoiceCommand.RouteAsync("call Ana at five", Keep, Session(provider), Run));
+        Assert.False(await VoiceCommand.RouteAsync("call Ana at five", Keep, session, Run));
 
         Assert.Empty(_asked);
-        Assert.Matches(@"^## \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n\ncall Ana at five\n\n$", _pad.Text);
+        Assert.True(Assert.Single(session.Answer.OfType<ToolStepSegment>()).IsError);
+        // Something was sent and answered: the words are in the AI history, not also a note.
+        Assert.Equal(PaletteStatus.Done, session.Status);
+        Assert.Equal("", _pad.Text);
     }
 
     [Fact]
@@ -194,19 +198,19 @@ public sealed class VoiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AnUnclearRequestRunsNothingAndKeepsTheRawNote()
+    public async Task AnUnclearRequestRunsNothingAndAddsNoNote()
     {
         var (session, _) = Recorded("unclear", 1);
 
-        Assert.True(await VoiceCommand.RouteAsync("hmm", Keep, session, Run));
+        Assert.False(await VoiceCommand.RouteAsync("hmm", Keep, session, Run));
 
         Assert.Empty(_asked);
         Assert.Empty(_ran);
         Assert.Empty(_events);
         Assert.Equal(PaletteStatus.Done, session.Status);
         Assert.Equal("Since the user didn't give a question, no action can be performed.", session.AnswerText);
-        // The model answered in text; the words are kept, as they are when there is no provider.
-        Assert.Matches(@"^## \d{4}-\d{2}-\d{2} \d{2}:\d{2}\n\nhmm\n\n$", _pad.Text);
+        // The model answered in text; Add to note is the choice for a note.
+        Assert.Equal("", _pad.Text);
     }
 
     [Fact]
@@ -528,6 +532,11 @@ public sealed class VoiceTests : IDisposable
     {
         var down = new ScriptedProvider { Throw = new ProviderException("Ollama is not running") };
         Assert.True(await VoiceCommand.RouteAsync("call Ana at five", Keep, Session(down), Run));
+        Assert.Contains("call Ana at five", _pad.Text);
+
+        // A palette taken down before its send sent nothing either.
+        _pad.Text = "";
+        Assert.True(await VoiceCommand.RouteAsync("call Ana at five", Keep, Session(down), _ => Task.CompletedTask));
         Assert.Contains("call Ana at five", _pad.Text);
 
         _pad.Text = "";
