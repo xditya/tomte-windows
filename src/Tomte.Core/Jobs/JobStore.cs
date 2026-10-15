@@ -10,7 +10,17 @@ namespace Tomte.Core.Jobs;
 public sealed record JobDraft(string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools);
 
 /// <summary>A stored job. <see cref="NextDue"/> is null once a one-off has run.</summary>
-public sealed record ScheduledJob(long Id, string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools, ProviderConfig Provider, DateTimeOffset? NextDue);
+public sealed record ScheduledJob(long Id, string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools, ProviderConfig Provider, DateTimeOffset? NextDue)
+{
+    /// <summary>
+    /// The job in plain words for the settings window: "Every weekday at 09:00. Next run Thursday 15 October at 09:00.
+    /// Uses read_shelf_item."
+    /// </summary>
+    public string Describe(TimeZoneInfo zone) =>
+        $"{Schedule.Describe()}. " +
+        (NextDue is { } next ? $"Next run {TimeZoneInfo.ConvertTime(next, zone).ToString("dddd d MMMM 'at' HH:mm", CultureInfo.InvariantCulture)}. " : "No run left. ") +
+        $"Uses {(Tools.Count == 0 ? "no tools" : JobSchedule.JoinWords(Tools))}.";
+}
 
 /// <summary>
 /// One finished run, kept for the palette to show: the answer or the reason it failed, and the steps and sends.
@@ -38,6 +48,12 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
 
     /// <summary>A one-off later than this is not run but recorded as missed.</summary>
     public static readonly TimeSpan OneOffGrace = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// A one-off whose time passed less than this ago can still be made, and then runs at once: "in one minute" often
+    /// comes due while the user reads the confirmation.
+    /// </summary>
+    public static readonly TimeSpan JustPassed = TimeSpan.FromMinutes(5);
 
     /// <summary>The text of a run that was claimed and had no result <see cref="RunLimit"/> later.</summary>
     public const string DidNotFinish = "Did not finish";
@@ -101,10 +117,14 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         }
     }
 
-    /// <summary>Stores a confirmed job with its first run worked out from <paramref name="now"/>.</summary>
+    /// <summary>A new job's first run: the next one after <paramref name="now"/>, else a one-off's time within <see cref="JustPassed"/>.</summary>
+    public static DateTimeOffset? FirstRun(JobSchedule schedule, DateTimeOffset now, TimeZoneInfo zone) =>
+        schedule.Next(now, zone) ?? schedule.Next(now - JustPassed, zone);
+
+    /// <summary>Stores a confirmed job with its first run worked out from <paramref name="now"/> (see <see cref="FirstRun"/>).</summary>
     public ScheduledJob Add(JobDraft draft, ProviderConfig provider, DateTimeOffset now, TimeZoneInfo zone)
     {
-        var next = draft.Schedule.Next(now, zone);
+        var next = FirstRun(draft.Schedule, now, zone);
         using var connection = db.Open(Feature, Schema);
         using var command = connection.CreateCommand();
         command.CommandText = """

@@ -592,7 +592,7 @@ public class ProviderTests
     }
 
     [Fact]
-    public void TheFastModelServesOnlyTheTwoSmallCalls()
+    public void TheFastModelServesOnlyVoiceCommands()
     {
         var config = Anthropic with { FastModel = "claude-haiku-5-5" };
         var tools = new BuiltInTools(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { });
@@ -606,7 +606,9 @@ public class ProviderTests
 
         Assert.Equal("claude-opus-5-5", Session(config).ModelId);
         Assert.Equal("claude-haiku-5-5", Session(config, voice: true).ModelId);
-        Assert.Equal("claude-haiku-5-5", Session(config, scheduling: true).ModelId);
+        // The AI box can make a job in any send, so it keeps its model; a job made by voice is read by the voice model.
+        Assert.Equal("claude-opus-5-5", Session(config, scheduling: true).ModelId);
+        Assert.Equal("claude-haiku-5-5", Session(config, voice: true, scheduling: true).ModelId);
         Assert.Equal("claude-opus-5-5", Session(Anthropic, voice: true).ModelId);
     }
 

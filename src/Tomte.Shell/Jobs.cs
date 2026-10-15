@@ -28,8 +28,8 @@ internal sealed record JobContext(
 /// hand its job over, and reads the small next-due file beside tomte.db on the pool: with no file there are no jobs
 /// and nothing else happens. With one, the island window holds one SetTimer one-shot for the next run; the database
 /// opens and Tomte.AI loads only when a run is due. A --run-job start with no Tomte running on its folder runs what is
-/// due with no island and exits; the next start shows the results. Making a job needs the debug switch until the
-/// island can show its confirmation as text.
+/// due with no island and exits; the next start shows the results. Jobs are made in the AI box and by voice, through
+/// <see cref="Planner"/>.
 /// </summary>
 internal static class Jobs
 {
@@ -43,6 +43,7 @@ internal static class Jobs
     private static bool running;
 
     private static TomteDb? db;
+    private static JobContext? context;
 
     /// <summary>The shelf the Shelf panel uses, so a job reads the same items. Set when the shelf starts.</summary>
     public static ShelfStore? Shelf { get; set; }
@@ -87,6 +88,7 @@ internal static class Jobs
         {
             JobTask.Tag((nint)c.Island.Hwnd, Path.GetDirectoryName(c.Db.FilePath)!);
             db = c.Db;
+            context = c;
             var inner = c.Island.Message;
             c.Island.Message = (message, wParam, lParam) => OnMessage(c, message, wParam, lParam) || (inner?.Invoke(message, wParam, lParam) ?? false);
             if (Arg(args, "--debug-remove-job") is { } remove)
@@ -111,6 +113,19 @@ internal static class Jobs
         {
             c.Log?.Invoke($"jobs: start failed: {e}");
         }
+    }
+
+    /// <summary>
+    /// What a palette or voice session needs to make a job: a job it stores gets its Task Scheduler entry and re-arms the
+    /// one-shot, so one due in a minute runs in a minute. Null before the jobs have started.
+    /// </summary>
+    public static JobPlanner? Planner() => context is { } c ? NewPlanner(c) : null;
+
+    private static JobPlanner NewPlanner(JobContext c)
+    {
+        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
+        planner.Scheduled += next => Arm(c, next);
+        return planner;
     }
 
     private static void Arm(JobContext c, DateTimeOffset? due)
@@ -152,6 +167,9 @@ internal static class Jobs
             case JobTask.MsgRunJob:
                 _ = RunDueAsync(c, (long)wParam);
                 return true;
+            case JobTask.MsgJobsChanged:
+                _ = RearmAsync(c);
+                return true;
             case PInvoke.WM_DESTROY:
                 JobTask.Untag((nint)c.Island.Hwnd);
                 return false;
@@ -165,6 +183,17 @@ internal static class Jobs
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// A job was removed in the settings window: the one-shot is armed again from the next-due file, which the removal
+    /// rewrote, so nothing loads and a removed job's time wakes nothing.
+    /// </summary>
+    private static async Task RearmAsync(JobContext c)
+    {
+        var next = await Task.Run(() => JobStore.ReadMarker(JobStore.MarkerFor(c.Db.FilePath)));
+        c.Log?.Invoke($"jobs: changed; next due {next?.ToString("O") ?? "none"}");
+        Arm(c, next);
     }
 
     /// <summary>Kept out of the start path so Tomte.AI loads only when a job is due.</summary>
@@ -270,11 +299,12 @@ internal static class Jobs
     }
 
     /// <summary>
-    /// --debug-job "request" [--debug-answer yes]: the palette opens, the model turns the request into a job, and the
-    /// confirmation is answered after 1.5 s: yes only with --debug-answer yes, which needs --debug-settings so the job
-    /// lands in the run's own folder. The typed palette does not make jobs yet, which is why this stays a debug switch.
-    /// A yes stores the job and registers its real Task Scheduler entry (none in a packaged build). Provider as for
-    /// voice: the command line, else settings, else local Ollama.
+    /// --debug-job "request" [--debug-answer yes]: the AI box's request without the keys. The palette opens with the typed
+    /// palette's built-in tools and schedule_job, the model answers, and the job's card shows for 1.5 s, then is answered:
+    /// yes only with --debug-answer yes, which needs --debug-settings so the job lands in the run's own folder. Any other
+    /// tool's question is answered no, so a model that acts now instead changes nothing. A yes stores the job and
+    /// registers its real Task Scheduler entry (none in a packaged build). Provider as for voice: the command line, else
+    /// settings, else local Ollama.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task ScheduleAsync(JobContext c, string request, string[] args)
@@ -285,17 +315,16 @@ internal static class Jobs
             : configured?.Config ?? new ProviderConfig("ollama", ProviderKind.OpenAICompatible, "http://127.0.0.1:11434/v1", "llama3.2:3b");
         bool yes = Arg(args, "--debug-answer") == "yes";
         using var http = ProviderSetup.NewHttp();
-        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
-        planner.Scheduled += next => Arm(c, next);
         var host = new PaletteHost(c.Island, c.Triggers.Machine, line => c.Writer?.WriteLine(line), Program.Text!);
         var session = new PaletteSession(configured?.Provider ?? ProviderSetup.Load(config, http), config, configured?.Options ?? new PaletteOptions(), new SendLog(c.SendLog),
             new BuiltInTools(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { }), new PermissionGrants(), [])
         {
-            Scheduling = planner,
+            Scheduling = NewPlanner(c),
             Prompt = request,
         };
+        var question = new ToolQuestion();
         session.ConfirmTool = Answer;
-        await host.RunAsync(session);
+        await host.RunAsync(session, question);
         foreach (var step in session.Answer.OfType<ToolStepSegment>())
         {
             c.Log?.Invoke($"jobs: step {step.Summary} -> {(step.IsError ? "error: " : "")}{step.Result}");
@@ -306,12 +335,16 @@ internal static class Jobs
         c.Triggers.Hide();
         PInvoke.PostQuitMessage(0);
 
+        // The card is drawn as the AI box draws it, then answered.
         async Task<PermissionAnswer> Answer(ToolRequest asked, CancellationToken ct)
         {
-            c.Log?.Invoke($"jobs: confirm \"{asked.Summary}\"");
+            c.Log?.Invoke($"jobs: confirm {asked.Tool} \"{asked.Summary}\"");
+            var answer = question.AskAsync(asked, ct);
             await Task.Delay(1500, ct);
-            c.Log?.Invoke($"jobs: debug answers {(yes ? "yes" : "no")}");
-            return yes ? PermissionAnswer.AllowOnce : PermissionAnswer.Deny;
+            bool allow = yes && asked.Tool == JobPlanner.Tool;
+            c.Log?.Invoke($"jobs: debug answers {(allow ? "yes" : "no")}");
+            question.Answer(allow);
+            return await answer;
         }
     }
 

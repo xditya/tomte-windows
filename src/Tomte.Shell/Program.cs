@@ -779,7 +779,7 @@ internal static partial class Program
             var now = named is null ? Configured(store, log.WriteLine)
                 : named.DefaultModel is null ? null
                 : (ProviderSetup.Load(named, paletteHttp ??= ProviderSetup.NewHttp()), named, new PaletteOptions());
-            var command = await VoiceCommand.StartAsync(now, () => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills), sendLog, tools, grants, History);
+            var command = await VoiceCommand.StartAsync(now, () => SkillSet.Load(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills), sendLog, tools, grants, History, Jobs.Planner());
             // Raised while the palette is up, the event waits in the triggers' queue and shows once the palette hides.
             command?.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));
             log.WriteLine($"rambler: voice {(command is null ? "off, no provider set up: raw transcript" : command.ModelId)}");

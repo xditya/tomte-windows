@@ -19,23 +19,28 @@ public enum ConfirmKeys { Prompt, Voice, Pointer }
 /// <summary>
 /// A tool's question as the palette draws it: what will run, why it asks and which keys answer, whether "Always
 /// allow" is offered, and whether Run takes the warning colour because the action can never be always allowed.
+/// <paramref name="Job"/> is a scheduled job's question: its yes says Schedule, and its summary is shown whole.
 /// </summary>
-public sealed record Confirmation(string Summary, string Line, bool AlwaysAllow, bool Destructive)
+public sealed record Confirmation(string Summary, string Line, bool AlwaysAllow, bool Destructive, bool Job = false)
 {
     /// <summary>Why a tool asks, in plain words, then the keys that answer it.</summary>
-    public static string LineFor(ActionTier tier, ConfirmKeys keys) =>
-        (tier switch
+    public static string LineFor(ActionTier tier, ConfirmKeys keys, bool job = false)
+    {
+        string why = job ? "Runs later on its own" : tier switch
         {
             ActionTier.Read => "Sends what it reads to the AI",
             ActionTier.AppLocalWrite => "Changes Tomte's own data",
             ActionTier.ExternalEffect => "Reaches outside Tomte",
             _ => "Asks every time",
-        }) + keys switch
+        };
+        string yes = job ? "schedules it" : "runs it";
+        return why + keys switch
         {
-            ConfirmKeys.Prompt => " · Enter runs it, Esc cancels",
-            ConfirmKeys.Voice => " · Win+Alt+Enter runs it, Esc cancels",
+            ConfirmKeys.Prompt => $" · Enter {yes}, Esc cancels",
+            ConfirmKeys.Voice => $" · Win+Alt+Enter {yes}, Esc cancels",
             _ => " · Esc cancels",
         };
+    }
 }
 
 /// <summary>The picture before a chip's name.</summary>
@@ -84,6 +89,12 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     public const int AskLines = 3, PromptLines = 4;
 
+    /// <summary>
+    /// The most lines a job's summary may take at the full palette width. A job's card shows its summary whole, never
+    /// cut, since the stored prompt is what runs; the planner refuses a job whose summary would need more.
+    /// </summary>
+    public const int JobLines = 8;
+
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
     public const float WheelStep = 3 * 20;
 
@@ -110,7 +121,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const string Hint = "Ask about what is in front of you…";
     public const string Off = "The AI layer is off";
     public const string Setup = "Add a provider key to use the palette.";
-    public const string Run = "Run", Cancel = "Cancel", AlwaysAllow = "Always allow";
+    public const string Run = "Run", Schedule = "Schedule", Cancel = "Cancel", AlwaysAllow = "Always allow";
     public const string Include = "Include", SendTip = "Send";
 
     /// <summary>The foot's provider line while a card asks before a tool runs: nothing is on its way until the user answers.</summary>
@@ -240,7 +251,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         var card = new RectangleF(Pad, height - Bottom - FootHeight - Gap - AskHeight, AnswerWidth, AskHeight);
         float inner = card.Width - 2 * AskPad, rowY = card.Bottom - AskPad - ButtonHeight, right = card.Right - AskPad;
         var buttons = new List<(ConfirmButton, RectangleF, TextSlot)>();
-        foreach (var (button, label, style) in new[] { (ConfirmButton.Run, Run, RunButton), (ConfirmButton.Cancel, Cancel, Button), (ConfirmButton.AlwaysAllow, AlwaysAllow, Button) })
+        foreach (var (button, label, style) in new[] { (ConfirmButton.Run, confirm.Job ? Schedule : Run, RunButton), (ConfirmButton.Cancel, Cancel, Button), (ConfirmButton.AlwaysAllow, AlwaysAllow, Button) })
         {
             if (button == ConfirmButton.AlwaysAllow && !confirm.AlwaysAllow)
             {
@@ -254,7 +265,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         }
 
         float left = card.X + AskPad;
-        return (card, new TextRun(confirm.Summary, AskSummary, inner, AskLines), new Vector2(left, card.Y + AskPad),
+        return (card, new TextRun(confirm.Summary, AskSummary, inner, SummaryLines), new Vector2(left, card.Y + AskPad),
             new TextSlot(confirm.Line, AskLine, new RectangleF(left, rowY, Math.Max(0, right - left), ButtonHeight)), buttons);
     }
 
@@ -283,8 +294,18 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     private float SummaryHeight(string summary)
     {
-        using var laid = TextLayout.Of(new TextRun(summary, AskSummary, AnswerWidth - 2 * AskPad, AskLines));
+        using var laid = TextLayout.Of(new TextRun(summary, AskSummary, AnswerWidth - 2 * AskPad, SummaryLines));
         return laid.Height;
+    }
+
+    // a palette narrowed by a small monitor gives a job's card a line or two more than JobLines rather than cut it.
+    private int SummaryLines => confirm?.Job == true ? int.MaxValue : AskLines;
+
+    /// <summary>True when a job's summary takes at most <see cref="JobLines"/> lines of the card at the full palette width.</summary>
+    public static bool FitsJobCard(string summary)
+    {
+        using var laid = TextLayout.Of(new TextRun(summary, AskSummary, (float)PanelSize.PaletteWidth - 2 * Pad - 2 * AskPad, JobLines));
+        return !laid.Trimmed;
     }
 
     /// <summary>The AI history button at the footer's left: a clock, as big as the smallest target, centred on the footer's line.</summary>

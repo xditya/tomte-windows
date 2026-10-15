@@ -368,7 +368,8 @@ internal sealed class PaletteView : IDisposable, IInteractive
             || (back is not null) != laidBack)
         {
             (laidText, laidChips, laidSends, laidAsk, laidKeys, laidBack) = (promptText, chips, sends, asked, keys, back is not null);
-            confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, keys), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive);
+            bool job = asked?.Tool == Tomte.AI.Jobs.JobPlanner.Tool;
+            confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, keys, job), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive, job);
             layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm, send: sendVisual is not null, sends, laidBack);
         }
 
@@ -395,7 +396,9 @@ internal sealed class PaletteView : IDisposable, IInteractive
         // every streamed word lays the answer out again (and its run once more to draw it); cache the blocks
         // that did not change if long answers cost frames.
         var (answer, measured) = layout.Answer(Blocks(session, followUp: typed));
-        float height = layout.Height(measured);
+        // The host caps the island at half the monitor's height; the answer band gives way first, so a tall card and its
+        // footer are never cut off.
+        float height = Math.Min(layout.Height(measured), (float)(0.5 * island.MonitorSize.Height));
         var area = layout.AnswerBand(height);
         band.Offset = new Vector3(area.X, area.Y, 0);
         band.Size = new Vector2(area.Width, area.Height);

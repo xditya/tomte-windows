@@ -8,11 +8,11 @@ using Tomte.Core.Jobs;
 namespace Tomte.AI.Jobs;
 
 /// <summary>
-/// Turns a request such as "every weekday at 9, summarise notes.txt" into a stored job. The model gets one tool,
-/// schedule_job, and fills in a strict structure: a name, the prompt each run sends, a time with days or a date, and
-/// the tools the job needs. Tomte checks it, shows it to the user in plain words, and stores it (and its Task Scheduler
-/// entry) only after the user says yes. That yes is the pre-approval each later run relies on: a run may use those
-/// tools and no others, and never a destructive one.
+/// Turns a request such as "every weekday at 9, summarise notes.txt" into a stored job. The model gets schedule_job
+/// beside its other tools, with <see cref="Guidance"/> in its system prompt, and fills in a strict structure: a name,
+/// the prompt each run sends, a time with days or a date, and the tools the job needs. Tomte checks it, shows it to the
+/// user in plain words, and stores it (and its Task Scheduler entry) only after the user says yes. That yes is the
+/// pre-approval each later run relies on: a run may use those tools and no others, and never a destructive one.
 /// </summary>
 public sealed class JobPlanner(JobStore store, IJobTasks tasks)
 {
@@ -20,9 +20,6 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
 
     public const int MaxName = 60;
     public const int MaxPrompt = 2000;
-
-    // The prompt in the confirmation; the whole prompt is stored and sent.
-    private const int PromptPreview = 80;
 
     /// <summary>Clock for "tomorrow" and for the first run; tests set it.</summary>
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.Now;
@@ -35,18 +32,21 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
     /// <summary>The tools a job may ask for: the typed palette's, without the destructive ones.</summary>
     public static IReadOnlyList<ToolDefinition> JobTools { get; } = [.. BuiltInTools.Definitions.Where(d => BuiltInTools.AllowedInScheduledJobs(d.Name))];
 
-    public string Prompt
+    /// <summary>
+    /// Added to the system prompt of a session that offers schedule_job beside its other tools: the local date and time,
+    /// so "in one minute" and "tomorrow" can be worked out, when to make a job instead of acting now, and its rules. The
+    /// tools are not listed: the session offers them, and schedule_job's own list names those a job may use.
+    /// </summary>
+    public string Guidance
     {
         get
         {
             var now = TimeZoneInfo.ConvertTime(Now(), Zone);
-            return "You are Tomte, a quiet helper on the user's Windows PC. The user wants something done later, once or " +
-                "on a repeating schedule. Turn the request into one call of schedule_job. " +
-                $"It is now {now.ToString("dddd d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture)} local time. " +
-                "prompt is the instruction Tomte follows at each run with nobody at the keyboard, so write it in full. " +
-                "tools lists every tool that instruction needs, and only those, by name: " +
-                string.Join("; ", JobTools.Select(t => $"{t.Name} ({t.Description.TrimEnd('.')})")) + ". " +
-                "Tools that lock, sleep, restart or shut down the PC never run in a job. If the request does not say when, " +
+            return $" It is now {now.ToString("dddd d MMMM yyyy, HH:mm", CultureInfo.InvariantCulture)} local time. " +
+                "When the user wants something done later, once or on a repeating schedule, do not do it now: turn the request " +
+                "into one call of schedule_job. Its prompt is the instruction Tomte follows at each run with nobody at the " +
+                "keyboard, so write it in full. Its tools lists every tool that instruction needs, and only those, by name. " +
+                "Tools that lock, sleep, restart or shut down the PC never run in a job. If such a request does not say when, " +
                 "or you are not sure, call no tool and ask one short question.";
         }
     }
@@ -66,7 +66,8 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
 
     /// <summary>
     /// The model's call as a job, or a message saying what is wrong with it. Nothing is stored. A destructive tool or a
-    /// one-off whose time has passed is refused here, before the user is asked.
+    /// one-off whose time has passed (by more than <see cref="JobStore.JustPassed"/>) is refused here, before the user is
+    /// asked.
     /// </summary>
     public (JobDraft? Draft, string? Error) Read(JsonElement input)
     {
@@ -106,28 +107,24 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
             return (null, error);
         }
 
-        if (schedule!.Next(Now(), Zone) is null)
+        if (JobStore.FirstRun(schedule!, Now(), Zone) is null)
         {
             return (null, "That time has already passed. Ask the user for a time in the future.");
         }
 
-        return (new JobDraft(name, prompt, schedule, tools), null);
+        return (new JobDraft(name, prompt, schedule!, tools), null);
     }
 
     /// <summary>
-    /// What the user is asked to confirm: "Every weekday at 09:00: Summarise notes.txt using read_shelf_item. Sends to
-    /// ollama · llama3.2:3b each time."
+    /// What the user is asked to confirm, the stored prompt whole, since it is what each run follows with the approved
+    /// tools: "Every weekday at 09:00: Summarise notes.txt. Uses read_shelf_item. Sends to ollama · llama3.2:3b each time."
     /// </summary>
     public static string Confirmation(JobDraft draft, ProviderConfig provider)
     {
-        string prompt = draft.Prompt.ReplaceLineEndings(" ").Trim().TrimEnd('.', '!', '?');
-        if (prompt.Length > PromptPreview)
-        {
-            prompt = prompt[..PromptPreview].TrimEnd() + "...";
-        }
-
-        string tools = draft.Tools.Count == 0 ? "with no tools" : "using " + JobSchedule.JoinWords(draft.Tools);
-        return $"{draft.Schedule.Describe()}: {prompt} {tools}. Sends to {provider.Id} · {provider.DefaultModel} each time.";
+        string prompt = draft.Prompt.ReplaceLineEndings(" ").Trim();
+        string tools = draft.Tools.Count == 0 ? "no tools" : JobSchedule.JoinWords(draft.Tools);
+        return $"{draft.Schedule.Describe()}: {prompt}{(".!?".Contains(prompt[^1]) ? "" : ".")} " +
+            $"Uses {tools}. Sends to {ProviderSetup.NameOf(provider.Id)} · {provider.DefaultModel} each time.";
     }
 
     /// <summary>
@@ -144,14 +141,28 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
         }
 
         string summary = Confirmation(draft, provider);
+        // The card shows the prompt whole or not at all: an instruction past what the user can read must not run unread.
+        if (!PaletteLayout.FitsJobCard(summary))
+        {
+            return (Tool, "prompt is too long to show the user in full. Shorten it and call schedule_job again.", true);
+        }
+
         if (await confirm(new ToolRequest(Tool, summary, ActionTier.ExternalEffect, OfferAlwaysAllow: false), ct) == PermissionAnswer.Deny)
         {
             return (summary, PaletteSession.NotAllowed, true);
         }
 
+        // A one-off taken within JobStore.JustPassed of its time can be gone by the yes; one with no run left is not
+        // stored. The same moment decides it and the stored first run.
+        var now = Now();
+        if (JobStore.FirstRun(draft.Schedule, now, Zone) is null)
+        {
+            return (summary, "That time passed before the user said yes, so nothing was scheduled. Ask the user for a new time.", true);
+        }
+
         var (job, taskError, next) = await Task.Run(() =>
         {
-            var (made, problem) = Create(draft, provider);
+            var (made, problem) = Create(draft, provider, now);
             return (made, problem, store.NextDue());
         }, ct);
         Scheduled?.Invoke(next);
@@ -162,10 +173,13 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
             " Do not call schedule_job again for this request; tell the user in one short sentence.", false);
     }
 
-    /// <summary>Stores a confirmed job, then its Task Scheduler entry. Blocks: worker thread only. A refused entry keeps the job.</summary>
-    public (ScheduledJob Job, string? TaskError) Create(JobDraft draft, ProviderConfig provider)
+    /// <summary>
+    /// Stores a confirmed job with its first run from <paramref name="now"/> (the clock when not given), then its Task
+    /// Scheduler entry. Blocks: worker thread only. A refused entry keeps the job.
+    /// </summary>
+    public (ScheduledJob Job, string? TaskError) Create(JobDraft draft, ProviderConfig provider, DateTimeOffset? now = null)
     {
-        var job = store.Add(draft, provider, Now(), Zone);
+        var job = store.Add(draft, provider, now ?? Now(), Zone);
         try
         {
             tasks.Register(job);

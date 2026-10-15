@@ -60,6 +60,9 @@ public static class JobTask
     /// <summary>What a --run-job start posts to the running Tomte's island window, with the job id in wParam.</summary>
     public const uint MsgRunJob = PInvoke.WM_APP + 0x4A;
 
+    /// <summary>What the settings window posts to the running Tomte after removing a job: read the next-due file again.</summary>
+    public const uint MsgJobsChanged = PInvoke.WM_APP + 0x4B;
+
     private static readonly XNamespace Ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
 
     /// <summary>The job id of a --run-job start, or null.</summary>
@@ -104,7 +107,12 @@ public static class JobTask
     /// Hands a --run-job start to the Tomte already running on <paramref name="dataFolder"/>: posts the id to the
     /// top-level window tagged with that folder. False when none is running there; the caller then runs the job itself.
     /// </summary>
-    public static unsafe bool HandOff(string dataFolder, long jobId)
+    public static bool HandOff(string dataFolder, long jobId) => Post(dataFolder, MsgRunJob, (nuint)jobId);
+
+    /// <summary>Tells the Tomte running on <paramref name="dataFolder"/>, if any, that its jobs changed. False with none.</summary>
+    public static bool Changed(string dataFolder) => Post(dataFolder, MsgJobsChanged, 0);
+
+    private static unsafe bool Post(string dataFolder, uint message, nuint wParam)
     {
         nint tag = FolderValue(dataFolder);
         fixed (char* name = FolderProperty)
@@ -113,7 +121,7 @@ public static class JobTask
             {
                 if ((nint)PInvoke.GetProp(window, name).Value == tag)
                 {
-                    return PInvoke.PostMessage(window, MsgRunJob, (nuint)jobId, 0);
+                    return PInvoke.PostMessage(window, message, wParam, 0);
                 }
             }
         }

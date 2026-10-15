@@ -39,12 +39,11 @@ public sealed partial class PaletteSession
 
     internal ModelFacts Facts => ModelFacts.For(_config with { DefaultModel = ModelId }, _provider.Capabilities, Model);
 
-    // Making a job has its own prompt. A job run has the unattended rule instead of skills and automation, and gets the
-    // file paragraph, like any session, once a file is in the send: for a job only through read_shelf_item, which it is
-    // offered only when the user approved it for that job.
-    private string SystemText => Scheduling?.Prompt
-        ?? (Voice ? VoicePrompt : Job is not null ? SystemPrompt + JobPrompt : SystemPrompt + Skills?.Prompt + (Automation is null ? null : AutomationTools.Prompt))
-            + (_filesInPlay || _fileReads.Count > 0 ? FileAttachments.Prompt : "");
+    // A job run has the unattended rule instead of skills and automation. A session that can make a job gets the
+    // planner's guidance. Each gets the file paragraph once a file is in the send: a job only through read_shelf_item,
+    // which it is offered only when the user approved it for that job.
+    private string SystemText => (Voice ? VoicePrompt : Job is not null ? SystemPrompt + JobPrompt : SystemPrompt + Skills?.Prompt + (Automation is null ? null : AutomationTools.Prompt))
+        + Scheduling?.Guidance + (_filesInPlay || _fileReads.Count > 0 ? FileAttachments.Prompt : "");
 
     /// <summary>
     /// read_shelf_item only once the user attached the shelf; a voice session keeps it and asks before every read, and a

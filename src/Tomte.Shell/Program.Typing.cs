@@ -273,9 +273,9 @@ internal static partial class Program
         session.Model = await ProviderSetup.DescribeAsync(provider, config);
 
     /// <summary>
-    /// The hotkey palette's session: the chips, the built-in tools, the skills read at this open, the user's MCP servers
-    /// (started on the first send, stopped when the palette closes) and, when Settings turned it on, UI Automation on the
-    /// window that was in front, every list and action of it asked.
+    /// The hotkey palette's session: the chips, the built-in tools, schedule_job for a request meant for later, the skills
+    /// read at this open, the user's MCP servers (started on the first send, stopped when the palette closes) and, when
+    /// Settings turned it on, UI Automation on the window that was in front, every list and action of it asked.
     /// </summary>
     private static PaletteSession Session(TriggerController triggers, SettingsStore store, (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) configured, bool dry, nint foreground, string? selection, SkillSet? skills, ContextChip? lasso, string? product, AiExchange? earlier)
     {
@@ -295,6 +295,8 @@ internal static partial class Program
             History = History,
             Continuing = earlier,
             Mcp = McpTools.For(settings.McpServers),
+            // --debug-palette only pretends, so it makes no real job or Task Scheduler entry.
+            Scheduling = dry ? null : Jobs.Planner(),
             // With no window to point them at (the tray's Ask AI with none remembered) the tools are not offered.
             Automation = AutomationTools.For(settings.UiAutomation.Enabled && foreground != 0, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),
         };
