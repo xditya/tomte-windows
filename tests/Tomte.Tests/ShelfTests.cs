@@ -939,18 +939,18 @@ public sealed class ShelfTests : IDisposable
         // The second tile's actions follow the tiles in group 2; it is missing, so only Copy path and Remove work.
         var band = ShelfLayout.Targets(Body, 0, items, items[1], [items[1]], false);
         Assert.Equal(Enum.GetValues<ShelfAction>().Select(a => $"act:{a}"), band.Skip(8).Select(t => t.Id));
-        Assert.All(band.Skip(8), t => Assert.True(t is { Kind: TargetKind.Button, Group: 2, Draggable: false }));
-        // Named on the band, so a tip only says the key; Share has none.
-        Assert.Equal(["Open (Enter)", "Show in folder (Ctrl+Shift+E)", "Copy path (Ctrl+C)", null, "Remove (Delete)"], band.Skip(8).Select(t => t.Tip));
+        Assert.All(band.Skip(8), t => Assert.True(t is { Kind: TargetKind.Button, Group: 2, Draggable: false, Tip: null }));
+        // Named on the band, so with the keys a tip only says the key; Share has none.
+        Assert.Equal(["Enter", "Ctrl+Shift+E", "Ctrl+C", null, "Delete"], band.Skip(8).Select(t => t.TipWith(keys: true)));
         Assert.Equal([false, false, true, false, true], band.Skip(8).Select(t => t.Enabled));
         Assert.Equal(ShelfLayout.Actions(Body, false).Select(a => a.Box), band.Skip(8).Select(t => t.Bounds));
         // Acting on the selection: an action works when one of the items allows it.
         Assert.All(ShelfLayout.Targets(Body, 0, items, items[1], [items[0], items[1]], false).Skip(8), t => Assert.True(t.Enabled));
 
-        // Icon only on a narrow band, each named in its tooltip.
-        var narrow = new System.Numerics.Vector2(440, Body.Y);
-        Assert.Equal(["Open (Enter)", "Show in folder (Ctrl+Shift+E)", "Copy path (Ctrl+C)", "Share", "Remove (Delete)"],
-            ShelfLayout.Targets(narrow, 0, items, items[0], [items[0]], false).Skip(8).Select(t => t.Tip));
+        // Icon only on a narrow band, each named in its tooltip, with its key while the island has the keys.
+        var narrow = ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [items[0]], false).Skip(8).ToList();
+        Assert.Equal(Enum.GetValues<ShelfAction>().Select(ShelfLayout.Name), narrow.Select(t => t.Tip));
+        Assert.Equal(["Open (Enter)", "Show in folder (Ctrl+Shift+E)", "Copy path (Ctrl+C)", "Share", "Remove (Delete)"], narrow.Select(t => t.TipWith(keys: true)));
         Assert.Equal("Show in folder", ShelfLayout.Name(ShelfAction.Reveal));
 
         // Scrolled away from the tile the band was for: no band.

@@ -30,7 +30,7 @@ public sealed class HistoryPanelLayout
     /// <summary>The most lines of one conversation the panel lays out (see <see cref="DropResultLayout.MaxLines"/>).</summary>
     public const int MaxLines = DropResultLayout.MaxLines, PromptLines = 6;
 
-    public const string ContinueId = "continue", CopyId = "copy", Continue = "Continue", Copy = "Copy answer", CopyTip = "Copy answer (Ctrl+C)";
+    public const string ContinueId = "continue", CopyId = "copy", Continue = "Continue", Copy = "Copy answer";
 
     /// <summary>The line under a conversation cut at <see cref="MaxLines"/>.</summary>
     public const string Rest = "The rest of this conversation is not shown here.";
@@ -187,7 +187,7 @@ public sealed class HistoryPanelLayout
         if (Opened >= 0)
         {
             targets.Add(new Target(ContinueId, InList(ContinueButton, scroll), Corner, TargetKind.Button));
-            targets.Add(new Target(CopyId, InList(CopyButton, scroll), Corner, TargetKind.Button, Enabled: Items[Opened].LastAnswer.Length > 0, Tip: CopyTip));
+            targets.Add(new Target(CopyId, InList(CopyButton, scroll), Corner, TargetKind.Button, Enabled: Items[Opened].LastAnswer.Length > 0, Key: "Ctrl+C"));
         }
 
         return targets;

@@ -359,6 +359,19 @@ public class InteractionTests
     }
 
     [Fact]
+    public void TooltipsNameTheirKeyOnlyWhileTheIslandHasTheKeys()
+    {
+        var remove = At("x", 0, 0) with { Tip = "Remove", Key = "Delete" };
+        Assert.Equal("Remove", remove.TipWith(keys: false));
+        Assert.Equal("Remove (Delete)", remove.TipWith(keys: true));
+        // A tab label says what it is: its tip is the key alone, and nothing without the keys.
+        var tab = At("Shelf", 0, 0) with { Key = "Ctrl+1" };
+        Assert.Null(tab.TipWith(keys: false));
+        Assert.Equal("Ctrl+1", tab.TipWith(keys: true));
+        Assert.Equal("Add", (At("a", 0, 0) with { Tip = "Add" }).TipWith(keys: true));
+    }
+
+    [Fact]
     public void HomeAndEndJumpToTheEndsOfTheGroupOfTheSameKind()
     {
         // Rows with a remove button each in group 1, the last row's button disabled, and a button in no group.

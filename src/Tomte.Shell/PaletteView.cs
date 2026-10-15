@@ -614,8 +614,8 @@ internal sealed class PaletteView : IDisposable, IInteractive
         for (int i = 0; i < layout.Chips.Count && session is not null; i++)
         {
             var chip = layout.Chips[i];
-            string tip = NavKeys.ChipKey(shownChips[i].Spec.Icon) is { } key ? $"{shownChips[i].Tip} ({key})" : shownChips[i].Tip;
-            list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, tip, Group: 1, Checked: chip.On));
+            list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, shownChips[i].Tip, Group: 1, Checked: chip.On,
+                Key: NavKeys.ChipKey(shownChips[i].Spec.Icon)));
         }
 
         if (sendVisual is not null)
@@ -625,7 +625,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         foreach (var (button, at, _) in layout.Ask(Height)?.Buttons ?? [])
         {
-            list.Add(new Target(PaletteLayout.ButtonId(button, questions), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ready, PaletteLayout.ButtonTip(button)));
+            list.Add(new Target(PaletteLayout.ButtonId(button, questions), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ready, Key: PaletteLayout.ButtonKey(button)));
         }
 
         if (openHistory is not null && session is not null)
@@ -636,7 +636,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
         // Last, so Shift+Tab from the prompt reaches the arrow drawn before it.
         if (back is not null)
         {
-            list.Add(new Target(PaletteLayout.BackId, layout.Back, PaletteLayout.BackCorner, TargetKind.Button, Tip: PaletteLayout.BackTip));
+            list.Add(new Target(PaletteLayout.BackId, layout.Back, PaletteLayout.BackCorner, TargetKind.Button, Tip: PaletteLayout.BackTip, Key: PaletteLayout.BackKey));
         }
 
         if (!list.SequenceEqual(targets))

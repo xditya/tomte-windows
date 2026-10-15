@@ -120,6 +120,9 @@ internal sealed class InteractionHost
     /// <summary>The island's text renderer, which draws the tooltips; until it is set no tip shows.</summary>
     public TextRenderer? Text { get; set; }
 
+    /// <summary>The island has the keyboard, for a text box or for the targets: tooltips name their keys only then.</summary>
+    public bool HasKeys { get; set; }
+
     /// <summary>Ctrl+Tab (+1) and Ctrl+Shift+Tab (-1) switch panel tabs through this.</summary>
     public Action<int>? SwitchTab { get; set; }
 
@@ -719,7 +722,7 @@ internal sealed class InteractionHost
         }
 
         HideTip();
-        if (at is { } r && !tipBlocked && Find(r, out _, out var t) && t.Tip is { } text)
+        if (at is { } r && !tipBlocked && Find(r, out _, out var t) && t.TipWith(HasKeys) is { } text)
         {
             (tipFor, tip, tipText) = (r, TipPhase.Waiting, text);
             Wait(StateLook.TipDelayMs);

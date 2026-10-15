@@ -24,7 +24,7 @@ public static class ShelfLayout
     public const float DropLeft = 8 + 26 + 10, DropRight = 14, DropPadY = 12;
 
     public const string Title = "Shelf";
-    public const string Hint = "Drag out to any app, Ctrl+P pins";
+    public const string Hint = "Drag out to any app";
     public const string Empty = "Drop files, folders, text, images or links here.\nDragging toward the top edge opens this surface.";
     public const string DropHere = "Drop to shelf";
     public const string ConfirmRemove = "Remove? Click again";
@@ -54,8 +54,8 @@ public static class ShelfLayout
 
     /// <summary>
     /// The shelf's clickable parts in Tab order: the visible tiles (group 1, draggable, the full name and folder as the
-    /// tip), then, while <paramref name="owner"/> is on the page, the band's actions for it (group 2, each tip naming its
-    /// key; an icon-only one without a key carries its name). An action that none of <paramref name="acting"/> allows is
+    /// tip), then, while <paramref name="owner"/> is on the page, the band's actions for it (group 2; an icon-only one
+    /// carries its name as the tip, and each its key). An action that none of <paramref name="acting"/> allows is
     /// disabled.
     /// </summary>
     public static IReadOnlyList<Target> Targets(Vector2 body, int first, IReadOnlyList<ShelfItem> items, ShelfItem? owner, IReadOnlyList<ShelfItem> acting, bool confirming)
@@ -73,7 +73,8 @@ public static class ShelfLayout
             foreach (var slot in Actions(body, confirming))
             {
                 bool allowed = acting.Any(i => ShelfStore.Allows(slot.Action, i));
-                targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, ActionTip(slot.Action, slot.Label is not null), Group: 2));
+                targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, slot.Label is null ? Name(slot.Action) : null, Group: 2,
+                    Key: ActionKey(slot.Action)));
             }
         }
 
@@ -290,17 +291,14 @@ public static class ShelfLayout
         _ => "Remove",
     };
 
-    /// <summary>
-    /// An action button's tooltip: its name and the key that does the same on a focused tile; with no key, its name only
-    /// while the button shows no name (<paramref name="labelled"/> false).
-    /// </summary>
-    public static string? ActionTip(ShelfAction action, bool labelled) => action switch
+    /// <summary>The key that does an action on a focused tile, for the button's tooltip while the island has the keys; null for Share.</summary>
+    public static string? ActionKey(ShelfAction action) => action switch
     {
-        ShelfAction.Open => "Open (Enter)",
-        ShelfAction.Reveal => "Show in folder (Ctrl+Shift+E)",
-        ShelfAction.CopyPath => "Copy path (Ctrl+C)",
-        ShelfAction.Remove => "Remove (Delete)",
-        _ => labelled ? null : Name(action),
+        ShelfAction.Open => "Enter",
+        ShelfAction.Reveal => "Ctrl+Shift+E",
+        ShelfAction.CopyPath => "Ctrl+C",
+        ShelfAction.Remove => "Delete",
+        _ => null,
     };
 
     /// <summary>

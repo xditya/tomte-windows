@@ -155,7 +155,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>The back arrow: as big as Send, level with the prompt's first line, after the tomte.</summary>
     public const float BackSize = SendSize, BackGap = 6, BackCorner = SendCorner;
 
-    public const string BackId = "back", BackTip = "Back (Alt+Left)";
+    public const string BackId = "back", BackTip = "Back", BackKey = "Alt+Left";
 
     public float Left => Start + (back ? BackSize + BackGap : 0);
 
@@ -264,12 +264,12 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// </summary>
     public static string ButtonId(ConfirmButton button, int question) => string.Create(CultureInfo.InvariantCulture, $"{button}:{question}");
 
-    /// <summary>A question's button's tooltip: the key that answers the same way.</summary>
-    public static string ButtonTip(ConfirmButton button) => button switch
+    /// <summary>The key that answers a question as its button does, for the button's tooltip while the island has the keys.</summary>
+    public static string ButtonKey(ConfirmButton button) => button switch
     {
-        ConfirmButton.Run => "Run (Enter)",
-        ConfirmButton.Cancel => "Cancel (Esc)",
-        _ => "Always allow (Alt+A)",
+        ConfirmButton.Run => "Enter",
+        ConfirmButton.Cancel => "Esc",
+        _ => "Alt+A",
     };
 
     /// <summary>The button an id names on question <paramref name="question"/>; null for another question's, or another target.</summary>
@@ -290,9 +290,9 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>The AI history button at the footer's left: a clock, as big as the smallest target, centred on the footer's line.</summary>
     public RectangleF History(float height) => new(Pad - 5, height - Bottom - (FootHeight / 2) - (StateLook.MinTarget / 2), StateLook.MinTarget, StateLook.MinTarget);
 
-    public Target HistoryTarget(float height) => new(HistoryId, History(height), 6, TargetKind.Button, Tip: HistoryTip);
+    public Target HistoryTarget(float height) => new(HistoryId, History(height), 6, TargetKind.Button, Tip: HistoryTip, Key: "Ctrl+H");
 
-    public const string HistoryId = "history", HistoryTip = "AI history (Ctrl+H)";
+    public const string HistoryId = "history", HistoryTip = "AI history";
 
     /// <summary>The clock's ring radius and stroke, and its two hands as bars from the centre, in the button's own DIPs.</summary>
     public const float ClockRadius = 5.5f, ClockStroke = 1.5f;

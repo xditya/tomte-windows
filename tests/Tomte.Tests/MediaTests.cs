@@ -346,7 +346,8 @@ public class MediaTests
         Assert.Equal(["previous", "playpause", "next"], transport.Select(t => t.Id));
         // Each a Tab stop of its own: on them Left and Right skip tracks rather than move between them.
         Assert.All(transport, t => Assert.True(t.Enabled && t.Group == 0 && t.Bounds.Width >= 32 && t.Bounds.Height >= 32, t.Id));
-        Assert.Equal(["Previous (Left)", "Pause (Space)", "Next (Right)"], transport.Select(t => t.Tip));
+        Assert.Equal(["Previous", "Pause", "Next"], transport.Select(t => t.Tip));
+        Assert.Equal(["Previous (Left)", "Pause (Space)", "Next (Right)"], transport.Select(t => t.TipWith(keys: true)));
 
         // The app takes only pause: next and previous are disabled, play or pause still works.
         var pauseOnly = Playing().WithPlayback(true, 1, MediaCommand.Pause, T0 + S(1));
@@ -355,7 +356,7 @@ public class MediaTests
         Assert.Equal(MediaCommand.Pause, MediaPanelLayout.Command("playpause", pauseOnly));
 
         // Paused, the middle button says Play. Nothing plays: every button is disabled.
-        Assert.Equal("Play (Space)", Layout.Targets(Playing().WithPlayback(false, 1, All, T0))[1].Tip);
+        Assert.Equal("Play", Layout.Targets(Playing().WithPlayback(false, 1, All, T0))[1].Tip);
         Assert.All(Layout.Targets(NowPlaying.None), t => Assert.False(t.Enabled, t.Id));
     }
 

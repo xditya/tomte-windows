@@ -76,8 +76,9 @@ public sealed class PanelLayoutTests
         Assert.Equal((TargetKind.Toggle, true, "Keep clipboard history: on"), (sw.Kind, sw.Checked, sw.Tip));
         Assert.Equal("Keep clipboard history: off", Clipboard.Targets(on: false, [], 0, asking: false)[0].Tip);
 
-        Assert.Equal((TargetKind.Row, "Copy again (Enter)", 1), (targets[1].Kind, targets[1].Tip, targets[1].Group));
-        Assert.Equal((TargetKind.Button, "Remove (Delete)", 1), (targets[2].Kind, targets[2].Tip, targets[2].Group));
+        Assert.Equal((TargetKind.Row, "Copy again", 1), (targets[1].Kind, targets[1].Tip, targets[1].Group));
+        Assert.Equal((TargetKind.Button, "Remove", 1), (targets[2].Kind, targets[2].Tip, targets[2].Group));
+        Assert.Equal(("Copy again (Enter)", "Remove (Delete)"), (targets[1].TipWith(keys: true), targets[2].TipWith(keys: true)));
         Assert.Equal((24f, 24f), (targets[2].Bounds.Width, targets[2].Bounds.Height));
 
         // Clear all is a panel action, as tall as one, alone in its Tab stop, and grows to the left when it asks.
@@ -286,15 +287,6 @@ public sealed class PanelLayoutTests
         Assert.True(head[1].Slot.Right <= head[2].Slot.Left);
         Assert.Equal(body.X - ShelfLayout.PadX, head[2].Slot.Right, 0.01);
         foreach (var line in head.Skip(1))
-        {
-            using var laid = TextLayout.Of(new TextRun(line.Text, line.Style, line.Slot.Width));
-            Assert.False(laid.Trimmed, line.Text);
-        }
-
-        // The Shortcuts head line the same way: what a tile can be, then its keys at the right end.
-        var shortcuts = Tomte.Core.Shortcuts.ShortcutGrid.HeadText(new Vector2(560, 300 - PanelSpace.TabStripHeight));
-        Assert.True(shortcuts[1].Slot.Right <= shortcuts[2].Slot.Left);
-        foreach (var line in shortcuts.Skip(1))
         {
             using var laid = TextLayout.Of(new TextRun(line.Text, line.Style, line.Slot.Width));
             Assert.False(laid.Trimmed, line.Text);

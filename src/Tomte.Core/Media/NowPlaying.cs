@@ -321,9 +321,9 @@ public sealed class MediaPanelLayout(float width)
             buttons.Add(new(SeekId, Seek, Seek.Height / 2, TargetKind.Slider, Draggable: true));
         }
 
-        buttons.Add(new(PreviousId, Previous, Previous.Width / 2, TargetKind.Button, now.Accepts(MediaCommand.Previous), "Previous (Left)"));
-        buttons.Add(new(PlayPauseId, PlayPause, PlayPause.Width / 2, TargetKind.Button, now.PlayPause != MediaCommand.None, now.IsPlaying ? "Pause (Space)" : "Play (Space)"));
-        buttons.Add(new(NextId, Next, Next.Width / 2, TargetKind.Button, now.Accepts(MediaCommand.Next), "Next (Right)"));
+        buttons.Add(new(PreviousId, Previous, Previous.Width / 2, TargetKind.Button, now.Accepts(MediaCommand.Previous), "Previous", Key: "Left"));
+        buttons.Add(new(PlayPauseId, PlayPause, PlayPause.Width / 2, TargetKind.Button, now.PlayPause != MediaCommand.None, now.IsPlaying ? "Pause" : "Play", Key: "Space"));
+        buttons.Add(new(NextId, Next, Next.Width / 2, TargetKind.Button, now.Accepts(MediaCommand.Next), "Next", Key: "Right"));
         return buttons;
     }
 

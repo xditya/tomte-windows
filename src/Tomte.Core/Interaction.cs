@@ -19,11 +19,19 @@ public enum ActivateBy { Click, DoubleClick, Key }
 /// order, and a later target sits on top of an earlier one it overlaps, so a button inside a row comes after the row.
 /// Arrow keys move between targets of the same <paramref name="Group"/> of the same view, by where they are; 0 is no
 /// group. <paramref name="Tip"/> is the tooltip, which an icon-only target needs. A press on a
-/// <paramref name="Draggable"/> target may start a drag rather than a click.
+/// <paramref name="Draggable"/> target may start a drag rather than a click. <paramref name="Key"/> is the key that does
+/// the same, which the tooltip names only while the island has the keyboard (<see cref="TipWith"/>).
 /// </summary>
 public readonly record struct Target(string Id, RectangleF Bounds, float Corner, TargetKind Kind, bool Enabled = true,
-    string? Tip = null, int Group = 0, bool Draggable = false, bool Checked = false)
+    string? Tip = null, int Group = 0, bool Draggable = false, bool Checked = false, string? Key = null)
 {
+    /// <summary>
+    /// The tooltip to show: with the keys, the tip and its key ("Remove (Delete)"), or the key alone on a target that
+    /// says what it is itself (a tab label: "Ctrl+1"); without them, the tip alone, so an island the pointer opened never
+    /// asks for a key the user's app would get.
+    /// </summary>
+    public string? TipWith(bool keys) => keys && Key is { } key ? (Tip is null ? key : $"{Tip} ({key})") : Tip;
+
     /// <summary>
     /// The target under an island point: the views in the order they registered, each with its list and the function
     /// from island space to its own space. A later view sits on top of an earlier one, and within a view a later target

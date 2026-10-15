@@ -151,7 +151,7 @@ internal sealed class TypingFocus
             previous = PInvoke.IsWindowVisible(front) ? front : default;
         }
 
-        keys = true;
+        keys = island.Interaction.HasKeys = true;
         PInvoke.SetFocus(island.Hwnd);
         if (editor is not null)
         {
@@ -172,7 +172,7 @@ internal sealed class TypingFocus
         dragging = null;
         if (keys)
         {
-            keys = false;
+            keys = island.Interaction.HasKeys = false;
             var was = focused;
             focused = null;
             was?.Blur();

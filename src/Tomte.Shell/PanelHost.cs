@@ -455,7 +455,7 @@ internal sealed class PanelHost
             var list = new List<Target>();
             foreach (var (id, line) in tabs.Zip(lines))
             {
-                list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Tip: $"{TabStrip.Name(id)} (Ctrl+{list.Count + 1})", Group: 1, Checked: id == current));
+                list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: id == current, Key: $"Ctrl+{list.Count + 1}"));
             }
 
             Visual.Size = new Vector2(width, PanelSpace.TabStripHeight);
@@ -481,7 +481,7 @@ internal sealed class PanelHost
             var (card, glyph, word) = TabStrip.AskPill(width);
             askWidth = card.Width;
             askFor = (float)island.Current.Width;
-            list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything (Ctrl+K)"));
+            list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything", Key: "Ctrl+K"));
             targets = [.. list];
             askVisual.Size = new Vector2(card.Width, PanelSpace.TabStripHeight);
             askEdge.SetScalarParameter("right", width - card.X);
