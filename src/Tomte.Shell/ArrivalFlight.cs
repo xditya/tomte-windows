@@ -151,6 +151,12 @@ internal sealed unsafe class ArrivalFlight
     {
         if (hwnd != HWND.Null)
         {
+            if (pillOpen)
+            {
+                // A pill still held grows now, or whatever takes over moves at once.
+                island.HoldNextMorph(0);
+            }
+
             island.MascotAway = false;
             Destroy();
         }
@@ -230,7 +236,6 @@ internal sealed unsafe class ArrivalFlight
             island.HoldNextMorph(Arrival.PillGrowsSeconds - now);
             if (!openPill())
             {
-                island.HoldNextMorph(0);
                 End();
                 return;
             }

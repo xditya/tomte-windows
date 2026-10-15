@@ -399,9 +399,17 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     /// <summary>
     /// The next morph from rest shows the window at once but holds the shape still for this many seconds: the launch
-    /// arrival opens the pill while its tomte holds still, and the pill grows once the tomte is nearly up.
+    /// arrival opens the pill while its tomte holds still, and the pill grows once the tomte is nearly up. 0 ends a hold
+    /// under way, so a morph that takes over from the arrival moves at once.
     /// </summary>
-    public void HoldNextMorph(double seconds) => heldLead = seconds;
+    public void HoldNextMorph(double seconds)
+    {
+        heldLead = seconds;
+        if (seconds <= 0 && islandMoving)
+        {
+            leadMs = Math.Min(leadMs, clock.Elapsed.TotalMilliseconds - morphStartMs);
+        }
+    }
 
     /// <summary>Where the tomte rests in the Compact pill at the island's place: its box's top-left in screen pixels.</summary>
     public System.Drawing.PointF MascotLanding()
