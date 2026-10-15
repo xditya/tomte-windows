@@ -268,4 +268,25 @@ public sealed class PaletteQuestionTests : IDisposable
         Assert.Equal([ConfirmButton.Cancel, ConfirmButton.Run], asked.Buttons.Select(b => b.Button));
         Assert.Equal("Asks every time · Win+Alt+Enter runs it, Esc cancels", asked.Line.Text);
     }
+
+    [Fact]
+    public void AJobsCardSaysScheduleAndShowsItsWholeSummary()
+    {
+        string summary = "Every weekday at 09:00: " + string.Join(' ', Enumerable.Repeat("Read the shelf item notes.txt and add a line to the note.", 5))
+            + " Uses read_shelf_item and write_scratchpad. Sends to Anthropic · claude-haiku-5-5 each time.";
+        var job = new Confirmation(summary, Confirmation.LineFor(ActionTier.ExternalEffect, ConfirmKeys.Prompt, job: true), AlwaysAllow: false, Destructive: false, Job: true);
+        var layout = new PaletteLayout(640, mascot: true, confirm: job);
+
+        var ask = layout.Ask(layout.Height(0))!.Value;
+
+        Assert.Equal(PaletteLayout.Schedule, ask.Buttons[^1].Label.Text);
+        Assert.Equal("Runs later on its own · Enter schedules it, Esc cancels", ask.Line.Text);
+        Assert.Equal("Runs later on its own · Win+Alt+Enter schedules it, Esc cancels", Confirmation.LineFor(ActionTier.ExternalEffect, ConfirmKeys.Voice, job: true));
+        // More than the three lines another tool's card takes, and nothing cut.
+        using var laid = TextLayout.Of(ask.Summary);
+        Assert.False(laid.Trimmed);
+        Assert.True(laid.LineCount > PaletteLayout.AskLines);
+        Assert.True(PaletteLayout.FitsJobCard(summary));
+        Assert.False(PaletteLayout.FitsJobCard(summary + string.Concat(Enumerable.Repeat(" And more.", 60))));
+    }
 }

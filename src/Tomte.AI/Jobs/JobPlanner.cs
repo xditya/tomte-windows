@@ -21,9 +21,6 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
     public const int MaxName = 60;
     public const int MaxPrompt = 2000;
 
-    // The prompt in the confirmation; the whole prompt is stored and sent.
-    private const int PromptPreview = 80;
-
     /// <summary>Clock for "tomorrow" and for the first run; tests set it.</summary>
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.Now;
 
@@ -119,19 +116,15 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
     }
 
     /// <summary>
-    /// What the user is asked to confirm: "Every weekday at 09:00: Summarise notes.txt using read_shelf_item. Sends to
-    /// ollama · llama3.2:3b each time."
+    /// What the user is asked to confirm, the stored prompt whole, since it is what each run follows with the approved
+    /// tools: "Every weekday at 09:00: Summarise notes.txt. Uses read_shelf_item. Sends to ollama · llama3.2:3b each time."
     /// </summary>
     public static string Confirmation(JobDraft draft, ProviderConfig provider)
     {
-        string prompt = draft.Prompt.ReplaceLineEndings(" ").Trim().TrimEnd('.', '!', '?');
-        if (prompt.Length > PromptPreview)
-        {
-            prompt = prompt[..PromptPreview].TrimEnd() + "...";
-        }
-
-        string tools = draft.Tools.Count == 0 ? "with no tools" : "using " + JobSchedule.JoinWords(draft.Tools);
-        return $"{draft.Schedule.Describe()}: {prompt} {tools}. Sends to {ProviderSetup.NameOf(provider.Id)} · {provider.DefaultModel} each time.";
+        string prompt = draft.Prompt.ReplaceLineEndings(" ").Trim();
+        string tools = draft.Tools.Count == 0 ? "no tools" : JobSchedule.JoinWords(draft.Tools);
+        return $"{draft.Schedule.Describe()}: {prompt}{(".!?".Contains(prompt[^1]) ? "" : ".")} " +
+            $"Uses {tools}. Sends to {ProviderSetup.NameOf(provider.Id)} · {provider.DefaultModel} each time.";
     }
 
     /// <summary>
@@ -148,6 +141,12 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
         }
 
         string summary = Confirmation(draft, provider);
+        // The card shows the prompt whole or not at all: an instruction past what the user can read must not run unread.
+        if (!PaletteLayout.FitsJobCard(summary))
+        {
+            return (Tool, "prompt is too long to show the user in full. Shorten it and call schedule_job again.", true);
+        }
+
         if (await confirm(new ToolRequest(Tool, summary, ActionTier.ExternalEffect, OfferAlwaysAllow: false), ct) == PermissionAnswer.Deny)
         {
             return (summary, PaletteSession.NotAllowed, true);

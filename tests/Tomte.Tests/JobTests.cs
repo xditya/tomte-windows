@@ -136,10 +136,10 @@ public sealed class JobTests : IDisposable
 
         await session.SendAsync();
 
-        // The model's own words, cut, as the user would read them before saying yes.
+        // The model's own words, whole, as the user would read them before saying yes.
         var asked = Assert.Single(_asked);
-        Assert.Equal("Every weekday at 09:00: Read the text of an item on the user\\u2019s shelf called notes.txt. Write the co... "
-            + "using read_shelf_item and write_scratchpad. Sends to ollama · llama3.2:3b each time.", asked.Summary);
+        Assert.Equal("Every weekday at 09:00: Read the text of an item on the user\\u2019s shelf called notes.txt. Write the content to the user’s "
+            + "scratchpad note. Uses read_shelf_item and write_scratchpad. Sends to ollama · llama3.2:3b each time.", asked.Summary);
         Assert.False(asked.OfferAlwaysAllow);
         var job = Assert.Single(_store.All());
         Assert.Equal("daily notes", job.Name);
@@ -184,7 +184,7 @@ public sealed class JobTests : IDisposable
 
         await session.SendAsync();
 
-        Assert.Equal("On Thursday 15 October 2026 at 08:30: open https://example.com/news in your browser using open_url. Sends to ollama · llama3.2:3b each time.",
+        Assert.Equal("On Thursday 15 October 2026 at 08:30: open https://example.com/news in your browser. Uses open_url. Sends to ollama · llama3.2:3b each time.",
             Assert.Single(_asked).Summary);
         var job = Assert.Single(_store.All());
         Assert.Equal(new DateOnly(2026, 10, 15), job.Schedule.Date);
@@ -341,8 +341,8 @@ public sealed class JobTests : IDisposable
 
         var asked = Assert.Single(_asked);
         Assert.Equal(JobPlanner.Tool, asked.Tool);
-        Assert.Equal("On Thursday 15 October 2026 at 15:11: Open the Windows Settings app. Call open_app with the name \"Settings\" and do not... "
-            + "using open_app. Sends to Anthropic · claude-haiku-5-5 each time.", asked.Summary);
+        Assert.Equal("On Thursday 15 October 2026 at 15:11: Open the Windows Settings app. Call open_app with the name \"Settings\" and do nothing "
+            + "else. Uses open_app. Sends to Anthropic · claude-haiku-5-5 each time.", asked.Summary);
         Assert.False(asked.OfferAlwaysAllow);
         var job = Assert.Single(_store.All());
         Assert.Equal((new DateOnly(2026, 10, 15), new TimeOnly(15, 11)), (job.Schedule.Date, job.Schedule.Time));
@@ -359,6 +359,33 @@ public sealed class JobTests : IDisposable
         Assert.Contains(BuiltInTools.OpenApp, AnthropicToolNames(handler.Bodies[0]));
         Assert.Contains(BuiltInTools.SetTimer, AnthropicToolNames(handler.Bodies[0]));
         Assert.Equal(JobPlanner.Tool, AnthropicToolNames(handler.Bodies[0])[^1]);
+    }
+
+    [Fact]
+    public async Task AJobPromptTooLongToReadOnTheCardIsSentBackBeforeAsking()
+    {
+        var provider = new ScriptedProvider();
+        string prompt = string.Join(' ', Enumerable.Repeat("Open the Settings app and then read every item on the shelf.", 15));
+        provider.Turns.Add(ScriptedProvider.Call(JobPlanner.Tool, $$"""{"name":"Long","prompt":"{{prompt}}","time":"09:00","days":["mon"],"tools":["open_app"]}"""));
+        provider.Turns.Add(ScriptedProvider.Text(10, 5, "Shorter, then."));
+        var session = new PaletteSession(provider, Haiku, new PaletteOptions(), new SendLog(LogPath), Tools(), new PermissionGrants(), [])
+        {
+            Scheduling = new JobPlanner(_store, _tasks) { Now = () => AskedAt, Zone = India },
+            Prompt = "every monday open settings and read my shelf",
+            ConfirmTool = (request, _) =>
+            {
+                _asked.Add(request);
+                return Task.FromResult(_answer);
+            },
+        };
+
+        await session.SendAsync();
+
+        Assert.Empty(_asked);
+        Assert.Empty(_store.All());
+        Assert.Equal("prompt is too long to show the user in full. Shorten it and call schedule_job again.", session.Answer.OfType<ToolStepSegment>().Single().Result);
+        // A prompt of 400 characters still fits.
+        Assert.True(PaletteLayout.FitsJobCard(JobPlanner.Confirmation(new JobDraft("n", string.Join(' ', Enumerable.Repeat("Read the shelf.", 25)), WeekdaysAtNine, ["read_shelf_item"]), Haiku)));
     }
 
     [Fact]

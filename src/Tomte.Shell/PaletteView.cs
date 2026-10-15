@@ -368,7 +368,8 @@ internal sealed class PaletteView : IDisposable, IInteractive
             || (back is not null) != laidBack)
         {
             (laidText, laidChips, laidSends, laidAsk, laidKeys, laidBack) = (promptText, chips, sends, asked, keys, back is not null);
-            confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, keys), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive);
+            bool job = asked?.Tool == Tomte.AI.Jobs.JobPlanner.Tool;
+            confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, keys, job), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive, job);
             layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm, send: sendVisual is not null, sends, laidBack);
         }
 
