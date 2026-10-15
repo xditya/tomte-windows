@@ -20,8 +20,18 @@ public static class Apps
         if (ShortcutTarget.IsApp(target) && !ShortcutTarget.IsInstalledApp(target)) return ActionResult.Fail("That is not an installed app.");
         if (dryRun) return ActionResult.DryRun($"open or focus {target}.");
         if (ProcessNameFor(target) is { } exe && MainWindowOf(exe) is { } window) return Focus(target, window);
-        return Launch(target);
+        var opened = Launch(target);
+        // "Settings" and other names Start shows are no program the shell finds by name: open those as Start does.
+        return opened.Ok || StartApp(target) is not { } app ? opened : Launch(new ProcessStartInfo(app.Target) { UseShellExecute = true }, target);
     }
+
+    /// <summary>
+    /// The app Start lists under exactly this name, case ignored, or null; a path is never looked up. Reads Start's list,
+    /// tens to hundreds of milliseconds: a worker thread only.
+    /// </summary>
+    public static InstalledApp? StartApp(string name) =>
+        name.IndexOfAny(['\\', '/', ':']) >= 0 ? null
+            : AppList.Load().FirstOrDefault(app => string.Equals(app.Name, name.Trim(), StringComparison.CurrentCultureIgnoreCase));
 
     // "notepad" and "C:\Tools\app.exe" name a process; a .lnk shortcut or an AUMID does not, so those only launch.
     public static string? ProcessNameFor(string target)

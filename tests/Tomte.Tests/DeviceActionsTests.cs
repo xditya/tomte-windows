@@ -119,6 +119,15 @@ public class DeviceActionsTests
     public void ProcessNameComesFromNamesAndExePathsOnly(string target, string? expected) =>
         Assert.Equal(expected, Apps.ProcessNameFor(target));
 
+    // "Settings" is no program the shell finds by name; open_app falls back to the app Start lists under it. Nothing opens.
+    [Fact]
+    public void ANameStartShowsIsFoundInStartsList()
+    {
+        Assert.StartsWith(@"shell:AppsFolder\windows.immersivecontrolpanel_", Apps.StartApp("settings")!.Target, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(Apps.StartApp("Settings2 that no app is called"));
+        Assert.Null(Apps.StartApp(@"C:\Windows\Settings"));
+    }
+
     private static readonly OutputDevice[] Devices =
     [
         new("a", "Speakers (Realtek Audio)", true),
