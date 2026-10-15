@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Tomte.Core;
 using Tomte.Core.Interaction;
+using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -804,14 +805,26 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         if (id == InputThread.EscapeHotkeyId)
         {
+            // On the rambler's card Esc throws the words away, and the card retracts itself.
+            if (rambler?.Discard() == true)
+            {
+                return;
+            }
+
             peekWanted = false;
             Hide();
             return;
         }
 
-        if (id == InputThread.ConfirmHotkeyId)
+        if (id >= InputThread.ConfirmHotkeyId && id <= InputThread.ConfirmHotkeyId + 3)
         {
-            rambler?.Answer(allow: true);
+            // Enter, Alt+I, Alt+A or Alt+N on the rambler's card; with no card, Enter's id is Win+Alt+Enter, a yes.
+            VoiceChoice? alt = id == InputThread.ConfirmHotkeyId ? null : (VoiceChoice)(id - InputThread.ConfirmHotkeyId - 1);
+            if (rambler?.Choose(alt) == false && alt is null)
+            {
+                rambler.Answer(allow: true);
+            }
+
             return;
         }
 

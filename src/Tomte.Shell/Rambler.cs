@@ -10,20 +10,25 @@ using Windows.UI.Composition;
 namespace Tomte.Shell;
 
 /// <summary>
-/// Hold the chord, speak, release: the recording becomes a transcript. With the AI layer off the transcript is
-/// the raw note on the scratchpad. With it on, the pill becomes the palette and the model reads the transcript as
-/// a command or a note; the palette asks before anything runs. Runs on the UI thread. The microphone is open only
-/// between the press and the release, and the hold is the visible user action that lets audio (to a speech-to-text
-/// provider) or the transcript (to the AI provider) leave the PC.
+/// Hold the chord, speak, release: the recording becomes a transcript, and the pill grows into a card that shows it
+/// with three choices (<see cref="VoiceCard"/>). Insert types it into the window that had the keys when the hold
+/// started; Add to note puts it on the scratchpad; Ask Tomte turns the card into the palette, where the model reads it
+/// as a command or a note and asks before anything runs. Nothing is typed, sent or saved before a choice. Runs on the
+/// UI thread. The microphone is open only between the press and the release; the hold is the visible user action that
+/// lets audio go to a speech-to-text provider, and Ask the one that lets the transcript go to the AI provider.
 /// </summary>
-/// <param name="voice">A new voice session per transcript, made from the provider set up at that moment; it returns null while there is none, and is null with no way to make one.</param>
-/// <param name="text">The island's text renderer: the voice palette shows the transcript, the answer and the question with it.</param>
+/// <param name="voice">A new voice session for a transcript the user asks about, made from the provider set up at that moment; it returns null while there is none, and is null with no way to make one.</param>
+/// <param name="enterDoes">The choice in settings that Enter picks on the card.</param>
+/// <param name="canAsk">Whether a provider is set up now, so Ask can be offered; nothing is sent to find out.</param>
+/// <param name="text">The island's text renderer: the card and the voice palette show the transcript with it.</param>
 internal sealed class Rambler(
     IslandWindow island,
     IslandStateMachine machine,
     ISpeechToText speech,
     ProviderSend? speechSend,
     Func<Task<PaletteSession?>>? voice,
+    Func<VoiceChoice> enterDoes,
+    Func<bool> canAsk,
     ScratchpadNote scratchpad,
     SendLog sendLog,
     PaletteOptions prices,
@@ -50,6 +55,9 @@ internal sealed class Rambler(
     private PaletteHost? palette;
     private TaskCompletionSource? replyHold;
     private readonly ToolQuestion question = new();
+    private nint spokenInto;
+    private VoiceCard? card;
+    private TaskCompletionSource<VoiceChoice?>? choosing;
 
     /// <summary>Microphone level 0..1, once per capture packet while recording, on the UI thread. The mascot bounces to it.</summary>
     public event Action<double>? Bounce;
@@ -65,6 +73,25 @@ internal sealed class Rambler(
 
     /// <summary>A line for the user once the pill has gone, such as a hold in which nothing was heard.</summary>
     public event Action<string>? Notice;
+
+    /// <summary>The card shows the words and waits for a choice.</summary>
+    public event Action? Choosing;
+
+    /// <summary>What Insert types with: the window the words were spoken into, and the words. Null when typed, else why not.</summary>
+    public Func<nint, string, string?> Insert { get; init; } = DesktopEffects.TypeInto;
+
+    /// <summary>A key on the card: Enter (null) picks the highlighted choice, Alt+I, Alt+A and Alt+N their own. False when no card waits.</summary>
+    public bool Choose(VoiceChoice? alt)
+    {
+        if (card is null || choosing is null)
+            return false;
+        if (VoiceChoices.Pick(alt, card.Highlighted, card.CanAsk) is { } picked)
+            choosing.TrySetResult(picked);
+        return true;
+    }
+
+    /// <summary>Esc on the card: the words are thrown away. False when no card waits.</summary>
+    public bool Discard() => choosing?.TrySetResult(null) ?? false;
 
     /// <summary>
     /// The answer to the palette's question (Win+Alt+Enter is yes, Esc no); with <paramref name="to"/>, only while that
@@ -91,6 +118,8 @@ internal sealed class Rambler(
         if (capture is not null || (transcribing && hold is null))
             return;
         clock.Restart();
+        // Where Insert types: the window in front as the hold starts, which the island never takes the keys from.
+        spokenInto = WindowContext.Foreground() is var front && front != (nint)island.Hwnd ? front : 0;
         // The capture thread posts each packet's level; the bars change when a packet arrives, with no timer.
         capture = MicCapture.Start(rms => island.Queue.TryEnqueue(() => Level(rms)));
         ShowView();
@@ -158,33 +187,43 @@ internal sealed class Rambler(
                 return;
             }
 
-            if (voice is not null && machine.State == IslandState.Compact)
-            {
-                try
-                {
-                    // The note tool reads and writes the loaded note; if it cannot be read, the words go in as the raw note.
-                    await scratchpad.LoadAsync();
-                    command = await voice();
-                }
-                catch (Exception e)
-                {
-                    log($"{DateTime.Now:HH:mm:ss.fff} voice: not started, keeping the words as a note: {e.Message}");
-                }
-            }
-
-            // Only while the rambler's pill is still up: a hold that the lock screen or a fullscreen app took down,
-            // before or while the note loaded, keeps the words as a note and opens nothing.
+            // Only while the rambler's pill is still up: a hold that the lock screen or a fullscreen app took down keeps
+            // the words as a note and opens nothing.
             if (machine.State != IslandState.Compact)
-                command = null;
-            if (command is not null)
             {
-                RemoveView();
-                command.ConfirmTool = ConfirmAsync;
-                log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{transcript}\"");
+                await KeepAsync(transcript);
+                return;
             }
 
-            var session = command;
-            await VoiceCommand.RouteAsync(transcript, KeepAsync, session, s => (palette = new PaletteHost(island, machine, log, text)).RunAsync(s, question));
+            log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{transcript}\"");
+            bool askable = voice is not null && canAsk();
+            var shown = card = new VoiceCard(island, text, transcript, VoiceChoices.Default(enterDoes(), askable), askable);
+            shown.Picked += c => choosing?.TrySetResult(c);
+            RemoveView();
+            _ = island.MorphTo(shown.Shape, SpringPreset.Snappy);
+            PaletteSession? session = null;
+            string? refused = null;
+            while (true)
+            {
+                var choice = await ChooseAsync();
+                log($"{DateTime.Now:HH:mm:ss.fff} voice: {(choice is null ? "thrown away" : machine.State == IslandState.Compact ? "picked " + choice : "taken down, kept as a note")}");
+                if (choice is not { } picked)
+                    break;
+                if (machine.State != IslandState.Compact)
+                    RemoveCard();
+                if (picked == VoiceChoice.Insert && refused is not null)
+                {
+                    await CopyAsync(transcript);
+                    break;
+                }
+
+                (refused, session) = await VoiceCommand.PickedAsync(picked, transcript, words => Insert(spokenInto, words), KeepAsync, StartAsync, s => (palette = new PaletteHost(island, machine, log, text)).RunAsync(s, question));
+                if (refused is null)
+                    break;
+                log($"{DateTime.Now:HH:mm:ss.fff} voice: not typed: {refused}");
+                shown.Refuse(refused);
+            }
+
             if (session is not null)
             {
                 log($"{DateTime.Now:HH:mm:ss.fff} voice: {session.Status}{(session.Error is null ? "" : ": " + session.Error)} steps={session.ToolSteps} reply=\"{session.AnswerText.ReplaceLineEndings(" | ")}\"");
@@ -233,6 +272,90 @@ internal sealed class Rambler(
     {
         bool saved = await scratchpad.AppendAsync(note, DateTime.Now);
         log($"{DateTime.Now:HH:mm:ss.fff} rambler: note {(saved ? "appended" : "kept until the database is free")} ({note.Length} chars)");
+    }
+
+    /// <summary>
+    /// Waits on the card for a click, a key, or Esc (null). Anything else that takes the island from the card (the lock
+    /// screen, a fullscreen app, another hotkey) keeps the words as a note, as a hold taken down before the card does.
+    /// </summary>
+    private async Task<VoiceChoice?> ChooseAsync()
+    {
+        var waiting = choosing = new TaskCompletionSource<VoiceChoice?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnState(IslandState from, IslandState to)
+        {
+            if (to != IslandState.Compact)
+                waiting.TrySetResult(VoiceChoice.Note);
+        }
+
+        machine.Changed += OnState;
+        // Esc and the choice keys come to the island only while the card waits; the app in front has them otherwise.
+        InputThread.SetEscape(true);
+        InputThread.SetChoices(true);
+        Choosing?.Invoke();
+        try
+        {
+            return await waiting.Task;
+        }
+        finally
+        {
+            machine.Changed -= OnState;
+            choosing = null;
+            InputThread.SetChoices(false);
+            // A state that took the island over has set Esc for itself.
+            if (machine.State == IslandState.Compact)
+                InputThread.SetEscape(false);
+        }
+    }
+
+    /// <summary>
+    /// Ask's session, made only once Ask is picked, so nothing reaches a provider before. The note tool reads and writes
+    /// the loaded note; when it cannot be read, or no session can be made, the words go in as the raw note.
+    /// </summary>
+    private async Task<PaletteSession?> StartAsync()
+    {
+        try
+        {
+            await scratchpad.LoadAsync();
+            command = voice is null ? null : await voice();
+        }
+        catch (Exception e)
+        {
+            log($"{DateTime.Now:HH:mm:ss.fff} voice: not started, keeping the words as a note: {e.Message}");
+        }
+
+        // Only while the card is still up: one the lock screen or a fullscreen app took down meanwhile opens nothing.
+        if (machine.State != IslandState.Compact)
+            command = null;
+        if (command is not null)
+        {
+            // The card leaves at once as it turns into the palette.
+            RemoveCard();
+            command.ConfirmTool = ConfirmAsync;
+        }
+
+        return command;
+    }
+
+    /// <summary>Copy, in Insert's place once it could not type. A clipboard another app keeps open sends the words to the note instead.</summary>
+    private async Task CopyAsync(string words)
+    {
+        try
+        {
+            DesktopEffects.CopyToClipboard(words);
+            Notice?.Invoke("Copied. Paste it where you want it.");
+        }
+        catch (InvalidOperationException e)
+        {
+            log($"{DateTime.Now:HH:mm:ss.fff} voice: not copied: {e.Message}");
+            await KeepAsync(words);
+            Notice?.Invoke("The clipboard was busy, so the words are in the note.");
+        }
+    }
+
+    private void RemoveCard()
+    {
+        card?.Dispose();
+        card = null;
     }
 
     /// <summary>Waits for the user's answer while the palette shows the question with its buttons. A hide answers no.</summary>
@@ -340,6 +463,9 @@ internal sealed class Rambler(
         bars = null;
         barShapes = null;
         gone?.StartAnimation("Opacity", Fade(gone.Compositor, 0, 0, 100));
+        var leaving = card;
+        card = null;
+        leaving?.FadeOut();
         if (machine.State == IslandState.Compact)
         {
             machine.TransitionTo(IslandState.Hidden);
@@ -347,6 +473,7 @@ internal sealed class Rambler(
             await island.MorphTo(IslandGeometry.Hidden, SpringPreset.Snappy);
         }
 
+        leaving?.Dispose();
         if (gone is not null)
         {
             island.Content.Children.Remove(gone);

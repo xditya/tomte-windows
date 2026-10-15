@@ -182,7 +182,7 @@ internal static partial class Program
             triggers.Rambler = CreateRambler(args, island, triggers, store, timer, shortcuts, log!);
             if (triggers.Rambler is { } hold && int.TryParse(Arg(args, "--debug-hold"), out int holdMs))
             {
-                DebugHold(island, hold, holdMs, Arg(args, "--debug-answer"), args.Contains("--dry"), log!);
+                DebugHold(island, hold, holdMs, Arg(args, "--debug-choice"), Arg(args, "--debug-answer"), args.Contains("--dry"), log!);
             }
         }
         else
@@ -707,10 +707,10 @@ internal static partial class Program
     /// (--provider-id, --provider-kind, --base-url, --model; the key is read from Credential Manager under the id) names
     /// one for the run instead. Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or the
     /// provider's /audio/transcriptions with --stt-provider and --stt-model, read at the first hold;
-    /// --debug-transcript "text" or --debug-wav file.wav stands in for what the microphone heard. Without a provider
-    /// the note is the raw transcript; with one the transcript is a voice command the model reads with the voice tools,
-    /// shown and asked in the palette, and --dry keeps device tools from changing anything. Null when there is no
-    /// speech to text.
+    /// --debug-transcript "text" or --debug-wav file.wav stands in for what the microphone heard. The words show on the
+    /// card with Insert, Ask Tomte and Add to note; Ask, offered only with a provider, makes them a voice command the
+    /// model reads with the voice tools, shown and asked in the palette. --dry keeps device tools from changing anything
+    /// and Insert from typing. Null when there is no speech to text.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static Rambler? CreateRambler(string[] args, IslandWindow island, TriggerController triggers, SettingsStore store, IslandTimer timer, ShortcutStore shortcuts, TextWriter log)
@@ -770,7 +770,18 @@ internal static partial class Program
             return command;
         }
 
-        var session = new Rambler(island, triggers.Machine, speech, speechSend, Voice, scratchpad, sendLog, options, text!, log.WriteLine);
+        // Reads the provider as Voice does, with nothing sent, so the card offers Ask only when it can go somewhere.
+        bool CanAsk() => named is null ? Configured(store, null) is not null : named.DefaultModel is not null;
+        string? NotTyped(nint window, string words)
+        {
+            log.WriteLine($"rambler: --dry, not typed: \"{words}\"");
+            return null;
+        }
+
+        var session = new Rambler(island, triggers.Machine, speech, speechSend, Voice, () => store.Current.VoiceEnter, CanAsk, scratchpad, sendLog, options, text!, log.WriteLine)
+        {
+            Insert = args.Contains("--dry") ? NotTyped : DesktopEffects.TypeInto,
+        };
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
         // Raised while the pill is up: it waits in the triggers' queue and shows once the pill has gone.
@@ -798,13 +809,34 @@ internal static partial class Program
     ];
 
     /// <summary>
-    /// --debug-hold ms [--debug-answer yes|no]: one hold of the rambler chord, posted to the island the way the input
-    /// thread posts it, so a run needs neither the global hotkey nor injected keys. Each question the palette asks is
-    /// answered after 1.5 s, yes only for what the run keeps to itself (see above); without --debug-answer it waits
-    /// for Win+Alt+Enter or Esc. After the hold the run waits out the event pill and quits.
+    /// --debug-hold ms [--debug-choice insert|ask|note|esc] [--debug-answer yes|no]: one hold of the rambler chord,
+    /// posted to the island the way the input thread posts it, so a run needs neither the global hotkey nor injected
+    /// keys. The card is answered after 1.5 s with the choice given (Insert types into the window in front unless
+    /// --dry); without one it waits for a click, Enter, the Alt keys or Esc. Each question the palette asks is answered
+    /// after 1.5 s, yes only for what the run keeps to itself (see above); without --debug-answer it waits for
+    /// Win+Alt+Enter or Esc. After the hold the run waits out the event pill and quits.
     /// </summary>
-    private static void DebugHold(IslandWindow island, Rambler rambler, int holdMs, string? answer, bool dry, TextWriter log)
+    private static void DebugHold(IslandWindow island, Rambler rambler, int holdMs, string? choice, string? answer, bool dry, TextWriter log)
     {
+        rambler.Choosing += async () =>
+        {
+            if (choice is null)
+            {
+                return;
+            }
+
+            await Task.Delay(1500);
+            log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} debug: picks {choice}");
+            if (choice == "esc")
+            {
+                rambler.Discard();
+            }
+            else
+            {
+                rambler.Choose(Enum.Parse<VoiceChoice>(choice, ignoreCase: true));
+            }
+        };
+
         rambler.Asking += async request =>
         {
             bool yes = answer == "yes" && (KeptToTheRun.Contains(request.Tool) || (dry && BuiltInTools.IsDeviceTool(request.Tool)));
