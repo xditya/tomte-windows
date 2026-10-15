@@ -12,10 +12,12 @@ public static class VoiceChoices
 
     /// <summary>
     /// What a key on the card picks: Enter (<paramref name="alt"/> null) the highlighted choice, Alt+I, Alt+A and Alt+N
-    /// their own. Null for Ask while there is no provider: it is disabled, and the card stays.
+    /// their own. Null for Ask while there is no provider: it is disabled, and the card stays. Null for Enter once Insert
+    /// was <paramref name="refused"/>: the user may be typing in another app by then, so Enter never copies.
     /// </summary>
-    public static VoiceChoice? Pick(VoiceChoice? alt, VoiceChoice setting, bool canAsk) =>
-        (alt ?? Default(setting, canAsk)) is var picked && (picked != VoiceChoice.Ask || canAsk) ? picked : null;
+    public static VoiceChoice? Pick(VoiceChoice? alt, VoiceChoice setting, bool canAsk, bool refused = false) =>
+        alt is null && refused ? null
+        : (alt ?? Default(setting, canAsk)) is var picked && (picked != VoiceChoice.Ask || canAsk) ? picked : null;
 
     public static string Label(VoiceChoice choice) => choice switch
     {

@@ -581,6 +581,12 @@ public sealed class VoiceTests : IDisposable
         Assert.Equal(VoiceChoice.Note, VoiceChoices.Pick(VoiceChoice.Note, VoiceChoice.Ask, canAsk: false));
         Assert.Equal(VoiceChoice.Ask, VoiceChoices.Pick(VoiceChoice.Ask, VoiceChoice.Insert, canAsk: true));
         Assert.Null(VoiceChoices.Pick(VoiceChoice.Ask, VoiceChoice.Insert, canAsk: false));
+        // Once Insert was refused, Enter picks nothing, so a second Enter typed in another app never copies; the Alt keys
+        // still pick (Alt+I is Copy then).
+        Assert.Null(VoiceChoices.Pick(null, VoiceChoice.Insert, canAsk: true, refused: true));
+        Assert.Null(VoiceChoices.Pick(null, VoiceChoice.Ask, canAsk: true, refused: true));
+        Assert.Equal(VoiceChoice.Insert, VoiceChoices.Pick(VoiceChoice.Insert, VoiceChoice.Insert, canAsk: true, refused: true));
+        Assert.Equal(VoiceChoice.Note, VoiceChoices.Pick(VoiceChoice.Note, VoiceChoice.Insert, canAsk: true, refused: true));
     }
 
     [Fact]

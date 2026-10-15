@@ -88,7 +88,7 @@ internal sealed class Rambler(
     {
         if (card is null || choosing is null)
             return false;
-        if ((alt is not null || !card.Refused) && VoiceChoices.Pick(alt, card.Highlighted, card.CanAsk) is { } picked)
+        if (VoiceChoices.Pick(alt, card.Highlighted, card.CanAsk, card.Refused) is { } picked)
             choosing.TrySetResult(picked);
         return true;
     }
@@ -100,7 +100,8 @@ internal sealed class Rambler(
     /// </summary>
     public void ForegroundChanged()
     {
-        if (choosing is null || card is not { Refused: false } shown)
+        // A pick that already landed keeps its choice: a window change in the gap before it runs must not turn it to Copy.
+        if (choosing is not { Task.IsCompleted: false } || card is not { Refused: false } shown)
             return;
         nint front = WindowContext.Foreground();
         if (front == (nint)island.Hwnd || VoiceChoices.Refusal(spokenInto, open: true, front, elevated: false, sameField: true) is not { } why)
@@ -317,6 +318,9 @@ internal sealed class Rambler(
         }
 
         machine.Changed += OnState;
+        // The user may have switched apps while the words were transcribed, when no card listened for it: look now,
+        // so a card that opens over another app is refused before Enter is ever taken from that app.
+        ForegroundChanged();
         // Esc and the choice keys come to the island only while the card waits; the app in front has them otherwise.
         // Enter not at all once Insert was refused: the user may be typing in another app by then.
         InputThread.SetEscape(true);
