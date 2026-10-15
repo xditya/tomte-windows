@@ -10,7 +10,17 @@ namespace Tomte.Core.Jobs;
 public sealed record JobDraft(string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools);
 
 /// <summary>A stored job. <see cref="NextDue"/> is null once a one-off has run.</summary>
-public sealed record ScheduledJob(long Id, string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools, ProviderConfig Provider, DateTimeOffset? NextDue);
+public sealed record ScheduledJob(long Id, string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools, ProviderConfig Provider, DateTimeOffset? NextDue)
+{
+    /// <summary>
+    /// The job in plain words for the settings window: "Every weekday at 09:00. Next run Thursday 15 October at 09:00.
+    /// Uses read_shelf_item."
+    /// </summary>
+    public string Describe(TimeZoneInfo zone) =>
+        $"{Schedule.Describe()}. " +
+        (NextDue is { } next ? $"Next run {TimeZoneInfo.ConvertTime(next, zone).ToString("dddd d MMMM 'at' HH:mm", CultureInfo.InvariantCulture)}. " : "No run left. ") +
+        $"Uses {(Tools.Count == 0 ? "no tools" : JobSchedule.JoinWords(Tools))}.";
+}
 
 /// <summary>
 /// One finished run, kept for the palette to show: the answer or the reason it failed, and the steps and sends.

@@ -129,6 +129,8 @@ public sealed partial class SettingsWindow : Window
                         Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } }))),
                 Header("Always allowed"),
                 Card(grantsList),
+                Header("Scheduled jobs"),
+                JobsSection(),
                 Header("All tools"),
                 Card([.. BuiltInTools.All.Select(ToolRow)]),
                 Header("MCP servers"),
@@ -186,6 +188,7 @@ public sealed partial class SettingsWindow : Window
         RenderGrants();
         RenderMcpServers();
         _ = RenderSkillsAsync();
+        _ = RenderJobsAsync();
         _ = LoadStartupAsync();
         startup.Toggled += async (_, _) => await SetStartupAsync(startup.IsOn);
         Closed += (_, _) => store.Dispose();

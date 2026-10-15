@@ -287,6 +287,17 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public void TheSettingsWindowSaysAJobInPlainWords()
+    {
+        var weekly = AddJob("p", "read_shelf_item", "write_scratchpad");
+        var once = _store.Add(new JobDraft("Once", "p", new JobSchedule { Time = new TimeOnly(9, 0), Date = new DateOnly(2026, 10, 19) }, []), Ollama, Monday0800, India);
+
+        Assert.Equal("Every weekday at 09:00. Next run Monday 19 October at 09:00. Uses read_shelf_item and write_scratchpad.", weekly.Describe(India));
+        Assert.Equal("On Monday 19 October 2026 at 09:00. Next run Monday 19 October at 09:00. Uses no tools.", once.Describe(India));
+        Assert.Equal("On Monday 19 October 2026 at 09:00. No run left. Uses no tools.", (once with { NextDue = null }).Describe(India));
+    }
+
+    [Fact]
     public void RemovingAJobRemovesItsTaskAndItsResults()
     {
         var planner = new JobPlanner(_store, _tasks) { Now = () => Monday0800, Zone = India };
@@ -958,11 +969,15 @@ public sealed class JobTests : IDisposable
         await using var tomte = await TaggedWindow.OpenAsync(_dir);
 
         Assert.True(JobTask.HandOff(_dir, 42));
+        // The settings window's removal reaches it the same way, and only it.
+        Assert.True(JobTask.Changed(_dir));
+        Assert.False(JobTask.Changed(Path.Combine(_dir, "other")));
         // No Tomte runs on another folder, so a start there is not handed over: it runs the job itself.
         Assert.False(JobTask.HandOff(Path.Combine(_dir, "other"), 42));
         // The island takes its tag off as it is destroyed.
         await tomte.UntagAsync();
         Assert.False(JobTask.HandOff(_dir, 42));
+        Assert.False(JobTask.Changed(_dir));
     }
 
     [Fact]

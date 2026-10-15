@@ -167,6 +167,9 @@ internal static class Jobs
             case JobTask.MsgRunJob:
                 _ = RunDueAsync(c, (long)wParam);
                 return true;
+            case JobTask.MsgJobsChanged:
+                _ = RearmAsync(c);
+                return true;
             case PInvoke.WM_DESTROY:
                 JobTask.Untag((nint)c.Island.Hwnd);
                 return false;
@@ -180,6 +183,17 @@ internal static class Jobs
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// A job was removed in the settings window: the one-shot is armed again from the next-due file, which the removal
+    /// rewrote, so nothing loads and a removed job's time wakes nothing.
+    /// </summary>
+    private static async Task RearmAsync(JobContext c)
+    {
+        var next = await Task.Run(() => JobStore.ReadMarker(JobStore.MarkerFor(c.Db.FilePath)));
+        c.Log?.Invoke($"jobs: changed; next due {next?.ToString("O") ?? "none"}");
+        Arm(c, next);
     }
 
     /// <summary>Kept out of the start path so Tomte.AI loads only when a job is due.</summary>
