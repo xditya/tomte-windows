@@ -33,19 +33,29 @@ public static class EverythingSetup
     // winget's "already installed" and "no newer version" answers, which leave Everything there as asked.
     private const int AlreadyInstalled = unchecked((int)0x8A150061), NoUpgrade = unchecked((int)0x8A15002B);
 
+    private const string Run = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const int Disabled = 4;
+
+    // 1.4 and the 1.5 alpha, which runs as its own instance with names of its own.
+    private static readonly string[] Names = ["Everything", "Everything (1.5a)"];
+    private static readonly (string Folder, string Exe)[] Folders = [("Everything", "Everything.exe"), ("Everything 1.5a", "Everything64.exe"), ("Everything 1.5a", "Everything.exe")];
+
     /// <summary>
-    /// The winget command line: the exact package, silent, the agreements accepted (the user agreed on Tomte's card), and
-    /// the machine-wide package, whose MSI installs and starts the Everything service and starts Everything at sign-in,
-    /// so later runs need no admin rights.
+    /// The winget command line: the exact package from winget's own source, silent, the agreements accepted (the user
+    /// agreed on Tomte's card), and the machine-wide package, whose MSI installs and starts the Everything service and
+    /// starts Everything at sign-in, so later runs need no admin rights.
     /// </summary>
     public static readonly IReadOnlyList<string> WingetArguments =
-        ["install", "--id", PackageId, "-e", "--silent", "--scope", "machine", "--accept-package-agreements", "--accept-source-agreements"];
+        ["install", "--id", PackageId, "-e", "--source", "winget", "--silent", "--scope", "machine", "--accept-package-agreements", "--accept-source-agreements"];
 
     public static FileSource Source() =>
         Everything.Running ? FileSource.Everything
         : Exe() is null ? FileSource.Index
-        : ServiceInstalled ? FileSource.EverythingStopped
+        : ServiceUsable ? FileSource.EverythingStopped
         : FileSource.EverythingManual;
+
+    /// <summary>The "Search every drive" row shows while search uses the Windows index and the user has not said "Not now" to it.</summary>
+    public static bool Offers(FileSource source, bool dismissed) => source == FileSource.Index && !dismissed;
 
     /// <summary>One line for Settings and the log: which file search is in use.</summary>
     public static string Describe(FileSource source) => source switch
@@ -56,33 +66,37 @@ public static class EverythingSetup
         _ => "The Windows Search index: only the folders Windows indexes. Get Everything (free, from voidtools) to search every drive.",
     };
 
-    /// <summary>The Everything service is installed; with it Everything runs as a standard user.</summary>
-    public static bool ServiceInstalled
-    {
-        get
-        {
-            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\Everything");
-            return key is not null;
-        }
-    }
+    /// <summary>
+    /// The Everything service (or the 1.5 alpha's) is installed and not disabled; with it Everything runs as a standard
+    /// user, so Tomte may start it with no admin prompt.
+    /// </summary>
+    public static bool ServiceUsable => Names.Any(name => ServiceStarts(Service(name, "Start") as int?));
+
+    /// <summary>A service's Start value that lets it run: any but disabled (4). Null is no service.</summary>
+    public static bool ServiceStarts(int? start) => start is int value && value != Disabled;
 
     /// <summary>
-    /// Everything.exe as installed: from its sign-in entry, its service or the usual folders. Null when none of them
-    /// names a file that is there.
+    /// Everything.exe as installed, looked up in this order: the machine-wide sign-in entry, the service's program, the
+    /// usual Program Files folders (1.4, then the 1.5 alpha), then the user's own sign-in entry, which anyone could set
+    /// without admin rights. Null when none names a file that is there.
     /// </summary>
-    public static string? Exe()
-    {
-        const string Run = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        string?[] candidates =
-        [
-            ExeFrom(Registry.GetValue(@"HKEY_LOCAL_MACHINE\" + Run, "Everything", null) as string),
-            ExeFrom(Registry.GetValue(@"HKEY_CURRENT_USER\" + Run, "Everything", null) as string),
-            ExeFrom(Registry.GetValue(@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Everything", "ImagePath", null) as string),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Everything", "Everything.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Everything", "Everything.exe"),
-        ];
-        return candidates.FirstOrDefault(File.Exists);
-    }
+    public static string? Exe() => Candidates(
+        name => Registry.GetValue(@"HKEY_LOCAL_MACHINE\" + Run, name, null) as string,
+        name => Service(name, "ImagePath") as string,
+        name => Registry.GetValue(@"HKEY_CURRENT_USER\" + Run, name, null) as string,
+        [Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)])
+        .FirstOrDefault(File.Exists);
+
+    /// <summary>The places <see cref="Exe"/> looks, in its order, from these readers of the sign-in entries and the services' programs.</summary>
+    public static IEnumerable<string> Candidates(Func<string, string?> machineRun, Func<string, string?> service, Func<string, string?> userRun, IReadOnlyList<string> programFiles) =>
+        Names.Select(n => ExeFrom(machineRun(n)))
+            .Concat(Names.Select(n => ExeFrom(service(n))))
+            .Concat(programFiles.Where(f => f.Length > 0).SelectMany(f => Folders.Select(folder => Path.Combine(f, folder.Folder, folder.Exe))))
+            .Concat(Names.Select(n => ExeFrom(userRun(n))))
+            .OfType<string>();
+
+    private static object? Service(string name, string value) =>
+        Registry.GetValue(@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\" + name, value, null);
 
     /// <summary>The program a command line starts: the quoted first part, or everything up to ".exe". Null when it names no .exe.</summary>
     public static string? ExeFrom(string? commandLine)
@@ -170,7 +184,7 @@ public static class EverythingSetup
 
     private static async Task<int> Winget(Action<string>? log, CancellationToken cancel)
     {
-        var start = new ProcessStartInfo("winget") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        var start = new ProcessStartInfo(WingetExe() ?? throw new Win32Exception(2)) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (string argument in WingetArguments)
         {
             start.ArgumentList.Add(argument);
@@ -187,5 +201,21 @@ public static class EverythingSetup
         string last = (await output).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault() ?? "";
         log?.Invoke($"everything: winget said \"{last}\"{((await errors).Length > 0 ? " (and wrote errors)" : "")}");
         return winget.ExitCode;
+    }
+
+    /// <summary>
+    /// winget by its full path, never a name looked up on PATH: the App Installer's alias in the user's WindowsApps folder,
+    /// else what App Paths names. Null when there is none.
+    /// </summary>
+    public static string? WingetExe()
+    {
+        const string AppPaths = @"Software\Microsoft\Windows\CurrentVersion\App Paths\winget.exe";
+        string?[] candidates =
+        [
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Microsoft", "WindowsApps", "winget.exe"),
+            Registry.GetValue(@"HKEY_CURRENT_USER\" + AppPaths, null, null) as string,
+            Registry.GetValue(@"HKEY_LOCAL_MACHINE\" + AppPaths, null, null) as string,
+        ];
+        return candidates.FirstOrDefault(c => c is { Length: > 0 } && Path.IsPathFullyQualified(c) && File.Exists(c));
     }
 }

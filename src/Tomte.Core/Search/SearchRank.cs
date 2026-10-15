@@ -43,7 +43,7 @@ public readonly record struct Launches(int Count, long LastTicks);
 /// <summary>
 /// How well a name matches what was typed, in tiers: the whole name, its start, the start of each typed word in any
 /// order, its initials or the starts of its words run together ("vsc", "vscode"), each word somewhere in it, its letters
-/// in order and close together, and one typo in a word of four letters or more.
+/// in order and close together, and one typo in a word of five letters or more.
 /// A tier is worth 100; inside it shorter names and earlier matches score up to 59 more, which leaves room for the
 /// launch boost without reaching the next tier. 0 is no match.
 /// </summary>
@@ -51,8 +51,11 @@ public static class SearchMatch
 {
     public const int Exact = 700, Prefix = 600, WordStarts = 500, Initials = 400, Substring = 300, Subsequence = 200, Typo = 100;
 
-    /// <summary>Typed words shorter than this must match exactly; one this long may have one letter wrong, missing, extra or swapped.</summary>
-    public const int TypoLength = 4;
+    /// <summary>
+    /// Typed words shorter than this must match exactly; one this long may have one letter wrong, missing, extra or swapped.
+    /// Five, not four: at four one wrong letter is a quarter of the word, and "repo" found Remote Mouse.
+    /// </summary>
+    public const int TypoLength = 5;
 
     public static int Score(string name, string query)
     {

@@ -5,8 +5,11 @@ namespace Tomte.Core.Search;
 
 /// <summary>
 /// File search through the Windows Search index, the one Start uses, over its OLE DB provider. Covers only the folders
-/// Windows indexes. Each search opens and closes its own connection, with OLE DB's session pooling off, so nothing of it
-/// stays open or running between searches. Blocks for the query (a few hundred milliseconds): worker threads only.
+/// Windows indexes. Each search opens and closes its own connection, with OLE DB's session pooling off, so no connection
+/// stays open between searches. System.Data.OleDb's connection factory starts its pool-pruning timer with the first
+/// connection, though, and it ticks every 30 s for the life of the process (first tick after 240 s): a known cost of
+/// searching without Everything, measured in the search launcher's report. Blocks for the query (a few hundred
+/// milliseconds): worker threads only.
 /// </summary>
 public static class WindowsIndex
 {
@@ -20,7 +23,8 @@ public static class WindowsIndex
     public static IReadOnlyList<FileHit>? Search(IReadOnlyList<string> words, CancellationToken cancel)
     {
         string sql = FileQuery.IndexSql(words, FileQuery.Excluded());
-        if (sql.Length == 0)
+        // A search already replaced by a newer one opens no connection.
+        if (sql.Length == 0 || cancel.IsCancellationRequested)
         {
             return [];
         }

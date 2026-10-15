@@ -40,6 +40,9 @@ public sealed record TomteSettings
     /// <summary>The ten-second "push your cursor up here" pill has been shown; replaying the tour clears it.</summary>
     public bool FirstRunHintShown { get; init; }
 
+    /// <summary>"Not now" on the search's Get Everything card: the "Search every drive" row is not offered again. Settings keeps its button.</summary>
+    public bool EverythingOfferDismissed { get; init; }
+
     /// <summary>
     /// "Attach to the top edge": draw the island as the notch joined to the screen edge instead of the floating
     /// pill. Read from the file only; the settings window does not show it yet.

@@ -1,3 +1,4 @@
+using Tomte.Core;
 using Tomte.Core.Search;
 using Xunit;
 
@@ -48,6 +49,8 @@ public sealed class SearchTests
     [InlineData("Google Chrome", "crhome", SearchMatch.Typo)]
     [InlineData("Spotify", "spotfy", SearchMatch.Subsequence)] // a missing letter is still the letters in order
     [InlineData("Spotify", "sptoify", SearchMatch.Typo)]
+    [InlineData("Google Chrome", "crhom", SearchMatch.Typo)] // five letters, one swap
+    [InlineData("Remote Mouse", "rmeote", SearchMatch.Typo)]
     [InlineData("Spotify", "spotifyy", SearchMatch.Typo)]
     [InlineData("Calculator", "calculator", SearchMatch.Exact)]
     public void EachKindOfMatchLandsInItsTier(string name, string query, int tier)
@@ -72,7 +75,10 @@ public sealed class SearchTests
     }
 
     [Theory]
-    [InlineData("Google Chrome", "crh")] // a typo needs four letters
+    [InlineData("Google Chrome", "crh")] // a typo needs five letters
+    [InlineData("Remote Mouse", "repo")] // four letters: no typo
+    [InlineData("Recovery Drive", "repo")]
+    [InlineData("Google Chrome", "crho")]
     [InlineData("Mixed Reality Portal", "report")] // letters in order, but spread over two words
     [InlineData("Visit Java.com", "vsc")]
     [InlineData("Windows Defender Firewall with Advanced Security", "vsc")]
@@ -246,12 +252,19 @@ public sealed class SearchLayoutTests
     }
 
     [Fact]
-    public void ACardsMainButtonIsLastAndRightmost()
+    public void ACardsFocusedButtonStandsOutAndFocusNeverMovesAButton()
     {
-        var card = Layout.Card(new SearchCard("Title", "Body", [("cancel", "Cancel"), ("install", "Install")]));
-        Assert.Equal(["cancel", "install"], card.Buttons.Select(b => b.Id));
+        var offer = new SearchCard("Title", "Body", [("notnow", "Not now"), ("install", "Install")]);
+        var card = Layout.Card(offer);
+        Assert.Equal(["notnow", "install"], card.Buttons.Select(b => b.Id));
         Assert.True(card.Buttons[0].Box.Right < card.Buttons[1].Box.Left);
         Assert.True(card.Card.Contains(card.Buttons[1].Box));
+        // Enter presses the safe button until Tab moves on: it is the focused one, drawn as the main one.
+        Assert.Equal(PaletteLayout.RunButton, card.Buttons[0].Label.Style);
+        Assert.Equal(PaletteLayout.Button, card.Buttons[1].Label.Style);
+        var tabbed = Layout.Card(offer, 1);
+        Assert.Equal(PaletteLayout.RunButton, tabbed.Buttons[1].Label.Style);
+        Assert.Equal(card.Buttons.Select(b => b.Box), tabbed.Buttons.Select(b => b.Box));
     }
 }
 
@@ -340,6 +353,29 @@ public sealed class FileQueryTests
         Text(file);
         Assert.Equal([new FileHit(folder, true), new FileHit(file, false)], Everything.Parse(data.ToArray()));
         Assert.Empty(Everything.Parse(new byte[8]));
+
+        // A relative name and a path with a quote are left out; the full path after them is read.
+        data.Clear();
+        string[] paths = ["notes.txt", "C:\\a\"b.txt", @"\\server\share\c.txt"];
+        U32(3);
+        U32(3);
+        U32(0);
+        U32(4);
+        U32(14);
+        int at = 20 + (3 * 8);
+        foreach (string p in paths)
+        {
+            U32(0);
+            U32((uint)at);
+            at += 4 + ((p.Length + 1) * 2);
+        }
+
+        foreach (string p in paths)
+        {
+            Text(p);
+        }
+
+        Assert.Equal([new FileHit(@"\\server\share\c.txt", false)], Everything.Parse(data.ToArray()));
     }
 
     [Theory]
@@ -353,8 +389,47 @@ public sealed class FileQueryTests
     [Fact]
     public void WingetInstallsTheExactPackageQuietly() =>
         Assert.Equal(
-            "install --id voidtools.Everything -e --silent --scope machine --accept-package-agreements --accept-source-agreements",
+            "install --id voidtools.Everything -e --source winget --silent --scope machine --accept-package-agreements --accept-source-agreements",
             string.Join(' ', EverythingSetup.WingetArguments));
+
+    [Fact]
+    public void WingetIsFoundByItsFullPathOrNotAtAll()
+    {
+        string? winget = EverythingSetup.WingetExe();
+        Assert.True(winget is null || (Path.IsPathFullyQualified(winget) && winget.EndsWith("winget.exe", StringComparison.OrdinalIgnoreCase)), winget);
+    }
+
+    [Fact]
+    public void EverythingIsLookedForMachineWideFirstAndInTheUsersOwnEntryLast()
+    {
+        var places = EverythingSetup.Candidates(
+            name => name == "Everything" ? "\"C:\\Program Files\\Everything\\Everything.exe\" -startup" : null,
+            name => name == "Everything" ? "\"D:\\Service\\Everything.exe\" -svc" : null,
+            name => name == "Everything" ? "C:\\Users\\me\\Everything.exe -startup" : null,
+            ["C:\\Program Files", ""]).ToList();
+        Assert.Equal(
+            [
+                @"C:\Program Files\Everything\Everything.exe", @"D:\Service\Everything.exe", @"C:\Program Files\Everything\Everything.exe",
+                @"C:\Program Files\Everything 1.5a\Everything64.exe", @"C:\Program Files\Everything 1.5a\Everything.exe", @"C:\Users\me\Everything.exe",
+            ],
+            places);
+    }
+
+    [Theory]
+    [InlineData(null, false)] // no service
+    [InlineData(2, true)] // automatic
+    [InlineData(3, true)] // manual
+    [InlineData(4, false)] // disabled
+    public void OnlyAServiceThatCanRunLetsTomteStartEverything(int? start, bool starts) => Assert.Equal(starts, EverythingSetup.ServiceStarts(start));
+
+    [Theory]
+    [InlineData(FileSource.Index, false, true)]
+    [InlineData(FileSource.Index, true, false)] // "Not now"
+    [InlineData(FileSource.Everything, false, false)]
+    [InlineData(FileSource.EverythingStopped, false, false)]
+    [InlineData(FileSource.EverythingManual, false, false)]
+    public void TheOfferShowsOnlyOnTheIndexUntilNotNow(FileSource source, bool dismissed, bool offers) =>
+        Assert.Equal(offers, EverythingSetup.Offers(source, dismissed));
 }
 
 public sealed class SearchHistoryTests : IDisposable
@@ -362,6 +437,23 @@ public sealed class SearchHistoryTests : IDisposable
     private readonly string dir = Path.Combine(Path.GetTempPath(), "tomte-tests-" + Guid.NewGuid().ToString("N"));
 
     public void Dispose() => Directory.Delete(dir, recursive: true);
+
+    [Fact]
+    public void NotNowIsKeptInTheSettingsFile()
+    {
+        string file = Path.Combine(dir, "settings.json");
+        using (var store = new SettingsStore(file))
+        {
+            Assert.False(store.Current.EverythingOfferDismissed);
+            Assert.True(EverythingSetup.Offers(FileSource.Index, store.Current.EverythingOfferDismissed));
+            store.Save(store.Current with { EverythingOfferDismissed = true });
+        }
+
+        var again = SettingsStore.Load(file);
+        Assert.True(again.EverythingOfferDismissed);
+        Assert.False(EverythingSetup.Offers(FileSource.Index, again.EverythingOfferDismissed));
+        Assert.Contains("\"everythingOfferDismissed\": true", File.ReadAllText(file));
+    }
 
     [Fact]
     public void OpeningARowCountsItAndKeepsTheNewestRows()

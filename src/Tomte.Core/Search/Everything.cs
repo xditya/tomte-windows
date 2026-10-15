@@ -67,7 +67,8 @@ public static unsafe class Everything
     /// <summary>
     /// The hits in Everything's answer (EVERYTHING_IPC_LIST2): each item's flags and where its data is, the data being,
     /// for each requested text, its length in characters, the characters and a terminator. Reads the name and the path
-    /// when Everything sent those instead of the full path. Anything that runs past the end of the answer is left out.
+    /// when Everything sent those instead of the full path. Anything that runs past the end of the answer, a path that is
+    /// not fully qualified and a path with a double quote are left out.
     /// </summary>
     public static IReadOnlyList<FileHit> Parse(ReadOnlySpan<byte> list)
     {
@@ -89,7 +90,9 @@ public static unsafe class Everything
             ok = ok && ((requested & RequestPath) == 0 || Text(list, ref at, out path));
             ok = ok && ((requested & RequestFullPath) == 0 || Text(list, ref at, out full));
             string? found = full ?? (name is null ? null : path is { Length: > 0 } ? Path.Combine(path, name) : name);
-            if (ok && found is { Length: > 0 })
+            // Only a full local or network path is opened later; anything else (a relative name, a quote that could end
+            // the argument Explorer is given) is left out.
+            if (ok && found is { Length: > 0 } && Path.IsPathFullyQualified(found) && !found.Contains('"'))
             {
                 hits.Add(new(found, (flags & FolderFlag) != 0));
             }
@@ -147,7 +150,17 @@ public static unsafe class Everything
         }
     }
 
-    private static HWND Window() => PInvoke.FindWindow(ClassFor(Instance), null);
+    // The named instance when one is set; else the usual Everything, then the 1.5 alpha, which runs as instance "1.5a".
+    private static HWND Window()
+    {
+        if (Instance is not null)
+        {
+            return PInvoke.FindWindow(ClassFor(Instance), null);
+        }
+
+        var found = PInvoke.FindWindow(WindowClass, null);
+        return found.IsNull ? PInvoke.FindWindow(ClassFor("1.5a"), null) : found;
+    }
 
     // The answer is a sent message, which this thread takes while it waits for input or for the cancel.
     private static byte[]? Wait(TimeSpan limit, CancellationToken cancel)

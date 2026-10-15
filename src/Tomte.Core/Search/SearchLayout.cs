@@ -6,8 +6,11 @@ namespace Tomte.Core.Search;
 /// <summary>A line of the result list: a group's heading, or a row with its index in the rows.</summary>
 public readonly record struct SearchLine(float Top, float Height, string? Heading, int Row);
 
-/// <summary>A card over the list that asks or tells something (getting Everything), with its buttons, the main one last.</summary>
-public sealed record SearchCard(string Title, string Body, IReadOnlyList<(string Id, string Label)> Buttons);
+/// <summary>
+/// A card over the list that asks or tells something (getting Everything), with its buttons left to right.
+/// <paramref name="Focus"/> is the button Enter presses until Tab moves on: the safe one, never one that installs.
+/// </summary>
+public sealed record SearchCard(string Title, string Body, IReadOnlyList<(string Id, string Label)> Buttons, int Focus = 0);
 
 /// <summary>
 /// The search box's content in DIPs from its top-left corner, in the AI box's look: the box after the tomte, the result
@@ -153,9 +156,15 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public float ScrollTo(float scroll, float top, float bottom, float content) =>
         Math.Clamp(bottom > scroll + Band.Height ? bottom - Band.Height : top < scroll ? top : scroll, 0, Math.Max(0, content - Band.Height));
 
-    /// <summary>A card in the middle of the band: its box, the title, the body on up to four lines, and the buttons along its bottom right.</summary>
-    public (RectangleF Card, TextSlot Title, TextRun Body, PointF BodyAt, IReadOnlyList<(string Id, RectangleF Box, TextSlot Label)> Buttons) Card(SearchCard card)
+    /// <summary>
+    /// A card in the middle of the band: its box, the title, the body on up to four lines, and the buttons along its
+    /// bottom right. The button <paramref name="focus"/> names (the card's own <see cref="SearchCard.Focus"/> when -1) is
+    /// the one Enter presses: it takes the white fill and black label, the others the plain look. Widths are measured in
+    /// the bold style, so moving the focus never moves a button.
+    /// </summary>
+    public (RectangleF Card, TextSlot Title, TextRun Body, PointF BodyAt, IReadOnlyList<(string Id, RectangleF Box, TextSlot Label)> Buttons) Card(SearchCard card, int focus = -1)
     {
+        focus = focus < 0 ? card.Focus : focus;
         var band = Band;
         float inner = band.Width - (2 * CardPad);
         using var laid = TextLayout.Of(new TextRun(card.Body, TextStyle.Secondary, inner, 4));
@@ -166,8 +175,8 @@ public sealed class SearchLayout(float width, bool mascot, float height)
         for (int i = card.Buttons.Count - 1; i >= 0; i--)
         {
             var (id, label) = card.Buttons[i];
-            var style = i == card.Buttons.Count - 1 ? PaletteLayout.RunButton : PaletteLayout.Button;
-            float bw = Math.Max(PaletteLayout.ButtonMinWidth, TextSlot.Measure(label, style, inner) + (2 * PaletteLayout.ButtonPadX));
+            var style = i == focus ? PaletteLayout.RunButton : PaletteLayout.Button;
+            float bw = Math.Max(PaletteLayout.ButtonMinWidth, TextSlot.Measure(label, PaletteLayout.RunButton, inner) + (2 * PaletteLayout.ButtonPadX));
             var at = new RectangleF(right - bw, rowY, bw, PaletteLayout.ButtonHeight);
             buttons.Insert(0, (id, at, new TextSlot(label, style, at)));
             right = at.X - PaletteLayout.ButtonGap;
