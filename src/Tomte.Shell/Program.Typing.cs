@@ -6,6 +6,7 @@ using Tomte.AI.Palette;
 using Tomte.AI.Skills;
 using Tomte.Core;
 using Tomte.Core.Triggers;
+using Windows.Win32;
 
 namespace Tomte.Shell;
 
@@ -162,9 +163,11 @@ internal static partial class Program
             return;
         }
 
-        // Read now, while the island is still not the foreground window.
-        nint foreground = front ?? WindowContext.Foreground();
-        var selection = front is null ? Task.Run(SelectionReader.Read) : Task.FromResult<string?>(null);
+        // Read now, while the island is still not the foreground window. Asked from the island itself (Ctrl+K or "/" on
+        // panels that have the keys), it is the window the user last worked in, and there is no selection to read.
+        bool own = front is null && PInvoke.GetForegroundWindow() == island.Hwnd;
+        nint foreground = own ? triggers.LastApp : front ?? WindowContext.Foreground();
+        var selection = front is null && !own ? Task.Run(SelectionReader.Read) : Task.FromResult<string?>(null);
         // The app's name as people know it, for what the chips say: its exe's version details, a file read, so off this
         // thread too and in the same wait; the process name stands in when it is late.
         var product = Task.Run(() => WindowContext.Product(foreground, WindowContext.Describe(foreground).App));
