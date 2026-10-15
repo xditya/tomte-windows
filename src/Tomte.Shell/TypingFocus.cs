@@ -283,7 +283,12 @@ internal sealed class TypingFocus
         {
             // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel. Then the focused
             // target's view and the views as a whole may step back (History's open conversation, the AI box opened from
-            // a tab); with nothing to step back to, the island hides.
+            // a tab); with nothing to step back to, the island hides. A held Esc steps once, as the hotkey's does.
+            if (down && (lParam & PromptKeys.WasDown) != 0)
+            {
+                return new LRESULT(0);
+            }
+
             if (!down || (focused?.Escape?.Invoke() != true && !island.Interaction.Key(NavKey.Escape, false)))
             {
                 Escape?.Invoke();
