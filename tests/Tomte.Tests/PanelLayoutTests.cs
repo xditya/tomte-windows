@@ -78,6 +78,7 @@ public sealed class PanelLayoutTests
 
         Assert.Equal((TargetKind.Row, "Copy again", 1), (targets[1].Kind, targets[1].Tip, targets[1].Group));
         Assert.Equal((TargetKind.Button, "Remove", 1), (targets[2].Kind, targets[2].Tip, targets[2].Group));
+        Assert.Equal(("Copy again (Enter)", "Remove (Delete)"), (targets[1].TipWith(keys: true), targets[2].TipWith(keys: true)));
         Assert.Equal((24f, 24f), (targets[2].Bounds.Width, targets[2].Bounds.Height));
 
         // Clear all is a panel action, as tall as one, alone in its Tab stop, and grows to the left when it asks.

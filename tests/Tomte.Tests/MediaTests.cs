@@ -344,8 +344,10 @@ public class MediaTests
 
         var transport = Layout.Targets(Playing());
         Assert.Equal(["previous", "playpause", "next"], transport.Select(t => t.Id));
-        Assert.All(transport, t => Assert.True(t.Enabled && t.Group == 1 && t.Bounds.Width >= 32 && t.Bounds.Height >= 32, t.Id));
+        // Each a Tab stop of its own: on them Left and Right skip tracks rather than move between them.
+        Assert.All(transport, t => Assert.True(t.Enabled && t.Group == 0 && t.Bounds.Width >= 32 && t.Bounds.Height >= 32, t.Id));
         Assert.Equal(["Previous", "Pause", "Next"], transport.Select(t => t.Tip));
+        Assert.Equal(["Previous (Left)", "Pause (Space)", "Next (Right)"], transport.Select(t => t.TipWith(keys: true)));
 
         // The app takes only pause: next and previous are disabled, play or pause still works.
         var pauseOnly = Playing().WithPlayback(true, 1, MediaCommand.Pause, T0 + S(1));
@@ -356,6 +358,22 @@ public class MediaTests
         // Paused, the middle button says Play. Nothing plays: every button is disabled.
         Assert.Equal("Play", Layout.Targets(Playing().WithPlayback(false, 1, All, T0))[1].Tip);
         Assert.All(Layout.Targets(NowPlaying.None), t => Assert.False(t.Enabled, t.Id));
+    }
+
+    [Fact]
+    public void OnTheTransportSpacePlaysAndLeftAndRightSkip()
+    {
+        foreach (var id in new[] { "previous", "playpause", "next" })
+        {
+            Assert.Equal("playpause", MediaPanelLayout.KeyFor(id, NavKey.Space));
+            Assert.Equal("previous", MediaPanelLayout.KeyFor(id, NavKey.Left));
+            Assert.Equal("next", MediaPanelLayout.KeyFor(id, NavKey.Right));
+            Assert.Null(MediaPanelLayout.KeyFor(id, NavKey.Activate));
+        }
+
+        // Space plays from the seek bar too; its Left and Right seek, which the panel does itself.
+        Assert.Equal("playpause", MediaPanelLayout.KeyFor("seek", NavKey.Space));
+        Assert.Null(MediaPanelLayout.KeyFor("seek", NavKey.Left));
     }
 
     [Fact]

@@ -155,15 +155,33 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     }
 
     /// <summary>
-    /// A caller that cannot say whether the key repeats: a Delete while the question shows counts as one held down, so
-    /// Delete only asks, and a click or Enter on the question removes. The host calls the one below.
+    /// On a focused tile or the band, the band's actions by key: Delete asks to remove, as the Remove button does, and a
+    /// second Delete, not a repeat, removes; Ctrl+C copies the path; Ctrl+Shift+E shows it in its folder. Up or Down off
+    /// the page scrolls a row first, so the arrow finds the tile it heads for.
     /// </summary>
-    public bool KeyDown(string id, int virtualKey) => KeyDown(id, virtualKey, repeat: question.Asks(Item(id)?.Id ?? shown, Environment.TickCount64));
-
-    /// <summary>Delete on a focused tile or on the band asks to remove, as the Remove button does; a second Delete, not a repeat, removes.</summary>
-    public bool KeyDown(string id, int virtualKey, bool repeat)
+    public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        if (virtualKey != (int)VIRTUAL_KEY.VK_DELETE || (Item(id) is null && ActionOf(id) is null))
+        if (key is NavKey.Up or NavKey.Down && Item(id) is { } from)
+        {
+            var items = shelf.Items;
+            int next = ShelfLayout.ScrollFor(first, items.ToList().IndexOf(from), key == NavKey.Down ? 1 : -1, items.Count, size);
+            if (next != first)
+            {
+                first = next;
+                Rebuild();
+            }
+
+            return false;
+        }
+
+        ShelfAction? action = key switch
+        {
+            NavKey.Remove => ShelfAction.Remove,
+            NavKey.Copy => ShelfAction.CopyPath,
+            NavKey.ShowInFolder => ShelfAction.Reveal,
+            _ => null,
+        };
+        if (action is null || (Item(id) is null && ActionOf(id) is null))
         {
             return false;
         }
@@ -175,9 +193,10 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             Show(item.Id);
         }
 
-        if (Owner() is { } owner)
+        // A held key copies or opens a folder once; Remove's question tells a repeat from a second press itself.
+        if (Owner() is { } owner && (!repeat || action == ShelfAction.Remove))
         {
-            Act(ShelfAction.Remove, owner, repeat);
+            Act(action.Value, owner, repeat);
         }
 
         return true;

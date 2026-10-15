@@ -292,14 +292,43 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
+    /// <summary>
+    /// The palette showing now was opened by a panel action (the Ask button, Ctrl+K, History's Continue), so it can go
+    /// back there. Not by a hotkey, the tray or anything else that opens it while Panels happen to show.
+    /// </summary>
+    internal bool FromPanels { get; private set; }
+
+    /// <summary>That panel action was a key while the island had the keyboard: the AI box keeps the keyboard, prompt or not.</summary>
+    internal bool AskedByKey { get; private set; }
+
+    /// <summary>The AI box opened from Panels goes back to the tab it was opened from, as that tab was left.</summary>
+    internal void Back()
+    {
+        if (machine.State == IslandState.Palette && FromPanels)
+        {
+            Panels?.GoingBack();
+            Go(IslandState.Panels);
+        }
+    }
+
     /// <summary>A button on the open Panels asked for the AI box, as the Ask pill does; the shell fills it.</summary>
     internal void OpenPalette()
     {
         if (OpensPalette())
         {
-            Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
-            PaletteOpened?.Invoke();
+            PaletteFromIsland();
         }
+    }
+
+    // The AI box from the open island (the pill's tomte, a panel action): one from a panel can go back there, and keeps
+    // the keyboard when a key asked. Read before the morph, whose hop through Hidden lets the keys go.
+    private void PaletteFromIsland()
+    {
+        bool panels = machine.State == IslandState.Panels;
+        bool keys = panels && island.Interaction.UsingKeys && activity.HasFlag(IslandActivity.Typing);
+        Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
+        (FromPanels, AskedByKey) = (panels, keys);
+        PaletteOpened?.Invoke();
     }
 
     /// <summary>The current panel changed while Panels is open (a tab switch): Panels re-enters itself and the shape morphs to the new size.</summary>
@@ -481,8 +510,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             if (OpensPalette())
             {
                 // The island is up and was clicked: the pause and the suppression had their say when it showed.
-                Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
-                PaletteOpened?.Invoke();
+                PaletteFromIsland();
             }
         });
     }
@@ -491,8 +519,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// The pill's own surface, which a drag moves along the top edge: the rambler's pill, the tab strip's row outside its
-    /// targets (the tabs, the tomte and the Ask pill take their presses first), and the tomte over the palette. Compact's
-    /// targets and the strip's tomte move it through their own drag. Panel bodies and the palette's controls keep their
+    /// targets (the tabs and the Ask pill take their presses first; the tomte is part of the row), and the tomte over the
+    /// palette. Compact's targets move it through their own drag. Panel bodies and the palette's controls keep their
     /// presses, and shelf and result tiles their drag out.
     /// </summary>
     private bool Grabs(System.Numerics.Vector2 at) => machine.State switch
@@ -699,7 +727,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         // Only a pointer coming onto the pill dwells; one moving about on it lets the dwell run.
         Dwell(hover);
-        if (activity.HasFlag(IslandActivity.Result))
+        if ((activity & (IslandActivity.Result | IslandActivity.Pinned)) != 0)
         {
             InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
         }
@@ -805,8 +833,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         if (id == InputThread.EscapeHotkeyId)
         {
-            // On the rambler's card Esc throws the words away, and the card retracts itself.
-            if (rambler?.Discard() == true)
+            // On the rambler's card Esc throws the words away, and the card retracts itself. Anywhere else it steps back
+            // before it retracts: a question cancelled, a conversation closed, the AI box back to its tab.
+            if (rambler?.Discard() == true || island.Interaction.Command(NavKey.Escape))
             {
                 return;
             }
@@ -874,8 +903,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
                     // Begin opens the 262 wide pill and sets the mascot itself.
                     rambler.Begin();
                     // A hold started on the peek pill is no longer peek: an event, a window under the zone or an edge
-                    // push would otherwise take the pill away mid-recording.
+                    // push would otherwise take the pill away mid-recording. A pin on the AI box it started from ends.
                     activity = (activity & ~IslandActivity.Peek) | IslandActivity.Rambling;
+                    Unpin();
                     // The rambler's pill has no room for the ring, and it changes state without Go; nor does a click on it do anything.
                     UpdateRing();
                     compact.Changed();
@@ -1131,6 +1161,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
     {
         var from = machine.State;
+        // A palette growing keeps where it came from; any other change forgets it, and a panel action sets it again.
+        if ((from, state) != (IslandState.Palette, IslandState.Palette))
+        {
+            (FromPanels, AskedByKey) = (false, false);
+        }
         if (from == IslandState.Capture)
         {
             // A hotkey, the tray or the pause took over while the overlay was up; Capture() resumes as a cancel.
@@ -1152,6 +1187,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             // Whatever shows now was asked for: the peek pill's window rule and the rambler's hold on the island end here.
             activity = RetractionRules.TakenOver(activity);
+        }
+
+        if (state is not (IslandState.Panels or IslandState.Palette))
+        {
+            // A pin holds Panels and the AI box only, from one to the other included.
+            Unpin();
         }
 
         if (state == IslandState.Panels)
@@ -1190,10 +1231,49 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
-    internal void Typing(bool on) => Hold(IslandActivity.Typing, on);
+    internal void Typing(bool on)
+    {
+        Hold(IslandActivity.Typing, on);
+        // The keys went elsewhere (another window, a click-back from the AI box): Esc becomes a hotkey again, if the rule
+        // takes it now; a pinned island away from the pointer leaves it to the user's app.
+        if (machine.State is IslandState.Panels or IslandState.Palette)
+        {
+            InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, pointerInside));
+        }
+    }
 
     /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: the island does not retract under it.</summary>
     internal void Pressing(bool on) => Hold(IslandActivity.Pressing, on);
+
+    /// <summary>
+    /// Ctrl+P in Panels or the AI box: pinned, the island stays when the pointer leaves or the keys go elsewhere, with a
+    /// mark on the tomte, until Ctrl+P again, Esc or the hotkey; unpinned, the usual retraction applies again.
+    /// </summary>
+    internal void TogglePin()
+    {
+        if (machine.State is IslandState.Panels or IslandState.Palette)
+        {
+            bool on = !activity.HasFlag(IslandActivity.Pinned);
+            Hold(IslandActivity.Pinned, on);
+            island.Pinned = on;
+            log?.Invoke(on ? "island: pinned" : "island: unpinned");
+        }
+    }
+
+    private void Unpin()
+    {
+        activity &= ~IslandActivity.Pinned;
+        island.Pinned = false;
+    }
+
+    /// <summary>The AI box lost the keys while nothing was being sent: it retracts, unless the island is pinned.</summary>
+    internal void FocusLost()
+    {
+        if (RetractionRules.RetractsOnFocusLoss(activity))
+        {
+            Hide();
+        }
+    }
 
     private void Hold(IslandActivity what, bool on)
     {

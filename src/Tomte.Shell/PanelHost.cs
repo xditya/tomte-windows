@@ -27,6 +27,12 @@ internal interface IPanel
     /// </summary>
     void Shown(ContainerVisual body, Vector2 size);
 
+    /// <summary>
+    /// The same, for the AI box going back to the tab it was opened from: a panel that keeps how it was left (History
+    /// with the same conversation open) shows it that way; any other shows as on <see cref="Shown"/>.
+    /// </summary>
+    void ShownBack(ContainerVisual body, Vector2 size) => Shown(body, size);
+
     /// <summary>The island hid or another tab took over. Stop the work and release every visual and surface.</summary>
     void Hidden();
 
@@ -64,7 +70,7 @@ internal sealed class PanelHost
     private ContainerVisual? body, leavingBody;
     private Strip? strip, leavingStrip;
     private Vector2 bodySize;
-    private bool fadeInPending, stripFadePending;
+    private bool fadeInPending, stripFadePending, back;
     private int wheel;
 
     public PanelHost(IslandWindow island, IslandStateMachine machine, TextRenderer text, Action<string>? log = null)
@@ -86,7 +92,7 @@ internal sealed class PanelHost
     /// <summary>Called when the current panel changes while Panels is open: the triggers re-enter Panels and morph the shape.</summary>
     public Action? Resize { get; set; }
 
-    /// <summary>A click on the tomte in the strip or on the Ask pill: the triggers open the palette.</summary>
+    /// <summary>A click on the Ask pill: the triggers open the palette.</summary>
     public Action? Ask { get; set; }
 
     /// <summary>The current panel's size in DIPs, before the monitor cap (<see cref="PanelSize.Fit"/>).</summary>
@@ -97,6 +103,9 @@ internal sealed class PanelHost
         tabs.Register(panel.Id);
         panels.Add(panel.Id, panel);
     }
+
+    /// <summary>The next state change is the AI box going back to the tab it was opened from (<see cref="IPanel.ShownBack"/>).</summary>
+    public void GoingBack() => back = true;
 
     /// <summary>Make a panel the current one. Open, that is a tab switch; closed, Panels opens on it next time.</summary>
     public void Select(PanelId id)
@@ -144,6 +153,8 @@ internal sealed class PanelHost
 
     private void OnState(IslandState from, IslandState to)
     {
+        bool again = back;
+        back = false;
         var next = to == IslandState.Panels && tabs.Current is { } id ? panels[id] : null;
         if (ReferenceEquals(next, shown))
         {
@@ -203,7 +214,14 @@ internal sealed class PanelHost
         // the morph and leave the machine in Panels with nothing on screen.
         try
         {
-            next.Shown(body, bodySize);
+            if (again)
+            {
+                next.ShownBack(body, bodySize);
+            }
+            else
+            {
+                next.Shown(body, bodySize);
+            }
         }
         catch (Exception e)
         {
@@ -247,6 +265,8 @@ internal sealed class PanelHost
             {
                 float width = bodySize.X;
                 island.Interaction.Register(view, p => PanelSpace.ToBody(p, width), p => new(p.X - (width / 2), p.Y + PanelSpace.TabStripHeight));
+                // Opened, back or switched to from the keyboard: the tab's first item takes focus.
+                island.Interaction.FocusFirst(view);
             }
 
             if (stripFadePending && strip is not null)
@@ -259,7 +279,7 @@ internal sealed class PanelHost
 
     /// <summary>
     /// A press on the body that no registered target took is the panel's once the body shows, so a quick click after
-    /// opening or switching cannot hit a button that is not drawn yet. The strip's tabs, tomte and Ask pill are targets.
+    /// opening or switching cannot hit a button that is not drawn yet. The strip's tabs and Ask pill are targets.
     /// </summary>
     private void OnPressed(Vector2 point)
     {
@@ -310,13 +330,13 @@ internal sealed class PanelHost
     /// The tab labels in the strip row, with a card behind the current one, and the Ask pill at its right end. The
     /// container sits on the shape's live body left edge in every frame of a morph (island space's origin less its own
     /// offset, plus the ramp an attached shape flares into the top edge with, whole pixels), so the labels move with the
-    /// edge they are laid out from; the Ask pill rides the live right edge the same way. Its targets are the tomte and the
-    /// Ask pill, which open the palette, and the tab labels, one group the arrow keys switch along. The wheel is the
-    /// host's.
+    /// edge they are laid out from; the Ask pill rides the live right edge the same way. Its targets are the tab labels,
+    /// one group the arrow keys switch along, and the Ask pill, the one control here that opens the palette. The tomte is
+    /// no target: like the rest of the row it moves the island. The wheel is the host's.
     /// </summary>
     private sealed class Strip : IDisposable, IInteractive
     {
-        private const string Tomte = "tomte", AskId = "ask";
+        private const string AskId = "ask";
         private readonly IslandWindow island;
         private readonly Action<PanelId> select;
         private readonly Action openAsk;
@@ -379,7 +399,7 @@ internal sealed class PanelHost
 
         public ShapeVisual Visual { get; }
 
-        /// <summary>The tomte, the tab labels and the Ask pill, which rides the live right edge as it is drawn.</summary>
+        /// <summary>The tab labels and the Ask pill, which rides the live right edge as it is drawn.</summary>
         public IReadOnlyList<Target> Targets
         {
             get
@@ -400,7 +420,7 @@ internal sealed class PanelHost
 
         public void Activate(string id)
         {
-            if (id is Tomte or AskId)
+            if (id == AskId)
             {
                 openAsk();
             }
@@ -410,22 +430,35 @@ internal sealed class PanelHost
             }
         }
 
-        /// <summary>A drag from the tomte moves the island, as one from the strip's empty row does; from strip space back to island space.</summary>
-        public bool TryDrag(string id, Vector2 at) => island.Drag(new Vector2(at.X - ((float)island.Current.Width / 2), at.Y));
+        /// <summary>
+        /// Ctrl+1 to Ctrl+6 pick the tab in that place, and leave the current one's to whoever has the keys there (the
+        /// note keeps them); Ctrl+K and "/" ask, as the Ask pill does.
+        /// </summary>
+        public bool Command(NavKey key)
+        {
+            if (key == NavKey.Ask)
+            {
+                openAsk();
+                return true;
+            }
+
+            var tab = targets.Where(t => t.Kind == TargetKind.Tab).ElementAtOrDefault(key - NavKey.Tab1);
+            if (key is < NavKey.Tab1 or > NavKey.Tab6 || tab.Id is null || tab.Checked)
+            {
+                return false;
+            }
+
+            Activate(tab.Id);
+            return true;
+        }
 
         public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot)
         {
             var lines = TabStrip.Labels(tabs, current, width, mascot);
             var list = new List<Target>();
-            if (mascot)
-            {
-                var box = MascotArt.Box(IslandGeometry.Panel(width, PanelSpace.TabStripHeight));
-                list.Add(new(Tomte, box with { X = box.X + (width / 2) }, box.Width / 2, TargetKind.Button, Tip: "Ask Tomte", Draggable: true));
-            }
-
             foreach (var (id, line) in tabs.Zip(lines))
             {
-                list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: id == current));
+                list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: id == current, Key: $"Ctrl+{list.Count + 1}"));
             }
 
             Visual.Size = new Vector2(width, PanelSpace.TabStripHeight);
@@ -451,7 +484,7 @@ internal sealed class PanelHost
             var (card, glyph, word) = TabStrip.AskPill(width);
             askWidth = card.Width;
             askFor = (float)island.Current.Width;
-            list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything"));
+            list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything", Key: "Ctrl+K"));
             targets = [.. list];
             askVisual.Size = new Vector2(card.Width, PanelSpace.TabStripHeight);
             askEdge.SetScalarParameter("right", width - card.X);

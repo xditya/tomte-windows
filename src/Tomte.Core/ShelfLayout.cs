@@ -55,7 +55,8 @@ public static class ShelfLayout
     /// <summary>
     /// The shelf's clickable parts in Tab order: the visible tiles (group 1, draggable, the full name and folder as the
     /// tip), then, while <paramref name="owner"/> is on the page, the band's actions for it (group 2; an icon-only one
-    /// carries its name as the tip). An action that none of <paramref name="acting"/> allows is disabled.
+    /// carries its name as the tip, and each its key). An action that none of <paramref name="acting"/> allows is
+    /// disabled.
     /// </summary>
     public static IReadOnlyList<Target> Targets(Vector2 body, int first, IReadOnlyList<ShelfItem> items, ShelfItem? owner, IReadOnlyList<ShelfItem> acting, bool confirming)
     {
@@ -72,7 +73,8 @@ public static class ShelfLayout
             foreach (var slot in Actions(body, confirming))
             {
                 bool allowed = acting.Any(i => ShelfStore.Allows(slot.Action, i));
-                targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, slot.Label is null ? Name(slot.Action) : null, Group: 2));
+                targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, slot.Label is null ? Name(slot.Action) : null, Group: 2,
+                    Key: ActionKey(slot.Action)));
             }
         }
 
@@ -288,6 +290,28 @@ public static class ShelfLayout
         ShelfAction.Share => "Share",
         _ => "Remove",
     };
+
+    /// <summary>The key that does an action on a focused tile, for the button's tooltip while the island has the keys; null for Share.</summary>
+    public static string? ActionKey(ShelfAction action) => action switch
+    {
+        ShelfAction.Open => "Enter",
+        ShelfAction.Reveal => "Ctrl+Shift+E",
+        ShelfAction.CopyPath => "Ctrl+C",
+        ShelfAction.Remove => "Delete",
+        _ => null,
+    };
+
+    /// <summary>
+    /// The first visible item after an arrow from <paramref name="index"/> by <paramref name="rows"/> rows (Down +1, Up
+    /// -1): a row further when the row it heads for has items and is off the page, so the arrow finds a tile there;
+    /// unchanged otherwise.
+    /// </summary>
+    public static int ScrollFor(int first, int index, int rows, int count, Vector2 body)
+    {
+        int row = (index / Columns) + rows, firstRow = first / Columns;
+        bool off = row < firstRow || row >= firstRow + Rows(body);
+        return off && row >= 0 && row <= (count - 1) / Columns ? Scroll(first, -rows, count, body) : first;
+    }
 
     /// <summary>One stroke of an action's icon, in its 16 DIP square: a line from A to B, or with a corner, an outlined box from A to B.</summary>
     public readonly record struct GlyphStroke(Vector2 A, Vector2 B, float Corner = -1);

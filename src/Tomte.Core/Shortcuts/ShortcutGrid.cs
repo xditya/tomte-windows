@@ -43,6 +43,9 @@ public static class ShortcutGrid
 
     public const string AddId = "add", AddTip = "Add a shortcut in Settings";
 
+    /// <summary>The question Delete on a tile asks on its card before a second Delete removes it.</summary>
+    public const string RemoveAsk = "Remove? Press Delete again";
+
     public static string TileId(long id) => $"tile:{id}";
 
     /// <summary>

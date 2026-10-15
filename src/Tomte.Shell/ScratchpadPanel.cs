@@ -46,6 +46,16 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
         bound = new NoteEditor(editor, note, island.Queue, kept) { Moving = () => island.Moving };
         island.Settled += bound.Settled;
         Load();
+        // Switched or come back to while the island has the keys for its targets (not on the tab labels, where the arrows
+        // go on along the tabs): the note is the tab's first useful thing.
+        var shownBox = editor;
+        island.Queue.TryEnqueue(() =>
+        {
+            if (editor == shownBox && focus.HasKeys && focus.Focused is null && !island.Interaction.HasFocus)
+            {
+                focus.Take(shownBox);
+            }
+        });
     }
 
     public void Hidden()

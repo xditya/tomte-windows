@@ -56,9 +56,10 @@ public readonly record struct LaidChip(RectangleF Box, RectangleF Icon, TextSlot
 /// palette is as tall as that needs, from 150 to 480 DIPs; an answer longer than the room left scrolls in its band.
 /// <paramref name="text"/> is the prompt's own height (the text box's content height), which the box grows with.
 /// <paramref name="send"/> puts a Send button at the box's right end, for a palette with a text box. <paramref name="sends"/>
-/// is the line under the chips saying what the next send carries; empty for none.
+/// is the line under the chips saying what the next send carries; empty for none. <paramref name="back"/> puts the back
+/// arrow before the prompt box, for a palette opened from the panels.
 /// </summary>
-public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false, string sends = "")
+public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false, string sends = "", bool back = false)
 {
     public const float Pad = 14, Top = 12, Bottom = 10, Gap = 10, BlockGap = 6;
     public const float PromptHeight = 36, PromptInsetX = 12, PromptInsetY = 9, PromptCorner = 8;
@@ -110,7 +111,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const string Off = "The AI layer is off";
     public const string Setup = "Add a provider key to use the palette.";
     public const string Run = "Run", Cancel = "Cancel", AlwaysAllow = "Always allow";
-    public const string Include = "Include", SendTip = "Send (Enter)";
+    public const string Include = "Include", SendTip = "Send";
 
     /// <summary>The foot's provider line while a card asks before a tool runs: nothing is on its way until the user answers.</summary>
     public const string Waiting = "Waiting for you";
@@ -151,7 +152,17 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     public float Width => width;
 
-    public float Left => mascot ? MascotArt.InsetX + MascotArt.SizeDips + 10 : Pad;
+    /// <summary>The back arrow: as big as Send, level with the prompt's first line, after the tomte.</summary>
+    public const float BackSize = SendSize, BackGap = 6, BackCorner = SendCorner;
+
+    public const string BackId = "back", BackTip = "Back", BackKey = "Alt+Left";
+
+    public float Left => Start + (back ? BackSize + BackGap : 0);
+
+    /// <summary>The back arrow before the prompt box; empty without one.</summary>
+    public RectangleF Back => back ? new(Start, Top + ((PromptHeight - BackSize) / 2), BackSize, BackSize) : RectangleF.Empty;
+
+    private float Start => mascot ? MascotArt.InsetX + MascotArt.SizeDips + 10 : Pad;
 
     /// <summary>The prompt's card: one line tall at least, growing with its text up to about four lines.</summary>
     public RectangleF Prompt => new(Left, Top, width - Pad - Left, Math.Clamp(text + 2 * PromptInsetY, PromptHeight, PromptMaxText + 2 * PromptInsetY));
@@ -253,6 +264,14 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// </summary>
     public static string ButtonId(ConfirmButton button, int question) => string.Create(CultureInfo.InvariantCulture, $"{button}:{question}");
 
+    /// <summary>The key that answers a question as its button does, for the button's tooltip while the island has the keys.</summary>
+    public static string ButtonKey(ConfirmButton button) => button switch
+    {
+        ConfirmButton.Run => "Enter",
+        ConfirmButton.Cancel => "Esc",
+        _ => "Alt+A",
+    };
+
     /// <summary>The button an id names on question <paramref name="question"/>; null for another question's, or another target.</summary>
     public static ConfirmButton? ButtonFor(string id, int question) =>
         Enum.GetValues<ConfirmButton>().Cast<ConfirmButton?>().FirstOrDefault(b => ButtonId(b!.Value, question) == id);
@@ -271,7 +290,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>The AI history button at the footer's left: a clock, as big as the smallest target, centred on the footer's line.</summary>
     public RectangleF History(float height) => new(Pad - 5, height - Bottom - (FootHeight / 2) - (StateLook.MinTarget / 2), StateLook.MinTarget, StateLook.MinTarget);
 
-    public Target HistoryTarget(float height) => new(HistoryId, History(height), 6, TargetKind.Button, Tip: HistoryTip);
+    public Target HistoryTarget(float height) => new(HistoryId, History(height), 6, TargetKind.Button, Tip: HistoryTip, Key: "Ctrl+H");
 
     public const string HistoryId = "history", HistoryTip = "AI history";
 
@@ -341,6 +360,10 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     /// <summary>A wheel delta (120 a notch, positive away from the user) moves the answer three lines a notch, back toward its start.</summary>
     public float Scrolled(float scroll, int delta, float answer, float height) => Math.Clamp(scroll - delta / 120f * WheelStep, 0, MaxScroll(answer, height));
+
+    /// <summary>Page Down (+1) or Page Up (-1) moves the answer by its band less one line, which stays in view.</summary>
+    public float Paged(float scroll, int direction, float answer, float height) =>
+        Math.Clamp(scroll + (direction * Math.Max(WheelStep / 3, AnswerBand(height).Height - (WheelStep / 3))), 0, MaxScroll(answer, height));
 
     /// <summary>
     /// The scroll for an answer that changed: at its end while pinned there, so a streaming answer shows its newest
@@ -430,6 +453,9 @@ public static class PaletteGlyphs
 
     /// <summary>Send: an arrow pointing up and away.</summary>
     public static readonly GlyphFigure[] Send = [new(TabStrip.Polygon(2, 7.33f, 14, 2, 8.67f, 14, 7.33f, 8.67f))];
+
+    /// <summary>Back: an arrow pointing left.</summary>
+    public static readonly GlyphFigure[] Back = [new(TabStrip.Polygon(2, 8, 7.5f, 2.5f, 8.6f, 3.6f, 4.95f, 7.25f, 14, 7.25f, 14, 8.75f, 4.95f, 8.75f, 8.6f, 12.4f, 7.5f, 13.5f))];
 
     public static GlyphFigure[] Icon(ChipIcon icon) => icon switch
     {

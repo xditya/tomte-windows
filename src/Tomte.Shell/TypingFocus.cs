@@ -30,7 +30,7 @@ internal sealed class TypingFocus
     private readonly Dictionary<EditorView, IInteractive> owners = [];
     private EditorView? focused, dragging;
     private HWND previous;
-    private bool keys, handBackQueued;
+    private bool keys, handBackQueued, taken;
     private long lastPress;
     private Vector2 lastPressAt;
 
@@ -49,12 +49,20 @@ internal sealed class TypingFocus
                 editor.Place(editor.Box, island.Scale);
             }
         };
-        // Leaving the typing states ends typing at once, before the panel is released after its fade.
-        machine.Changed += (_, to) =>
+        // Leaving the typing states ends typing at once, before the panel is released after its fade. The AI box giving
+        // way to the panels (back, History, the summon hotkey) takes its prompt's keys with it at once, not after the
+        // fade, so nothing typed meanwhile goes into a box that is going; the island keeps the keys for whoever moved it
+        // to decide (a key keeps them for the targets, a click lets them go).
+        machine.Changed += (from, to) =>
         {
             if (to is not (IslandState.Panels or IslandState.Palette))
             {
                 Release();
+            }
+            else if ((from, to) == (IslandState.Palette, IslandState.Panels) && focused is { } prompt)
+            {
+                focused = null;
+                prompt.Blur();
             }
         };
     }
@@ -65,10 +73,16 @@ internal sealed class TypingFocus
     /// <summary>A box has the keys, or no longer: the island must not retract under someone typing.</summary>
     public Action<bool>? Typing { get; set; }
 
+    /// <summary>Ctrl+P while the island has the keys: it pins or unpins.</summary>
+    public Action? Pin { get; set; }
+
     /// <summary>The user moved the foreground to another window while a box had the keys.</summary>
     public event Action? Lost;
 
     public EditorView? Focused => focused;
+
+    /// <summary>The island has the keys, for a box or for its targets.</summary>
+    public bool HasKeys => keys;
 
     /// <summary>
     /// A text box in <paramref name="host"/>, drawn on the text device. Dispose it with its view. A box with an
@@ -145,7 +159,7 @@ internal sealed class TypingFocus
             previous = PInvoke.IsWindowVisible(front) ? front : default;
         }
 
-        keys = true;
+        keys = island.Interaction.HasKeys = true;
         PInvoke.SetFocus(island.Hwnd);
         if (editor is not null)
         {
@@ -166,7 +180,7 @@ internal sealed class TypingFocus
         dragging = null;
         if (keys)
         {
-            keys = false;
+            keys = island.Interaction.HasKeys = false;
             var was = focused;
             focused = null;
             was?.Blur();
@@ -223,15 +237,11 @@ internal sealed class TypingFocus
             case PInvoke.WM_ACTIVATE:
                 if ((wParam & 0xFFFF) == PInvoke.WA_INACTIVE && keys)
                 {
-                    // The user went elsewhere: their choice of window stands, and Esc goes back to being a hotkey for
-                    // as long as the island shows. Before Lost, which may hide the island and release Esc after this.
+                    // The user went elsewhere: their choice of window stands. Releasing the keys lets the triggers make
+                    // Esc a hotkey again where their rule takes it (not for a pinned island away from the pointer).
+                    // Before Lost, which may hide the island and release Esc after this.
                     previous = default;
                     Release();
-                    if (machine.State is IslandState.Panels or IslandState.Palette)
-                    {
-                        InputThread.SetEscape(true);
-                    }
-
                     Lost?.Invoke();
                 }
 
@@ -271,9 +281,15 @@ internal sealed class TypingFocus
         bool down = message == IslandKeys.KeyDown, ctrl = Down(VIRTUAL_KEY.VK_CONTROL);
         if (IslandKeys.Hides(message, wParam, keys))
         {
-            // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel. With no box, the
-            // focused target's view may take it.
-            if (!down || (focused is { } box ? box.Escape?.Invoke() != true : !island.Interaction.Key(key, false, ctrl, false)))
+            // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel. Then the focused
+            // target's view and the views as a whole may step back (History's open conversation, the AI box opened from
+            // a tab); with nothing to step back to, the island hides. A held Esc steps once, as the hotkey's does.
+            if (down && (lParam & PromptKeys.WasDown) != 0)
+            {
+                return new LRESULT(0);
+            }
+
+            if (!down || (focused?.Escape?.Invoke() != true && !island.Interaction.Key(NavKey.Escape, false)))
             {
                 Escape?.Invoke();
             }
@@ -281,17 +297,49 @@ internal sealed class TypingFocus
             return new LRESULT(0);
         }
 
+        // The character of a key the island took goes nowhere: Ctrl+H's backspace would reach a box, and an Alt letter
+        // would beep for a menu the island does not have.
+        if (message is PInvoke.WM_CHAR or PInvoke.WM_SYSCHAR && taken)
+        {
+            taken = false;
+            return new LRESULT(0);
+        }
+
+        bool pressed = down || message == IslandKeys.SysKeyDown;
         bool shift = Down(VIRTUAL_KEY.VK_SHIFT), repeat = (lParam & PromptKeys.WasDown) != 0;
+        // "/" is read as the character it types, which is "/" on every layout; in a box it is only typing.
+        var nav = pressed ? NavKeys.Of(key, shift, ctrl, Down(VIRTUAL_KEY.VK_MENU))
+            : message == PInvoke.WM_CHAR && focused is null ? NavKeys.Of((char)key) : NavKey.None;
+        taken &= !pressed;
+        // Ctrl+P pins and unpins the island from a box too; a held key toggles once.
+        if (nav == NavKey.Pin && Pin is not null)
+        {
+            if (!repeat)
+            {
+                Pin();
+            }
+
+            taken = true;
+            return new LRESULT(0);
+        }
+
         if (focused is { } editor)
         {
             // Tab out of the prompt moves to its view's targets, when there are any, and Ctrl+Tab switches the panel tab;
             // either way the box lets go, and the island keeps the keys for the targets.
             var owner = owners.GetValueOrDefault(editor);
-            if (down && NavKeys.LeavesBox(key, ctrl, owner is not null)
-                && (ctrl ? island.Interaction.Key(key, shift, ctrl, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor))))
+            if (NavKeys.LeavesBox(nav, owner is not null)
+                && (ctrl ? island.Interaction.Key(nav, repeat) : island.Interaction.FromBox(owner!, shift ? -1 : 1, () => Take(editor))))
             {
                 focused = null;
                 editor.Blur();
+                return new LRESULT(0);
+            }
+
+            // The AI box's own keys reach its view first; the box keeps the keys either way.
+            if (NavKeys.Offered(nav) && island.Interaction.Key(nav, repeat))
+            {
+                taken = true;
                 return new LRESULT(0);
             }
 
@@ -303,7 +351,13 @@ internal sealed class TypingFocus
             return editor.Key(message, wParam, lParam, out var result) ? result : null;
         }
 
-        return keys && down && island.Interaction.Key(key, shift, ctrl, repeat) ? new LRESULT(0) : null;
+        if (keys && island.Interaction.Key(nav, repeat))
+        {
+            taken = true;
+            return new LRESULT(0);
+        }
+
+        return null;
     }
 
     private static bool Down(VIRTUAL_KEY key) => PInvoke.GetKeyState((int)key) < 0;

@@ -6,6 +6,7 @@ using Tomte.AI.Palette;
 using Tomte.AI.Skills;
 using Tomte.Core;
 using Tomte.Core.Triggers;
+using Windows.Win32;
 
 namespace Tomte.Shell;
 
@@ -36,7 +37,7 @@ internal static partial class Program
     private static TypingFocus StartTyping(IslandWindow island, TriggerController triggers, SettingsStore store, TextRenderer renderer, Action<string>? log)
     {
         text = renderer;
-        focus = new TypingFocus(island, triggers.Machine, renderer, log) { Escape = triggers.Hide, Typing = triggers.Typing };
+        focus = new TypingFocus(island, triggers.Machine, renderer, log) { Escape = triggers.Hide, Typing = triggers.Typing, Pin = triggers.TogglePin };
         triggers.PaletteOpened = async () =>
         {
             try
@@ -86,6 +87,32 @@ internal static partial class Program
         continuing = conversation;
         triggers.OpenPalette();
         continuing = null;
+    }
+
+    // The AI box goes back to the tab it came from.
+    private static void GoBack(IslandWindow island, TriggerController triggers)
+    {
+        triggers.Back();
+        KeysToPanels(island);
+    }
+
+    // The AI box gave way to the panels (back, History). A key that did it (Esc, Alt+Left, Ctrl+H, Enter) keeps the keys
+    // the island had, for the tab's targets, with focus showing; a click lets them go, so the tab retracts as usual.
+    private static void KeysToPanels(IslandWindow island)
+    {
+        if (focus?.HasKeys != true)
+        {
+            return;
+        }
+
+        if (island.Interaction.UsingKeys)
+        {
+            focus.TakeKeys();
+        }
+        else
+        {
+            focus.Release();
+        }
     }
 
     // A palette that failed to open would leave the island in the Palette state with nothing in it.
@@ -141,16 +168,28 @@ internal static partial class Program
         // Read before the first wait: Continue sets it only for the open it starts.
         var earlier = continuing;
         hotkeyPalette ??= NewPaletteHost(island, triggers, log);
+        // Opened from the panels, the AI box has a back arrow to the tab it came from; on the next turn, after the key or click.
+        Action? back = triggers.FromPanels ? () => island.Queue.TryEnqueue(() => GoBack(island, triggers)) : null;
+        // Asked by a key, the island keeps the keys from here on: the hop through Hidden queued a hand-back to the user's
+        // app, and without this it would run during the wait below, so the next keys typed would land in that app.
+        if (triggers.AskedByKey)
+        {
+            focus?.TakeKeys();
+        }
+
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
         if ((debug ? DebugProvider() : Configured(store, log)) is not { } configured)
         {
-            hotkeyPalette.Type(null);
+            // No prompt to take the keys; asked by a key, the island holds them for the back arrow and Esc.
+            hotkeyPalette.Type(null, back);
             return;
         }
 
-        // Read now, while the island is still not the foreground window.
-        nint foreground = front ?? WindowContext.Foreground();
-        var selection = front is null ? Task.Run(SelectionReader.Read) : Task.FromResult<string?>(null);
+        // Read now, while the island is still not the foreground window. Asked from the island itself (Ctrl+K or "/" on
+        // panels that have the keys), it is the window the user last worked in, and there is no selection to read.
+        bool own = front is null && PInvoke.GetForegroundWindow() == island.Hwnd;
+        nint foreground = own ? triggers.LastApp : front ?? WindowContext.Foreground();
+        var selection = front is null && !own ? Task.Run(SelectionReader.Read) : Task.FromResult<string?>(null);
         // The app's name as people know it, for what the chips say: its exe's version details, a file read, so off this
         // thread too and in the same wait; the process name stands in when it is late.
         var product = Task.Run(() => WindowContext.Product(foreground, WindowContext.Describe(foreground).App));
@@ -180,14 +219,21 @@ internal static partial class Program
             _ = DescribeAsync(session, configured.Provider, configured.Config);
         }
 
-        hotkeyPalette.Type(session);
+        hotkeyPalette.Type(session, back);
     }
 
-    /// <summary>The typed palette's host, whose footer button opens the History tab on the next turn, after the click.</summary>
+    /// <summary>
+    /// The typed palette's host, whose footer button opens the History tab on the next turn, after the click. It goes
+    /// when it loses the keys, unless the island is pinned.
+    /// </summary>
     private static PaletteHost NewPaletteHost(IslandWindow island, TriggerController triggers, Action<string>? log) =>
-        new(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide)
+        new(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.FocusLost)
         {
-            OpenHistory = () => island.Queue.TryEnqueue(() => triggers.OpenPanel(PanelId.History)),
+            OpenHistory = () => island.Queue.TryEnqueue(() =>
+            {
+                triggers.OpenPanel(PanelId.History);
+                KeysToPanels(island);
+            }),
         };
 
     private static (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) DebugProvider()

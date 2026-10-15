@@ -369,9 +369,10 @@ internal static partial class Program
         triggers.SummonOpened = () =>
         {
             scratchpad.TakeKeys();
-            if (typing.Focused is null)
+            if (typing.Focused is null && typing.TakeKeys())
             {
-                typing.TakeKeys();
+                // Opened from the keyboard: the tab's first item takes focus, and the ring shows it.
+                island.Interaction.ShowFocus();
             }
         };
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.

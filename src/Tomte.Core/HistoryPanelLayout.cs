@@ -187,7 +187,7 @@ public sealed class HistoryPanelLayout
         if (Opened >= 0)
         {
             targets.Add(new Target(ContinueId, InList(ContinueButton, scroll), Corner, TargetKind.Button));
-            targets.Add(new Target(CopyId, InList(CopyButton, scroll), Corner, TargetKind.Button, Enabled: Items[Opened].LastAnswer.Length > 0));
+            targets.Add(new Target(CopyId, InList(CopyButton, scroll), Corner, TargetKind.Button, Enabled: Items[Opened].LastAnswer.Length > 0, Key: "Ctrl+C"));
         }
 
         return targets;

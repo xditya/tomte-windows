@@ -151,8 +151,8 @@ public sealed class ClipboardPanelLayout(Vector2 body)
             var row = Row(i, List.Width);
             var remove = RemoveIn(List.Width);
             remove.Offset(row.X, row.Y);
-            all.Add(new(RowId(rows[i]), InList(row, scroll), Corner, TargetKind.Row, Tip: "Copy again", Group: 1));
-            all.Add(new(RemoveId(rows[i]), InList(remove, scroll), Remove / 2, TargetKind.Button, Tip: "Remove", Group: 1));
+            all.Add(new(RowId(rows[i]), InList(row, scroll), Corner, TargetKind.Row, Tip: "Copy again", Group: 1, Key: "Enter"));
+            all.Add(new(RemoveId(rows[i]), InList(remove, scroll), Remove / 2, TargetKind.Button, Tip: "Remove", Group: 1, Key: "Delete"));
         }
 
         all.Add(new(ClearId, ClearAll(asking), Corner, TargetKind.Button));

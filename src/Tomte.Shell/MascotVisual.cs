@@ -1,5 +1,6 @@
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Windows.UI;
 using Windows.UI.Composition;
 
@@ -18,7 +19,7 @@ internal sealed class MascotVisual
     private readonly ContainerVisual root;
     private readonly ContainerVisual body;
     private readonly ContainerVisual cap;
-    private readonly ShapeVisual tip;
+    private readonly ShapeVisual tip, pin;
     private readonly InsetClip edge;
     private readonly CompositionColorBrush capBrush;
     private readonly CompositionColorBrush shadeBrush;
@@ -41,7 +42,14 @@ internal sealed class MascotVisual
         cap = Group(compositor, MascotArt.CapPivot, cone, tip, brim);
         body = Group(compositor, MascotArt.BodyPivot, face, cap);
         root = Group(compositor, MascotArt.RootPivot, body);
-        place = Group(compositor, Vector2.Zero, root);
+
+        // The pinned mark sits on the place, not the body, so it stays still while the tomte moves.
+        var ink = compositor.CreateColorBrush(Rgb(0x000000));
+        pin = Shapes(compositor, [Circle(compositor, MascotArt.PinRing, ink), Circle(compositor, MascotArt.PinDisc, compositor.CreateColorBrush(Rgb(StateLook.Accent))),
+            .. MascotArt.Pin.Select(part => Path(compositor, part, ink))]);
+        pin.Size = new Vector2(MascotArt.PinRing.Center.X + MascotArt.PinRing.Radius);
+        pin.IsVisible = false;
+        place = Group(compositor, Vector2.Zero, root, pin);
         place.IsVisible = false;
 
         // Nothing of the tomte shows above the island's top edge. The notch has the screen edge there; the floating
@@ -53,6 +61,12 @@ internal sealed class MascotVisual
     }
 
     public Visual Visual => place;
+
+    /// <summary>The island is pinned (Ctrl+P): the mark shows at the tomte's lower right.</summary>
+    public bool Pinned
+    {
+        set => pin.IsVisible = value;
+    }
 
     /// <summary>Copy the pose onto the visuals, the box's top-left at <paramref name="offsetPx"/> from the island's. Property sets only; nothing is allocated per frame.</summary>
     public void Apply(Mascot mascot, Vector2 offsetPx, float scale)

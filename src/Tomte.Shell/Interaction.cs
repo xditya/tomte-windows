@@ -51,14 +51,17 @@ internal interface IInteractive
     /// <summary>
     /// A key while the island has the keys and one of this view's targets has focus, before the host's own Tab, arrow,
     /// Enter and Space handling. True when the view took it: Delete on a row, Left and Right on a seek bar.
+    /// <paramref name="repeat"/> is the keyboard's own repeat while the key is held, which must not act twice where a
+    /// second press means more (Delete on a row).
     /// </summary>
-    bool KeyDown(string id, int virtualKey) => false;
+    bool KeyDown(string id, NavKey key, bool repeat) => false;
 
     /// <summary>
-    /// The same, saying whether the key is the keyboard's own repeat while it is held: the host calls this one. A view
-    /// where a repeat must not act twice (Delete on a row) answers it; any other leaves it to the two-argument one.
+    /// A key for the view as a whole, whatever has focus, after the focused target's view passed on it: Esc closing
+    /// History's open conversation, Alt+Left on the AI box. Also Esc while the island does not have the keys. True when
+    /// the view took it. Called on the views from the last registered back, so a view laid over another hears it first.
     /// </summary>
-    bool KeyDown(string id, int virtualKey, bool repeat) => KeyDown(id, virtualKey);
+    bool Command(NavKey key) => false;
 
     /// <summary>
     /// The pointer moved over one of this view's targets, at this point of the view's own space. Not called during a
@@ -88,7 +91,11 @@ internal sealed class InteractionHost
     private TargetRef? focus, told, tipFor;
     private TipPhase tip;
     private string tipText = "";
-    private bool ring, tracking, dragging, tipBlocked;
+    private bool ring, tracking, dragging, tipBlocked, tipTick;
+
+    // The view whose first stop takes focus once it has one: a panel's body, after the island opened or came back from
+    // the keyboard.
+    private IInteractive? first;
 
     // The view a text box with the keys belongs to (the palette's prompt), and how the box takes them back.
     private IInteractive? boxOwner;
@@ -112,6 +119,9 @@ internal sealed class InteractionHost
 
     /// <summary>The island's text renderer, which draws the tooltips; until it is set no tip shows.</summary>
     public TextRenderer? Text { get; set; }
+
+    /// <summary>The island has the keyboard, for a text box or for the targets: tooltips name their keys only then.</summary>
+    public bool HasKeys { get; set; }
 
     /// <summary>Ctrl+Tab (+1) and Ctrl+Shift+Tab (-1) switch panel tabs through this.</summary>
     public Action<int>? SwitchTab { get; set; }
@@ -152,6 +162,11 @@ internal sealed class InteractionHost
             (boxOwner, backToBox) = (null, null);
         }
 
+        if (ReferenceEquals(first, view))
+        {
+            first = null;
+        }
+
         if (views.Count == 0)
         {
             Reset();
@@ -164,39 +179,45 @@ internal sealed class InteractionHost
     /// <summary>
     /// A short confirmation at one of the view's targets, after an action that shows nothing by itself (a copy): a tick
     /// and <paramref name="text"/> on the tooltip's card for <see cref="StateLook.AcknowledgeMs"/>, in place of any tooltip.
+    /// Without <paramref name="tick"/> and for <paramref name="ms"/>, the same card asks a question a key answers (Delete
+    /// again removes).
     /// </summary>
-    public void Acknowledge(IInteractive view, string id, string text = "Copied")
+    public void Acknowledge(IInteractive view, string id, string text = "Copied", bool tick = true, int ms = StateLook.AcknowledgeMs)
     {
         var at = new TargetRef(view, id);
         HideTip();
-        if (Find(at, out var v, out var t) && ShowCard(v, t, text, tick: true))
+        if (Find(at, out var v, out var t) && ShowCard(v, t, text, tick))
         {
-            (tipFor, tip, tipText) = (at, TipPhase.Acknowledging, text);
-            Wait(StateLook.AcknowledgeMs);
+            (tipFor, tip, tipText, tipTick) = (at, TipPhase.Acknowledging, text, tick);
+            Wait(ms);
         }
     }
 
     /// <summary>
-    /// A key down while the island has the keys and no text box takes it: first the focused target's view, then Tab and
-    /// Shift+Tab between stops, the arrows inside a group (a tab switches as focus reaches it), Enter and Space, and
-    /// Ctrl+Tab between panel tabs. True when it was used.
+    /// A key down while the island has the keys and no text box takes it: first the focused target's view, then the views
+    /// as a whole (<see cref="Command"/>), then Tab and Shift+Tab between stops, the arrows inside a group (a tab switches
+    /// as focus reaches it), Home and End to its ends, Enter and Space, and Ctrl+Tab between panel tabs. True when it
+    /// was used.
     /// </summary>
-    public bool Key(int virtualKey, bool shift, bool ctrl, bool repeat)
+    public bool Key(NavKey key, bool repeat)
     {
-        if (views.Count == 0)
+        if (views.Count == 0 || key == NavKey.None)
         {
             return false;
         }
 
-        if (focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, virtualKey, repeat))
+        bool onTab = focus is { } a && Find(a, out _, out var tab) && tab.Kind == TargetKind.Tab;
+        if ((focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, key, repeat)) || Command(key))
         {
-            ring = true;
+            ring = views.Count > 0;
+            // Ctrl+1 to Ctrl+6 switch tabs through the strip's own keys.
+            FollowTab(onTab);
             Update();
             return true;
         }
 
-        var key = NavKeys.Of(virtualKey, shift, ctrl);
-        if (key == NavKey.None || (key == NavKey.Activate && focus is null))
+        if (key is not (NavKey.NextTab or NavKey.PreviousTab or NavKey.Next or NavKey.Previous or NavKey.Activate or NavKey.Space
+            or NavKey.Left or NavKey.Right or NavKey.Up or NavKey.Down or NavKey.Home or NavKey.End) || (key is NavKey.Activate or NavKey.Space && focus is null))
         {
             return false;
         }
@@ -205,19 +226,13 @@ internal sealed class InteractionHost
         switch (key)
         {
             case NavKey.NextTab or NavKey.PreviousTab:
-                bool onTab = focus is { } a && Find(a, out _, out var tab) && tab.Kind == TargetKind.Tab;
                 SwitchTab?.Invoke(key == NavKey.NextTab ? 1 : -1);
-                // Focus on a tab moves with the switch to the new current one.
-                if (onTab && focus is { } b && Find(b, out var strip, out _) && CheckedTab(strip) is { } current)
-                {
-                    FocusOn(strip, current);
-                }
-
+                FollowTab(onTab);
                 break;
             case NavKey.Next or NavKey.Previous:
                 Step(key == NavKey.Next ? 1 : -1);
                 break;
-            case NavKey.Activate:
+            case NavKey.Activate or NavKey.Space:
                 // A held key clicks once.
                 if (!repeat && focus is { } c && Find(c, out var cv, out var ct) && ct.Enabled)
                 {
@@ -225,13 +240,66 @@ internal sealed class InteractionHost
                 }
 
                 break;
+            case NavKey.Home or NavKey.End:
+                Arrow((list, from) => Target.Edge(list, from, last: key == NavKey.End));
+                break;
             default:
-                Arrow(NavKeys.Direction(key));
+                Arrow((list, from) => Target.Arrow(list, from, NavKeys.Direction(key)));
                 break;
         }
 
         Update();
         return true;
+    }
+
+    /// <summary>
+    /// The island opened, came back or switched tabs from the keyboard: focus goes to <paramref name="view"/>'s first stop
+    /// (the tab's first item) once it has one, unless focus is somewhere already (on the tab labels, say).
+    /// </summary>
+    public void FocusFirst(IInteractive view)
+    {
+        if (ring && focus is null)
+        {
+            first = view;
+            Refresh();
+        }
+    }
+
+    /// <summary>The island took the keys on a key (the summon hotkey): focus shows from the start, as after any key.</summary>
+    public void ShowFocus() => ring = true;
+
+    /// <summary>One of the targets has keyboard focus.</summary>
+    public bool HasFocus => focus is not null;
+
+    /// <summary>The last input on the targets was a key, not the pointer, so focus shows.</summary>
+    public bool UsingKeys => ring;
+
+    // Focus on a tab moves with a tab switch to the new current one.
+    private void FollowTab(bool onTab)
+    {
+        if (onTab && focus is { } b && Find(b, out var strip, out _) && CheckedTab(strip) is { } current)
+        {
+            FocusOn(strip, current);
+        }
+    }
+
+    /// <summary>
+    /// A key for the views as a whole (<see cref="IInteractive.Command"/>), the last registered first: true when one took
+    /// it. Esc comes here alone while the island does not have the keys, as the hotkey it is then.
+    /// </summary>
+    public bool Command(NavKey key)
+    {
+        // A view that takes the key may hide others, so the list is read as it was.
+        var all = views.ToArray();
+        for (int i = all.Length - 1; i >= 0; i--)
+        {
+            if (all[i].Interactive.Command(key))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -528,6 +596,18 @@ internal sealed class InteractionHost
             focus = null;
         }
 
+        // The first useful thing takes focus once its view has one, unless a key or the pointer put focus elsewhere first.
+        if (first is not null && (focus is not null || !ring))
+        {
+            first = null;
+        }
+        else if (first is not null && views.Find(v => ReferenceEquals(v.Interactive, first)) is { } fv
+            && Target.Stop([fv.Interactive.Targets], null, 1, (_, g) => lastInGroup.GetValueOrDefault((fv.Interactive, g))) is { } stop)
+        {
+            first = null;
+            FocusOn(fv, fv.Interactive.Targets[stop.Index]);
+        }
+
         if (pointer.Pressed is null)
         {
             Hover(tracking && PInvoke.GetCursorPos(out var c) ? Under(island.ScreenToIsland(c.X, c.Y)) : null);
@@ -535,7 +615,7 @@ internal sealed class InteractionHost
 
         if (tip is TipPhase.Showing or TipPhase.Acknowledging)
         {
-            if (tipFor is { } r && Find(r, out var v, out var t) && ShowCard(v, t, tipText, tip == TipPhase.Acknowledging))
+            if (tipFor is { } r && Find(r, out var v, out var t) && ShowCard(v, t, tipText, tip == TipPhase.Acknowledging && tipTick))
             {
                 Update();
                 return;
@@ -572,7 +652,8 @@ internal sealed class InteractionHost
         }
     }
 
-    private void Arrow(Vector2 direction)
+    // An arrow, Home or End: focus to where `next` says inside the focused target's group; with nothing focused, the first stop.
+    private void Arrow(Func<IReadOnlyList<Target>, int, int> next)
     {
         var lists = views.Select(v => v.Interactive.Targets).ToList();
         if (focus is not { } f || IndexOf(f, lists) is not { } at)
@@ -581,7 +662,7 @@ internal sealed class InteractionHost
             return;
         }
 
-        int to = Target.Arrow(lists[at.View], at.Index, direction);
+        int to = next(lists[at.View], at.Index);
         if (to >= 0)
         {
             var view = views[at.View];
@@ -641,7 +722,7 @@ internal sealed class InteractionHost
         }
 
         HideTip();
-        if (at is { } r && !tipBlocked && Find(r, out _, out var t) && t.Tip is { } text)
+        if (at is { } r && !tipBlocked && Find(r, out _, out var t) && t.TipWith(HasKeys) is { } text)
         {
             (tipFor, tip, tipText) = (r, TipPhase.Waiting, text);
             Wait(StateLook.TipDelayMs);
@@ -733,7 +814,7 @@ internal sealed class InteractionHost
         }
 
         pointer.Reset();
-        (focus, told, ring, tracking, tipBlocked, boxOwner, backToBox) = (null, null, false, false, false, null, null);
+        (focus, told, ring, tracking, tipBlocked, boxOwner, backToBox, first) = (null, null, false, false, false, null, null, null);
         lastInGroup.Clear();
         HideTip();
         overlay?.Release();

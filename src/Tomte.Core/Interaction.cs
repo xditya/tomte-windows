@@ -19,11 +19,19 @@ public enum ActivateBy { Click, DoubleClick, Key }
 /// order, and a later target sits on top of an earlier one it overlaps, so a button inside a row comes after the row.
 /// Arrow keys move between targets of the same <paramref name="Group"/> of the same view, by where they are; 0 is no
 /// group. <paramref name="Tip"/> is the tooltip, which an icon-only target needs. A press on a
-/// <paramref name="Draggable"/> target may start a drag rather than a click.
+/// <paramref name="Draggable"/> target may start a drag rather than a click. <paramref name="Key"/> is the key that does
+/// the same, which the tooltip names only while the island has the keyboard (<see cref="TipWith"/>).
 /// </summary>
 public readonly record struct Target(string Id, RectangleF Bounds, float Corner, TargetKind Kind, bool Enabled = true,
-    string? Tip = null, int Group = 0, bool Draggable = false, bool Checked = false)
+    string? Tip = null, int Group = 0, bool Draggable = false, bool Checked = false, string? Key = null)
 {
+    /// <summary>
+    /// The tooltip to show: with the keys, the tip and its key ("Remove (Delete)"), or the key alone on a target that
+    /// says what it is itself (a tab label: "Ctrl+1"); without them, the tip alone, so an island the pointer opened never
+    /// asks for a key the user's app would get.
+    /// </summary>
+    public string? TipWith(bool keys) => keys && Key is { } key ? (Tip is null ? key : $"{Tip} ({key})") : Tip;
+
     /// <summary>
     /// The target under an island point: the views in the order they registered, each with its list and the function
     /// from island space to its own space. A later view sits on top of an earlier one, and within a view a later target
@@ -133,6 +141,31 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
     }
 
     /// <summary>
+    /// Home (<paramref name="last"/> false) or End from <paramref name="from"/>: the first or last enabled target in list
+    /// order of its group and kind, so End in a list of rows with a remove button each lands on the last row. -1 when the
+    /// target is in no group.
+    /// </summary>
+    public static int Edge(IReadOnlyList<Target> targets, int from, bool last)
+    {
+        if (from < 0 || from >= targets.Count || targets[from].Group == 0)
+        {
+            return -1;
+        }
+
+        int pick = -1;
+        for (int i = 0; i < targets.Count; i++)
+        {
+            var t = targets[i];
+            if (t.Enabled && t.Group == targets[from].Group && t.Kind == targets[from].Kind && (pick < 0 || last))
+            {
+                pick = i;
+            }
+        }
+
+        return pick;
+    }
+
+    /// <summary>
     /// Tab (+1) or Shift+Tab (-1) across several views' lists in the order they registered: <see cref="Next"/> over them
     /// as one list, each view's groups its own. A group is entered at a checked member (the current tab), else at the one
     /// <paramref name="lastIn"/> names for it (the one last focused there), else at its first enabled member. Null when
@@ -199,27 +232,112 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
 /// <summary>One target of one registered view, by the view and the target's id, which outlive a change of its list.</summary>
 public readonly record struct TargetRef(object View, string Id);
 
-/// <summary>What a key does to the island's targets.</summary>
-public enum NavKey { None, Next, Previous, Left, Right, Up, Down, Activate, NextTab, PreviousTab }
+/// <summary>What a key does on the island: moves between its targets, acts on the focused one, or asks a view for something.</summary>
+public enum NavKey
+{
+    None,
+    Next,
+    Previous,
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    PageUp,
+    PageDown,
 
-/// <summary>Which keys move between the island's targets, and which ones a text box gives up.</summary>
+    /// <summary>Enter, and with <see cref="Space"/> a click on the focused target.</summary>
+    Activate,
+    Space,
+    NextTab,
+    PreviousTab,
+
+    /// <summary>Ctrl+1 to Ctrl+6: the tab in that place.</summary>
+    Tab1,
+    Tab2,
+    Tab3,
+    Tab4,
+    Tab5,
+    Tab6,
+    Remove,
+    Copy,
+    ShowInFolder,
+    Escape,
+    Back,
+    Pin,
+    Ask,
+    History,
+    AlwaysAllow,
+    WindowChip,
+    ScreenshotChip,
+    ShelfChip,
+    NoteChip,
+}
+
+/// <summary>Which keys move between the island's targets, which act on them, and which ones a text box gives up.</summary>
 public static class NavKeys
 {
     public const int Tab = 0x09, Return = 0x0D, Escape = 0x1B, Space = 0x20;
-    private const int VkLeft = 0x25, VkUp = 0x26, VkRight = 0x27, VkDown = 0x28;
+    private const int VkPrior = 0x21, VkNext = 0x22, VkEnd = 0x23, VkHome = 0x24, VkLeft = 0x25, VkUp = 0x26, VkRight = 0x27, VkDown = 0x28, VkDelete = 0x2E;
 
-    /// <summary>Tab and Shift+Tab move between stops, the arrows inside a group, Enter and Space click, Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs.</summary>
-    public static NavKey Of(int virtualKey, bool shift, bool ctrl) => virtualKey switch
+    /// <summary>The AI box's chips that an Alt key toggles, by the key's letter.</summary>
+    private static readonly (char Letter, NavKey Key, ChipIcon Icon)[] Chips =
+        [('W', NavKey.WindowChip, ChipIcon.Window), ('S', NavKey.ScreenshotChip, ChipIcon.Screenshot), ('H', NavKey.ShelfChip, ChipIcon.Shelf), ('N', NavKey.NoteChip, ChipIcon.Note)];
+
+    /// <summary>
+    /// Tab and Shift+Tab move between stops, the arrows inside a group, Home and End to its ends, Enter and Space click,
+    /// Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs and Ctrl+1 to Ctrl+6 pick one, Ctrl+K asks, Ctrl+P pins and unpins
+    /// the island. On the focused item
+    /// Delete removes, Ctrl+C copies and Ctrl+Shift+E shows it in its folder. Esc steps back. The AI box: Alt+Left is the
+    /// back arrow, Ctrl+H opens History, Alt+A always allows, Alt+W, Alt+S, Alt+H and Alt+N toggle the chips, Page Up and
+    /// Page Down scroll the answer. Ctrl with Alt is AltGr on many layouts, which types, so it is nothing here.
+    /// </summary>
+    public static NavKey Of(int virtualKey, bool shift, bool ctrl, bool alt = false)
     {
-        Tab when ctrl => shift ? NavKey.PreviousTab : NavKey.NextTab,
-        Tab => shift ? NavKey.Previous : NavKey.Next,
-        VkLeft => NavKey.Left,
-        VkRight => NavKey.Right,
-        VkUp => NavKey.Up,
-        VkDown => NavKey.Down,
-        Return or Space when !ctrl => NavKey.Activate,
-        _ => NavKey.None,
-    };
+        if (alt)
+        {
+            return ctrl || shift ? NavKey.None
+                : virtualKey == VkLeft ? NavKey.Back
+                : virtualKey == 'A' ? NavKey.AlwaysAllow
+                : Array.Find(Chips, c => c.Letter == virtualKey).Key;
+        }
+
+        return virtualKey switch
+        {
+            Tab when ctrl => shift ? NavKey.PreviousTab : NavKey.NextTab,
+            Tab => shift ? NavKey.Previous : NavKey.Next,
+            >= '1' and <= '6' when ctrl && !shift => NavKey.Tab1 + (virtualKey - '1'),
+            'K' when ctrl && !shift => NavKey.Ask,
+            'H' when ctrl && !shift => NavKey.History,
+            'P' when ctrl && !shift => NavKey.Pin,
+            'C' when ctrl && !shift => NavKey.Copy,
+            'E' when ctrl && shift => NavKey.ShowInFolder,
+            _ when ctrl => NavKey.None,
+            VkLeft => NavKey.Left,
+            VkRight => NavKey.Right,
+            VkUp => NavKey.Up,
+            VkDown => NavKey.Down,
+            VkHome => NavKey.Home,
+            VkEnd => NavKey.End,
+            VkPrior => NavKey.PageUp,
+            VkNext => NavKey.PageDown,
+            VkDelete => NavKey.Remove,
+            Escape => NavKey.Escape,
+            Return => NavKey.Activate,
+            Space => NavKey.Space,
+            _ => NavKey.None,
+        };
+    }
+
+    /// <summary>A character typed while no text box has the keys: "/" asks, as Ctrl+K does. Read as a character, so it is "/" on every layout.</summary>
+    public static NavKey Of(char typed) => typed == '/' ? NavKey.Ask : NavKey.None;
+
+    /// <summary>The chip an Alt key toggles; null for any other key.</summary>
+    public static ChipIcon? Chip(NavKey key) => Array.Find(Chips, c => c.Key == key) is { Key: not NavKey.None } c ? c.Icon : null;
+
+    /// <summary>The key that toggles a chip, for its tooltip; null for a chip with none (the selection, a circled region).</summary>
+    public static string? ChipKey(ChipIcon icon) => Array.Find(Chips, c => c.Icon == icon) is { Key: not NavKey.None } c ? $"Alt+{c.Letter}" : null;
 
     /// <summary>The unit step of an arrow key in DIP space, y down; zero for any other key.</summary>
     public static Vector2 Direction(NavKey key) => key switch
@@ -232,10 +350,20 @@ public static class NavKeys
     };
 
     /// <summary>
-    /// A key down in a text box that the box gives up to the targets: Ctrl+Tab from any box, which switches panel tabs,
-    /// and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note is a tab.
+    /// A key down in a text box that the box gives up to the targets: Ctrl+Tab and Ctrl+1 to Ctrl+6 from any box, which
+    /// switch panel tabs, and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note is a tab.
     /// </summary>
-    public static bool LeavesBox(int virtualKey, bool ctrl, bool tabLeaves) => virtualKey == Tab && (ctrl || tabLeaves);
+    public static bool LeavesBox(NavKey key, bool tabLeaves) =>
+        key is NavKey.NextTab or NavKey.PreviousTab or (>= NavKey.Tab1 and <= NavKey.Tab6) || (tabLeaves && key is NavKey.Next or NavKey.Previous);
+
+    /// <summary>
+    /// A key down in a text box that the island's views get first while the box keeps the keys, and the box gets when no
+    /// view takes it: the AI box's own keys from its prompt (Alt+Left, Ctrl+H, Alt+A, the chips' Alt keys, Page Up and
+    /// Page Down for the answer), and Ctrl+K, so the panels ask from the note as the Ask pill's tooltip says. A typed "/"
+    /// is never offered: in a text box it is text.
+    /// </summary>
+    public static bool Offered(NavKey key) =>
+        key is NavKey.Back or NavKey.History or NavKey.AlwaysAllow or NavKey.PageUp or NavKey.PageDown or NavKey.Ask || Chip(key) is not null;
 }
 
 /// <summary>

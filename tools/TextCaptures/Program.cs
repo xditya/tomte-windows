@@ -300,6 +300,9 @@ internal static unsafe partial class Program
             new("clipboard-targets", Panel(PanelSize.Clipboard), c => Clipboard(c, on: true, Rows, targets: true)),
             new("shortcuts-targets", Panel(PanelSize.Shortcuts), c => Shortcuts(c, targets: true)),
             new("palette-continuing", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Is that this week?", Chips(false), Continuing)), c => Palette(c, "Is that this week?", Chips(false), "Nothing sent", Continuing, 0, 0.03m)),
+            // Continue from History, then Ctrl+P: the back arrow before the prompt and the pinned mark on the tomte.
+            new("palette-back-pinned", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Is that this week?", Chips(false), Continuing)), c => Palette(c, "Is that this week?", Chips(false), "Nothing sent", Continuing, 0, 0.03m, back: true, pinned: true)),
+            new("palette-ai-off-back", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0, back: true)),
             .. DropZoneScenes(),
             .. HistoryScenes(),
             CaptureHint(),
@@ -761,12 +764,13 @@ internal static unsafe partial class Program
     // answer and the footer, as the palette view lays them out. A null prompt is a palette with no provider. The answer
     // shows in its band, clipped there and scrolled to <paramref name="scrolled"/> of its range (1 is the end, where a
     // streaming answer stays). In a typed palette the box has the keys. While <paramref name="sending"/> the chips and
-    // Send are dimmed; <paramref name="run"/> is Run's opacity, dim while its read guard runs.
-    private static void Palette(Canvas c, string? prompt, ChipSpec[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false, bool sending = false, float run = 1, string sends = "")
+    // Send are dimmed; <paramref name="run"/> is Run's opacity, dim while its read guard runs. Opened from the panels it
+    // has the back arrow (<paramref name="back"/>); <paramref name="pinned"/> puts the pinned mark on the tomte.
+    private static void Palette(Canvas c, string? prompt, ChipSpec[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false, bool sending = false, float run = 1, string sends = "", bool back = false, bool pinned = false)
     {
         var origin = new Vector2((float)(-PanelSize.PaletteWidth / 2), 0);
         c.Pill();
-        c.Mascot();
+        c.Mascot(pinned);
         float text = 0;
         TextServices? editor = null;
         bool typed = prompt is not null && !voice;
@@ -784,7 +788,13 @@ internal static unsafe partial class Program
         }
 
         // As the view does it: the prompt's height first, then the box grows to it and the rest follows.
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: typed, sends);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: typed, sends, back);
+        if (back)
+        {
+            var arrow = Offset(layout.Back, origin);
+            c.Figures(PaletteGlyphs.Back, new Vector2(arrow.X + ((arrow.Width - PaletteGlyphs.SendSize) / 2), arrow.Y + ((arrow.Height - PaletteGlyphs.SendSize) / 2)), TextStyle.SecondaryColor);
+        }
+
         var card = layout.Prompt;
         c.RoundRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
         c.Stroke(Offset(card, origin), PaletteLayout.PromptCorner, typed ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine, 1);
@@ -1096,7 +1106,7 @@ internal static unsafe partial class Program
         }
 
         /// <summary>The tomte at rest, in its box at the pill's left edge.</summary>
-        public void Mascot()
+        public void Mascot(bool pinned = false)
         {
             var box = MascotArt.Box(g);
             var at = new Vector2(box.X, box.Y);
@@ -1109,6 +1119,13 @@ internal static unsafe partial class Program
             Fill(MascotArt.TipCurl, at, k, cap);
             Circle(at + MascotArt.TipBulb.Center * k, MascotArt.TipBulb.Radius * k, cap);
             Fill(MascotArt.Brim, at, k, shade);
+            if (pinned)
+            {
+                // The pinned mark, as the mascot visual draws it over the tomte.
+                Circle(at + MascotArt.PinRing.Center * k, MascotArt.PinRing.Radius * k, 0xFF000000);
+                Circle(at + MascotArt.PinDisc.Center * k, MascotArt.PinDisc.Radius * k, StateLook.Accent);
+                Figures(MascotArt.Pin, at, k, 0xFF000000);
+            }
         }
 
         public void RoundRect(RectangleF r, float radius, uint argb, float opacity = 1)

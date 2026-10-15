@@ -142,21 +142,35 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         }
     }
 
-    /// <summary>On the seek bar, Left and Right move 5 s and Home and End go to the ends; repeated keys add up before the app reports back.</summary>
-    public bool KeyDown(string id, int virtualKey)
+    /// <summary>
+    /// Space plays or pauses; on the transport buttons Left and Right skip tracks. On the seek bar, Left and Right move
+    /// 5 s and Home and End go to the ends; repeated keys add up before the app reports back.
+    /// </summary>
+    public bool KeyDown(string id, NavKey key, bool repeat)
     {
+        // Space plays or pauses from any of them, and Left and Right skip on the transport buttons; a held key sends once.
+        if (MediaPanelLayout.KeyFor(id, key) is { } button)
+        {
+            if (!repeat)
+            {
+                Send(MediaPanelLayout.Command(button, tracker.Current));
+            }
+
+            return true;
+        }
+
         if (id != MediaPanelLayout.SeekId || tracker.Current is not { CanSeek: true, Timeline: { } timeline })
         {
             return false;
         }
 
         var from = sought is { } last && last.Holds(timeline, now()) ? last.To : timeline.PositionAt(now());
-        TimeSpan? to = (VIRTUAL_KEY)virtualKey switch
+        TimeSpan? to = key switch
         {
-            VIRTUAL_KEY.VK_LEFT => MediaPanelLayout.Stepped(from, -1, timeline),
-            VIRTUAL_KEY.VK_RIGHT => MediaPanelLayout.Stepped(from, 1, timeline),
-            VIRTUAL_KEY.VK_HOME => timeline.Start,
-            VIRTUAL_KEY.VK_END => timeline.End,
+            NavKey.Left => MediaPanelLayout.Stepped(from, -1, timeline),
+            NavKey.Right => MediaPanelLayout.Stepped(from, 1, timeline),
+            NavKey.Home => timeline.Start,
+            NavKey.End => timeline.End,
             _ => null,
         };
         if (to is not { } position)

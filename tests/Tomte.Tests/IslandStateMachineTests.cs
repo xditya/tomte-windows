@@ -18,6 +18,7 @@ public class IslandStateMachineTests
         (IslandState.Panels, IslandState.Panels),
         (IslandState.Panels, IslandState.Hidden),
         (IslandState.Palette, IslandState.Palette),
+        (IslandState.Palette, IslandState.Panels),
         (IslandState.ShelfDrop, IslandState.Panels),
         (IslandState.ShelfDrop, IslandState.Palette),
         (IslandState.ShelfDrop, IslandState.Hidden),

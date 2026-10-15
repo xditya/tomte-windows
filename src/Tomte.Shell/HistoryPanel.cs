@@ -4,16 +4,15 @@ using Tomte.Core;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
-using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
 
 /// <summary>
 /// The History tab: the AI conversations and drop zone results kept on this PC, newest first, or the off or empty state.
-/// A click on a row (or Enter or Right on it) opens its conversation under it, read as Markdown, with Continue, which opens the
-/// AI box with the conversation loaded and nothing sent, and Copy answer, which puts the last answer on the clipboard.
-/// The wheel scrolls the list. Rows come from the history's worker, so <see cref="Shown"/> returns at once and the rows
+/// A click on a row (or Enter or Right on it) opens its conversation under it (Left or Esc closes it), read as Markdown,
+/// with Continue, which opens the AI box with the conversation loaded and nothing sent, and Copy answer (Ctrl+C), which
+/// puts the last answer on the clipboard. The wheel scrolls the list. Rows come from the history's worker, so <see cref="Shown"/> returns at once and the rows
 /// are drawn when they land; only the rows in and near the list's view have visuals. Composition visuals in DIPs laid
 /// out by <see cref="HistoryPanelLayout"/>, built when the tab shows and released when it hides.
 /// </summary>
@@ -27,6 +26,9 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
     private float scroll;
     private int generation;
 
+    // The conversation that was open and the scroll when the tab last hid, for the AI box going back to it.
+    private (string? Opened, float Scroll) left;
+
     public PanelId Id => PanelId.History;
 
     public IReadOnlyList<Target> Targets => targets;
@@ -39,11 +41,33 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
         Reload(size);
     }
 
+    /// <summary>Back from the AI box Continue opened: the same conversation open, scrolled where it was.</summary>
+    public void ShownBack(ContainerVisual body, Vector2 size)
+    {
+        (opened, scroll) = left;
+        Shown(body, size);
+    }
+
     public void Hidden()
     {
         generation++;
         view?.Dispose();
+        left = (opened, scroll);
         (view, layout, rows, targets, opened, scroll) = (null, null, [], [], null, 0);
+    }
+
+    /// <summary>Esc closes the open conversation to the list, before it retracts the island.</summary>
+    public bool Command(NavKey key)
+    {
+        if (key != NavKey.Escape || opened is null || layout is null)
+        {
+            return false;
+        }
+
+        opened = null;
+        Lay();
+        Draw();
+        return true;
     }
 
     // The rows and buttons are the interaction host's.
@@ -74,11 +98,25 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
         Retarget();
     }
 
-    /// <summary>On a row, Right opens it and Left closes it; held keys do it once.</summary>
-    public bool KeyDown(string id, int virtualKey, bool repeat)
+    /// <summary>
+    /// On a row, Right opens it and Left closes it; Ctrl+C on a row copies its answer, and on the open conversation's
+    /// buttons the open one's, as Copy answer does. Held keys do it once.
+    /// </summary>
+    public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        bool right = virtualKey == (int)VIRTUAL_KEY.VK_RIGHT;
-        if ((!right && virtualKey != (int)VIRTUAL_KEY.VK_LEFT) || rows.FirstOrDefault(row => HistoryPanelLayout.RowId(row) == id) is not { } row)
+        if (key == NavKey.Copy)
+        {
+            var of = rows.FirstOrDefault(r => HistoryPanelLayout.RowId(r) == id) ?? (layout is { Opened: >= 0 } at ? rows[at.Opened] : null);
+            if (!repeat && of is { LastAnswer.Length: > 0 } && copy(of.LastAnswer))
+            {
+                island.Interaction.Acknowledge(this, id);
+            }
+
+            return of is not null;
+        }
+
+        bool right = key == NavKey.Right;
+        if ((!right && key != NavKey.Left) || rows.FirstOrDefault(row => HistoryPanelLayout.RowId(row) == id) is not { } row)
         {
             return false;
         }

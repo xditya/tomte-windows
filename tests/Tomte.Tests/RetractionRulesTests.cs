@@ -40,6 +40,24 @@ public class RetractionRulesTests
         Assert.Equal(expected, RetractionRules.ShouldRetract(state, activity));
     }
 
+    // Ctrl+P: pinned, Panels and the AI box stay when the pointer leaves and when the keys go elsewhere, also once the
+    // press that held them has ended; unpinned, losing the keys retracts the AI box again.
+    [Fact]
+    public void APinnedIslandStaysWhenThePointerLeavesOrTheKeysGo()
+    {
+        foreach (var state in new[] { IslandState.Panels, IslandState.Palette })
+        {
+            Assert.False(RetractionRules.ShouldRetract(state, IslandActivity.Pinned));
+            Assert.False(RetractionRules.ShouldRetract(state, RetractionRules.Released(IslandActivity.Pinned | IslandActivity.Pressing, buttonDown: false)));
+        }
+
+        Assert.False(RetractionRules.RetractsOnFocusLoss(IslandActivity.Pinned));
+        Assert.False(RetractionRules.RetractsOnFocusLoss(IslandActivity.Pinned | IslandActivity.Typing));
+        Assert.True(RetractionRules.RetractsOnFocusLoss(IslandActivity.None));
+        // Opening the AI box from a pinned panel keeps the pin.
+        Assert.True(RetractionRules.TakenOver(IslandActivity.Pinned).HasFlag(IslandActivity.Pinned));
+    }
+
     [Fact]
     public void APressLetGoOutsideTheIslandHoldsNothingWhenTheDelayIsUp()
     {
@@ -85,6 +103,13 @@ public class RetractionRulesTests
     [InlineData(IslandState.Palette, IslandActivity.Result, false, false)]
     [InlineData(IslandState.Compact, IslandActivity.None, true, false)]
     [InlineData(IslandState.Hidden, IslandActivity.None, false, false)]
+    // A pinned island stays up after the user has gone back to their app: Esc there is theirs.
+    [InlineData(IslandState.Panels, IslandActivity.Pinned, true, true)]
+    [InlineData(IslandState.Panels, IslandActivity.Pinned, false, false)]
+    [InlineData(IslandState.Palette, IslandActivity.Pinned, false, false)]
+    // With the keys, Esc reaches the island as a key, never as a hotkey.
+    [InlineData(IslandState.Panels, IslandActivity.Typing, true, false)]
+    [InlineData(IslandState.Palette, IslandActivity.Typing | IslandActivity.Pinned, true, false)]
     public void EscIsTakenWhileAResultIsUpOnlyWithThePointerOnIt(IslandState state, IslandActivity activity, bool pointerInside, bool expected)
     {
         Assert.Equal(expected, RetractionRules.TakesEscape(state, activity, pointerInside));

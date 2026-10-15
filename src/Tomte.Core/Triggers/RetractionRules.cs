@@ -86,11 +86,20 @@ public static class RetractionRules
 
     /// <summary>
     /// Whether Esc is taken as a global hotkey: in the states the user opened on purpose, except that a drop zone's
-    /// result, which can stay up a long time, takes it only while the pointer is on the island, so Esc in the user's
-    /// own app after Alt+Tab stays theirs.
+    /// result or a pinned island, which can stay up a long time, takes it only while the pointer is on the island, so Esc
+    /// in the user's own app after Alt+Tab stays theirs. While the island has the keys Esc reaches it as a key, where an
+    /// input method can still use it, so it is no hotkey then.
     /// </summary>
     public static bool TakesEscape(IslandState state, IslandActivity activity, bool pointerInside) =>
-        state is IslandState.Panels or IslandState.Palette && (!activity.HasFlag(IslandActivity.Result) || pointerInside);
+        state is IslandState.Panels or IslandState.Palette && !activity.HasFlag(IslandActivity.Typing)
+        && ((activity & (IslandActivity.Result | IslandActivity.Pinned)) == 0 || pointerInside);
+
+    /// <summary>
+    /// The palette retracts when it loses the keys while nothing is being sent, unless the island is pinned (Ctrl+P),
+    /// which only Esc, the hotkey that opened it or Ctrl+P again ends. A pin also keeps the island when the pointer leaves
+    /// (<see cref="ShouldRetract"/>), not over a fullscreen app or the lock screen.
+    /// </summary>
+    public static bool RetractsOnFocusLoss(IslandActivity activity) => !activity.HasFlag(IslandActivity.Pinned);
 
     /// <summary>A press outside the island dismisses a drop zone's result; anywhere else it is the user's own click.</summary>
     public static bool DismissedByClickOutside(IslandState state, IslandActivity activity) =>
