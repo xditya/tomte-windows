@@ -286,7 +286,7 @@ public sealed class FileFinder(Func<FileFilter, int, CancellationToken, IReadOnl
         try
         {
             string full = Path.GetFullPath(given);
-            return full.StartsWith(given[..2], StringComparison.OrdinalIgnoreCase) && new DriveInfo(full[..1]).DriveType == DriveType.Fixed ? full : null;
+            return full.StartsWith(given[..2], StringComparison.OrdinalIgnoreCase) && new DriveInfo(full[..1]).DriveType is DriveType.Fixed or DriveType.Removable ? full : null;
         }
         catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException or IOException)
         {
