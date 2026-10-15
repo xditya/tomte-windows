@@ -268,6 +268,9 @@ internal sealed class InteractionHost
     /// <summary>One of the targets has keyboard focus.</summary>
     public bool HasFocus => focus is not null;
 
+    /// <summary>The last input on the targets was a key, not the pointer, so focus shows.</summary>
+    public bool UsingKeys => ring;
+
     // Focus on a tab moves with a tab switch to the new current one.
     private void FollowTab(bool onTab)
     {

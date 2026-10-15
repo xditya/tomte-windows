@@ -88,10 +88,11 @@ internal static partial class Program
         continuing = null;
     }
 
-    // The AI box goes back to the tab it came from; the island keeps the keys it had, for that tab's targets.
-    private static void GoBack(TriggerController triggers)
+    // The AI box goes back to the tab it came from. Back by a key (Esc, Alt+Left, Enter on the arrow) keeps the keys the
+    // island had, for that tab's targets; back by a click lets them go with the prompt, so the tab retracts as usual.
+    private static void GoBack(IslandWindow island, TriggerController triggers)
     {
-        bool keys = focus?.HasKeys == true;
+        bool keys = focus?.HasKeys == true && island.Interaction.UsingKeys;
         triggers.Back();
         if (keys)
         {
@@ -153,7 +154,7 @@ internal static partial class Program
         var earlier = continuing;
         hotkeyPalette ??= NewPaletteHost(island, triggers, log);
         // Opened from the panels, the AI box has a back arrow to the tab it came from; on the next turn, after the key or click.
-        Action? back = triggers.FromPanels ? () => island.Queue.TryEnqueue(() => GoBack(triggers)) : null;
+        Action? back = triggers.FromPanels ? () => island.Queue.TryEnqueue(() => GoBack(island, triggers)) : null;
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
         if ((debug ? DebugProvider() : Configured(store, log)) is not { } configured)
         {
