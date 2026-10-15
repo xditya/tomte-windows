@@ -339,8 +339,10 @@ public class InteractionTests
     public void TheAiBoxKeysReachItsViewFromThePromptAndTheChipsSayTheirKeys()
     {
         // From the prompt, the AI box's own keys go to its view first; typing and moving keys stay the box's.
-        Assert.All(new[] { NavKey.Back, NavKey.History, NavKey.AlwaysAllow, NavKey.WindowChip, NavKey.NoteChip, NavKey.PageDown }, k => Assert.True(NavKeys.Offered(k), k.ToString()));
-        Assert.All(new[] { NavKey.Left, NavKey.Activate, NavKey.Copy, NavKey.Ask, NavKey.Remove, NavKey.Tab1 }, k => Assert.False(NavKeys.Offered(k), k.ToString()));
+        Assert.All(new[] { NavKey.Back, NavKey.History, NavKey.AlwaysAllow, NavKey.WindowChip, NavKey.NoteChip, NavKey.PageDown, NavKey.Ask }, k => Assert.True(NavKeys.Offered(k), k.ToString()));
+        Assert.All(new[] { NavKey.Left, NavKey.Activate, NavKey.Copy, NavKey.Remove, NavKey.Tab1 }, k => Assert.False(NavKeys.Offered(k), k.ToString()));
+        // A typed "/" maps through the typed-character path and is never offered from a text box.
+        Assert.Equal(NavKey.Ask, NavKeys.Of('/'));
 
         // The chip a key toggles and the key a chip's tooltip names are the same pair; the selection has none.
         foreach (var icon in new[] { Tomte.Core.ChipIcon.Window, Tomte.Core.ChipIcon.Screenshot, Tomte.Core.ChipIcon.Shelf, Tomte.Core.ChipIcon.Note })

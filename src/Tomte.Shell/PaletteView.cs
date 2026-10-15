@@ -610,7 +610,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         if (sendVisual is not null)
         {
-            list.Add(new Target(SendId, layout.Send, PaletteLayout.SendCorner, TargetKind.Button, canSend, PaletteLayout.SendTip));
+            list.Add(new Target(SendId, layout.Send, PaletteLayout.SendCorner, TargetKind.Button, canSend, PaletteLayout.SendTip, Key: "Enter"));
         }
 
         foreach (var (button, at, _) in layout.Ask(Height)?.Buttons ?? [])

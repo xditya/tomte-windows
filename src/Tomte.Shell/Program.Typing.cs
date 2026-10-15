@@ -170,16 +170,18 @@ internal static partial class Program
         hotkeyPalette ??= NewPaletteHost(island, triggers, log);
         // Opened from the panels, the AI box has a back arrow to the tab it came from; on the next turn, after the key or click.
         Action? back = triggers.FromPanels ? () => island.Queue.TryEnqueue(() => GoBack(island, triggers)) : null;
+        // Asked by a key, the island keeps the keys from here on: the hop through Hidden queued a hand-back to the user's
+        // app, and without this it would run during the wait below, so the next keys typed would land in that app.
+        if (triggers.AskedByKey)
+        {
+            focus?.TakeKeys();
+        }
+
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
         if ((debug ? DebugProvider() : Configured(store, log)) is not { } configured)
         {
+            // No prompt to take the keys; asked by a key, the island holds them for the back arrow and Esc.
             hotkeyPalette.Type(null, back);
-            // No prompt to take the keys: asked by a key, the island keeps them for the back arrow and Esc.
-            if (triggers.AskedByKey)
-            {
-                focus?.TakeKeys();
-            }
-
             return;
         }
 

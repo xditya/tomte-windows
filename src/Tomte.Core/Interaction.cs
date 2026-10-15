@@ -359,10 +359,11 @@ public static class NavKeys
     /// <summary>
     /// A key down in a text box that the island's views get first while the box keeps the keys, and the box gets when no
     /// view takes it: the AI box's own keys from its prompt (Alt+Left, Ctrl+H, Alt+A, the chips' Alt keys, Page Up and
-    /// Page Down for the answer).
+    /// Page Down for the answer), and Ctrl+K, so the panels ask from the note as the Ask pill's tooltip says. A typed "/"
+    /// is never offered: in a text box it is text.
     /// </summary>
     public static bool Offered(NavKey key) =>
-        key is NavKey.Back or NavKey.History or NavKey.AlwaysAllow or NavKey.PageUp or NavKey.PageDown || Chip(key) is not null;
+        key is NavKey.Back or NavKey.History or NavKey.AlwaysAllow or NavKey.PageUp or NavKey.PageDown or NavKey.Ask || Chip(key) is not null;
 }
 
 /// <summary>

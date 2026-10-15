@@ -111,7 +111,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const string Off = "The AI layer is off";
     public const string Setup = "Add a provider key to use the palette.";
     public const string Run = "Run", Cancel = "Cancel", AlwaysAllow = "Always allow";
-    public const string Include = "Include", SendTip = "Send (Enter)";
+    public const string Include = "Include", SendTip = "Send";
 
     /// <summary>The foot's provider line while a card asks before a tool runs: nothing is on its way until the user answers.</summary>
     public const string Waiting = "Waiting for you";
