@@ -126,6 +126,8 @@ public class NoteMarkdownTests
         Assert.Equal("a    []d", Indented("abcd", 1, 3));
         // Lines selected across a line break are each indented; a selection ending at a line's start leaves that line.
         Assert.Equal("    [one\n    two\n]three", Indented("one\ntwo\nthree", 0, 8));
+        Assert.Equal("    [a\n]b", Indented("a\nb", 0, 2));
+        Assert.Equal("    [a\n\n    b]", Indented("a\n\nb", 0, 4));
     }
 
     [Fact]
@@ -135,6 +137,7 @@ public class NoteMarkdownTests
         Assert.Equal("- a\n    - b\n[]  - c", Indented("- a\n    - b\n      - c", 12, 12, outdent: true));
         Assert.Equal("[- a\n  - b]", Indented("    - a\n      - b", 0, 17, outdent: true));
         Assert.Equal("a\n[]b", Indented("a\n\tb", 2, 2, outdent: true));
+        Assert.Equal("    x[]", Indented("\t    x", 6, 6, outdent: true));
         // Nothing to take off: no change.
         Assert.Equal("unchanged", Indented("- a", 3, 3, outdent: true));
 

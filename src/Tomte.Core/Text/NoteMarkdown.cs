@@ -197,7 +197,7 @@ public static class NoteMarkdown
         // A selection that ends where a line starts leaves that line alone.
         int lastAt = end > start && text[end - 1] == '\n' ? end - 1 : end;
         int last = LineEnd(text, lastAt);
-        bool lines = text.AsSpan(start, lastAt - start).Contains('\n');
+        bool lines = text.AsSpan(start, end - start).Contains('\n');
         if (!outdent && !lines && Markdown.Item(text.AsSpan(first, last - first).TrimStart(" \t"), note: true) is null)
         {
             return (new Splice(start, end - start, unit), start + unit.Length, start + unit.Length);
@@ -208,17 +208,18 @@ public static class NoteMarkdown
         for (int at = first; at <= last;)
         {
             int lineEnd = LineEnd(text, at);
-            // Shift+Tab takes a leading tab, or up to one indent's worth of leading spaces.
+            // Shift+Tab takes a leading tab, or else up to one indent's worth of leading spaces.
             int cut = outdent && at < lineEnd && text[at] == '\t' ? 1 : 0;
-            while (outdent && cut < most && at + cut < lineEnd && text[at + cut] == ' ')
+            while (outdent && cut < most && at + cut < lineEnd && text[at] != '\t' && text[at + cut] == ' ')
             {
                 cut++;
             }
 
-            int shift = outdent ? -cut : unit.Length;
+            // Tab leaves blank lines in the selection blank.
+            int shift = outdent ? -cut : lineEnd > at ? unit.Length : 0;
             newStart += Moved(start, at, cut, shift);
             newEnd += Moved(end, at, cut, shift);
-            block.Append(outdent ? "" : unit).Append(text, at + cut, lineEnd - at - cut);
+            block.Append(outdent || lineEnd == at ? "" : unit).Append(text, at + cut, lineEnd - at - cut);
             if (lineEnd < last)
             {
                 block.Append('\n');
