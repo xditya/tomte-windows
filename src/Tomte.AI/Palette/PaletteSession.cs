@@ -322,7 +322,7 @@ public sealed partial class PaletteSession : IPaletteSession
                 }
 
                 // A built-in name always means the built-in tool.
-                tools = [.. tools, .. (await Mcp.ListAsync(ct)).Where(d => !BuiltInTools.Tiers.ContainsKey(d.Name) && d.Name != JobPlanner.Tool)];
+                tools = [.. tools, .. (await Mcp.ListAsync(ct)).Where(d => !BuiltInTools.Tiers.ContainsKey(d.Name))];
             }
 
             tools = OfferShelf(tools);

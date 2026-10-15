@@ -431,6 +431,36 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task TheOtherToolsRunAsBeforeAndAGrantNeverSkipsTheJobCard()
+    {
+        // A grant stored under schedule_job's name, as a hand-edited settings file could hold.
+        var grants = new PermissionGrants();
+        grants.AlwaysAllow(JobPlanner.Tool);
+        var provider = new ScriptedProvider();
+        provider.Turns.Add(ScriptedProvider.Call(BuiltInTools.OpenUrl, """{"url":"https://example.com"}""", "c1"));
+        provider.Turns.Add(ScriptedProvider.Call(JobPlanner.Tool, """{"name":"Morning news","prompt":"Open https://example.com.","time":"09:00","date":"2026-10-15","tools":["open_url"]}""", "c2"));
+        provider.Turns.Add(ScriptedProvider.Text(10, 5, "Done."));
+        var session = new PaletteSession(provider, Ollama, new PaletteOptions(), new SendLog(LogPath), Tools(), grants, [])
+        {
+            Scheduling = new JobPlanner(_store, _tasks) { Now = () => Recorded, Zone = India },
+            Prompt = "open example.com now, and again tomorrow at 9",
+            ConfirmTool = (request, _) =>
+            {
+                _asked.Add(request);
+                return Task.FromResult(PermissionAnswer.AlwaysAllow);
+            },
+        };
+
+        await session.SendAsync();
+
+        // open_url goes its own way: asked with Always allow on offer, then run.
+        Assert.Equal([(BuiltInTools.OpenUrl, true), (JobPlanner.Tool, false)], _asked.Select(r => (r.Tool, r.OfferAlwaysAllow)));
+        Assert.Equal(["open https://example.com"], _ran);
+        Assert.Equal(["open_url"], Assert.Single(_store.All()).Tools);
+        Assert.Contains(BuiltInTools.OpenUrl, grants.AlwaysAllowed);
+    }
+
+    [Fact]
     public async Task AskTomteByVoiceCanMakeTheSameJob()
     {
         var (session, handler) = AiBox(() => AskedAt, voice: true);
