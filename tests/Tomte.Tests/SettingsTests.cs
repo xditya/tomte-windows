@@ -27,6 +27,7 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal("Win+Alt+C", s.Hotkeys.CircleToAsk);
         Assert.Equal("Win+Alt+V", s.Hotkeys.Rambler);
         Assert.Equal("Win+Alt+N", s.Hotkeys.Scratchpad);
+        Assert.Equal("Win+Alt+Space", s.Hotkeys.Search);
         Assert.Equal(0.30, s.Reveal.ZoneFraction);
         Assert.Equal(60, s.Reveal.PushCounts);
         Assert.Equal(400, s.Reveal.PushWindowMs);
@@ -243,6 +244,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("Alt+I", "Add Win")]
     [InlineData("Win+Alt+Enter", "says yes to a voice command")]
     [InlineData("Alt+Win+N", "Scratchpad already uses Win+Alt+N.")]
+    [InlineData("Win+Alt+Space", "Search already uses Win+Alt+Space.")]
     public void RebindingRejectsBadChords(string chord, string message)
     {
         string? error = Hotkey.Validate(new HotkeySettings(), HotkeyAction.Summon, chord);
@@ -280,6 +282,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData(0x37, HotkeyModifiers.Alt | HotkeyModifiers.Shift | HotkeyModifiers.Ctrl | HotkeyModifiers.Win, HotkeyPress.Chord, "Win+Ctrl+Alt+Shift+7")]
     [InlineData(0x87, HotkeyModifiers.Win, HotkeyPress.Chord, "Win+F24")]
     [InlineData(0x20, HotkeyModifiers.Win | HotkeyModifiers.Shift, HotkeyPress.Chord, "Win+Shift+Space")]
+    [InlineData(0x20, HotkeyModifiers.Win | HotkeyModifiers.Alt, HotkeyPress.Chord, "Win+Alt+Space")]
     [InlineData(0xBC, HotkeyModifiers.Alt, HotkeyPress.Chord, "Alt+Comma")]
     [InlineData(0x4B, HotkeyModifiers.None, HotkeyPress.Chord, "K")]
     [InlineData(0x5B, HotkeyModifiers.None, HotkeyPress.Preview, "Win+...")]

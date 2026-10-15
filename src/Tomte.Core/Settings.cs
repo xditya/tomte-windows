@@ -108,6 +108,8 @@ public sealed record HotkeySettings
 
     public string Scratchpad { get; init; } = "Win+Alt+N";
 
+    public string Search { get; init; } = "Win+Alt+Space";
+
     public string this[HotkeyAction action] => action switch
     {
         HotkeyAction.Summon => Summon,
@@ -115,6 +117,7 @@ public sealed record HotkeySettings
         HotkeyAction.CircleToAsk => CircleToAsk,
         HotkeyAction.Rambler => Rambler,
         HotkeyAction.Scratchpad => Scratchpad,
+        HotkeyAction.Search => Search,
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
@@ -125,6 +128,7 @@ public sealed record HotkeySettings
         HotkeyAction.CircleToAsk => this with { CircleToAsk = chord },
         HotkeyAction.Rambler => this with { Rambler = chord },
         HotkeyAction.Scratchpad => this with { Scratchpad = chord },
+        HotkeyAction.Search => this with { Search = chord },
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 }
