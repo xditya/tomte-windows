@@ -156,15 +156,18 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     /// <summary>
     /// On a focused tile or the band, the band's actions by key: Delete asks to remove, as the Remove button does, and a
-    /// second Delete, not a repeat, removes; Ctrl+C copies the path; Ctrl+Shift+E shows it in its folder. Up or Down off
+    /// second Delete, not a repeat, removes; Ctrl+C copies the path; Ctrl+Shift+E shows it in its folder. An arrow off
     /// the page scrolls a row first, so the arrow finds the tile it heads for.
     /// </summary>
     public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        if (key is NavKey.Up or NavKey.Down && Item(id) is { } from)
+        if (key is NavKey.Up or NavKey.Down or NavKey.Left or NavKey.Right && Item(id) is { } from)
         {
             var items = shelf.Items;
-            int next = ShelfLayout.ScrollFor(first, items.ToList().IndexOf(from), key == NavKey.Down ? 1 : -1, items.Count, size);
+            int index = items.ToList().IndexOf(from);
+            int next = key is NavKey.Up or NavKey.Down
+                ? ShelfLayout.ScrollFor(first, index, key == NavKey.Down ? 1 : -1, items.Count, size)
+                : ShelfLayout.ScrollSideways(first, index, key == NavKey.Right ? 1 : -1, items.Count, size);
             if (next != first)
             {
                 first = next;

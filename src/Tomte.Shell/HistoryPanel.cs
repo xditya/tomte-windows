@@ -10,7 +10,7 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// The History tab: the AI conversations and drop zone results kept on this PC, newest first, or the off or empty state.
-/// A click on a row (or Enter or Right on it) opens its conversation under it (Left or Esc closes it), read as Markdown,
+/// A click on a row (or Enter on it) opens its conversation under it (Enter again or Esc closes it), read as Markdown,
 /// with Continue, which opens the AI box with the conversation loaded and nothing sent, and Copy answer (Ctrl+C), which
 /// puts the last answer on the clipboard. The wheel scrolls the list. Rows come from the history's worker, so <see cref="Shown"/> returns at once and the rows
 /// are drawn when they land; only the rows in and near the list's view have visuals. Composition visuals in DIPs laid
@@ -99,34 +99,23 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
     }
 
     /// <summary>
-    /// On a row, Right opens it and Left closes it; Ctrl+C on a row copies its answer, and on the open conversation's
-    /// buttons the open one's, as Copy answer does. Held keys do it once.
+    /// Ctrl+C on a row copies its answer, and on the open conversation's buttons the open one's, as Copy answer does. A
+    /// held key copies once. Left and Right are the host's: in this list they switch tabs.
     /// </summary>
     public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        if (key == NavKey.Copy)
-        {
-            var of = rows.FirstOrDefault(r => HistoryPanelLayout.RowId(r) == id) ?? (layout is { Opened: >= 0 } at ? rows[at.Opened] : null);
-            if (!repeat && of is { LastAnswer.Length: > 0 } && copy(of.LastAnswer))
-            {
-                island.Interaction.Acknowledge(this, id);
-            }
-
-            return of is not null;
-        }
-
-        bool right = key == NavKey.Right;
-        if ((!right && key != NavKey.Left) || rows.FirstOrDefault(row => HistoryPanelLayout.RowId(row) == id) is not { } row)
+        if (key != NavKey.Copy)
         {
             return false;
         }
 
-        if (!repeat && right != (row.Key == opened))
+        var of = rows.FirstOrDefault(r => HistoryPanelLayout.RowId(r) == id) ?? (layout is { Opened: >= 0 } at ? rows[at.Opened] : null);
+        if (!repeat && of is { LastAnswer.Length: > 0 } && copy(of.LastAnswer))
         {
-            Activate(id);
+            island.Interaction.Acknowledge(this, id);
         }
 
-        return true;
+        return of is not null;
     }
 
     /// <summary>A double click's second click would close the row the first opened: only the first counts.</summary>

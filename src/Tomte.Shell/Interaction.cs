@@ -199,9 +199,9 @@ internal sealed class InteractionHost
 
     /// <summary>
     /// A key down while the island has the keys and no text box takes it: first the focused target's view, then the views
-    /// as a whole (<see cref="Command"/>), then Tab and Shift+Tab between stops, the arrows inside a group (a tab switches
-    /// as focus reaches it), Home and End to its ends, Enter and Space, and Ctrl+Tab between panel tabs. True when it
-    /// was used.
+    /// as a whole (<see cref="Command"/>), then Tab and Shift+Tab between stops, Up and Down inside a group, Left and
+    /// Right sideways (<see cref="Target.Sideways"/>, else to the previous or next panel tab), Home and End to a group's
+    /// ends, Enter and Space, and Ctrl+Tab between panel tabs. True when it was used.
     /// </summary>
     public bool Key(NavKey key, bool repeat)
     {
@@ -248,6 +248,9 @@ internal sealed class InteractionHost
                 break;
             case NavKey.Home or NavKey.End:
                 Arrow((list, from) => Target.Edge(list, from, last: key == NavKey.End));
+                break;
+            case NavKey.Left or NavKey.Right:
+                Sideways(key == NavKey.Right ? 1 : -1, onTab);
                 break;
             default:
                 Arrow((list, from) => Target.Arrow(list, from, NavKeys.Direction(key)));
@@ -716,6 +719,27 @@ internal sealed class InteractionHost
             {
                 view.Interactive.Activate(t.Id, ActivateBy.Key);
             }
+        }
+    }
+
+    // Left (-1) or Right (+1): along the focused target's grid or group (Target.Sideways); where it has nothing to do there
+    // (a tab, a list, the end of a grid, nothing focused) the previous or next panel tab while the tab strip is up, with
+    // focus on the tab labels following the tab. With no strip and nothing focused, the first stop.
+    private void Sideways(int step, bool onTab)
+    {
+        var lists = views.Select(v => v.Interactive.Targets).ToList();
+        if (focus is { } f && IndexOf(f, lists) is { } at && Target.Sideways(lists[at.View], at.Index, step) is int to and >= 0)
+        {
+            FocusOn(views[at.View], lists[at.View][to]);
+        }
+        else if (TabLabel() is not null)
+        {
+            SwitchTab?.Invoke(step);
+            FollowTab(onTab);
+        }
+        else if (focus is null)
+        {
+            Step(1);
         }
     }
 
