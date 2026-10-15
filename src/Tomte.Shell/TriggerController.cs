@@ -194,7 +194,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             HideForNext();
         }
 
-        if (!Reveal(RevealTrigger.Hotkey, IslandState.Palette, SearchSize))
+        // At the palette's smallest; the search grows to what it shows.
+        if (!Reveal(RevealTrigger.Hotkey, IslandState.Palette, (SearchSize.W, PanelSize.PaletteMinHeight)))
         {
             return false;
         }

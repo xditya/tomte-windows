@@ -214,6 +214,18 @@ public sealed class SearchLayoutTests
     }
 
     [Fact]
+    public void TheBoxIsAsTallAsWhatItShows()
+    {
+        var app = new SearchItem(SearchKind.App, "Code", "a");
+        Assert.Equal((float)Tomte.Core.PanelSize.PaletteMinHeight, SearchLayout.Fit(640, true, [], null, 480));
+        float two = SearchLayout.Fit(640, true, [app, app with { Target = "b" }], null, 480);
+        var tall = new SearchLayout(640, true, two);
+        Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight), tall.Band.Height, 3);
+        Assert.Equal(480, SearchLayout.Fit(640, true, [.. Enumerable.Range(0, 20).Select(i => app with { Target = $"{i}" })], null, 480));
+        Assert.True(SearchLayout.Fit(640, true, [], new SearchCard("Title", "Body", [("ok", "OK")]), 480) > Tomte.Core.PanelSize.PaletteMinHeight);
+    }
+
+    [Fact]
     public void ARowKeepsItsPartsInsideTheBand()
     {
         var item = new SearchItem(SearchKind.File, new string('x', 200), @"C:\x", new string('y', 300));

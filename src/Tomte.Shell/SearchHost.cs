@@ -85,6 +85,13 @@ internal sealed class SearchHost
         shown.Typed += _ => Typed();
         shown.Chosen += Chosen;
         shown.CardAnswered += Answered;
+        shown.HeightChanged += () =>
+        {
+            if (view == shown && triggers.Searching)
+            {
+                _ = island.MorphTo(IslandGeometry.For(IslandState.Palette, width, shown.Height), SpringPreset.Gentle);
+            }
+        };
         triggers.Machine.Changed += Gone;
         files = [];
         filesFrom = "";

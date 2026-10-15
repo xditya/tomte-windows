@@ -11,8 +11,9 @@ public sealed record SearchCard(string Title, string Body, IReadOnlyList<(string
 
 /// <summary>
 /// The search box's content in DIPs from its top-left corner, in the AI box's look: the box after the tomte, the result
-/// list under it in a band that scrolls, and a footer. The island is as tall as the palette at most, capped at half the
-/// monitor, and keeps that height while results change, so typing never moves the shape.
+/// list under it in a band that scrolls, and a footer. The island opens at the palette's smallest and grows to what it
+/// shows (<see cref="Fit"/>), up to the palette's tallest capped at half the monitor; it does not shrink while open, so
+/// the shape settles after the first few letters and typing on does not move it.
 /// </summary>
 public sealed class SearchLayout(float width, bool mascot, float height)
 {
@@ -31,13 +32,32 @@ public sealed class SearchLayout(float width, bool mascot, float height)
 
     public const string Placeholder = "Search apps, files and folders";
     public const string Keys = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc clears";
+    public const string KeysEmpty = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc closes";
     public const string NothingYet = "Type to search your apps, files and folders. What you open from here is listed first next time.";
     public const string NoResults = "Nothing found.";
 
     private readonly PaletteLayout prompt = new(width, mascot);
 
-    /// <summary>The island's height for search, for a monitor this tall in DIPs.</summary>
+    /// <summary>Room under the box for the hint when there are no rows: its three lines at most.</summary>
+    public const float EmptyRoom = 56;
+
+    /// <summary>The island's tallest for search, for a monitor this tall in DIPs.</summary>
     public static float HeightFor(double monitorHeight) => (float)Math.Min(PanelSize.PaletteMaxHeight, 0.5 * monitorHeight);
+
+    /// <summary>
+    /// The height that shows the list (or the hint with no rows, or the card), from the palette's smallest to
+    /// <paramref name="tallest"/>; past that the list scrolls.
+    /// </summary>
+    public static float Fit(float width, bool mascot, IReadOnlyList<SearchItem> rows, SearchCard? card, float tallest)
+    {
+        var low = new SearchLayout(width, mascot, (float)PanelSize.PaletteMinHeight);
+        float top = low.Band.Y, below = PaletteLayout.Gap + FootHeight + PaletteLayout.Bottom;
+        var lines = Lines(rows);
+        float needed = card is not null ? top + low.Card(card).Card.Height + (2 * PaletteLayout.Gap) + below
+            : lines.Count > 0 ? top + lines[^1].Top + lines[^1].Height + below
+            : top + EmptyRoom + below;
+        return Math.Clamp(needed, (float)PanelSize.PaletteMinHeight, tallest);
+    }
 
     public float Width => width;
 

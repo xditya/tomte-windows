@@ -37,7 +37,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     private readonly IslandStateMachine machine;
     private readonly TypingFocus focus;
     private readonly TextRenderer text;
-    private readonly SearchLayout layout;
+    private readonly float width, tallest;
     private readonly ContainerVisual root, band, scrolled, cardLayer;
     private readonly ShapeVisual shapes, selection, cardShapes;
     private readonly CompositionRoundedRectangleGeometry box, selected, cardBox;
@@ -53,23 +53,27 @@ internal sealed class SearchView : IDisposable, IInteractive
     private IReadOnlyList<Target> targets = [];
     private SearchCard? card;
     private PixelSurfaces? surfaces;
+    private SearchLayout layout;
     private string typed = "", source = "", hint = "";
     private int select;
     private float scroll, content;
     private bool fadeInPending = true, disposed, loadingIcons, iconsAgain;
 
-    public SearchView(IslandWindow island, IslandStateMachine machine, TextRenderer text, TypingFocus focus, float width, float height)
+    /// <param name="tallest">The most the box grows to: it opens at the palette's smallest and grows with what it shows.</param>
+    public SearchView(IslandWindow island, IslandStateMachine machine, TextRenderer text, TypingFocus focus, float width, float tallest)
     {
         this.island = island;
         this.machine = machine;
         this.text = text;
         this.focus = focus;
-        layout = new SearchLayout(width, island.Mascot.Enabled, height);
+        this.width = width;
+        this.tallest = tallest;
+        layout = new SearchLayout(width, island.Mascot.Enabled, (float)PanelSize.PaletteMinHeight);
         var c = island.Compositor;
         root = c.CreateContainerVisual();
         root.Offset = new Vector3(-width / 2, 0, 0);
         root.Opacity = 0;
-        shapes = Shapes(root, new Vector2(width, height));
+        shapes = Shapes(root, new Vector2(width, tallest));
         box = Rounded(shapes, layout.Box, PaletteLayout.PromptCorner, c.CreateColorBrush(Card));
         boxLine = c.CreateColorBrush(Argb(PaletteLayout.PromptFocusLine));
         ((CompositionSpriteShape)shapes.Shapes[^1]).StrokeBrush = boxLine;
@@ -93,7 +97,7 @@ internal sealed class SearchView : IDisposable, IInteractive
 
         cardLayer = c.CreateContainerVisual();
         root.Children.InsertAtTop(cardLayer);
-        cardShapes = Shapes(cardLayer, new Vector2(width, height));
+        cardShapes = Shapes(cardLayer, new Vector2(width, tallest));
         cardBox = Rounded(cardShapes, RectangleF.Empty, PaletteLayout.PromptCorner, c.CreateColorBrush(Card));
         ((CompositionSpriteShape)cardShapes.Shapes[^1]).StrokeBrush = c.CreateColorBrush(Argb(PaletteLayout.AskOutline));
         ((CompositionSpriteShape)cardShapes.Shapes[^1]).StrokeThickness = 1;
@@ -123,6 +127,12 @@ internal sealed class SearchView : IDisposable, IInteractive
 
     /// <summary>The text changed: the host searches again.</summary>
     public event Action<string>? Typed;
+
+    /// <summary>The box's height for what it shows, in DIPs. It only grows while the box is open, so the shape settles once.</summary>
+    public float Height => layout.Height;
+
+    /// <summary>The box grew; the island morphs to the new height, gently.</summary>
+    public event Action? HeightChanged;
 
     /// <summary>A row was chosen: Enter or a click opens it, Ctrl+Enter (true) shows it in its folder.</summary>
     public event Action<SearchItem, bool>? Chosen;
@@ -285,9 +295,10 @@ internal sealed class SearchView : IDisposable, IInteractive
             return;
         }
 
+        Grow();
         placeholder.Show(typed.Length == 0 ? SearchLayout.Placeholder : "", PaletteLayout.Placeholder, layout.Editor);
         boxLine.Color = Argb(focus.Focused == editor ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine);
-        var (left, right) = layout.Footer(card is null ? SearchLayout.Keys : "", card is null ? source : "");
+        var (left, right) = layout.Footer(card is not null ? "" : typed.Length > 0 ? SearchLayout.Keys : SearchLayout.KeysEmpty, card is null ? source : "");
         footLeft.Show(left);
         footRight.Show(right);
         band.IsVisible = card is null;
@@ -335,6 +346,23 @@ internal sealed class SearchView : IDisposable, IInteractive
         }
 
         Scrolled();
+    }
+
+    // The box grows to what it shows (the list, the hint or a card), up to its tallest; it never shrinks while open, so a
+    // typed letter that shortens the list does not move the shape back and forth.
+    private void Grow()
+    {
+        float next = SearchLayout.Fit(width, island.Mascot.Enabled, rows, card, tallest);
+        if (next <= layout.Height)
+        {
+            return;
+        }
+
+        layout = new SearchLayout(width, island.Mascot.Enabled, next);
+        var area = layout.Band;
+        band.Offset = new Vector3(area.X, area.Y, 0);
+        band.Size = new Vector2(area.Width, area.Height);
+        HeightChanged?.Invoke();
     }
 
     // The selection's box, the scroll that keeps it in view, and the targets for the rows that show.
