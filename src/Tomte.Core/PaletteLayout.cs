@@ -56,9 +56,10 @@ public readonly record struct LaidChip(RectangleF Box, RectangleF Icon, TextSlot
 /// palette is as tall as that needs, from 150 to 480 DIPs; an answer longer than the room left scrolls in its band.
 /// <paramref name="text"/> is the prompt's own height (the text box's content height), which the box grows with.
 /// <paramref name="send"/> puts a Send button at the box's right end, for a palette with a text box. <paramref name="sends"/>
-/// is the line under the chips saying what the next send carries; empty for none.
+/// is the line under the chips saying what the next send carries; empty for none. <paramref name="back"/> puts the back
+/// arrow before the prompt box, for a palette opened from the panels.
 /// </summary>
-public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false, string sends = "")
+public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false, string sends = "", bool back = false)
 {
     public const float Pad = 14, Top = 12, Bottom = 10, Gap = 10, BlockGap = 6;
     public const float PromptHeight = 36, PromptInsetX = 12, PromptInsetY = 9, PromptCorner = 8;
@@ -151,7 +152,17 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     public float Width => width;
 
-    public float Left => mascot ? MascotArt.InsetX + MascotArt.SizeDips + 10 : Pad;
+    /// <summary>The back arrow: as big as Send, level with the prompt's first line, after the tomte.</summary>
+    public const float BackSize = SendSize, BackGap = 6, BackCorner = SendCorner;
+
+    public const string BackId = "back", BackTip = "Back (Alt+Left)";
+
+    public float Left => Start + (back ? BackSize + BackGap : 0);
+
+    /// <summary>The back arrow before the prompt box; empty without one.</summary>
+    public RectangleF Back => back ? new(Start, Top + ((PromptHeight - BackSize) / 2), BackSize, BackSize) : RectangleF.Empty;
+
+    private float Start => mascot ? MascotArt.InsetX + MascotArt.SizeDips + 10 : Pad;
 
     /// <summary>The prompt's card: one line tall at least, growing with its text up to about four lines.</summary>
     public RectangleF Prompt => new(Left, Top, width - Pad - Left, Math.Clamp(text + 2 * PromptInsetY, PromptHeight, PromptMaxText + 2 * PromptInsetY));
@@ -430,6 +441,9 @@ public static class PaletteGlyphs
 
     /// <summary>Send: an arrow pointing up and away.</summary>
     public static readonly GlyphFigure[] Send = [new(TabStrip.Polygon(2, 7.33f, 14, 2, 8.67f, 14, 7.33f, 8.67f))];
+
+    /// <summary>Back: an arrow pointing left.</summary>
+    public static readonly GlyphFigure[] Back = [new(TabStrip.Polygon(2, 8, 7.5f, 2.5f, 8.6f, 3.6f, 4.95f, 7.25f, 14, 7.25f, 14, 8.75f, 4.95f, 8.75f, 8.6f, 12.4f, 7.5f, 13.5f))];
 
     public static GlyphFigure[] Icon(ChipIcon icon) => icon switch
     {

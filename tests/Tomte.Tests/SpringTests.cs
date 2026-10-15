@@ -102,6 +102,8 @@ public class SpringTests
     [InlineData(IslandState.Panels, IslandState.Panels, SpringPreset.Gentle)]
     [InlineData(IslandState.ShelfDrop, IslandState.Panels, SpringPreset.Gentle)]
     [InlineData(IslandState.Palette, IslandState.Palette, SpringPreset.Gentle)]
+    [InlineData(IslandState.Panels, IslandState.Palette, SpringPreset.Gentle)]
+    [InlineData(IslandState.Palette, IslandState.Panels, SpringPreset.Snappy)]
     public void PresetFollowsTheSpec(IslandState from, IslandState to, SpringPreset expected) =>
         Assert.Equal(expected, Spring.PresetFor(from, to));
 }

@@ -57,6 +57,13 @@ internal interface IInteractive
     bool KeyDown(string id, NavKey key, bool repeat) => false;
 
     /// <summary>
+    /// A key for the view as a whole, whatever has focus, after the focused target's view passed on it: Esc closing
+    /// History's open conversation, Alt+Left on the AI box. Also Esc while the island does not have the keys. True when
+    /// the view took it. Called on the views from the last registered back, so a view laid over another hears it first.
+    /// </summary>
+    bool Command(NavKey key) => false;
+
+    /// <summary>
     /// The pointer moved over one of this view's targets, at this point of the view's own space. Not called during a
     /// press the host holds or a <see cref="TryDrag"/> loop. For content that follows the pointer, such as the time
     /// under it on a seek bar.
@@ -173,9 +180,9 @@ internal sealed class InteractionHost
     }
 
     /// <summary>
-    /// A key down while the island has the keys and no text box takes it: first the focused target's view, then Tab and
-    /// Shift+Tab between stops, the arrows inside a group (a tab switches as focus reaches it), Enter and Space, and
-    /// Ctrl+Tab between panel tabs. True when it was used.
+    /// A key down while the island has the keys and no text box takes it: first the focused target's view, then the views
+    /// as a whole (<see cref="Command"/>), then Tab and Shift+Tab between stops, the arrows inside a group (a tab switches
+    /// as focus reaches it), Enter and Space, and Ctrl+Tab between panel tabs. True when it was used.
     /// </summary>
     public bool Key(NavKey key, bool repeat)
     {
@@ -184,9 +191,9 @@ internal sealed class InteractionHost
             return false;
         }
 
-        if (focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, key, repeat))
+        if ((focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, key, repeat)) || Command(key))
         {
-            ring = true;
+            ring = views.Count > 0;
             Update();
             return true;
         }
@@ -228,6 +235,25 @@ internal sealed class InteractionHost
 
         Update();
         return true;
+    }
+
+    /// <summary>
+    /// A key for the views as a whole (<see cref="IInteractive.Command"/>), the last registered first: true when one took
+    /// it. Esc comes here alone while the island does not have the keys, as the hotkey it is then.
+    /// </summary>
+    public bool Command(NavKey key)
+    {
+        // A view that takes the key may hide others, so the list is read as it was.
+        var all = views.ToArray();
+        for (int i = all.Length - 1; i >= 0; i--)
+        {
+            if (all[i].Interactive.Command(key))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

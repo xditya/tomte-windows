@@ -88,6 +88,17 @@ internal static partial class Program
         continuing = null;
     }
 
+    // The AI box goes back to the tab it came from; the island keeps the keys it had, for that tab's targets.
+    private static void GoBack(TriggerController triggers)
+    {
+        bool keys = focus?.HasKeys == true;
+        triggers.Back();
+        if (keys)
+        {
+            focus!.TakeKeys();
+        }
+    }
+
     // A palette that failed to open would leave the island in the Palette state with nothing in it.
     private static void NotOpened(TriggerController triggers, Action<string>? log, Exception e)
     {
@@ -141,6 +152,8 @@ internal static partial class Program
         // Read before the first wait: Continue sets it only for the open it starts.
         var earlier = continuing;
         hotkeyPalette ??= NewPaletteHost(island, triggers, log);
+        // Opened from the panels, the AI box has a back arrow to the tab it came from; on the next turn, after the key or click.
+        hotkeyPalette.Back = triggers.FromPanels ? () => island.Queue.TryEnqueue(() => GoBack(triggers)) : null;
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
         if ((debug ? DebugProvider() : Configured(store, log)) is not { } configured)
         {

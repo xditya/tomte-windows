@@ -49,9 +49,11 @@ public sealed class Spring
     }
 
     /// <summary>
-    /// Leaving Hidden, retracting and the drop surface are snappy; panel and palette changes are gentle. The island
-    /// is hidden under the capture overlay, so leaving Capture counts as leaving Hidden.
+    /// Leaving Hidden, retracting, the drop surface and going back from the palette to the panels are snappy; other
+    /// panel and palette changes are gentle. The island is hidden under the capture overlay, so leaving Capture counts
+    /// as leaving Hidden.
     /// </summary>
     public static SpringPreset PresetFor(IslandState from, IslandState to) =>
-        from is not (IslandState.Hidden or IslandState.Capture) && (to is IslandState.Panels or IslandState.Palette) ? SpringPreset.Gentle : SpringPreset.Snappy;
+        from is not (IslandState.Hidden or IslandState.Capture) && (to is IslandState.Panels or IslandState.Palette)
+            && (from, to) != (IslandState.Palette, IslandState.Panels) ? SpringPreset.Gentle : SpringPreset.Snappy;
 }

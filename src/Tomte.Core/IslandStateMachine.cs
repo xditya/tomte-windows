@@ -4,10 +4,12 @@ public sealed class IslandStateMachine
 {
     // Out of Hidden each trigger reaches a different state; every state can retract to Hidden.
     // Panels and Palette re-enter themselves: a tab switch or the answer growing morphs the size.
+    // The palette goes back to the panels it was opened from.
     private static readonly HashSet<(IslandState From, IslandState To)> Allowed =
     [
         (IslandState.Panels, IslandState.Panels),
         (IslandState.Palette, IslandState.Palette),
+        (IslandState.Palette, IslandState.Panels),
         (IslandState.Hidden, IslandState.Compact),
         (IslandState.Hidden, IslandState.Panels),
         (IslandState.Hidden, IslandState.ShelfDrop),

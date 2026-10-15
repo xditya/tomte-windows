@@ -706,10 +706,29 @@ public class PaletteLayoutTests
     }
 
     [Fact]
+    public void TheBackArrowSitsBetweenTheTomteAndThePromptOnlyWhenOpenedFromThePanels()
+    {
+        var plain = new PaletteLayout(640, mascot: true);
+        var back = new PaletteLayout(640, mascot: true, back: true);
+        Assert.Equal(System.Drawing.RectangleF.Empty, plain.Back);
+
+        // After the tomte, level with the prompt's first line; the prompt moves right by the arrow and its gap.
+        var arrow = back.Back;
+        Assert.True(arrow.Left >= MascotArt.InsetX + MascotArt.SizeDips);
+        Assert.Equal(plain.Prompt.Y + (PaletteLayout.PromptHeight / 2), arrow.Y + (arrow.Height / 2));
+        Assert.Equal(arrow.Right + PaletteLayout.BackGap, back.Prompt.X);
+        Assert.Equal(plain.Prompt.Right, back.Prompt.Right);
+        Assert.True(arrow.Width >= Tomte.Core.Interaction.StateLook.MinTarget);
+        // With the tomte off it starts at the padding.
+        Assert.Equal(PaletteLayout.Pad, new PaletteLayout(640, mascot: false, back: true).Back.X);
+    }
+
+    [Fact]
     public void GlyphsStayInTheirBoxes()
     {
         foreach (var (figures, size) in Enum.GetValues<ChipIcon>().Select(i => (PaletteGlyphs.Icon(i), PaletteLayout.IconSize))
-            .Append((PaletteGlyphs.Plus, PaletteLayout.MarkSize)).Append((PaletteGlyphs.Tick, PaletteLayout.MarkSize)).Append((PaletteGlyphs.Send, PaletteGlyphs.SendSize)))
+            .Append((PaletteGlyphs.Plus, PaletteLayout.MarkSize)).Append((PaletteGlyphs.Tick, PaletteLayout.MarkSize)).Append((PaletteGlyphs.Send, PaletteGlyphs.SendSize))
+            .Append((PaletteGlyphs.Back, PaletteGlyphs.SendSize)))
         {
             Assert.All(figures.SelectMany(f => f.Path.Select(s => (s.End, f.Stroked))), p =>
             {

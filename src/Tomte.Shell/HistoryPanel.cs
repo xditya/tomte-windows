@@ -3,6 +3,7 @@ using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
+using Tomte.Core.Triggers;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
 
@@ -10,7 +11,7 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// The History tab: the AI conversations and drop zone results kept on this PC, newest first, or the off or empty state.
-/// A click on a row (or Enter or Right on it) opens its conversation under it, read as Markdown, with Continue, which opens the
+/// A click on a row (or Enter or Right on it) opens its conversation under it (Left or Esc closes it), read as Markdown, with Continue, which opens the
 /// AI box with the conversation loaded and nothing sent, and Copy answer, which puts the last answer on the clipboard.
 /// The wheel scrolls the list. Rows come from the history's worker, so <see cref="Shown"/> returns at once and the rows
 /// are drawn when they land; only the rows in and near the list's view have visuals. Composition visuals in DIPs laid
@@ -26,6 +27,9 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
     private float scroll;
     private int generation;
 
+    // The conversation that was open and the scroll when the tab last hid, for the AI box going back to it.
+    private (string? Opened, float Scroll) left;
+
     public PanelId Id => PanelId.History;
 
     public IReadOnlyList<Target> Targets => targets;
@@ -38,11 +42,33 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
         Reload(size);
     }
 
+    /// <summary>Back from the AI box Continue opened: the same conversation open, scrolled where it was.</summary>
+    public void ShownBack(ContainerVisual body, Vector2 size)
+    {
+        (opened, scroll) = left;
+        Shown(body, size);
+    }
+
     public void Hidden()
     {
         generation++;
         view?.Dispose();
+        left = (opened, scroll);
         (view, layout, rows, targets, opened, scroll) = (null, null, [], [], null, 0);
+    }
+
+    /// <summary>Esc closes the open conversation to the list, before it retracts the island.</summary>
+    public bool Command(NavKey key)
+    {
+        if (key != NavKey.Escape || RetractionRules.Escape(asking: false, opened is not null, fromPanels: false) != EscapeStep.Close || layout is null)
+        {
+            return false;
+        }
+
+        opened = null;
+        Lay();
+        Draw();
+        return true;
     }
 
     // The rows and buttons are the interaction host's.

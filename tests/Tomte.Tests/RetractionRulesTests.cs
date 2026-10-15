@@ -90,6 +90,16 @@ public class RetractionRulesTests
         Assert.Equal(expected, RetractionRules.TakesEscape(state, activity, pointerInside));
     }
 
+    // One level at a time: the question first, then the open conversation, then back to the tab, then away.
+    [Theory]
+    [InlineData(true, false, true, EscapeStep.Cancel)]
+    [InlineData(true, false, false, EscapeStep.Cancel)]
+    [InlineData(false, true, false, EscapeStep.Close)]
+    [InlineData(false, false, true, EscapeStep.Back)]
+    [InlineData(false, false, false, EscapeStep.Retract)]
+    public void EscStepsBackOneLevelThenRetracts(bool asking, bool conversationOpen, bool fromPanels, EscapeStep expected) =>
+        Assert.Equal(expected, RetractionRules.Escape(asking, conversationOpen, fromPanels));
+
     [Theory]
     [InlineData(IslandState.Palette, IslandActivity.Result, true)]
     [InlineData(IslandState.Palette, IslandActivity.Result | IslandActivity.DragInProgress, true)]

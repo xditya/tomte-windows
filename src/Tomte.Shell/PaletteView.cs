@@ -5,6 +5,7 @@ using Tomte.Core;
 using Tomte.Core.Device;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
+using Tomte.Core.Triggers;
 using Windows.System;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
@@ -77,11 +78,16 @@ internal sealed class PaletteView : IDisposable, IInteractive
     private DispatcherQueueTimer? readTimer;
 
     // What the targets were last built from: rebuilt only when one of these changes, not for every streamed word.
-    private (PaletteLayout? Layout, float Height, bool Sending, bool Readable, bool CanSend, bool History) targeted;
+    private (PaletteLayout? Layout, float Height, bool Sending, bool Readable, bool CanSend, bool History, bool Back) targeted;
 
     // The footer's AI history button: its clock, and what a click does; neither while nothing opens the tab (voice).
     private CompositionContainerShape? clock;
     private Action? openHistory;
+
+    // The back arrow before the prompt, and what it does; neither for a palette opened from Hidden.
+    private CompositionContainerShape? backArrow;
+    private Action? back;
+    private bool laidBack;
 
     /// <param name="send">What Enter does with the prompt's text; null for a palette that only shows (voice, a driven run).</param>
     /// <param name="question">The session's open question, drawn with its buttons; null where nobody can answer (a driven run).</param>
@@ -229,10 +235,35 @@ internal sealed class PaletteView : IDisposable, IInteractive
         }
     }
 
-    /// <summary>A chip turns on or off, Send sends, or a question's button answers it; nothing while that target is disabled.</summary>
+    /// <summary>
+    /// The back arrow: Panels on the tab the AI box was opened from, as that tab was left. Without it the palette shows no
+    /// arrow, and Esc with no question open hides the island (a palette opened from Hidden).
+    /// </summary>
+    public Action? Back
+    {
+        get => back;
+        set
+        {
+            back = value;
+            Update();
+        }
+    }
+
+    /// <summary>A chip turns on or off, Send sends, a question's button answers it, or the arrow goes back; nothing while that target is disabled.</summary>
     public void Activate(string id)
     {
-        if (disposed || session is null || machine.State != IslandState.Palette || targets.FirstOrDefault(t => t.Id == id) is not { Enabled: true })
+        if (disposed || machine.State != IslandState.Palette || targets.FirstOrDefault(t => t.Id == id) is not { Enabled: true })
+        {
+            return;
+        }
+
+        if (id == PaletteLayout.BackId)
+        {
+            back?.Invoke();
+            return;
+        }
+
+        if (session is null)
         {
             return;
         }
@@ -256,6 +287,32 @@ internal sealed class PaletteView : IDisposable, IInteractive
         }
 
         Update();
+    }
+
+    /// <summary>Alt+Left goes back; Esc cancels an open question, else goes back, else leaves the island to hide.</summary>
+    public bool Command(NavKey key)
+    {
+        if (disposed || machine.State != IslandState.Palette)
+        {
+            return false;
+        }
+
+        var step = key switch
+        {
+            NavKey.Back => back is null ? EscapeStep.Retract : EscapeStep.Back,
+            NavKey.Escape => RetractionRules.Escape(laidAsk is not null, conversationOpen: false, back is not null),
+            _ => EscapeStep.Retract,
+        };
+        switch (step)
+        {
+            case EscapeStep.Cancel:
+                return Answer(ConfirmButton.Cancel);
+            case EscapeStep.Back:
+                back!();
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>The question the card shows now, which a yes from the chord may answer; null with none.</summary>
@@ -296,11 +353,12 @@ internal sealed class PaletteView : IDisposable, IInteractive
         // Enter answers only while the prompt box has the keys; the line says so, and the card's outline shows it.
         bool focused = prompt is not null && focus?.Focused == prompt;
         var keys = !typed ? ConfirmKeys.Voice : focused ? ConfirmKeys.Prompt : ConfirmKeys.Pointer;
-        if (promptText != laidText || !chips.SequenceEqual(laidChips) || sends != laidSends || !ReferenceEquals(asked, laidAsk) || keys != laidKeys)
+        if (promptText != laidText || !chips.SequenceEqual(laidChips) || sends != laidSends || !ReferenceEquals(asked, laidAsk) || keys != laidKeys
+            || (back is not null) != laidBack)
         {
-            (laidText, laidChips, laidSends, laidAsk, laidKeys) = (promptText, chips, sends, asked, keys);
+            (laidText, laidChips, laidSends, laidAsk, laidKeys, laidBack) = (promptText, chips, sends, asked, keys, back is not null);
             confirm = asked is null ? null : new Confirmation(asked.Summary, Confirmation.LineFor(asked.Tier, keys), asked.OfferAlwaysAllow, asked.Tier == ActionTier.Destructive);
-            layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm, send: sendVisual is not null, sends);
+            layout = new PaletteLayout(width, island.Mascot.Enabled, promptText, chips, confirm, send: sendVisual is not null, sends, laidBack);
         }
 
         var box = layout.Prompt;
@@ -309,6 +367,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
         cardLine.Color = Argb(focused ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine);
         prompt?.Place(layout.Editor, island.Scale);
         Hint();
+        BackArrow();
 
         if (session is null)
         {
@@ -316,6 +375,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
             setup ??= text.Create(root);
             setup.Show(new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad, layout.ChipsTop + 4));
             SetHeight(layout.Height(0));
+            Retarget();
             return;
         }
 
@@ -514,22 +574,23 @@ internal sealed class PaletteView : IDisposable, IInteractive
     private bool Sending => session?.Status == PaletteStatus.Sending;
 
     // The targets the island's interaction host runs, in Tab order: the chips as one stop (the arrows move among them),
-    // Send, then each of the question's buttons as a stop of its own, the yes buttons once a yes would count. Built
+    // Send, then each of the question's buttons as a stop of its own, the yes buttons once a yes would count, the history
+    // button and the back arrow. With no session, the back arrow alone. Built
     // again only when the layout, the sending state, the read guard or Send's state changed; raised to the host only
     // when the list did. A chip's tooltip is read then, so a note that loads later shows in it at the next change.
     private void Retarget()
     {
         bool sending = Sending, ready = ReferenceEquals(readable, laidAsk);
         bool canSend = sendVisual is not null && PaletteLayout.CanSend(prompt!.Services.Text, sending);
-        var from = (layout, Height, sending, ready, canSend, openHistory is not null);
-        if (disposed || session is null || from == targeted)
+        var from = (layout, Height, sending, ready, canSend, openHistory is not null, back is not null);
+        if (disposed || from == targeted)
         {
             return;
         }
 
         targeted = from;
         var list = new List<Target>();
-        for (int i = 0; i < layout.Chips.Count; i++)
+        for (int i = 0; i < layout.Chips.Count && session is not null; i++)
         {
             var chip = layout.Chips[i];
             list.Add(new Target(ChipId + shownChips[i].Label, chip.Box, PaletteLayout.ChipCorner, TargetKind.Toggle, !sending, shownChips[i].Tip, Group: 1, Checked: chip.On));
@@ -545,9 +606,15 @@ internal sealed class PaletteView : IDisposable, IInteractive
             list.Add(new Target(PaletteLayout.ButtonId(button, questions), at, PaletteLayout.ButtonCorner, TargetKind.Button, button == ConfirmButton.Cancel || ready));
         }
 
-        if (openHistory is not null)
+        if (openHistory is not null && session is not null)
         {
             list.Add(layout.HistoryTarget(Height));
+        }
+
+        // Last, so Shift+Tab from the prompt reaches the arrow drawn before it.
+        if (back is not null)
+        {
+            list.Add(new Target(PaletteLayout.BackId, layout.Back, PaletteLayout.BackCorner, TargetKind.Button, Tip: PaletteLayout.BackTip));
         }
 
         if (!list.SequenceEqual(targets))
@@ -772,6 +839,25 @@ internal sealed class PaletteView : IDisposable, IInteractive
         clock.Offset = new Vector2(at.X, at.Y);
     }
 
+    // The back arrow before the prompt, in the clock's grey, made the first time there is one.
+    private void BackArrow()
+    {
+        if (back is null)
+        {
+            return;
+        }
+
+        if (backArrow is null)
+        {
+            backArrow = island.Compositor.CreateContainerShape();
+            Draw(backArrow, PaletteGlyphs.Back, island.Compositor.CreateColorBrush(Argb(TextStyle.SecondaryColor)));
+            shapes.Shapes.Add(backArrow);
+        }
+
+        var box = layout.Back;
+        backArrow.Offset = new Vector2(box.X + ((box.Width - PaletteGlyphs.SendSize) / 2), box.Y + ((box.Height - PaletteGlyphs.SendSize) / 2));
+    }
+
     private void Show(int i, TextRun run, Vector2 at)
     {
         while (runs.Count <= i)
@@ -896,7 +982,7 @@ internal sealed partial class PaletteHost
         var question = new ToolQuestion();
         Task sending = Task.CompletedTask;
         PaletteView? view = null;
-        view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question) { OpenHistory = OpenHistory };
+        view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question) { OpenHistory = OpenHistory, Back = Back };
         typed = view;
         view.HeightChanged += () => Grow(view.Height);
         if (hide is not null)

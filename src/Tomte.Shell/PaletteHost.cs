@@ -27,6 +27,9 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
     /// <summary>What the footer's AI history button does: Panels on the History tab.</summary>
     public Action? OpenHistory { get; set; }
 
+    /// <summary>What the back arrow of the next typed palette does; null for a palette opened from Hidden, which has none.</summary>
+    public Action? Back { get; set; }
+
     /// <param name="question">The question the session asks through, drawn with its buttons; null for a driven run that answers itself.</param>
     public async Task RunAsync(PaletteSession session, ToolQuestion? question = null)
     {

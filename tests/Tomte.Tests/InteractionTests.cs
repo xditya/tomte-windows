@@ -269,8 +269,14 @@ public class InteractionTests
         Assert.Equal(NavKey.None, NavKeys.Of(NavKeys.Space, false, ctrl: true));
         Assert.Equal(NavKey.Left, NavKeys.Of(0x25, false, false));
         Assert.Equal(NavKey.Down, NavKeys.Of(0x28, false, false));
-        Assert.Equal(NavKey.None, NavKeys.Of(NavKeys.Escape, false, false));
+        Assert.Equal(NavKey.Escape, NavKeys.Of(NavKeys.Escape, false, false));
         Assert.Equal(NavKey.None, NavKeys.Of('A', false, false));
+        // Alt+Left is the AI box's back arrow; Ctrl+Alt is AltGr, which types.
+        Assert.Equal(NavKey.Back, NavKeys.Of(0x25, false, false, alt: true));
+        Assert.Equal(NavKey.None, NavKeys.Of(0x25, false, ctrl: true, alt: true));
+        Assert.Equal(NavKey.None, NavKeys.Of(0x27, false, false, alt: true));
+        Assert.True(NavKeys.Offered(NavKey.Back));
+        Assert.False(NavKeys.Offered(NavKey.Left));
         Assert.Equal(NavKey.Home, NavKeys.Of(0x24, false, false));
         Assert.Equal(NavKey.End, NavKeys.Of(0x23, false, false));
         Assert.Equal(NavKey.Remove, NavKeys.Of(0x2E, false, false));

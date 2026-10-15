@@ -292,6 +292,19 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
+    /// <summary>The palette showing now was opened from Panels (the Ask button, History's Continue), so it can go back there.</summary>
+    internal bool FromPanels { get; private set; }
+
+    /// <summary>The AI box opened from Panels goes back to the tab it was opened from, as that tab was left.</summary>
+    internal void Back()
+    {
+        if (machine.State == IslandState.Palette && FromPanels)
+        {
+            Panels?.GoingBack();
+            Go(IslandState.Panels);
+        }
+    }
+
     /// <summary>A button on the open Panels asked for the AI box, as the Ask pill does; the shell fills it.</summary>
     internal void OpenPalette()
     {
@@ -805,8 +818,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         if (id == InputThread.EscapeHotkeyId)
         {
-            // On the rambler's card Esc throws the words away, and the card retracts itself.
-            if (rambler?.Discard() == true)
+            // On the rambler's card Esc throws the words away, and the card retracts itself. Anywhere else it steps back
+            // before it retracts: a question cancelled, a conversation closed, the AI box back to its tab.
+            if (rambler?.Discard() == true || island.Interaction.Command(NavKey.Escape))
             {
                 return;
             }
@@ -1131,6 +1145,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
     {
         var from = machine.State;
+        // A palette growing keeps where it came from; one opened anew came from Panels or not.
+        FromPanels = state == IslandState.Palette && (from == IslandState.Palette ? FromPanels : from == IslandState.Panels);
         if (from == IslandState.Capture)
         {
             // A hotkey, the tray or the pause took over while the overlay was up; Capture() resumes as a cancel.

@@ -27,6 +27,12 @@ internal interface IPanel
     /// </summary>
     void Shown(ContainerVisual body, Vector2 size);
 
+    /// <summary>
+    /// The same, for the AI box going back to the tab it was opened from: a panel that keeps how it was left (History
+    /// with the same conversation open) shows it that way; any other shows as on <see cref="Shown"/>.
+    /// </summary>
+    void ShownBack(ContainerVisual body, Vector2 size) => Shown(body, size);
+
     /// <summary>The island hid or another tab took over. Stop the work and release every visual and surface.</summary>
     void Hidden();
 
@@ -64,7 +70,7 @@ internal sealed class PanelHost
     private ContainerVisual? body, leavingBody;
     private Strip? strip, leavingStrip;
     private Vector2 bodySize;
-    private bool fadeInPending, stripFadePending;
+    private bool fadeInPending, stripFadePending, back;
     private int wheel;
 
     public PanelHost(IslandWindow island, IslandStateMachine machine, TextRenderer text, Action<string>? log = null)
@@ -97,6 +103,9 @@ internal sealed class PanelHost
         tabs.Register(panel.Id);
         panels.Add(panel.Id, panel);
     }
+
+    /// <summary>The next state change is the AI box going back to the tab it was opened from (<see cref="IPanel.ShownBack"/>).</summary>
+    public void GoingBack() => back = true;
 
     /// <summary>Make a panel the current one. Open, that is a tab switch; closed, Panels opens on it next time.</summary>
     public void Select(PanelId id)
@@ -144,6 +153,8 @@ internal sealed class PanelHost
 
     private void OnState(IslandState from, IslandState to)
     {
+        bool again = back;
+        back = false;
         var next = to == IslandState.Panels && tabs.Current is { } id ? panels[id] : null;
         if (ReferenceEquals(next, shown))
         {
@@ -203,7 +214,14 @@ internal sealed class PanelHost
         // the morph and leave the machine in Panels with nothing on screen.
         try
         {
-            next.Shown(body, bodySize);
+            if (again)
+            {
+                next.ShownBack(body, bodySize);
+            }
+            else
+            {
+                next.Shown(body, bodySize);
+            }
         }
         catch (Exception e)
         {

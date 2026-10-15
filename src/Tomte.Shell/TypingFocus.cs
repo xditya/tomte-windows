@@ -30,7 +30,7 @@ internal sealed class TypingFocus
     private readonly Dictionary<EditorView, IInteractive> owners = [];
     private EditorView? focused, dragging;
     private HWND previous;
-    private bool keys, handBackQueued;
+    private bool keys, handBackQueued, taken;
     private long lastPress;
     private Vector2 lastPressAt;
 
@@ -69,6 +69,9 @@ internal sealed class TypingFocus
     public event Action? Lost;
 
     public EditorView? Focused => focused;
+
+    /// <summary>The island has the keys, for a box or for its targets.</summary>
+    public bool HasKeys => keys;
 
     /// <summary>
     /// A text box in <paramref name="host"/>, drawn on the text device. Dispose it with its view. A box with an
@@ -271,9 +274,10 @@ internal sealed class TypingFocus
         bool down = message == IslandKeys.KeyDown, ctrl = Down(VIRTUAL_KEY.VK_CONTROL);
         if (IslandKeys.Hides(message, wParam, keys))
         {
-            // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel. With no box, the
-            // focused target's view may take it.
-            if (!down || (focused is { } box ? box.Escape?.Invoke() != true : !island.Interaction.Key(NavKeys.Of(key, false, ctrl), false)))
+            // Esc (not Alt+F4) goes to the box first: the palette's open question takes it as Cancel. Then the focused
+            // target's view and the views as a whole may step back (History's open conversation, the AI box opened from
+            // a tab); with nothing to step back to, the island hides.
+            if (!down || (focused?.Escape?.Invoke() != true && !island.Interaction.Key(NavKey.Escape, false)))
             {
                 Escape?.Invoke();
             }
@@ -281,8 +285,18 @@ internal sealed class TypingFocus
             return new LRESULT(0);
         }
 
+        // The character of a key the island took goes nowhere: Ctrl+H's backspace would reach a box, and an Alt letter
+        // would beep for a menu the island does not have.
+        if (message is PInvoke.WM_CHAR or PInvoke.WM_SYSCHAR && taken)
+        {
+            taken = false;
+            return new LRESULT(0);
+        }
+
+        bool pressed = down || message == IslandKeys.SysKeyDown;
         bool shift = Down(VIRTUAL_KEY.VK_SHIFT), repeat = (lParam & PromptKeys.WasDown) != 0;
-        var nav = down ? NavKeys.Of(key, shift, ctrl) : NavKey.None;
+        var nav = pressed ? NavKeys.Of(key, shift, ctrl, Down(VIRTUAL_KEY.VK_MENU)) : NavKey.None;
+        taken &= !pressed;
         if (focused is { } editor)
         {
             // Tab out of the prompt moves to its view's targets, when there are any, and Ctrl+Tab switches the panel tab;
@@ -296,6 +310,13 @@ internal sealed class TypingFocus
                 return new LRESULT(0);
             }
 
+            // The AI box's own keys reach its view first; the box keeps the keys either way.
+            if (NavKeys.Offered(nav) && island.Interaction.Key(nav, repeat))
+            {
+                taken = true;
+                return new LRESULT(0);
+            }
+
             if (editor.BeforeKey?.Invoke(message, wParam, lParam) == true)
             {
                 return new LRESULT(0);
@@ -304,7 +325,13 @@ internal sealed class TypingFocus
             return editor.Key(message, wParam, lParam, out var result) ? result : null;
         }
 
-        return keys && island.Interaction.Key(nav, repeat) ? new LRESULT(0) : null;
+        if (keys && island.Interaction.Key(nav, repeat))
+        {
+            taken = true;
+            return new LRESULT(0);
+        }
+
+        return null;
     }
 
     private static bool Down(VIRTUAL_KEY key) => PInvoke.GetKeyState((int)key) < 0;
