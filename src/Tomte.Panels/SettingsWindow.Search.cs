@@ -7,6 +7,9 @@ namespace Tomte.Panels;
 /// <summary>The Search part of the Hotkeys page: which file search is in use, and getting Everything.</summary>
 public sealed partial class SettingsWindow
 {
+    // Under the file search: small local models rarely call AI search's tools.
+    private const string AiSearchNote = "Search with AI works best with the cloud model or a local model of 7B or larger.";
+
     private readonly TextBlock fileSearchNote = Note();
     private readonly Button getEverything = new() { Content = "Get Everything" };
 
@@ -18,7 +21,7 @@ public sealed partial class SettingsWindow
         var row = Row("File search", fileSearchNote, getEverything);
         // The row names its control after the row; a screen reader should hear what the button does.
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(getEverything, "Get Everything");
-        return Card(row);
+        return Card(row, Note(AiSearchNote));
     }
 
     private async Task ShowFileSearchAsync()
