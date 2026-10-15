@@ -284,6 +284,16 @@ internal sealed class InteractionHost
     /// <summary>This target of <paramref name="view"/> has the focus, set by a key or a press, not just the pointer over it.</summary>
     public bool IsFocus(IInteractive view, string id) => focus is { } f && ReferenceEquals(f.View, view) && f.Id == id;
 
+    /// <summary>Focus to this target of <paramref name="view"/>, as a key would put it there; nothing when it has none such.</summary>
+    public void Focus(IInteractive view, string id)
+    {
+        if (views.Find(v => ReferenceEquals(v.Interactive, view)) is { } v && Find(new TargetRef(view, id), out _, out var t))
+        {
+            FocusOn(v, t);
+            Update();
+        }
+    }
+
     /// <summary>A text box let go of the keys with Esc (the note): focus goes to the current tab's label, with the ring.</summary>
     public void FocusTab()
     {

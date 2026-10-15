@@ -234,8 +234,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     public void Hovered(string? id)
     {
-        // Keyboard focus takes the band at once: the waits are for a pointer crossing tiles on its way to the band.
-        if (id is not null && Item(id) is { } focused && island.Interaction.IsFocus(this, id))
+        // Keyboard focus takes the band at once: the waits are for a pointer crossing tiles on its way to the band, and a
+        // press sets the focus too.
+        if (id is not null && Item(id) is { } focused && island.Interaction.UsingKeys && island.Interaction.IsFocus(this, id))
         {
             (hovering, pending, due) = (id, null, null);
             bandWait?.Stop();
@@ -401,6 +402,12 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
                     Share(allowed);
                     break;
                 default:
+                    // Focus on the band's Remove goes to the tile first, so it moves on to the tile that takes its place.
+                    if (island.Interaction.UsingKeys && island.Interaction.IsFocus(this, ShelfLayout.ActionId(ShelfAction.Remove)))
+                    {
+                        island.Interaction.Focus(this, ShelfLayout.TileId(owner));
+                    }
+
                     selected.ExceptWith(allowed.Select(i => i.Id));
                     Show(null);
                     _ = shelf.Remove(allowed);

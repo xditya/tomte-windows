@@ -343,7 +343,13 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
         int pick = Index(list, m => m.Group == group && m.Enabled && m.Checked && m.Kind != TargetKind.Toggle);
         pick = pick >= 0 ? pick : Index(list, m => m.Group == group && m.Enabled && m.Id == last);
         pick = pick >= 0 ? pick : index;
-        // Shift+Tab comes into a row at its own button first, as Tab leaves the row through it.
+        // Tab comes into a row at the row, even when its button was focused last; Shift+Tab at its own button first, as
+        // Tab leaves the row through it.
+        if (direction > 0 && Own(list, pick, -1) is int member and >= 0)
+        {
+            pick = member;
+        }
+
         return (view, direction < 0 && Own(list, pick, 1) is int own and >= 0 ? own : pick);
     }
 

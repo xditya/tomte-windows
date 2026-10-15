@@ -81,6 +81,9 @@ public class KeyboardNavigationTests
         var clipboard = new ClipboardPanelLayout(Body).Targets(on: true, [7, 8, 9], 0, asking: false);
         Assert.Equal(["0:Clipboard", "0:ask", "1:switch", "1:row:7", "1:remove:7", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard]));
         Assert.Equal(["1:clear", "1:remove:7", "1:row:7", "1:switch", "0:ask", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1));
+        // A remove button focused last: Tab comes back into the list at its row, Shift+Tab at the button.
+        Assert.Equal(["0:Clipboard", "0:ask", "1:switch", "1:row:8", "1:remove:8", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard], 1, "remove:8"));
+        Assert.Equal(["1:clear", "1:remove:8", "1:row:8", "1:switch", "0:ask", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1, "remove:8"));
 
         // History with a conversation open: the rows are one stop, entered at the open one, then Continue and Copy answer.
         var rows = Enumerable.Range(0, 4).Select(i => AiHistoryTests.Talk($"k{i}", DateTimeOffset.UnixEpoch.AddMinutes(-i))).ToList();
