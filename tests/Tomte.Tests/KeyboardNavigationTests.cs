@@ -29,14 +29,15 @@ public class KeyboardNavigationTests
         ];
     }
 
-    // Every stop Tab (+1) or Shift+Tab (-1) reaches from nothing focused, until it comes round to the first one again.
-    private static List<string> Walk(IReadOnlyList<Target>[] views, int direction = 1)
+    // Every stop Tab (+1) or Shift+Tab (-1) reaches from nothing focused, until it comes round to the first one again;
+    // `last` names the member each group was last left at, as the host remembers it.
+    private static List<string> Walk(IReadOnlyList<Target>[] views, int direction = 1, string? last = null)
     {
         var seen = new List<string>();
         (int View, int Index)? at = null;
         for (int k = 0; k < 50; k++)
         {
-            at = Target.Stop(views, at, direction, (_, _) => null);
+            at = Target.Stop(views, at, direction, (v, _) => v == 1 ? last : null);
             if (at is not { } a || seen.Contains($"{a.View}:{views[a.View][a.Index].Id}"))
             {
                 break;

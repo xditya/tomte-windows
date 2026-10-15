@@ -181,6 +181,95 @@ public static class NoteMarkdown
         };
     }
 
+    /// <summary>
+    /// Tab (<paramref name="outdent"/> false) or Shift+Tab on the selection from <paramref name="start"/> to
+    /// <paramref name="end"/>, as an editor does: Tab on a list item's line nests the item, Tab on lines selected across
+    /// a line break indents each of them, and Tab anywhere else puts one indent in place of the selection; Shift+Tab takes
+    /// one indent off the start of every line it touches. One indent is what the note already uses: a tab when its first
+    /// indented line starts with one, else the fewest spaces an indented line starts with (2 to 8), else four spaces.
+    /// The change and the selection after it; null when nothing changes.
+    /// </summary>
+    public static (Splice Change, int Start, int End)? Indent(string text, int start, int end, bool outdent)
+    {
+        (start, end) = (Math.Clamp(Math.Min(start, end), 0, text.Length), Math.Clamp(Math.Max(start, end), 0, text.Length));
+        string unit = IndentUnit(text);
+        int first = LineStart(text, start);
+        // A selection that ends where a line starts leaves that line alone.
+        int lastAt = end > start && text[end - 1] == '\n' ? end - 1 : end;
+        int last = LineEnd(text, lastAt);
+        bool lines = text.AsSpan(start, lastAt - start).Contains('\n');
+        if (!outdent && !lines && Markdown.Item(text.AsSpan(first, last - first).TrimStart(" \t"), note: true) is null)
+        {
+            return (new Splice(start, end - start, unit), start + unit.Length, start + unit.Length);
+        }
+
+        var block = new System.Text.StringBuilder();
+        int newStart = start, newEnd = end, most = unit == "\t" ? 4 : unit.Length;
+        for (int at = first; at <= last;)
+        {
+            int lineEnd = LineEnd(text, at);
+            // Shift+Tab takes a leading tab, or up to one indent's worth of leading spaces.
+            int cut = outdent && at < lineEnd && text[at] == '\t' ? 1 : 0;
+            while (outdent && cut < most && at + cut < lineEnd && text[at + cut] == ' ')
+            {
+                cut++;
+            }
+
+            int shift = outdent ? -cut : unit.Length;
+            newStart += Moved(start, at, cut, shift);
+            newEnd += Moved(end, at, cut, shift);
+            block.Append(outdent ? "" : unit).Append(text, at + cut, lineEnd - at - cut);
+            if (lineEnd < last)
+            {
+                block.Append('\n');
+            }
+
+            at = lineEnd + 1;
+        }
+
+        // Only what changed is replaced, so the lines' own formatting is left alone.
+        var change = Splice.Between(text[first..last], block.ToString());
+        return change.IsEmpty ? null : (change with { Start = first + change.Start }, newStart, newEnd);
+    }
+
+    // How far a position moves when a line starting at `line` gains (shift > 0) or loses `cut` characters at its start.
+    private static int Moved(int position, int line, int cut, int shift) =>
+        position < line ? 0 : shift >= 0 ? shift : -Math.Min(cut, position - line);
+
+    // What one indent is in this note: see Indent.
+    private static string IndentUnit(string text)
+    {
+        int least = int.MaxValue;
+        for (int at = 0; at < text.Length; at = LineEnd(text, at) + 1)
+        {
+            int lead = at;
+            while (lead < text.Length && text[lead] is ' ' or '\t')
+            {
+                lead++;
+            }
+
+            if (lead == at || lead == text.Length || text[lead] == '\n')
+            {
+                continue;
+            }
+
+            if (text[at] == '\t')
+            {
+                if (least == int.MaxValue)
+                {
+                    return "\t";
+                }
+
+                continue;
+            }
+
+            int spaces = text.AsSpan(at, lead - at).IndexOf('\t') is int tab and >= 0 ? tab : lead - at;
+            least = Math.Min(least, spaces);
+        }
+
+        return new string(' ', least == int.MaxValue ? 4 : Math.Clamp(least, 2, 8));
+    }
+
     // The indent, the marker as written (the task box included) and the white space after it.
     private static int Hang(string text, MarkdownBlock item)
     {

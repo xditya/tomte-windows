@@ -485,7 +485,7 @@ public static class NavKeys
 
     /// <summary>
     /// A key down in a text box that the box gives up to the targets: Ctrl+Tab and Ctrl+1 to Ctrl+6 from any box, which
-    /// switch panel tabs, and Tab or Shift+Tab from one where Tab leaves (the palette's prompt, the note).
+    /// switch panel tabs, and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note indents.
     /// </summary>
     public static bool LeavesBox(NavKey key, bool tabLeaves) =>
         key is NavKey.NextTab or NavKey.PreviousTab or (>= NavKey.Tab1 and <= NavKey.Tab6) || (tabLeaves && key is NavKey.Next or NavKey.Previous);

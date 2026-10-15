@@ -14,8 +14,8 @@ namespace Tomte.Shell;
 /// a click into it, or the scratchpad hotkey, gives it the keys. The note loads on a worker, so <see cref="Shown"/>
 /// returns at once and what is typed before the first load goes in once it lands. A load that fails says so in the
 /// card and keeps what was typed for the next show that can read the note. Leaving the tab saves what is unsaved and
-/// releases the text box. The note is the tab's one stop in the Tab order: focus arriving there gives it the keys, and
-/// Tab and Shift+Tab leave it for the tab strip.
+/// releases the text box. The note is the tab's one stop in the Tab order: focus arriving there gives it the keys. In
+/// it, Tab and Shift+Tab indent and outdent (<see cref="NoteEditor"/>), and Esc leaves it for the tab's label.
 /// </summary>
 internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, TextRenderer text, TypingFocus focus, Action<string>? log) : IPanel, IInteractive
 {
@@ -48,8 +48,19 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
         frame.Size = size;
         body.Children.InsertAtTop(frame);
         DrawFrame(body, layout);
-        editor = focus.Create(body, multiline: true, ScratchpadPanelLayout.NoteSize, owner: this);
+        editor = focus.Create(body, multiline: true, ScratchpadPanelLayout.NoteSize);
         editor.Place(layout.Editor, island.Scale);
+        // Esc leaves the note for the tab's label, the ring on it; a second Esc closes the island as before.
+        editor.Escape = () =>
+        {
+            if (!focus.TakeKeys())
+            {
+                return false;
+            }
+
+            island.Interaction.FocusTab();
+            return true;
+        };
         // The note is styled once the Panels morph is at rest, never during it.
         bound = new NoteEditor(editor, note, island.Queue, kept) { Moving = () => island.Moving };
         island.Settled += bound.Settled;

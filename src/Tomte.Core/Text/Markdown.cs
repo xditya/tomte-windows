@@ -237,7 +237,7 @@ public static class Markdown
     /// A list item's kind and how far its text starts: past "- ", "* ", "+ ", "12. " or "12) ", and in the note also
     /// past a task box right after that, "[ ]", "[x]" or "[X]" and a space.
     /// </summary>
-    private static (MarkdownKind, int)? Item(ReadOnlySpan<char> line, bool note)
+    internal static (MarkdownKind, int)? Item(ReadOnlySpan<char> line, bool note)
     {
         int digits = 0;
         while (digits < line.Length && digits < 9 && char.IsAsciiDigit(line[digits]))

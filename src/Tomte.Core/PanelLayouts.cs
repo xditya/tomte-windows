@@ -193,17 +193,21 @@ public sealed class ScratchpadPanelLayout(Vector2 body)
     /// <summary>The text box the note is typed in: the card less its insets. Its text scrolls inside it.</summary>
     public RectangleF Editor => RectangleF.FromLTRB(Note.X + TextInset, Note.Y + 10, Note.Right - TextInset, Note.Bottom - 10);
 
+    /// <summary>The footer's keys: what Tab and Esc do in the note, and the pin.</summary>
+    public const string Keys = "Tab indents, Esc leaves the note, Ctrl+P pins";
+
     /// <summary>The heading, what goes beside it, and the footer's two ends.</summary>
     public IReadOnlyList<TextSlot> FrameText()
     {
         const string title = "Scratchpad";
         float after = TextSlot.Measure(title, TextStyle.Title, Head.Width) + 10;
+        float keys = MathF.Ceiling(TextSlot.Measure(Keys, TextStyle.Small, Foot.Width - 150));
         return
         [
             new(title, TextStyle.Title, Head),
             new("one note, saved locally", TextStyle.Secondary, new(Head.X + after, Head.Y, Head.Width - after, HeadHeight)),
             new("Saved on this PC", TextStyle.Small, new(Foot.X, Foot.Y, 140, FootHeight)),
-            new("Esc closes, Ctrl+P pins", TextStyle.Small with { Align = TextAlign.Trailing }, new(Foot.Right - 160, Foot.Y, 160, FootHeight)),
+            new(Keys, TextStyle.Small with { Align = TextAlign.Trailing }, new(Foot.Right - keys, Foot.Y, keys, FootHeight)),
         ];
     }
 }
