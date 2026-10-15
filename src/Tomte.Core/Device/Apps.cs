@@ -20,9 +20,12 @@ public static class Apps
         if (ShortcutTarget.IsApp(target) && !ShortcutTarget.IsInstalledApp(target)) return ActionResult.Fail("That is not an installed app.");
         if (dryRun) return ActionResult.DryRun($"open or focus {target}.");
         if (ProcessNameFor(target) is { } exe && MainWindowOf(exe) is { } window) return Focus(target, window);
-        var opened = Launch(target);
-        // "Settings" and other names Start shows are no program the shell finds by name: open those as Start does.
-        return opened.Ok || StartApp(target) is not { } app ? opened : Launch(new ProcessStartInfo(app.Target) { UseShellExecute = true }, target);
+        var opened = Launch(new ProcessStartInfo(target) { UseShellExecute = true }, target, out int failed);
+        // "Settings" and other names Start shows are no file the shell finds by name: open those as Start does. Only
+        // then: a start refused at its UAC prompt, or failing any other way, must not be tried again.
+        return failed != (int)WIN32_ERROR.ERROR_FILE_NOT_FOUND || StartApp(target) is not { } app
+            ? opened
+            : Launch(new ProcessStartInfo(app.Target) { UseShellExecute = true }, target);
     }
 
     /// <summary>
@@ -101,8 +104,12 @@ public static class Apps
     // this process may set the foreground, which the never-activated island may only right after
     // the user's own click on it, so the result says when the app is likely to open behind the
     // current window. Internal: it is not an action the AI layer may call.
-    internal static ActionResult Launch(ProcessStartInfo start, string name)
+    internal static ActionResult Launch(ProcessStartInfo start, string name) => Launch(start, name, out _);
+
+    // As above; error is the Win32 error of a start that failed, else 0.
+    private static ActionResult Launch(ProcessStartInfo start, string name, out int error)
     {
+        error = 0;
         try
         {
             using var process = Process.Start(start);
@@ -114,6 +121,7 @@ public static class Apps
         }
         catch (Win32Exception e)
         {
+            error = e.NativeErrorCode;
             return ActionResult.Fail($"Could not open {name}: {e.Message}");
         }
     }

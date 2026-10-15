@@ -123,9 +123,15 @@ public class DeviceActionsTests
     [Fact]
     public void ANameStartShowsIsFoundInStartsList()
     {
-        Assert.StartsWith(@"shell:AppsFolder\windows.immersivecontrolpanel_", Apps.StartApp("settings")!.Target, StringComparison.OrdinalIgnoreCase);
         Assert.Null(Apps.StartApp("Settings2 that no app is called"));
         Assert.Null(Apps.StartApp(@"C:\Windows\Settings"));
+        // A Start list in another language has no "Settings".
+        if (Apps.StartApp("settings") is not { } settings)
+        {
+            return;
+        }
+
+        Assert.StartsWith(@"shell:AppsFolder\windows.immersivecontrolpanel_", settings.Target, StringComparison.OrdinalIgnoreCase);
     }
 
     private static readonly OutputDevice[] Devices =
