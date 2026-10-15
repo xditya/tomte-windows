@@ -152,6 +152,10 @@ public static class ClipboardImages
             {
                 Marshal.FinalReleaseComObject(item);
             }
+
+            // The decoder reads the copy's memory until the stream is released above; a caller that does not hold the
+            // copy must not see it finalized, and its memory freed, before then.
+            GC.KeepAlive(copied);
         }
     }
 
@@ -287,7 +291,10 @@ public static class ClipboardImages
             frame.Commit();
             encoder.Commit();
             output.Stat(out var stat, STATFLAG.STATFLAG_NONAME);
-            PInvoke.GetHGlobalFromStream(output, out var memory).ThrowOnFailure();
+            // The stream owns this memory and frees it on release. A plain handle, not the generated overload's
+            // SafeHandle, which would free it a second time when collected, by then often another allocation's.
+            HGLOBAL memory;
+            PInvoke.GetHGlobalFromStream(output, &memory).ThrowOnFailure();
             var bytes = new byte[stat.cbSize];
             new ReadOnlySpan<byte>(PInvoke.GlobalLock(memory), bytes.Length).CopyTo(bytes);
             PInvoke.GlobalUnlock(memory);

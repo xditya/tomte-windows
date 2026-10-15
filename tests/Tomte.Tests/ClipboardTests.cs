@@ -487,6 +487,26 @@ public sealed class ClipboardTests : IDisposable
     }
 
     [Fact]
+    public void KeepingAnImageLeavesNoOwnerOfMemoryItAlreadyFreed()
+    {
+        // Keep's encoder streams free their global memory when released. Anything still owning one of those handles
+        // would free it again once collected, and by then Windows has handed the handle to the next copy.
+        using (var copied = new CopiedImage(Dib(5, 3, 24, Colour), png: false))
+        {
+            Assert.NotNull(ClipboardImages.Keep(copied, Limits.MaxImageReadBytes));
+        }
+
+        var next = Enumerable.Range(0, 16).Select(i => new CopiedImage([(byte)i, 7, 7], png: true)).ToList();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        for (int i = 0; i < next.Count; i++)
+        {
+            Assert.Equal([(byte)i, 7, 7], next[i].ToArray());
+            next[i].Dispose();
+        }
+    }
+
+    [Fact]
     public void AHeaderClaimingAHugeBitmapIsNotKept()
     {
         // 0x7FFFFFFF squared times 4 does not fit a long; the size must still count as over.
