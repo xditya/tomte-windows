@@ -295,7 +295,8 @@ internal static partial class Program
             History = History,
             Continuing = earlier,
             Mcp = McpTools.For(settings.McpServers),
-            Scheduling = Jobs.Planner(),
+            // --debug-palette only pretends, so it makes no real job or Task Scheduler entry.
+            Scheduling = dry ? null : Jobs.Planner(),
             // With no window to point them at (the tray's Ask AI with none remembered) the tools are not offered.
             Automation = AutomationTools.For(settings.UiAutomation.Enabled && foreground != 0, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),
         };
