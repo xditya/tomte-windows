@@ -167,6 +167,108 @@ public sealed class SearchTests
         Assert.Equal(File("A.TXT").Key, new SearchItem(SearchKind.File, "a.txt", @"d:\work\a.txt").Key);
 }
 
+public sealed class FileQueryTests
+{
+    private static readonly string[] Excluded = [@"C:\Windows", @"C:\Users\O'Brien\AppData\"];
+
+    [Theory]
+    [InlineData("  quarterly   report ", new[] { "quarterly", "report" })]
+    [InlineData("\"tax\" Tax 2025", new[] { "tax", "2025" })]
+    [InlineData("a\tb\u0001c", new[] { "a", "bc" })]
+    [InlineData("\"\"", new string[0])]
+    [InlineData("1 2 3 4 5 6 7 8 9 10", new[] { "1", "2", "3", "4", "5", "6", "7", "8" })]
+    public void TypedTextSplitsIntoWords(string text, string[] words) => Assert.Equal(words, FileQuery.Words(text));
+
+    [Fact]
+    public void EverythingGetsEachWordQuotedAndTheFoldersLeftOut() =>
+        Assert.Equal(
+            "\"tax|2025\" \"!report\" !\"C:\\Windows\\\" !\"C:\\Users\\O'Brien\\AppData\\\" !\"\\$Recycle.Bin\\\"",
+            FileQuery.Everything(["tax|2025", "!report"], Excluded));
+
+    [Fact]
+    public void TheIndexGetsWordStartsAndEscapedQuotes() =>
+        Assert.Equal(
+            "SELECT TOP 60 System.ItemPathDisplay, System.ItemType FROM SystemIndex WHERE SCOPE='file:' AND CONTAINS(System.FileName, '\"o''neil*\" AND \"cv*\"')"
+            + " AND NOT SCOPE='file:C:/Windows' AND NOT SCOPE='file:C:/Users/O''Brien/AppData' ORDER BY System.DateModified DESC",
+            FileQuery.IndexSql(["o'neil", "cv"], Excluded));
+
+    [Fact]
+    public void NoWordsAskNothing()
+    {
+        Assert.Equal("", FileQuery.Everything([], Excluded));
+        Assert.Equal("", FileQuery.IndexSql([], Excluded));
+    }
+
+    [Fact]
+    public void TheExcludedFoldersAreFullPaths() =>
+        Assert.All(FileQuery.Excluded(), folder => Assert.True(Path.IsPathFullyQualified(folder), folder));
+
+    [Fact]
+    public void AHitBecomesARowNamedAfterItsFile()
+    {
+        var file = new FileHit(@"D:\Work\Taxes\return 2025.pdf", false).Item();
+        Assert.Equal((SearchKind.File, "return 2025.pdf", @"D:\Work\Taxes"), (file.Kind, file.Name, file.Detail));
+        Assert.Equal(@"D:\Work\Taxes\return 2025.pdf", file.Location);
+        var drive = new FileHit(@"D:\", true).Item();
+        Assert.Equal((SearchKind.Folder, @"D:\"), (drive.Kind, drive.Name));
+    }
+
+    [Fact]
+    public void EverythingsQueryIsLaidOutAsItsSdkSays()
+    {
+        byte[] query = Everything.Query(0x1234, "ab", 60);
+        uint[] fields = [.. Enumerable.Range(0, 7).Select(i => BitConverter.ToUInt32(query, i * 4))];
+        // Reply window, the reply's tag ("TOMT"), flags, offset, max, full path and name, newest change first.
+        Assert.Equal([0x1234u, 0x544F4D54u, 0u, 0u, 60u, 4u, 14u], fields);
+        Assert.Equal("ab\0", System.Text.Encoding.Unicode.GetString(query, 28, query.Length - 28));
+    }
+
+    [Fact]
+    public void EverythingsAnswerIsRead()
+    {
+        // EVERYTHING_IPC_LIST2 with two items: a folder and a file, each its full path; then one item cut short.
+        var data = new List<byte>();
+        void U32(uint v) => data.AddRange(BitConverter.GetBytes(v));
+        void Text(string s)
+        {
+            U32((uint)s.Length);
+            data.AddRange(System.Text.Encoding.Unicode.GetBytes(s + "\0"));
+        }
+
+        U32(3); // total
+        U32(3); // in this answer
+        U32(0);
+        U32(4); // full path and name
+        U32(14);
+        const int Items = 20 + (3 * 8);
+        string folder = @"D:\Work", file = @"D:\Work\notes.txt";
+        U32(1);
+        U32(Items);
+        U32(0);
+        U32((uint)(Items + 4 + ((folder.Length + 1) * 2)));
+        U32(0);
+        U32(100_000);
+        Text(folder);
+        Text(file);
+        Assert.Equal([new FileHit(folder, true), new FileHit(file, false)], Everything.Parse(data.ToArray()));
+        Assert.Empty(Everything.Parse(new byte[8]));
+    }
+
+    [Theory]
+    [InlineData("\"C:\\Program Files\\Everything\\Everything.exe\" -startup", @"C:\Program Files\Everything\Everything.exe")]
+    [InlineData("C:\\Tools\\Everything.exe -svc", @"C:\Tools\Everything.exe")]
+    [InlineData("\"C:\\Tools\\other.cmd\"", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void TheExeComesFromACommandLine(string? commandLine, string? exe) => Assert.Equal(exe, EverythingSetup.ExeFrom(commandLine));
+
+    [Fact]
+    public void WingetInstallsTheExactPackageQuietly() =>
+        Assert.Equal(
+            "install --id voidtools.Everything -e --silent --scope machine --accept-package-agreements --accept-source-agreements",
+            string.Join(' ', EverythingSetup.WingetArguments));
+}
+
 public sealed class SearchHistoryTests : IDisposable
 {
     private readonly string dir = Path.Combine(Path.GetTempPath(), "tomte-tests-" + Guid.NewGuid().ToString("N"));

@@ -95,3 +95,13 @@ GlobalLock
 GlobalUnlock
 GlobalFree
 GlobalSize
+FindWindow
+RegisterClassEx
+CreateWindowEx
+DestroyWindow
+DefWindowProc
+PeekMessage
+DispatchMessage
+MsgWaitForMultipleObjectsEx
+COPYDATASTRUCT
+WM_COPYDATA
