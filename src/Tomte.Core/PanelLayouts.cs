@@ -135,8 +135,9 @@ public sealed class ClipboardPanelLayout(Vector2 body)
 
     /// <summary>
     /// The clickable parts in Tab order: the switch, each row with its remove button after it (so the button is on top of
-    /// the row), then Clear all; rows and their buttons are one arrow-key group. In body space, cut to the list where it
-    /// scrolls. A row out of view keeps its place with no height, so nothing hits it but the arrow keys still find it.
+    /// the row), then Clear all; rows and their buttons are one group, which Up and Down move along and Tab leaves through
+    /// the focused row's button. In body space, cut to the list where it scrolls. A row out of view keeps its place with
+    /// no height, so nothing hits it but the arrow keys still find it.
     /// </summary>
     public IReadOnlyList<Target> Targets(bool on, IReadOnlyList<long> rows, float scroll, bool asking)
     {

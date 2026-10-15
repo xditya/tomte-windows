@@ -313,6 +313,13 @@ public static class ShelfLayout
         return off && row >= 0 && row <= (count - 1) / Columns ? Scroll(first, -rows, count, body) : first;
     }
 
+    /// <summary>
+    /// The first visible item after Left (-1) or Right (+1) from <paramref name="index"/>, which go on to the row before
+    /// or after at the ends of a row: a row further when that row is off the page, so the arrow finds the tile there.
+    /// </summary>
+    public static int ScrollSideways(int first, int index, int step, int count, Vector2 body) =>
+        ScrollFor(first, index, ((index + step) / Columns) - (index / Columns), count, body);
+
     /// <summary>One stroke of an action's icon, in its 16 DIP square: a line from A to B, or with a corner, an outlined box from A to B.</summary>
     public readonly record struct GlyphStroke(Vector2 A, Vector2 B, float Corner = -1);
 
