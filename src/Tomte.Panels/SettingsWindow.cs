@@ -59,13 +59,13 @@ public sealed partial class SettingsWindow : Window
         // and opened again shows what it showed.
         (string Name, string Glyph, UIElement[] Parts)[] pages =
         [
-            ("General", "", [Card(
+            ("General", "\uE713", [Card(
                 Row("Start with Windows", startupNote, startup),
                 Row("Desktop peek", Note("Show the tomte at the top of the screen when no window is there. Point at it to open the island."), Toggle(s => s.DesktopPeek, (s, v) => s with { DesktopPeek = v })),
                 Row("Track changes", Note("Show the pill for a few seconds when another track starts playing."), Toggle(s => s.MediaTrackChangeEvent, (s, v) => s with { MediaTrackChangeEvent = v })),
                 Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors()),
                 Row("Island position", Note("Drag the island along the top edge to move it. Double-click an empty part of its tab row to put it back in the middle."), ResetPosition()))]),
-            ("Opening and closing", "", [
+            ("Opening and closing", "\uE962", [
                 Card(
                     Row("Edge push", Note("Push the cursor up against the top edge to reveal the island."), RevealToggle(r => r.EdgePush, (r, v) => r with { EdgePush = v })),
                     Row("Dwell", Note("Resting in the reveal zone this many milliseconds also reveals it. 0 turns it off."), Number(0, 3000, r => r.DwellMs, (r, v) => r with { DwellMs = (int)v })),
@@ -97,8 +97,8 @@ public sealed partial class SettingsWindow : Window
                     Note("Allow: edge push and drag reveal work even when the app is fullscreen. Deny: only hotkeys open the island while the app is in front. Deny with hotkeys: the hotkeys go to the app as well."),
                     rulesList,
                     AddRuleRow())]),
-            ("Hotkeys", "", [Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), CopilotNote()])]),
-            ("Shelf and shortcuts", "", [
+            ("Hotkeys", "\uE765", [Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), Note("The Copilot key cannot open Tomte yet.")])]),
+            ("Shelf and shortcuts", "\uE7B8", [
                 Header("Shelf"),
                 Card(Row(
                     "Remove from the shelf after dragging out",
@@ -106,14 +106,14 @@ public sealed partial class SettingsWindow : Window
                     Toggle(s => s.RemoveAfterDragOut, (s, v) => s with { RemoveAfterDragOut = v }))),
                 Header(ShortcutsHeader),
                 ShortcutsSection()]),
-            ("Clipboard", "", [Card(Row(
+            ("Clipboard", "\uE77F", [Card(Row(
                 "Keep history",
                 Note($"Keeps the last {kept.MaxItems} pieces of text and {kept.MaxImages} images you copy, on this PC, for up to {kept.MaxDays} days. Never kept: an image over {kept.MaxImageBytes >> 20} MB as a PNG, items password managers mark, and anything copied while Tomte is paused or an app with a deny rule is in front. Turning it off deletes the history."),
                 Toggle(s => s.KeepClipboardHistory, (s, v) => s with { KeepClipboardHistory = v })))]),
-            ("Voice", "", [Card(
+            ("Voice", "\uE720", [Card(
                 Row("When you finish speaking, Enter does", voiceNote, VoiceEnter()),
                 Row("Spoken replies", Note("Read the answer to a voice command aloud with Windows speech."), Toggle(s => s.SpokenReplies, (s, v) => s with { SpokenReplies = v })))]),
-            ("AI", "", [
+            ("AI", "\uF4A5", [
                 Header("AI provider"),
                 ProviderSection(),
                 Header("AI history"),
@@ -122,7 +122,7 @@ public sealed partial class SettingsWindow : Window
                         Note($"Keeps your last {AiHistory.MaxItems} AI conversations and drop zone results, on this PC, for up to {AiHistory.MaxDays} days: what you asked, the names of what you attached, the answers, the model and the cost. Attached content is never kept, and nothing leaves this PC. Turning it off deletes the history."),
                         KeepHistory()),
                     Row("Clear history", clearedNote, ClearHistory()))]),
-            ("AI tools", "", [
+            ("AI tools", "\uE90F", [
                 Card(
                     Note("What the AI can do when you ask, once a provider is set up. A tool that asks each time can be always allowed from its prompt. By voice, every tool asks first, always allowed or not, and MCP server tools are not offered."),
                     Row("Desktop automation", Note("Let the typed palette list, click, type into and select controls in other apps. Every action asks first and none can be always allowed. Never by voice."),
@@ -364,9 +364,6 @@ public sealed partial class SettingsWindow : Window
         };
         return Row(Hotkey.Name(action), note, box);
     }
-
-    private static TextBlock CopilotNote() =>
-        Note("The Copilot key cannot open Tomte yet.");
 
     private UIElement AddRuleRow()
     {
