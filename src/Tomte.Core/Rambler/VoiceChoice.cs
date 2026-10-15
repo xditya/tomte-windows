@@ -32,4 +32,18 @@ public static class VoiceChoices
     };
 
     public const string NoProvider = "Ask Tomte needs an AI provider.";
+
+    /// <summary>
+    /// Why Insert must not type, or null when it may: only into <paramref name="spokenInto"/>, the window that had the
+    /// keys when the hold started, while it is still open and still in front, and not into an app that runs as
+    /// administrator (<paramref name="elevated"/> true) or one that could not be checked (null), since Windows keeps a
+    /// normal app's keys out of those.
+    /// </summary>
+    public static string? Refusal(nint spokenInto, bool open, nint inFront, bool? elevated) =>
+        spokenInto == 0 ? "No app had the keys when you spoke."
+        : !open ? "The window you spoke into has closed."
+        : inFront != spokenInto ? "The window you spoke into is no longer in front."
+        : elevated is null ? "Tomte could not check that app, so it does not type into it."
+        : elevated.Value ? "That app runs as administrator, so Windows does not let Tomte type into it."
+        : null;
 }
