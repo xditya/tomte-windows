@@ -105,6 +105,13 @@ public class RetractionRulesTests
     [InlineData(IslandState.Palette, IslandActivity.Result, false, false)]
     [InlineData(IslandState.Compact, IslandActivity.None, true, false)]
     [InlineData(IslandState.Hidden, IslandActivity.None, false, false)]
+    // A pinned island stays up after the user has gone back to their app: Esc there is theirs.
+    [InlineData(IslandState.Panels, IslandActivity.Pinned, true, true)]
+    [InlineData(IslandState.Panels, IslandActivity.Pinned, false, false)]
+    [InlineData(IslandState.Palette, IslandActivity.Pinned, false, false)]
+    // With the keys, Esc reaches the island as a key, never as a hotkey.
+    [InlineData(IslandState.Panels, IslandActivity.Typing, true, false)]
+    [InlineData(IslandState.Palette, IslandActivity.Typing | IslandActivity.Pinned, true, false)]
     public void EscIsTakenWhileAResultIsUpOnlyWithThePointerOnIt(IslandState state, IslandActivity activity, bool pointerInside, bool expected)
     {
         Assert.Equal(expected, RetractionRules.TakesEscape(state, activity, pointerInside));

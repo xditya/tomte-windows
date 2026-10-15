@@ -712,7 +712,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         // Only a pointer coming onto the pill dwells; one moving about on it lets the dwell run.
         Dwell(hover);
-        if (activity.HasFlag(IslandActivity.Result))
+        if ((activity & (IslandActivity.Result | IslandActivity.Pinned)) != 0)
         {
             InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
         }
@@ -1213,7 +1213,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
-    internal void Typing(bool on) => Hold(IslandActivity.Typing, on);
+    internal void Typing(bool on)
+    {
+        Hold(IslandActivity.Typing, on);
+        // The keys went elsewhere (another window, a click-back from the AI box): Esc becomes a hotkey again, if the rule
+        // takes it now; a pinned island away from the pointer leaves it to the user's app.
+        if (machine.State is IslandState.Panels or IslandState.Palette)
+        {
+            InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, pointerInside));
+        }
+    }
 
     /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: the island does not retract under it.</summary>
     internal void Pressing(bool on) => Hold(IslandActivity.Pressing, on);

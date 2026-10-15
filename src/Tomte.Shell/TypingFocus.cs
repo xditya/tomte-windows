@@ -229,15 +229,11 @@ internal sealed class TypingFocus
             case PInvoke.WM_ACTIVATE:
                 if ((wParam & 0xFFFF) == PInvoke.WA_INACTIVE && keys)
                 {
-                    // The user went elsewhere: their choice of window stands, and Esc goes back to being a hotkey for
-                    // as long as the island shows. Before Lost, which may hide the island and release Esc after this.
+                    // The user went elsewhere: their choice of window stands. Releasing the keys lets the triggers make
+                    // Esc a hotkey again where their rule takes it (not for a pinned island away from the pointer).
+                    // Before Lost, which may hide the island and release Esc after this.
                     previous = default;
                     Release();
-                    if (machine.State is IslandState.Panels or IslandState.Palette)
-                    {
-                        InputThread.SetEscape(true);
-                    }
-
                     Lost?.Invoke();
                 }
 
