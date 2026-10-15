@@ -430,7 +430,10 @@ internal sealed class PanelHost
             }
         }
 
-        /// <summary>Ctrl+1 to Ctrl+6 pick the tab in that place; Ctrl+K and "/" ask, as the Ask pill does.</summary>
+        /// <summary>
+        /// Ctrl+1 to Ctrl+6 pick the tab in that place, and leave the current one's to whoever has the keys there (the
+        /// note keeps them); Ctrl+K and "/" ask, as the Ask pill does.
+        /// </summary>
         public bool Command(NavKey key)
         {
             if (key == NavKey.Ask)
@@ -440,7 +443,7 @@ internal sealed class PanelHost
             }
 
             var tab = targets.Where(t => t.Kind == TargetKind.Tab).ElementAtOrDefault(key - NavKey.Tab1);
-            if (key is < NavKey.Tab1 or > NavKey.Tab6 || tab.Id is null)
+            if (key is < NavKey.Tab1 or > NavKey.Tab6 || tab.Id is null || tab.Checked)
             {
                 return false;
             }
