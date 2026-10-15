@@ -196,6 +196,8 @@ public sealed partial class SettingsWindow : Window
         _ = LoadStartupAsync();
         startup.Toggled += async (_, _) => await SetStartupAsync(startup.IsOn);
         Closed += (_, _) => store.Dispose();
+        // A settings window that ended while a shortcut box recorded left Tomte's hotkeys paused; no box records yet.
+        Hotkey.Pause(DataFolder, false);
     }
 
     /// <summary>
