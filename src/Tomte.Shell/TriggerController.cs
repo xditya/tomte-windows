@@ -906,7 +906,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
                         HideForNext();
                     }
 
-                    // Begin opens the 262 wide pill and sets the mascot itself.
+                    // Begin opens the 262 wide pill and sets the mascot itself, without Go.
+                    EndArrival();
                     rambler.Begin(watch.LastApp);
                     // The pill is the rambler's now: no click, dwell, event or edge push takes it away mid-recording.
                     activity |= IslandActivity.Rambling;
@@ -949,11 +950,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
             overlay?.Dispose();
         }
 
-        // A launch flight goes too, also before its pill is up.
-        if (arrival is { } flight && (s.Fullscreen || s.Secure))
+        if (s.Fullscreen || s.Secure)
         {
-            arrival = null;
-            flight.End();
+            EndArrival();
         }
 
         if (machine.State is not (IslandState.Hidden or IslandState.Capture) && !activity.HasFlag(IslandActivity.DragInProgress) && (s.Fullscreen || s.Secure))
@@ -1272,13 +1271,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
     {
-        // Anything else that moves the island ends a launch flight still under way; the island's own tomte takes over.
-        if (arrival is { } flight)
-        {
-            arrival = null;
-            flight.End();
-        }
-
+        EndArrival();
         var from = machine.State;
         // A palette growing keeps where it came from; any other change forgets it, and a panel action sets it again.
         if ((from, state) != (IslandState.Palette, IslandState.Palette))
@@ -1428,8 +1421,23 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
+    /// <summary>
+    /// Anything else that takes the island ends a launch flight still under way, also before its pill is up; the
+    /// island's own tomte takes over. Go, Hide (and with it the lasso), the voice key and a fullscreen app or the lock
+    /// screen call it; the flight's own pill does not.
+    /// </summary>
+    private void EndArrival()
+    {
+        if (arrival is { } flight)
+        {
+            arrival = null;
+            flight.End();
+        }
+    }
+
     internal void Hide()
     {
+        EndArrival();
         foreach (nuint id in HideTimers)
         {
             PInvoke.KillTimer(island.Hwnd, id);
