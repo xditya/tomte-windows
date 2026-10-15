@@ -560,6 +560,85 @@ public sealed class VoiceTests : IDisposable
         Assert.Null(VoiceCommand.ReplyToSpeak(session, spokenReplies: false));
         Assert.Equal("Since the user didn't give a question, no action can be performed.", VoiceCommand.ReplyToSpeak(session, spokenReplies: true));
     }
+
+    [Fact]
+    public void EnterInsertsByDefaultAndAskFallsBackToInsertWithoutAProvider()
+    {
+        Directory.CreateDirectory(_dir);
+        string file = Path.Combine(_dir, "settings.json");
+        File.WriteAllText(file, """{"desktopPeek":false}""");
+        Assert.Equal(VoiceChoice.Insert, SettingsStore.Load(file).VoiceEnter);
+        File.WriteAllText(file, """{"voiceEnter":"Ask"}""");
+        Assert.Equal(VoiceChoice.Ask, SettingsStore.Load(file).VoiceEnter);
+
+        // Enter picks the choice in settings, but Ask only while a provider is set up.
+        Assert.Equal(VoiceChoice.Insert, VoiceChoices.Pick(null, VoiceChoice.Insert, canAsk: true));
+        Assert.Equal(VoiceChoice.Ask, VoiceChoices.Pick(null, VoiceChoice.Ask, canAsk: true));
+        Assert.Equal(VoiceChoice.Insert, VoiceChoices.Pick(null, VoiceChoice.Ask, canAsk: false));
+        Assert.Equal(VoiceChoice.Note, VoiceChoices.Pick(null, VoiceChoice.Note, canAsk: false));
+        // Alt+I, Alt+A and Alt+N pick their own whatever the setting; Alt+A does nothing while Ask is off.
+        Assert.Equal(VoiceChoice.Insert, VoiceChoices.Pick(VoiceChoice.Insert, VoiceChoice.Note, canAsk: true));
+        Assert.Equal(VoiceChoice.Note, VoiceChoices.Pick(VoiceChoice.Note, VoiceChoice.Ask, canAsk: false));
+        Assert.Equal(VoiceChoice.Ask, VoiceChoices.Pick(VoiceChoice.Ask, VoiceChoice.Insert, canAsk: true));
+        Assert.Null(VoiceChoices.Pick(VoiceChoice.Ask, VoiceChoice.Insert, canAsk: false));
+    }
+
+    [Fact]
+    public void InsertTypesOnlyIntoTheWindowSpokenIntoWhileItIsInFrontAndNotAdministrator()
+    {
+        const nint Spoken = 0x1234;
+        Assert.Null(VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: false));
+        Assert.Equal("The window you spoke into is no longer in front.", VoiceChoices.Refusal(Spoken, open: true, inFront: 0x5678, elevated: false));
+        Assert.Equal("The window you spoke into has closed.", VoiceChoices.Refusal(Spoken, open: false, inFront: Spoken, elevated: false));
+        Assert.Equal("No app had the keys when you spoke.", VoiceChoices.Refusal(0, open: false, inFront: 0, elevated: null));
+        Assert.Equal("That app runs as administrator, so Windows does not let Tomte type into it.", VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: true));
+        Assert.Equal("Tomte could not check that app, so it does not type into it.", VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: null));
+
+        // The real path refuses before any key goes out: no window, and a handle that is no window.
+        Assert.Equal("No app had the keys when you spoke.", DesktopEffects.TypeInto(0, "buy milk"));
+        Assert.Equal("The window you spoke into has closed.", DesktopEffects.TypeInto(unchecked((nint)0x7FFF_FFF0), "buy milk"));
+    }
+
+    [Fact]
+    public async Task NothingReachesAProviderBeforeAskIsPicked()
+    {
+        int starts = 0;
+        var provider = new ScriptedProvider();
+        provider.Turns.Add(ScriptedProvider.Text(1, 1, "It is ten past five."));
+        Task<PaletteSession?> Start()
+        {
+            starts++;
+            return Task.FromResult<PaletteSession?>(Session(provider));
+        }
+
+        var typed = new List<string>();
+        string? Type(string words)
+        {
+            typed.Add(words);
+            return null;
+        }
+
+        // Insert types the words and Add to note keeps them; neither makes a session.
+        Assert.Equal(default, await VoiceCommand.PickedAsync(VoiceChoice.Insert, "buy milk", Type, Keep, Start, Run));
+        Assert.Equal(["buy milk"], typed);
+        Assert.Equal("", _pad.Text);
+        Assert.Equal(default, await VoiceCommand.PickedAsync(VoiceChoice.Note, "buy milk", Type, Keep, Start, Run));
+        Assert.Contains("buy milk", _pad.Text);
+        // A refused Insert comes back for the card to say, with Copy in its place.
+        var refused = await VoiceCommand.PickedAsync(VoiceChoice.Insert, "buy milk", _ => "The window you spoke into has closed.", Keep, Start, Run);
+        Assert.Equal(("The window you spoke into has closed.", (PaletteSession?)null), refused);
+        Assert.Equal(0, starts);
+        Assert.Empty(provider.Requests);
+        Assert.False(File.Exists(LogPath));
+
+        // Ask alone makes a session, and the words go to the provider.
+        var (_, asked) = await VoiceCommand.PickedAsync(VoiceChoice.Ask, "what time is it", Type, Keep, Start, Run);
+        Assert.Equal(1, starts);
+        Assert.Single(provider.Requests);
+        Assert.Equal("what time is it", asked!.Prompt);
+        Assert.Equal(PaletteStatus.Done, asked.Status);
+        Assert.Equal(["buy milk"], typed);
+    }
 }
 
 /// <summary>Runs only where Windows can make a media player (no Media Foundation on some server images).</summary>
