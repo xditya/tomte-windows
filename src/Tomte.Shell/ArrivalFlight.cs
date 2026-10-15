@@ -271,14 +271,17 @@ internal sealed unsafe class ArrivalFlight
     private void Destroy()
     {
         ending = true;
+        // The target lets go of the window before the window goes.
+        target?.Dispose();
+        root?.Dispose();
+        // the tomte's parts under the root (about 45 objects) go when the GC collects their wrappers; a forced
+        // GC after landing freed nothing measurable. Give MascotVisual a Dispose if a measurement ever shows them.
         if (hwnd != HWND.Null)
         {
             PInvoke.DestroyWindow(hwnd);
             hwnd = HWND.Null;
         }
 
-        target?.Dispose();
-        root?.Dispose();
         fixed (char* className = ClassName)
         {
             PInvoke.UnregisterClass(className, new HINSTANCE(Marshal.GetHINSTANCE(typeof(ArrivalFlight).Module)));
