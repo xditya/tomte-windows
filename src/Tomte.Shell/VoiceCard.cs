@@ -25,7 +25,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
     private static readonly VoiceChoice[] Order = [VoiceChoice.Insert, VoiceChoice.Ask, VoiceChoice.Note];
 
     private readonly IslandWindow island;
-    private readonly bool canAsk;
+    private readonly string? askOff;
     private readonly ContainerVisual root;
     private readonly TextVisual words, line;
     private readonly List<Button> buttons = [];
@@ -33,11 +33,11 @@ internal sealed class VoiceCard : IInteractive, IDisposable
     private readonly VoiceChoice highlighted;
     private string? refused;
 
-    public VoiceCard(IslandWindow island, TextRenderer text, string transcript, VoiceChoice highlighted, bool canAsk)
+    public VoiceCard(IslandWindow island, TextRenderer text, string transcript, VoiceChoice highlighted, string? askOff)
     {
         this.island = island;
         this.highlighted = highlighted;
-        this.canAsk = canAsk;
+        this.askOff = askOff;
         var c = island.Compositor;
         root = c.CreateContainerVisual();
         root.Offset = new Vector3(-Width / 2, 0, 0);
@@ -86,8 +86,8 @@ internal sealed class VoiceCard : IInteractive, IDisposable
     /// <summary>Insert could not type: Copy is in its place, and Enter picks nothing.</summary>
     public bool Refused => refused is not null;
 
-    /// <summary>A provider was set up when the card opened, so Ask is on.</summary>
-    public bool CanAsk => canAsk;
+    /// <summary>A provider could be used when the card opened, so Ask is on.</summary>
+    public bool CanAsk => askOff is null;
 
     /// <summary>The island's shape around the card.</summary>
     public IslandGeometry Shape => new(Width, Depth, Corner);
@@ -137,7 +137,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
         {
             var choice = Order[i];
             var b = buttons[i];
-            bool on = refused is null && choice == highlighted, enabled = choice != VoiceChoice.Ask || canAsk;
+            bool on = refused is null && choice == highlighted, enabled = choice != VoiceChoice.Ask || askOff is null;
             var box = new RectangleF(left + i * (width + PaletteLayout.ButtonGap), rowY, width, PaletteLayout.ButtonHeight);
             b.Pill.Offset = new Vector2(box.X, box.Y);
             b.Pill.Size = new Vector2(box.Width, box.Height);
@@ -154,10 +154,10 @@ internal sealed class VoiceCard : IInteractive, IDisposable
             float x = box.X + Math.Max(0, (box.Width - lw - KeyGap - kw) / 2);
             b.Label.Show(label, labelStyle, new RectangleF(x, box.Y, lw + 1, box.Height));
             b.Key.Show(key, keyStyle, new RectangleF(x + lw + KeyGap, box.Y, kw + 1, box.Height));
-            targets.Add(new Target(choice.ToString(), box, PaletteLayout.ButtonCorner, TargetKind.Button, enabled, enabled ? null : VoiceChoices.NoProvider));
+            targets.Add(new Target(choice.ToString(), box, PaletteLayout.ButtonCorner, TargetKind.Button, enabled, enabled ? null : askOff));
         }
 
-        string say = refused ?? (canAsk ? "Esc throws the words away." : VoiceChoices.NoProvider + " Esc throws the words away.");
+        string say = refused ?? (askOff is null ? "" : askOff + " ") + "Esc throws the words away.";
         line.Show(say, PaletteLayout.AskLine, new RectangleF(left, rowY + PaletteLayout.ButtonHeight + LineGap, Width - left - Right, LineHeight));
         Targets = targets;
         TargetsChanged?.Invoke();

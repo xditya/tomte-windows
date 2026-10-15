@@ -770,15 +770,20 @@ internal static partial class Program
             return command;
         }
 
-        // Reads the provider as Voice does, with nothing sent, so the card offers Ask only when it can go somewhere.
-        bool CanAsk() => named is null ? Configured(store, null) is not null : named.DefaultModel is not null;
+        // Reads the provider as Voice does, with nothing sent, so the card offers Ask only when it can go somewhere, and
+        // otherwise says why as Settings would: no provider there, or one the AI layer refuses.
+        string? AskOff() =>
+            named is not null ? (named.DefaultModel is null ? VoiceChoices.NoProvider : null)
+            : Configured(store, null) is not null ? null
+            : store.Current.Provider is { DefaultModel.Length: > 0 } ? VoiceChoices.ProviderUnusable
+            : VoiceChoices.NoProvider;
         string? NotTyped(nint window, string words)
         {
             log.WriteLine($"rambler: --dry, not typed: \"{words}\"");
             return null;
         }
 
-        var session = new Rambler(island, triggers.Machine, speech, speechSend, Voice, () => store.Current.VoiceEnter, CanAsk, scratchpad, sendLog, options, text!, log.WriteLine)
+        var session = new Rambler(island, triggers.Machine, speech, speechSend, Voice, () => store.Current.VoiceEnter, AskOff, scratchpad, sendLog, options, text!, log.WriteLine)
         {
             Insert = args.Contains("--dry") ? NotTyped : DesktopEffects.TypeInto,
         };

@@ -19,7 +19,7 @@ namespace Tomte.Shell;
 /// </summary>
 /// <param name="voice">A new voice session for a transcript the user asks about, made from the provider set up at that moment; it returns null while there is none, and is null with no way to make one.</param>
 /// <param name="enterDoes">The choice in settings that Enter picks on the card.</param>
-/// <param name="canAsk">Whether a provider is set up now, so Ask can be offered; nothing is sent to find out.</param>
+/// <param name="askOff">Why Ask cannot be offered now, or null when a provider can be used; nothing is sent to find out.</param>
 /// <param name="text">The island's text renderer: the card and the voice palette show the transcript with it.</param>
 internal sealed class Rambler(
     IslandWindow island,
@@ -28,7 +28,7 @@ internal sealed class Rambler(
     ProviderSend? speechSend,
     Func<Task<PaletteSession?>>? voice,
     Func<VoiceChoice> enterDoes,
-    Func<bool> canAsk,
+    Func<string?> askOff,
     ScratchpadNote scratchpad,
     SendLog sendLog,
     PaletteOptions prices,
@@ -216,8 +216,8 @@ internal sealed class Rambler(
             }
 
             log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{transcript}\"");
-            bool askable = voice is not null && canAsk();
-            var shown = card = new VoiceCard(island, text, transcript, VoiceChoices.Default(enterDoes(), askable), askable);
+            string? off = voice is null ? VoiceChoices.NoProvider : askOff();
+            var shown = card = new VoiceCard(island, text, transcript, VoiceChoices.Default(enterDoes(), off is null), off);
             shown.Picked += c => choosing?.TrySetResult(c);
             RemoveView();
             _ = island.MorphTo(shown.Shape, SpringPreset.Snappy);

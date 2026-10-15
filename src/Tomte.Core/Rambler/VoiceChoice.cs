@@ -33,6 +33,9 @@ public static class VoiceChoices
 
     public const string NoProvider = "Ask Tomte needs an AI provider.";
 
+    /// <summary>Why Ask is off when Settings has a provider that the AI layer refuses (its key or its address).</summary>
+    public const string ProviderUnusable = "The provider in Settings cannot be used.";
+
     /// <summary>
     /// Why Insert must not type, or null when it may: only into <paramref name="spokenInto"/>, the window that had the
     /// keys when the hold started, while it is still open and still in front, and not into an app that runs as
