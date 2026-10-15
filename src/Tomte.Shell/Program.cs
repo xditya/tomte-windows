@@ -217,7 +217,7 @@ internal static partial class Program
         Tomte.Core.Search.Everything.Instance = Arg(args, "--debug-everything");
         if (Arg(args, "--debug-search") is { } searched && logLine is not null)
         {
-            _ = DebugSearch(triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-quit"), logLine);
+            _ = DebugSearch(triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
         }
 
         // After the lasso the palette opens with the region on, for the user to type the question; the driver asks its own.

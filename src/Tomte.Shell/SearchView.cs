@@ -20,7 +20,8 @@ namespace Tomte.Shell;
 /// group, Enter opens, Ctrl+Enter shows the row's file in its folder, Page Up and Page Down move a page, Esc clears the
 /// box and then closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
 /// the pointer's hover is the interaction host's, and a click opens a row. A card (getting Everything) can take the
-/// list's place. Icons come from the shell, read off this thread and kept for the session. Island thread only.
+/// list's place: Tab moves between its buttons, Enter presses the focused one, which starts on the safe one. Icons come
+/// from the shell, read off this thread and kept for the session. Island thread only.
 /// </summary>
 internal sealed class SearchView : IDisposable, IInteractive
 {
@@ -52,12 +53,16 @@ internal sealed class SearchView : IDisposable, IInteractive
     private IReadOnlyList<SearchLine> lines = [];
     private IReadOnlyList<Target> targets = [];
     private SearchCard? card;
+    private int cardFocus;
     private PixelSurfaces? surfaces;
     private SearchLayout layout;
     private string typed = "", source = "", hint = "";
 
     // The text the rows on show were found for.
     private string? shownFor;
+
+    // The user moved the selection for this text (a key or a page); only then do later results keep it.
+    private bool moved;
     private int select;
     private float scroll, content;
     private bool fadeInPending = true, disposed, loadingIcons, iconsAgain;
@@ -137,10 +142,13 @@ internal sealed class SearchView : IDisposable, IInteractive
     /// <summary>The box grew; the island morphs to the new height, gently.</summary>
     public event Action? HeightChanged;
 
-    /// <summary>A row was chosen: Enter or a click opens it, Ctrl+Enter (true) shows it in its folder.</summary>
-    public event Action<SearchItem, bool>? Chosen;
+    /// <summary>A row was clicked: it opens.</summary>
+    public event Action<SearchItem>? Clicked;
 
-    /// <summary>A card's button, by its id; Enter is the last button, Esc says null.</summary>
+    /// <summary>Enter (false) or Ctrl+Enter (true) in the box: the host opens the selected row, or shows it in its folder.</summary>
+    public event Action<bool>? Entered;
+
+    /// <summary>A card's button, by its id: a click, or Enter on the focused one. Esc says null.</summary>
     public event Action<string?>? CardAnswered;
 
     public string Text => typed;
@@ -151,6 +159,9 @@ internal sealed class SearchView : IDisposable, IInteractive
 
     /// <summary>The card in the list's place; null with none.</summary>
     public SearchCard? Card => card;
+
+    /// <summary>The card's button Enter presses now; null with no card.</summary>
+    public string? CardButton => card is { Buttons.Count: > 0 } c ? c.Buttons[Math.Clamp(cardFocus, 0, c.Buttons.Count - 1)].Label : null;
 
     public IReadOnlyList<Target> Targets => targets;
 
@@ -170,9 +181,10 @@ internal sealed class SearchView : IDisposable, IInteractive
     }
 
     /// <summary>
-    /// New results. For new text the first row is selected, so Enter opens the best match; results that arrive later for
-    /// the same text (files, the app list) keep the row the user moved to, wherever it now is, so Enter never opens
-    /// something else than what is highlighted. <paramref name="note"/> shows when there are none.
+    /// New results. The first row is selected, so Enter opens the best match, never the row that offers Everything; once
+    /// the user has moved the selection, results that arrive later for the same text (files, the app list) keep that row,
+    /// wherever it now is, so Enter never opens something else than what is highlighted. <paramref name="note"/> shows
+    /// when there are none.
     /// </summary>
     public void Show(IReadOnlyList<SearchItem> results, string files, string note)
     {
@@ -181,15 +193,17 @@ internal sealed class SearchView : IDisposable, IInteractive
             return;
         }
 
-        string? kept = shownFor == typed ? Selected?.Key : null;
+        moved &= shownFor == typed;
+        string? kept = moved ? Selected?.Key : null;
         bool same = results.SequenceEqual(rows);
         rows = results;
         source = files;
         hint = note;
         if (!same)
         {
-            int at = kept is null ? -1 : rows.ToList().FindIndex(r => r.Key == kept);
-            select = at >= 0 ? at : rows.Count > 0 ? 0 : -1;
+            var list = rows.ToList();
+            int at = kept is null ? -1 : list.FindIndex(r => r.Key == kept);
+            select = at >= 0 ? at : list.FindIndex(r => r.Kind != SearchKind.GetEverything);
             scroll = at >= 0 ? scroll : 0;
         }
 
@@ -201,12 +215,13 @@ internal sealed class SearchView : IDisposable, IInteractive
         _ = IconsAsync();
     }
 
-    /// <summary>A card in the list's place, or null for the list again.</summary>
+    /// <summary>A card in the list's place, its safe button focused, or null for the list again.</summary>
     public void ShowCard(SearchCard? shown)
     {
         if (!disposed)
         {
             card = shown;
+            cardFocus = shown?.Focus ?? 0;
             Draw();
         }
     }
@@ -226,7 +241,7 @@ internal sealed class SearchView : IDisposable, IInteractive
         {
             select = i;
             Draw();
-            Chosen?.Invoke(rows[i], false);
+            Clicked?.Invoke(rows[i]);
         }
     }
 
@@ -408,7 +423,7 @@ internal sealed class SearchView : IDisposable, IInteractive
         var area = layout.Band;
         if (card is not null)
         {
-            foreach (var (id, at, _) in layout.Card(card).Buttons)
+            foreach (var (id, at, _) in layout.Card(card, cardFocus).Buttons)
             {
                 list.Add(new Target(CardId + id, at, PaletteLayout.ButtonCorner, TargetKind.Button));
             }
@@ -435,7 +450,7 @@ internal sealed class SearchView : IDisposable, IInteractive
 
     private void DrawCard(SearchCard shown)
     {
-        var (at, title, body, bodyAt, laid) = layout.Card(shown);
+        var (at, title, body, bodyAt, laid) = layout.Card(shown, cardFocus);
         Place(cardBox, at);
         cardTitle.Show(title);
         cardBody.Show(body, new Vector2(bodyAt.X, bodyAt.Y));
@@ -452,7 +467,8 @@ internal sealed class SearchView : IDisposable, IInteractive
             var (pill, fill, label) = buttons[i];
             bool shownButton = i < laid.Count;
             Place(pill, shownButton ? laid[i].Box : RectangleF.Empty);
-            fill.Color = Argb(i == laid.Count - 1 ? PaletteLayout.RunFill : PaletteLayout.ButtonFill);
+            // The focused button is the white one: what Enter presses is what stands out.
+            fill.Color = Argb(i == cardFocus ? PaletteLayout.RunFill : PaletteLayout.ButtonFill);
             label.Show(shownButton ? laid[i].Label : new TextSlot("", PaletteLayout.Button, RectangleF.Empty));
         }
     }
@@ -482,6 +498,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     private void Select(int row)
     {
         select = row;
+        moved = true;
         Scrolled();
     }
 
@@ -497,23 +514,30 @@ internal sealed class SearchView : IDisposable, IInteractive
         return message == PInvoke.WM_KEYDOWN && Press(key, Down(VIRTUAL_KEY.VK_CONTROL), Down(VIRTUAL_KEY.VK_SHIFT));
     }
 
-    /// <summary>A key down in the box that the list may take: Up, Down, Tab and Enter. True when it took it.</summary>
+    /// <summary>
+    /// A key down in the box that the list may take: Up, Down, Tab and Enter. On a card, Tab and Shift+Tab move between
+    /// its buttons and Enter presses the focused one. True when it took it.
+    /// </summary>
     internal bool Press(int key, bool ctrl, bool shift)
     {
         switch (key)
         {
             case NavKeys.Return when card is not null:
-                CardAnswered?.Invoke(card.Buttons.Count > 0 ? card.Buttons[^1].Id : null);
+                CardAnswered?.Invoke(card.Buttons.Count > 0 ? card.Buttons[Math.Clamp(cardFocus, 0, card.Buttons.Count - 1)].Id : null);
                 return true;
             case NavKeys.Return:
-                if (Selected is { } item)
+                Entered?.Invoke(ctrl);
+                return true;
+            case NavKeys.Tab when card is not null:
+                if (card.Buttons.Count > 0)
                 {
-                    Chosen?.Invoke(item, ctrl);
+                    cardFocus = (((cardFocus + (shift ? -1 : 1)) % card.Buttons.Count) + card.Buttons.Count) % card.Buttons.Count;
+                    Draw();
                 }
 
                 return true;
             case NavKeys.Tab:
-                if (card is null && rows.Count > 0)
+                if (rows.Count > 0)
                 {
                     Select(NextGroup(shift ? -1 : 1));
                 }

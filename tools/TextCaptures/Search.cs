@@ -36,8 +36,8 @@ internal static partial class Program
 
     private static readonly SearchCard GetEverything = new(
         "Get Everything for whole-disk search",
-        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in.",
-        [("cancel", "Cancel"), ("install", "Install")]);
+        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in. Not now hides this row; Settings, Hotkeys keeps a Get Everything button.",
+        [("notnow", "Not now"), ("install", "Install")]);
 
     private static List<Scene> SearchScenes() =>
     [
@@ -95,7 +95,7 @@ internal static partial class Program
             c.Text(body, new Vector2(bodyAt.X, bodyAt.Y), origin);
             for (int i = 0; i < buttons.Count; i++)
             {
-                c.RoundRect(Offset(buttons[i].Box, origin), PaletteLayout.ButtonCorner, i == buttons.Count - 1 ? PaletteLayout.RunFill : PaletteLayout.ButtonFill);
+                c.RoundRect(Offset(buttons[i].Box, origin), PaletteLayout.ButtonCorner, i == card.Focus ? PaletteLayout.RunFill : PaletteLayout.ButtonFill);
                 c.Text(buttons[i].Label, origin);
             }
 

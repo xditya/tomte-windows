@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Tomte.Core.Search;
 
 namespace Tomte.Shell;
 
@@ -9,23 +8,37 @@ internal static partial class Program
     /// <summary>
     /// --debug-search "words" with --debug-log=path: opens the search box as its hotkey does, types the words a letter at a
     /// time as a person would, logs the rows after each letter and once the file search has answered, presses the keys in
-    /// --debug-keys (Down, Up, Tab, ShiftTab, Esc, and Enter on the Get Everything row only; comma separated) and logs the
-    /// selection after each, then hides the island.
-    /// Opens nothing. --debug-everything name searches a named Everything instance instead of the usual one, and
-    /// --debug-quit ends Tomte half a second after the island hid.
+    /// --debug-keys (Down, Up, Tab, ShiftTab, Enter, CtrlEnter, Esc; comma separated) and logs the selection after each,
+    /// then hides the island. Opens nothing: a row Enter would open is logged instead. --debug-race types the words and
+    /// presses Enter at once, before Start's app list has been read, to show Enter waiting for it. --debug-everything name
+    /// searches a named Everything instance instead of the usual one, and --debug-quit ends Tomte half a second after the
+    /// island hid.
     /// </summary>
-    private static async Task DebugSearch(TriggerController triggers, string words, string? keys, bool quit, Action<string> log)
+    private static async Task DebugSearch(TriggerController triggers, string words, string? keys, bool race, bool quit, Action<string> log)
     {
         // After the launch flight, which any open would cut short.
         await Task.Delay(1500);
         var watch = Stopwatch.StartNew();
-        if (!triggers.OpenSearch() || search?.View is not { } view)
+        search!.Dry = true;
+        if (!triggers.OpenSearch() || search.View is not { } view)
         {
             log("debug search: did not open");
             return;
         }
 
         log($"debug search: open in {watch.Elapsed.TotalMilliseconds:F1} ms, the box {(focus?.Focused is not null ? "has" : "does not have")} the keys");
+        if (race)
+        {
+            view.Fill(words);
+            // The box reads its text on the next turn.
+            await Task.Delay(1);
+            Rows($"typed \"{words}\" at once");
+            log($"debug search: Enter {(view.Press(0x0D, ctrl: false, shift: false) ? "taken" : "not taken")} {watch.ElapsedMilliseconds} ms after the open");
+            await Task.Delay(3000);
+            await End();
+            return;
+        }
+
         await Task.Delay(2500);
         Rows("empty box");
         for (int i = 1; i <= words.Length; i++)
@@ -40,24 +53,28 @@ internal static partial class Program
         Rows("after the file search");
         foreach (string key in (keys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            // Enter only on rows that open nothing outside Tomte: the Get Everything row's card, which Esc closes again.
             bool took = key switch
             {
                 "Esc" => view.OnEscape(),
-                "Enter" when view.Card is null && view.Selected?.Kind == SearchKind.GetEverything => view.Press(0x0D, ctrl: false, shift: false),
-                "Enter" => false,
+                "Enter" or "CtrlEnter" => view.Press(0x0D, ctrl: key == "CtrlEnter", shift: false),
                 _ => view.Press(key switch { "Down" => 0x28, "Up" => 0x26, "Tab" or "ShiftTab" => 0x09, _ => 0 }, ctrl: false, shift: key == "ShiftTab"),
             };
             await Task.Delay(50);
-            log($"debug search: {key} {(took ? "taken" : "not taken")}, selected {view.Selected?.Kind} \"{view.Selected?.Name}\", card \"{view.Card?.Title}\", text \"{view.Text}\"");
+            log($"debug search: {key} {(took ? "taken" : "not taken")}, selected {view.Selected?.Kind} \"{view.Selected?.Name}\", card \"{view.Card?.Title}\" on \"{view.CardButton}\", text \"{view.Text}\", rows {view.Rows.Count}");
         }
 
-        triggers.Hide();
-        log("debug search: hidden");
-        if (quit)
+        await End();
+
+        async Task End()
         {
-            await Task.Delay(500);
-            Windows.Win32.PInvoke.PostQuitMessage(0);
+            triggers.Hide();
+            log("debug search: hidden");
+            // The working set is trimmed two seconds after the island hid.
+            await Task.Delay(2500);
+            if (quit)
+            {
+                Windows.Win32.PInvoke.PostQuitMessage(0);
+            }
         }
 
         void Rows(string when) => log($"debug search: {when}: {view.Rows.Count} rows, selected \"{view.Selected?.Name}\": "

@@ -7,6 +7,7 @@ using Tomte.Core.Search;
 using Tomte.Core.Shortcuts;
 using Tomte.Core.Storage;
 using Tomte.Core.Triggers;
+using Windows.System;
 using Windows.Win32;
 
 namespace Tomte.Shell;
@@ -23,12 +24,19 @@ internal sealed class SearchHost
 {
     // A pause in typing before a file search: Everything answers in a millisecond, the index takes a few hundred.
     private const int EverythingPauseMs = 30, IndexPauseMs = 150;
-    private const string Install = "install", Cancel = "cancel", Download = "download", Close = "close";
 
+    // After the island hides from a search, this long (the fade, the morph and an app's start) before the working set is trimmed.
+    private const int TrimAfterMs = 2000;
+    private const string Install = "install", NotNow = "notnow", Download = "download", Close = "close";
+
+    // Explorer by its full path, never a name looked up where something else could stand in for it.
+    private static readonly string Explorer = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+
+    // Enter presses "Not now"; Install takes Tab to it, or a click.
     private static readonly SearchCard Confirm = new(
         "Get Everything for whole-disk search",
-        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in.",
-        [(Cancel, "Cancel"), (Install, "Install")]);
+        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in. Not now hides this row; Settings, Hotkeys keeps a Get Everything button.",
+        [(NotNow, "Not now"), (Install, "Install")]);
 
     private static readonly SearchCard Installing = new(
         "Installing Everything",
@@ -48,8 +56,13 @@ internal sealed class SearchHost
     private IReadOnlyList<SearchItem> apps = [], tiles = [], shelf = [], opened = [];
     private IReadOnlyDictionary<string, Launches> launches = new Dictionary<string, Launches>();
     private FileSource source = FileSource.Index;
-    private bool startedEverything;
+    private bool startedEverything, offerDismissed;
     private Task? installing;
+
+    // Start's app list has not been read yet this session; Enter waits for it, held here with whether Ctrl was down.
+    private bool appsPending = true;
+    private bool? held;
+    private DispatcherQueueTimer? trim;
 
     // This search's own.
     private SearchView? view;
@@ -77,13 +90,17 @@ internal sealed class SearchHost
     /// <summary>The view of the search showing now, for the debug driver; null with none.</summary>
     public SearchView? View => view;
 
+    /// <summary>The debug driver's runs: a row that would open is logged and the island hides; nothing opens, nothing is counted.</summary>
+    public bool Dry { get; set; }
+
     /// <summary>The search hotkey opened the Palette state as the search box: its content, and the box takes the keys.</summary>
     public void Open()
     {
         var (width, height) = triggers.SearchSize;
         var shown = view = new SearchView(island, triggers.Machine, text, focus, (float)width, (float)height);
         shown.Typed += _ => Typed();
-        shown.Chosen += Chosen;
+        shown.Clicked += item => Chosen(item, folder: false);
+        shown.Entered += Entered;
         shown.CardAnswered += Answered;
         shown.HeightChanged += () =>
         {
@@ -95,6 +112,8 @@ internal sealed class SearchHost
         triggers.Machine.Changed += Gone;
         files = [];
         filesFrom = "";
+        held = null;
+        trim?.Stop();
         shown.TakeKeys();
         Refresh();
         _ = LoadAsync(shown);
@@ -105,12 +124,61 @@ internal sealed class SearchHost
             {
                 triggers.Machine.Changed -= Gone;
                 fileSearch?.Cancel();
+                held = null;
                 if (view == shown)
                 {
                     view = null;
                 }
+
+                if (to == IslandState.Hidden)
+                {
+                    TrimLater();
+                }
             }
         }
+    }
+
+    // Enter in the box. Before Start's app list has been read for the first time the best app is not known yet, so Enter
+    // waits for it, then the list is ranked again and the top row opens; with the list known, the selected row opens.
+    private void Entered(bool folder)
+    {
+        if (appsPending)
+        {
+            held = folder;
+            log?.Invoke("search: Enter waits for the app list");
+            return;
+        }
+
+        if (view?.Selected is { } item)
+        {
+            Chosen(item, folder);
+        }
+    }
+
+    // The search's loading, its view, its text box and the shell's app code leave pages behind that the hidden island does
+    // not use: once the island has been hidden a moment, they are handed back. One call; nothing runs after it.
+    private void TrimLater()
+    {
+        if (trim is null)
+        {
+            trim = island.Queue.CreateTimer();
+            trim.IsRepeating = false;
+            trim.Interval = TimeSpan.FromMilliseconds(TrimAfterMs);
+            trim.Tick += (_, _) =>
+            {
+                if (triggers.Machine.State != IslandState.Hidden)
+                {
+                    return;
+                }
+
+                long before = Environment.WorkingSet;
+                bool trimmed = PInvoke.SetProcessWorkingSetSize(PInvoke.GetCurrentProcess(), nuint.MaxValue, nuint.MaxValue);
+                log?.Invoke($"search: working set trimmed ({trimmed}) from {before / 1048576.0:F1} MB to {Environment.WorkingSet / 1048576.0:F1} MB");
+            };
+        }
+
+        trim.Stop();
+        trim.Start();
     }
 
     // Each list is read off this thread and shown as it arrives; one that cannot be read keeps what it had.
@@ -118,12 +186,35 @@ internal sealed class SearchHost
     {
         var watch = Stopwatch.StartNew();
         await Task.WhenAll(
-            Load(() => AppList.Load().Select(a => new SearchItem(SearchKind.App, a.Name, a.Target, "", a.Target)).ToList(), list => apps = list, "apps"),
+            Apps(),
             Load(Tiles, list => tiles = list, "tiles"),
             Load(history.Load, seen => (opened, launches) = seen, "history"),
             Load(EverythingNow, now => source = now, "file source"),
             Shelf());
         log?.Invoke($"search: loaded {apps.Count} apps, {tiles.Count} tiles, {shelf.Count} shelf items, {opened.Count} opened before, files from {source}, in {watch.ElapsedMilliseconds} ms");
+
+        // Start's apps. Once read (or failed), an Enter that waited for them opens the top row of the list ranked with them.
+        async Task Apps()
+        {
+            try
+            {
+                await Load(() => AppList.Load().Select(a => new SearchItem(SearchKind.App, a.Name, a.Target, "", a.Target)).ToList(), list => apps = list, "apps");
+            }
+            finally
+            {
+                appsPending = false;
+                if (held is bool folder && view == shown)
+                {
+                    held = null;
+                    Refresh();
+                    if (shown.Selected is { } top)
+                    {
+                        log?.Invoke("search: the app list is in; the held Enter opens the top row");
+                        Chosen(top, folder);
+                    }
+                }
+            }
+        }
 
         // The shelf reads its rows on its own and hands them to this thread before its task ends.
         async Task Shelf()
@@ -212,7 +303,7 @@ internal sealed class SearchHost
         // Files found for earlier text stay while they still hold every word, so the list does not flicker as one types on.
         var still = files.Where(f => words.All(w => f.Name.Contains(w, StringComparison.CurrentCultureIgnoreCase)));
         var candidates = apps.Concat(tiles).Concat(shelf).Concat(still);
-        if (source == FileSource.Index && installing is null)
+        if (EverythingSetup.Offers(source, offerDismissed || store.Current.EverythingOfferDismissed) && installing is null)
         {
             candidates = candidates.Append(new SearchItem(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"));
         }
@@ -269,11 +360,13 @@ internal sealed class SearchHost
         (IReadOnlyList<FileHit>? Hits, bool Everything) found;
         try
         {
-            found = await Task.Run(() =>
+            found = await Task.Run<(IReadOnlyList<FileHit>?, bool)>(() =>
             {
                 var excluded = FileQuery.Excluded();
-                return everything && Tomte.Core.Search.Everything.Search(FileQuery.Everything(words, excluded), FileQuery.Fetch, cancel) is { } hits
-                    ? ((IReadOnlyList<FileHit>?)hits, true)
+                var hits = everything ? Tomte.Core.Search.Everything.Search(FileQuery.Everything(words, excluded), FileQuery.Fetch, cancel) : null;
+                // A search a newer keystroke replaced does not go on to the index.
+                return hits is not null ? (hits, true)
+                    : cancel.IsCancellationRequested ? (null, false)
                     : (WindowsIndex.Search(words, cancel), false);
             });
         }
@@ -303,12 +396,19 @@ internal sealed class SearchHost
     {
         switch (item.Kind)
         {
-            case SearchKind.Ask:
+            case SearchKind.Ask when !Dry:
                 Ask?.Invoke(item.Target);
                 return;
             case SearchKind.GetEverything:
                 view?.ShowCard(Confirm);
                 return;
+        }
+
+        if (Dry)
+        {
+            log?.Invoke($"search: would open {item.Kind} \"{item.Name}\"{(folder ? " in its folder" : "")}");
+            triggers.Hide();
+            return;
         }
 
         log?.Invoke($"search: opening {item.Kind}{(folder ? " in its folder" : "")}");
@@ -348,7 +448,7 @@ internal sealed class SearchHost
         {
             if (folder && item.Location is { } place)
             {
-                using var shown = Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{place}\"") { UseShellExecute = true });
+                using var shown = Process.Start(new ProcessStartInfo(Explorer, $"/select,\"{place}\"") { UseShellExecute = true });
                 return null;
             }
 
@@ -381,6 +481,23 @@ internal sealed class SearchHost
             case Install when installing is null:
                 installing = InstallAsync();
                 view?.ShowCard(Installing);
+                break;
+            case NotNow:
+                // For good: the row goes now, and the setting keeps it gone; Settings keeps its Get Everything button.
+                offerDismissed = true;
+                view?.ShowCard(null);
+                Refresh();
+                _ = Task.Run(() =>
+                {
+                    try
+                    {
+                        store.Save(store.Current with { EverythingOfferDismissed = true });
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                    {
+                        log?.Invoke($"search: \"Not now\" not saved: {e.Message}");
+                    }
+                });
                 break;
             case Download:
                 PInvoke.AllowSetForegroundWindow(unchecked((uint)-1));
