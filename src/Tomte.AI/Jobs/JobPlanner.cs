@@ -153,15 +153,17 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
             return (summary, PaletteSession.NotAllowed, true);
         }
 
-        // The card waits as long as the user likes: a one-off can pass meanwhile, and one with no run left is not stored.
-        if (JobStore.FirstRun(draft.Schedule, Now(), Zone) is null)
+        // A one-off taken within JobStore.JustPassed of its time can be gone by the yes; one with no run left is not
+        // stored. The same moment decides it and the stored first run.
+        var now = Now();
+        if (JobStore.FirstRun(draft.Schedule, now, Zone) is null)
         {
             return (summary, "That time passed before the user said yes, so nothing was scheduled. Ask the user for a new time.", true);
         }
 
         var (job, taskError, next) = await Task.Run(() =>
         {
-            var (made, problem) = Create(draft, provider);
+            var (made, problem) = Create(draft, provider, now);
             return (made, problem, store.NextDue());
         }, ct);
         Scheduled?.Invoke(next);
@@ -172,10 +174,13 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
             " Do not call schedule_job again for this request; tell the user in one short sentence.", false);
     }
 
-    /// <summary>Stores a confirmed job, then its Task Scheduler entry. Blocks: worker thread only. A refused entry keeps the job.</summary>
-    public (ScheduledJob Job, string? TaskError) Create(JobDraft draft, ProviderConfig provider)
+    /// <summary>
+    /// Stores a confirmed job with its first run from <paramref name="now"/> (the clock when not given), then its Task
+    /// Scheduler entry. Blocks: worker thread only. A refused entry keeps the job.
+    /// </summary>
+    public (ScheduledJob Job, string? TaskError) Create(JobDraft draft, ProviderConfig provider, DateTimeOffset? now = null)
     {
-        var job = store.Add(draft, provider, Now(), Zone);
+        var job = store.Add(draft, provider, now ?? Now(), Zone);
         try
         {
             tasks.Register(job);
