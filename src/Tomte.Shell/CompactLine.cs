@@ -61,7 +61,12 @@ internal sealed class CompactLine
             Update();
         };
         triggers.CompactChanged += Update;
-        Jobs.NextChanged += Update;
+        // A removed job can leave the soonest time as it was; read the name again after any change.
+        Jobs.NextChanged += () =>
+        {
+            jobFor = null;
+            Update();
+        };
     }
 
     private void Update()
