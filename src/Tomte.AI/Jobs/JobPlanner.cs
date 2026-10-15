@@ -128,7 +128,7 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
         }
 
         string tools = draft.Tools.Count == 0 ? "with no tools" : "using " + JobSchedule.JoinWords(draft.Tools);
-        return $"{draft.Schedule.Describe()}: {prompt} {tools}. Sends to {provider.Id} · {provider.DefaultModel} each time.";
+        return $"{draft.Schedule.Describe()}: {prompt} {tools}. Sends to {ProviderSetup.NameOf(provider.Id)} · {provider.DefaultModel} each time.";
     }
 
     /// <summary>
