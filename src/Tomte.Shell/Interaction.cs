@@ -101,6 +101,8 @@ internal sealed class InteractionHost
     private IInteractive? first;
     private TargetRef? standIn;
 
+    // Left came into that view from the tab after it: its last item takes focus, not its first.
+    private bool firstAtLast;
 
     // The view a text box with the keys belongs to (the palette's prompt), and how the box takes them back.
     private IInteractive? boxOwner;
@@ -169,7 +171,7 @@ internal sealed class InteractionHost
 
         if (ReferenceEquals(first, view))
         {
-            (first, standIn) = (null, null);
+            (first, standIn, firstAtLast) = (null, null, false);
         }
 
         if (views.Count == 0)
@@ -212,7 +214,7 @@ internal sealed class InteractionHost
         }
 
         // A key of the user's own: the first stop of a body still loading no longer takes focus from where it is.
-        (first, standIn) = (null, null);
+        (first, standIn, firstAtLast) = (null, null, false);
         bool onTab = focus is { } a && Find(a, out _, out var tab) && tab.Kind == TargetKind.Tab;
         if ((focus is { } f && Find(f, out var fv, out var ft) && fv.Interactive.KeyDown(ft.Id, key, repeat)) || Command(key))
         {
@@ -252,6 +254,9 @@ internal sealed class InteractionHost
                 break;
             case NavKey.Left or NavKey.Right:
                 Sideways(key == NavKey.Right ? 1 : -1, onTab);
+                break;
+            case NavKey.Up or NavKey.Down:
+                Vertical(key == NavKey.Down);
                 break;
             default:
                 Arrow((list, from) => Target.Arrow(list, from, NavKeys.Direction(key)));
@@ -649,12 +654,13 @@ internal sealed class InteractionHost
         // until then the current tab's label holds it in its place.
         if (first is not null && (!ring || (focus is not null && focus != standIn)))
         {
-            (first, standIn) = (null, null);
+            (first, standIn, firstAtLast) = (null, null, false);
         }
         else if (first is not null && views.Find(v => ReferenceEquals(v.Interactive, first)) is { } fv
-            && Target.Stop([fv.Interactive.Targets], null, 1, (_, g) => lastInGroup.GetValueOrDefault((fv.Interactive, g)))?.Index is int pick)
+            && (firstAtLast ? Target.Last(fv.Interactive.Targets)
+                : Target.Stop([fv.Interactive.Targets], null, 1, (_, g) => lastInGroup.GetValueOrDefault((fv.Interactive, g)))?.Index ?? -1) is int pick and >= 0)
         {
-            (first, standIn) = (null, null);
+            (first, standIn, firstAtLast) = (null, null, false);
             FocusOn(fv, fv.Interactive.Targets[pick]);
         }
         else if (first is not null && focus is null && TabLabel() is { } tab)
@@ -742,6 +748,8 @@ internal sealed class InteractionHost
         }
         else if (TabLabel() is not null)
         {
+            // Left past a body's first item lands on the previous tab's last one.
+            firstAtLast = step < 0 && !onTab;
             SwitchTab?.Invoke(step);
             FollowTab(onTab);
         }
@@ -749,6 +757,38 @@ internal sealed class InteractionHost
         {
             Step(1);
         }
+    }
+
+    // Up and Down inside a group. Down from the tab labels goes into the tab's first item; Up with nothing above it in
+    // the tab's body goes back up to the labels.
+    private void Vertical(bool down)
+    {
+        var lists = views.Select(v => v.Interactive.Targets).ToList();
+        if (focus is { } f && IndexOf(f, lists) is { } at && TabLabel() is { } label)
+        {
+            bool onLabels = ReferenceEquals(label.View, views[at.View]);
+            if (down && onLabels)
+            {
+                for (int v = 0; v < views.Count; v++)
+                {
+                    if (v != at.View && Target.Stop([lists[v]], null, 1, (_, _) => null) is { } stop)
+                    {
+                        FocusOn(views[v], lists[v][stop.Index]);
+                        return;
+                    }
+                }
+
+                return;
+            }
+
+            if (!down && !onLabels && Target.AtTop(lists[at.View], at.Index))
+            {
+                FocusOn(label.View, label.Tab);
+                return;
+            }
+        }
+
+        Arrow((list, from) => Target.Arrow(list, from, NavKeys.Direction(down ? NavKey.Down : NavKey.Up)));
     }
 
     private void FocusOn(View view, Target t)
@@ -896,7 +936,7 @@ internal sealed class InteractionHost
         }
 
         pointer.Reset();
-        (focus, focusAt, told, ring, tracking, tipBlocked, boxOwner, backToBox, first, standIn) = (null, null, null, false, false, false, null, null, null, null);
+        (focus, focusAt, told, ring, tracking, tipBlocked, boxOwner, backToBox, first, standIn, firstAtLast) = (null, null, null, false, false, false, null, null, null, null, false);
         lastInGroup.Clear();
         HideTip();
         overlay?.Release();

@@ -180,6 +180,29 @@ public class KeyboardNavigationTests
     }
 
     [Fact]
+    public void LeftIntoATabLandsOnItsLastItemAndUpFromTheTopGoesToTheLabels()
+    {
+        // The last row of a list, not Clear all; the last tile of a grid (the add tile); a view with no group: its last stop.
+        var clipboard = new ClipboardPanelLayout(Body).Targets(on: true, [7, 8, 9], 0, asking: false);
+        Assert.Equal("row:9", clipboard[Target.Last(clipboard)].Id);
+        var shortcuts = ShortcutGrid.Targets([new Shortcut(1, "Notes", @"C:\notes.exe", null), new Shortcut(2, "Mail", @"C:\mail.exe", null)], 0, Body);
+        Assert.Equal(ShortcutGrid.AddId, shortcuts[Target.Last(shortcuts)].Id);
+        Target[] media = [At("seek", 0, 0), At("previous", 0, 40), At("next", 40, 40), At("off", 80, 40, enabled: false)];
+        Assert.Equal(2, Target.Last(media));
+        Assert.Equal(-1, Target.Last([]));
+
+        // Up from the first row or the top row of a grid has nowhere to go; from lower down it has.
+        Assert.True(Target.AtTop(clipboard, 1));
+        Assert.False(Target.AtTop(clipboard, 3));
+        Assert.True(Target.AtTop(shortcuts, 0));
+        // In no group: the switch at the top, the seek bar over the buttons, but not a button under the seek bar.
+        Assert.True(Target.AtTop(clipboard, 0));
+        Assert.False(Target.AtTop(clipboard, clipboard.Count - 1));
+        Assert.True(Target.AtTop(media, 0));
+        Assert.False(Target.AtTop(media, 1));
+    }
+
+    [Fact]
     public void ThePointerNeverHitsABoxWhoseOwnPressesAreTheTextBoxes()
     {
         Target[] body = [new("note", new RectangleF(0, 0, 100, 100), 8, TargetKind.Box), At("under", 10, 10)];

@@ -353,6 +353,33 @@ public readonly record struct Target(string Id, RectangleF Bounds, float Corner,
         return (view, direction < 0 && Own(list, pick, 1) is int own and >= 0 ? own : pick);
     }
 
+    /// <summary>
+    /// Where focus lands coming into a view backwards (Left past the first item of the tab after it): the last item of
+    /// its first group (the last row, the last tile), else its last stop. -1 when nothing is enabled.
+    /// </summary>
+    public static int Last(IReadOnlyList<Target> targets)
+    {
+        int group = Index(targets, t => t.Group != 0 && t.Enabled) is int i and >= 0 ? targets[i].Group : 0;
+        return group != 0 ? Edge(targets, First(targets, group), last: true) : Next(targets, -1, -1);
+    }
+
+    /// <summary>
+    /// Up from <paramref name="from"/> has nowhere to go in its view: none of its group lies above it (the first row of a
+    /// list or a grid), or, in no group, no enabled target of the view lies wholly above it. The host goes up to the
+    /// tab labels then.
+    /// </summary>
+    public static bool AtTop(IReadOnlyList<Target> targets, int from)
+    {
+        if (from < 0 || from >= targets.Count)
+        {
+            return false;
+        }
+
+        var at = targets[from];
+        return at.Group != 0 ? Arrow(targets, from, new Vector2(0, -1)) < 0
+            : Index(targets, t => t.Enabled && t.Bounds.Bottom <= at.Bounds.Top && t.Id != at.Id) < 0;
+    }
+
     private static int Index(IReadOnlyList<Target> targets, Func<Target, bool> match)
     {
         for (int i = 0; i < targets.Count; i++)
