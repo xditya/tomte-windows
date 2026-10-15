@@ -429,7 +429,7 @@ public sealed partial class SettingsWindow : Window
                     Tell(null);
                     break;
                 case HotkeyPress.Unusable:
-                    Tell("Tomte cannot use that key. Use a letter, a digit, F1 to F24 or Space.");
+                    Tell("Tomte cannot use that key. Use a letter, a digit on the top row, F1 to F24 or Space.");
                     break;
             }
         };
