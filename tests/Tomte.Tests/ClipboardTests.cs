@@ -636,17 +636,9 @@ public sealed class ClipboardTests : IDisposable
         var listeners = new List<FakeListener>();
         var watch = Watch(listeners);
         watch.Apply(true);
-        var at = DateTimeOffset.Now;
-        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), png: false), at);
-        // The same copy announced again a moment later, as OLE does when the copying app flushes: freed, never decoded.
-        var again = new CopiedImage(Dib(5, 3, 24, Colour), png: false);
-        listeners[0].Copy(again, at.AddMilliseconds(5));
-        Assert.Throws<ObjectDisposedException>(() => again.ToArray());
+        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), png: false));
         await watch.RowsAsync(Now);
-        Assert.Single(log, line => line.StartsWith("clipboard: store an image took", StringComparison.Ordinal));
-
-        // Copied again later, it is decoded again and its row moves up.
-        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), png: false), at.AddSeconds(5));
+        listeners[0].Copy(new CopiedImage(Dib(5, 3, 24, Colour), png: false));
         Assert.Single(await watch.RowsAsync(Now));
         Assert.Equal(2, log.Count(line => line.StartsWith("clipboard: store an image took", StringComparison.Ordinal)));
     }
@@ -781,7 +773,7 @@ public sealed class ClipboardTests : IDisposable
 
         public void Copy(string text) => Captured!(new(text, ""), DateTimeOffset.Now);
 
-        public void Copy(CopiedImage image, DateTimeOffset? at = null) => Captured!(new(null, "", image), at ?? DateTimeOffset.Now);
+        public void Copy(CopiedImage image) => Captured!(new(null, "", image), DateTimeOffset.Now);
 
         public void Put(string text) => PutTexts.Add(text);
 

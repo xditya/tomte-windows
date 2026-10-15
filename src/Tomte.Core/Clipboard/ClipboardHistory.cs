@@ -208,7 +208,6 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
     private int generation;
     private Task queue = Task.CompletedTask;
     private (CopiedImage Image, DateTimeOffset At)? pendingImage;
-    private (byte[]? Sha, DateTimeOffset At) lastImage;
 
     /// <summary>The history or the switch changed. Raised on a worker thread or the caller's.</summary>
     public event Action? Changed;
@@ -353,8 +352,6 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
     // On the listener's thread, after the read. Only the listener started last may add, and only while it is on.
     private void Captured(int from, ClipboardRead read, DateTimeOffset at)
     {
-        // Hashed before the lock: tens of milliseconds for the largest copy.
-        byte[]? sha = read.Image?.Read(SHA256.HashData);
         lock (gate)
         {
             if (from != generation || listener is null)
@@ -365,17 +362,6 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
 
             if (read.Image is { } image)
             {
-                // An app that copies through OLE announces one copy twice, when it is set and again when it is flushed.
-                // The same bytes again within a second are that second announcement, dropped before any decoding.
-                // a time window, not the copy's identity; the same image copied again within a second keeps
-                // its first row's time.
-                if (at - lastImage.At < TimeSpan.FromSeconds(1) && sha.AsSpan().SequenceEqual(lastImage.Sha))
-                {
-                    image.Dispose();
-                    return;
-                }
-
-                lastImage = (sha, at);
                 // One slot: copies that land while the worker is busy replace each other, so only the latest is
                 // decoded and at most two copies are held, the one being decoded and the one waiting.
                 bool waiting = pendingImage is not null;
