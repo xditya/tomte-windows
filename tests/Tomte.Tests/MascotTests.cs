@@ -72,6 +72,20 @@ public class MascotTests
     }
 
     [Fact]
+    public void ThePinnedMarkSitsOnTheTomtesLowerRightWithItsPinInsideTheDisc()
+    {
+        // The pin's parts are on the disc, which sits in its ring over the art's lower right corner.
+        Assert.All(MascotArt.Pin.SelectMany(part => part), s =>
+            Assert.True(System.Numerics.Vector2.Distance(s.End, MascotArt.PinDisc.Center) < MascotArt.PinDisc.Radius, $"{s.End} off the disc"));
+        Assert.Equal(MascotArt.PinRing.Center, MascotArt.PinDisc.Center);
+        Assert.True(MascotArt.PinRing.Radius > MascotArt.PinDisc.Radius);
+        Assert.True(MascotArt.PinRing.Center.X > MascotArt.ViewBox / 2 && MascotArt.PinRing.Center.Y > MascotArt.ViewBox / 2);
+        // Never more than a few DIP past the tomte's box, short of the first tab label after it.
+        float past = (MascotArt.PinRing.Center.X + MascotArt.PinRing.Radius - MascotArt.ViewBox) * MascotArt.SizeDips / MascotArt.ViewBox;
+        Assert.True(past < TabStrip.AfterMascot, $"{past} DIP past the box");
+    }
+
+    [Fact]
     public void PivotsSitWhereTheContractSays()
     {
         Assert.Equal(new Vector2(32, 61), MascotArt.RootPivot);

@@ -257,6 +257,7 @@ public enum NavKey
     ShowInFolder,
     Escape,
     Back,
+    Pin,
     Ask,
     History,
     AlwaysAllow,
@@ -278,7 +279,8 @@ public static class NavKeys
 
     /// <summary>
     /// Tab and Shift+Tab move between stops, the arrows inside a group, Home and End to its ends, Enter and Space click,
-    /// Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs and Ctrl+1 to Ctrl+6 pick one, Ctrl+K asks. On the focused item
+    /// Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs and Ctrl+1 to Ctrl+6 pick one, Ctrl+K asks, Ctrl+P pins and unpins
+    /// the island. On the focused item
     /// Delete removes, Ctrl+C copies and Ctrl+Shift+E shows it in its folder. Esc steps back. The AI box: Alt+Left is the
     /// back arrow, Ctrl+H opens History, Alt+A always allows, Alt+W, Alt+S, Alt+H and Alt+N toggle the chips, Page Up and
     /// Page Down scroll the answer. Ctrl with Alt is AltGr on many layouts, which types, so it is nothing here.
@@ -300,6 +302,7 @@ public static class NavKeys
             >= '1' and <= '6' when ctrl && !shift => NavKey.Tab1 + (virtualKey - '1'),
             'K' when ctrl && !shift => NavKey.Ask,
             'H' when ctrl && !shift => NavKey.History,
+            'P' when ctrl && !shift => NavKey.Pin,
             'C' when ctrl && !shift => NavKey.Copy,
             'E' when ctrl && shift => NavKey.ShowInFolder,
             _ when ctrl => NavKey.None,

@@ -1211,6 +1211,30 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: the island does not retract under it.</summary>
     internal void Pressing(bool on) => Hold(IslandActivity.Pressing, on);
 
+    /// <summary>
+    /// Ctrl+P in Panels or the AI box: pinned, the island stays when the pointer leaves or the keys go elsewhere, with a
+    /// mark on the tomte, until Ctrl+P again, Esc or the hotkey; unpinned, the usual retraction applies again.
+    /// </summary>
+    internal void TogglePin()
+    {
+        if (machine.State is IslandState.Panels or IslandState.Palette)
+        {
+            bool on = !activity.HasFlag(IslandActivity.Pinned);
+            Hold(IslandActivity.Pinned, on);
+            island.Pinned = on;
+            log?.Invoke(on ? "island: pinned" : "island: unpinned");
+        }
+    }
+
+    /// <summary>The AI box lost the keys while nothing was being sent: it retracts, unless the island is pinned.</summary>
+    internal void FocusLost()
+    {
+        if (RetractionRules.RetractsOnFocusLoss(activity))
+        {
+            Hide();
+        }
+    }
+
     private void Hold(IslandActivity what, bool on)
     {
         activity = on ? activity | what : activity & ~what;
@@ -1254,6 +1278,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         bool wasPeek = activity.HasFlag(IslandActivity.Peek);
         activity = IslandActivity.None;
+        island.Pinned = false;
         if (eventShowing && showing.Any(IsTimerDone))
         {
             // The finished timer keeps its full ring until its done pill has been shown. A hide of anything else,

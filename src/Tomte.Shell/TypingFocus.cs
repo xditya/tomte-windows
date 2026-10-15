@@ -65,6 +65,9 @@ internal sealed class TypingFocus
     /// <summary>A box has the keys, or no longer: the island must not retract under someone typing.</summary>
     public Action<bool>? Typing { get; set; }
 
+    /// <summary>Ctrl+P while the island has the keys: it pins or unpins.</summary>
+    public Action? Pin { get; set; }
+
     /// <summary>The user moved the foreground to another window while a box had the keys.</summary>
     public event Action? Lost;
 
@@ -299,6 +302,18 @@ internal sealed class TypingFocus
         var nav = pressed ? NavKeys.Of(key, shift, ctrl, Down(VIRTUAL_KEY.VK_MENU))
             : message == PInvoke.WM_CHAR && focused is null ? NavKeys.Of((char)key) : NavKey.None;
         taken &= !pressed;
+        // Ctrl+P pins and unpins the island from a box too; a held key toggles once.
+        if (nav == NavKey.Pin && Pin is not null)
+        {
+            if (!repeat)
+            {
+                Pin();
+            }
+
+            taken = true;
+            return new LRESULT(0);
+        }
+
         if (focused is { } editor)
         {
             // Tab out of the prompt moves to its view's targets, when there are any, and Ctrl+Tab switches the panel tab;

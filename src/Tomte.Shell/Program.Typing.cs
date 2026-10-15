@@ -36,7 +36,7 @@ internal static partial class Program
     private static TypingFocus StartTyping(IslandWindow island, TriggerController triggers, SettingsStore store, TextRenderer renderer, Action<string>? log)
     {
         text = renderer;
-        focus = new TypingFocus(island, triggers.Machine, renderer, log) { Escape = triggers.Hide, Typing = triggers.Typing };
+        focus = new TypingFocus(island, triggers.Machine, renderer, log) { Escape = triggers.Hide, Typing = triggers.Typing, Pin = triggers.TogglePin };
         triggers.PaletteOpened = async () =>
         {
             try
@@ -196,9 +196,12 @@ internal static partial class Program
         hotkeyPalette.Type(session);
     }
 
-    /// <summary>The typed palette's host, whose footer button opens the History tab on the next turn, after the click.</summary>
+    /// <summary>
+    /// The typed palette's host, whose footer button opens the History tab on the next turn, after the click. It goes
+    /// when it loses the keys, unless the island is pinned.
+    /// </summary>
     private static PaletteHost NewPaletteHost(IslandWindow island, TriggerController triggers, Action<string>? log) =>
-        new(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.Hide)
+        new(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.FocusLost)
         {
             OpenHistory = () => island.Queue.TryEnqueue(() => triggers.OpenPanel(PanelId.History)),
         };

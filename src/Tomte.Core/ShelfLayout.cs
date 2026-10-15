@@ -24,7 +24,7 @@ public static class ShelfLayout
     public const float DropLeft = 8 + 26 + 10, DropRight = 14, DropPadY = 12;
 
     public const string Title = "Shelf";
-    public const string Hint = "Drag out to any app";
+    public const string Hint = "Drag out to any app, Ctrl+P pins";
     public const string Empty = "Drop files, folders, text, images or links here.\nDragging toward the top edge opens this surface.";
     public const string DropHere = "Drop to shelf";
     public const string ConfirmRemove = "Remove? Click again";

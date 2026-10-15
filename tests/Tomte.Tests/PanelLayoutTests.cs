@@ -291,6 +291,15 @@ public sealed class PanelLayoutTests
             Assert.False(laid.Trimmed, line.Text);
         }
 
+        // The Shortcuts head line the same way: what a tile can be, then its keys at the right end.
+        var shortcuts = Tomte.Core.Shortcuts.ShortcutGrid.HeadText(new Vector2(560, 300 - PanelSpace.TabStripHeight));
+        Assert.True(shortcuts[1].Slot.Right <= shortcuts[2].Slot.Left);
+        foreach (var line in shortcuts.Skip(1))
+        {
+            using var laid = TextLayout.Of(new TextRun(line.Text, line.Style, line.Slot.Width));
+            Assert.False(laid.Trimmed, line.Text);
+        }
+
         // The drop target's glyph and word are centred together, and the word is whole.
         var target = ShelfLayout.DropTarget(IslandGeometry.ShelfDrop.Width, IslandGeometry.ShelfDrop.Depth);
         var (x, label) = ShelfLayout.DropLabel(target.Size);

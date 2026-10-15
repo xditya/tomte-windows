@@ -40,6 +40,26 @@ public class RetractionRulesTests
         Assert.Equal(expected, RetractionRules.ShouldRetract(state, activity));
     }
 
+    // Ctrl+P: pinned, Panels and the AI box stay when the pointer leaves and when the keys go elsewhere, also once the
+    // typing or the press that held them has ended; unpinned, both retract again.
+    [Fact]
+    public void APinnedIslandStaysWhenThePointerLeavesOrTheKeysGo()
+    {
+        foreach (var state in new[] { IslandState.Panels, IslandState.Palette })
+        {
+            Assert.False(RetractionRules.ShouldRetract(state, IslandActivity.Pinned));
+            Assert.False(RetractionRules.ShouldRetract(state, IslandActivity.Pinned & ~IslandActivity.Typing));
+            Assert.False(RetractionRules.ShouldRetract(state, RetractionRules.Released(IslandActivity.Pinned | IslandActivity.Pressing, buttonDown: false)));
+            Assert.True(RetractionRules.ShouldRetract(state, IslandActivity.Pinned ^ IslandActivity.Pinned));
+        }
+
+        Assert.False(RetractionRules.RetractsOnFocusLoss(IslandActivity.Pinned));
+        Assert.False(RetractionRules.RetractsOnFocusLoss(IslandActivity.Pinned | IslandActivity.Typing));
+        Assert.True(RetractionRules.RetractsOnFocusLoss(IslandActivity.None));
+        // Opening the AI box from a pinned panel keeps the pin.
+        Assert.True(RetractionRules.TakenOver(IslandActivity.Pinned).HasFlag(IslandActivity.Pinned));
+    }
+
     [Fact]
     public void APressLetGoOutsideTheIslandHoldsNothingWhenTheDelayIsUp()
     {

@@ -79,6 +79,20 @@ public static class MascotArt
     public static readonly OutlineSegment[] Brim = [M(9, 31), L(55, 31), C(56.2f, 33, 56.2f, 35, 55, 37), L(9, 37), C(7.8f, 35, 7.8f, 33, 9, 31)];
 
     /// <summary>
+    /// The pinned mark, a badge at the tomte's lower right while the island is pinned: an accent disc in a ring of the
+    /// island's black, with a pin on it in black. About 9 DIP across.
+    /// </summary>
+    public static readonly (Vector2 Center, float Radius) PinRing = (new(54, 54), 13), PinDisc = (new(54, 54), 11);
+
+    public static readonly OutlineSegment[][] Pin =
+    [
+        [M(50, 46.5f), L(58, 46.5f), L(58, 49), L(50, 49)],
+        [M(51.5f, 49), L(56.5f, 49), L(57.5f, 55), L(50.5f, 55)],
+        [M(48.5f, 55), L(59.5f, 55), L(59.5f, 57), L(48.5f, 57)],
+        [M(53.4f, 57), L(54.6f, 57), L(54.6f, 62.5f), L(53.4f, 62.5f)],
+    ];
+
+    /// <summary>
     /// The tomte's box in island space (x from the shape's centre line, y from its top) for the shape it sits in: at the
     /// left edge, with the art centred down the top row, which is the shape's depth up to the tab strip's height. The
     /// peek pill is the box with its inset on both sides, so there the tomte is centred both ways.

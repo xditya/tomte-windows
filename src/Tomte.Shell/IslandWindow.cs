@@ -307,6 +307,12 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>Whether an island point is on the tomte's box at the shape's left edge, while the tomte is on.</summary>
     public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(anchor ?? Current).Contains(at.X, at.Y);
 
+    /// <summary>The island is pinned (Ctrl+P): a small mark at the tomte's lower right says so.</summary>
+    public bool Pinned
+    {
+        set => mascotVisual.Pinned = value;
+    }
+
     /// <summary>The mascot's centre in screen pixels, for the Shelf-drop lean.</summary>
     public double MascotScreenX => windowX + root.Offset.X + mascotX + MascotVisual.SizeDips / 2 * scale;
 

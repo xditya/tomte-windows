@@ -102,6 +102,13 @@ public static class RetractionRules
         state is IslandState.Panels or IslandState.Palette && (!activity.HasFlag(IslandActivity.Result) || pointerInside);
 
     /// <summary>
+    /// The palette retracts when it loses the keys while nothing is being sent, unless the island is pinned (Ctrl+P),
+    /// which only Esc, the hotkey that opened it or Ctrl+P again ends. A pin also keeps the island when the pointer leaves
+    /// (<see cref="ShouldRetract"/>), not over a fullscreen app or the lock screen.
+    /// </summary>
+    public static bool RetractsOnFocusLoss(IslandActivity activity) => !activity.HasFlag(IslandActivity.Pinned);
+
+    /// <summary>
     /// Esc steps back one level at a time: a question on a card is cancelled, then an opened History conversation closes
     /// to its list, then the AI box opened from a tab goes back to that tab. With nothing to step back to, the island
     /// retracts.
