@@ -280,6 +280,9 @@ internal sealed class InteractionHost
     /// <summary>One of the targets has keyboard focus.</summary>
     public bool HasFocus => focus is not null;
 
+    /// <summary>This target of <paramref name="view"/> has the focus, set by a key or a press, not just the pointer over it.</summary>
+    public bool IsFocus(IInteractive view, string id) => focus is { } f && ReferenceEquals(f.View, view) && f.Id == id;
+
     /// <summary>The last input on the targets was a key, not the pointer, so focus shows.</summary>
     public bool UsingKeys => ring;
 
