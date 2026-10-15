@@ -55,7 +55,7 @@ internal sealed class Rambler(
     private PaletteHost? palette;
     private TaskCompletionSource? replyHold;
     private readonly ToolQuestion question = new();
-    private nint spokenInto;
+    private nint spokenInto, spokenField;
     private VoiceCard? card;
     private TaskCompletionSource<VoiceChoice?>? choosing;
 
@@ -77,8 +77,8 @@ internal sealed class Rambler(
     /// <summary>The card shows the words and waits for a choice.</summary>
     public event Action? Choosing;
 
-    /// <summary>What Insert types with: the window the words were spoken into, and the words. Null when typed, else why not.</summary>
-    public Func<nint, string, string?> Insert { get; init; } = DesktopEffects.TypeInto;
+    /// <summary>What Insert types with: the window the words were spoken into, the field in it that had the keys, and the words. Null when typed, else why not.</summary>
+    public Func<nint, nint, string, string?> Insert { get; init; } = DesktopEffects.TypeInto;
 
     /// <summary>
     /// A key on the card: Enter (null) picks the highlighted choice, Alt+I, Alt+A and Alt+N their own. Enter does nothing
@@ -103,7 +103,7 @@ internal sealed class Rambler(
         if (choosing is null || card is not { Refused: false } shown)
             return;
         nint front = WindowContext.Foreground();
-        if (front == (nint)island.Hwnd || VoiceChoices.Refusal(spokenInto, open: true, front, elevated: false) is not { } why)
+        if (front == (nint)island.Hwnd || VoiceChoices.Refusal(spokenInto, open: true, front, elevated: false, sameField: true) is not { } why)
             return;
         log($"{DateTime.Now:HH:mm:ss.fff} voice: {why}");
         shown.Refuse(why);
@@ -140,6 +140,7 @@ internal sealed class Rambler(
         clock.Restart();
         // Where Insert types: the window in front as the hold starts, which the island never takes the keys from.
         spokenInto = WindowContext.Foreground() is var front && front != (nint)island.Hwnd ? front : 0;
+        spokenField = DesktopEffects.FocusIn(spokenInto);
         // The capture thread posts each packet's level; the bars change when a packet arrives, with no timer.
         capture = MicCapture.Start(rms => island.Queue.TryEnqueue(() => Level(rms)));
         ShowView();
@@ -238,7 +239,7 @@ internal sealed class Rambler(
                     break;
                 }
 
-                (string? refused, session) = await VoiceCommand.PickedAsync(picked, transcript, words => Insert(spokenInto, words), KeepAsync, StartAsync, s => (palette = new PaletteHost(island, machine, log, text)).RunAsync(s, question));
+                (string? refused, session) = await VoiceCommand.PickedAsync(picked, transcript, words => Insert(spokenInto, spokenField, words), KeepAsync, StartAsync, s => (palette = new PaletteHost(island, machine, log, text)).RunAsync(s, question));
                 if (refused is null)
                     break;
                 log($"{DateTime.Now:HH:mm:ss.fff} voice: not typed: {refused}");

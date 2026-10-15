@@ -6,6 +6,7 @@ using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.Threading;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
+using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.AI.Palette;
 
@@ -21,10 +22,11 @@ public static unsafe class DesktopEffects
     /// <summary>
     /// Types <paramref name="text"/> at the cursor of <paramref name="window"/>, the window the words were spoken into, as
     /// Unicode key events, so nothing passes through the clipboard or its history. The island never takes the keys, so the
-    /// field that had them when the hold started still has them. Null when typed, else why not (see
-    /// <see cref="VoiceChoices.Refusal"/>), for the island to say.
+    /// field that had them when the hold started, <paramref name="field"/> (see <see cref="FocusIn"/>), should still have them;
+    /// if another field has, nothing is typed. Null when typed, else why not (see <see cref="VoiceChoices.Refusal"/>), for
+    /// the island to say.
     /// </summary>
-    public static string? TypeInto(nint window, string text)
+    public static string? TypeInto(nint window, nint field, string text)
     {
         var hwnd = new HWND(window);
         bool open = window != 0 && PInvoke.IsWindow(hwnd);
@@ -36,7 +38,7 @@ public static unsafe class DesktopEffects
             elevated = process.IsInvalid ? null : UiaClient.Elevated(process);
         }
 
-        if (VoiceChoices.Refusal(window, open, (nint)PInvoke.GetForegroundWindow().Value, elevated) is { } refused)
+        if (VoiceChoices.Refusal(window, open, (nint)PInvoke.GetForegroundWindow().Value, elevated, sameField: FocusIn(window) == field) is { } refused)
             return refused;
 
         var keys = Keys(text, Held(VIRTUAL_KEY.VK_LMENU), Held(VIRTUAL_KEY.VK_RMENU));
@@ -63,6 +65,17 @@ public static unsafe class DesktopEffects
         }
 
         return keys;
+    }
+
+    /// <summary>
+    /// The control that has the keys in <paramref name="window"/>'s thread, or 0 when none has or Windows does not say. Apps
+    /// that draw their own fields in one window (browsers, Electron) answer the same window for every field.
+    /// </summary>
+    public static nint FocusIn(nint window)
+    {
+        uint thread = window == 0 ? 0 : PInvoke.GetWindowThreadProcessId(new HWND(window), null);
+        var info = new GUITHREADINFO { cbSize = (uint)sizeof(GUITHREADINFO) };
+        return thread != 0 && PInvoke.GetGUIThreadInfo(thread, ref info) ? (nint)info.hwndFocus.Value : 0;
     }
 
     private static bool Held(VIRTUAL_KEY vk) => (PInvoke.GetAsyncKeyState((int)vk) & 0x8000) != 0;

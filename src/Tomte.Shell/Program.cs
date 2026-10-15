@@ -777,7 +777,7 @@ internal static partial class Program
             : Configured(store, null) is not null ? null
             : store.Current.Provider is { DefaultModel.Length: > 0 } ? VoiceChoices.ProviderUnusable
             : VoiceChoices.NoProvider;
-        string? NotTyped(nint window, string words)
+        string? NotTyped(nint window, nint field, string words)
         {
             log.WriteLine($"rambler: --dry, not typed: \"{words}\"");
             return null;

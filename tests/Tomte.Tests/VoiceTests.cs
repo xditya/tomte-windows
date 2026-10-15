@@ -587,16 +587,17 @@ public sealed class VoiceTests : IDisposable
     public void InsertTypesOnlyIntoTheWindowSpokenIntoWhileItIsInFrontAndNotAdministrator()
     {
         const nint Spoken = 0x1234;
-        Assert.Null(VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: false));
-        Assert.Equal("The window you spoke into is no longer in front.", VoiceChoices.Refusal(Spoken, open: true, inFront: 0x5678, elevated: false));
-        Assert.Equal("The window you spoke into has closed.", VoiceChoices.Refusal(Spoken, open: false, inFront: Spoken, elevated: false));
-        Assert.Equal("No app had the keys when you spoke.", VoiceChoices.Refusal(0, open: false, inFront: 0, elevated: null));
-        Assert.Equal("That app runs as administrator, so Windows does not let Tomte type into it.", VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: true));
-        Assert.Equal("Tomte could not check that app, so it does not type into it.", VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: null));
+        Assert.Null(VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: false, sameField: true));
+        Assert.Equal("The window you spoke into is no longer in front.", VoiceChoices.Refusal(Spoken, open: true, inFront: 0x5678, elevated: false, sameField: true));
+        Assert.Equal("The window you spoke into has closed.", VoiceChoices.Refusal(Spoken, open: false, inFront: Spoken, elevated: false, sameField: true));
+        Assert.Equal("No app had the keys when you spoke.", VoiceChoices.Refusal(0, open: false, inFront: 0, elevated: null, sameField: true));
+        Assert.Equal("That app runs as administrator, so Windows does not let Tomte type into it.", VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: true, sameField: true));
+        Assert.Equal("Tomte could not check that app, so it does not type into it.", VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: null, sameField: true));
+        Assert.Equal("The cursor moved to another field in that window.", VoiceChoices.Refusal(Spoken, open: true, inFront: Spoken, elevated: false, sameField: false));
 
         // The real path refuses before any key goes out: no window, and a handle that is no window.
-        Assert.Equal("No app had the keys when you spoke.", DesktopEffects.TypeInto(0, "buy milk"));
-        Assert.Equal("The window you spoke into has closed.", DesktopEffects.TypeInto(unchecked((nint)0x7FFF_FFF0), "buy milk"));
+        Assert.Equal("No app had the keys when you spoke.", DesktopEffects.TypeInto(0, 0, "buy milk"));
+        Assert.Equal("The window you spoke into has closed.", DesktopEffects.TypeInto(unchecked((nint)0x7FFF_FFF0), 0, "buy milk"));
     }
 
     [Fact]
@@ -604,7 +605,7 @@ public sealed class VoiceTests : IDisposable
     {
         const uint Up = 0x2, Unicode = 0x4;
         const ushort LeftAlt = 0xA4;
-        var keys = DesktopEffects.Keys("a\n😀", leftAlt: true, rightAlt: false)
+        var keys = DesktopEffects.Keys("a\n" + char.ConvertFromUtf32(0x1F600), leftAlt: true, rightAlt: false)
             .Select(k => ((ushort)k.Anonymous.ki.wVk, (int)k.Anonymous.ki.wScan, (uint)k.Anonymous.ki.dwFlags));
 
         (ushort, int, uint)[] expected =

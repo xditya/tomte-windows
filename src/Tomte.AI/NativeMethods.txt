@@ -22,6 +22,7 @@ DeleteEnhMetaFile
 SendInput
 GetAsyncKeyState
 GetForegroundWindow
+GetGUIThreadInfo
 GetWindowThreadProcessId
 GetWindowText
 CreateWindowEx

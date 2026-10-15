@@ -40,13 +40,15 @@ public static class VoiceChoices
     /// Why Insert must not type, or null when it may: only into <paramref name="spokenInto"/>, the window that had the
     /// keys when the hold started, while it is still open and still in front, and not into an app that runs as
     /// administrator (<paramref name="elevated"/> true) or one that could not be checked (null), since Windows keeps a
-    /// normal app's keys out of those.
+    /// normal app's keys out of those; and not once another field in that window has the keys (<paramref name="sameField"/>
+    /// false), where the words would land somewhere the user did not speak into.
     /// </summary>
-    public static string? Refusal(nint spokenInto, bool open, nint inFront, bool? elevated) =>
+    public static string? Refusal(nint spokenInto, bool open, nint inFront, bool? elevated, bool sameField) =>
         spokenInto == 0 ? "No app had the keys when you spoke."
         : !open ? "The window you spoke into has closed."
         : inFront != spokenInto ? "The window you spoke into is no longer in front."
         : elevated is null ? "Tomte could not check that app, so it does not type into it."
         : elevated.Value ? "That app runs as administrator, so Windows does not let Tomte type into it."
+        : !sameField ? "The cursor moved to another field in that window."
         : null;
 }
