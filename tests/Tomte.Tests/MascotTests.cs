@@ -157,7 +157,7 @@ public class MascotTests
 
         var peek = Assert.Single(CompactLayout.Targets(IslandGeometry.Peek, mascot: true));
         Assert.Equal(CompactLayout.TomteId, peek.Id);
-        Assert.Equal("Ask Tomte · rest to open the panels", peek.Tip);
+        Assert.Null(peek.Tip);
         Assert.Equal(new System.Drawing.RectangleF(-18.5f, 0, 37, 38), peek.Bounds);
         Assert.Equal(CompactLayout.PillId, Assert.Single(CompactLayout.Targets(IslandGeometry.Compact, mascot: false)).Id);
     }
