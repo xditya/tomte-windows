@@ -225,10 +225,12 @@ internal sealed class Rambler(
             while (true)
             {
                 var choice = await ChooseAsync();
-                log($"{DateTime.Now:HH:mm:ss.fff} voice: {(choice is null ? "thrown away" : machine.State == IslandState.Compact ? "picked " + choice : "taken down, kept as a note")}");
+                // A takedown picks Note; a pick may also land in the same turn as one.
+                bool takenDown = machine.State != IslandState.Compact;
+                log($"{DateTime.Now:HH:mm:ss.fff} voice: {(choice is null ? "thrown away" : "picked " + choice)}{(takenDown ? ", the card was taken down" : "")}");
                 if (choice is not { } picked)
                     break;
-                if (machine.State != IslandState.Compact)
+                if (takenDown)
                     RemoveCard();
                 if (picked == VoiceChoice.Insert && shown.Refused)
                 {
@@ -240,6 +242,13 @@ internal sealed class Rambler(
                 if (refused is null)
                     break;
                 log($"{DateTime.Now:HH:mm:ss.fff} voice: not typed: {refused}");
+                if (card is null)
+                {
+                    // The card was taken down with the pick, so there is no Copy to offer: the words go to the note.
+                    await KeepAsync(transcript);
+                    break;
+                }
+
                 shown.Refuse(refused);
             }
 
