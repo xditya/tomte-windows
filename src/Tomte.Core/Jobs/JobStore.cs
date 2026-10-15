@@ -39,6 +39,12 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
     /// <summary>A one-off later than this is not run but recorded as missed.</summary>
     public static readonly TimeSpan OneOffGrace = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// A one-off whose time passed less than this ago can still be made, and then runs at once: "in one minute" often
+    /// comes due while the user reads the confirmation.
+    /// </summary>
+    public static readonly TimeSpan JustPassed = TimeSpan.FromMinutes(5);
+
     /// <summary>The text of a run that was claimed and had no result <see cref="RunLimit"/> later.</summary>
     public const string DidNotFinish = "Did not finish";
 
@@ -101,10 +107,14 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         }
     }
 
-    /// <summary>Stores a confirmed job with its first run worked out from <paramref name="now"/>.</summary>
+    /// <summary>A new job's first run: the next one after <paramref name="now"/>, else a one-off's time within <see cref="JustPassed"/>.</summary>
+    public static DateTimeOffset? FirstRun(JobSchedule schedule, DateTimeOffset now, TimeZoneInfo zone) =>
+        schedule.Next(now, zone) ?? schedule.Next(now - JustPassed, zone);
+
+    /// <summary>Stores a confirmed job with its first run worked out from <paramref name="now"/> (see <see cref="FirstRun"/>).</summary>
     public ScheduledJob Add(JobDraft draft, ProviderConfig provider, DateTimeOffset now, TimeZoneInfo zone)
     {
-        var next = draft.Schedule.Next(now, zone);
+        var next = FirstRun(draft.Schedule, now, zone);
         using var connection = db.Open(Feature, Schema);
         using var command = connection.CreateCommand();
         command.CommandText = """

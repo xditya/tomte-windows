@@ -66,7 +66,8 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
 
     /// <summary>
     /// The model's call as a job, or a message saying what is wrong with it. Nothing is stored. A destructive tool or a
-    /// one-off whose time has passed is refused here, before the user is asked.
+    /// one-off whose time has passed (by more than <see cref="JobStore.JustPassed"/>) is refused here, before the user is
+    /// asked.
     /// </summary>
     public (JobDraft? Draft, string? Error) Read(JsonElement input)
     {
@@ -106,12 +107,12 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
             return (null, error);
         }
 
-        if (schedule!.Next(Now(), Zone) is null)
+        if (JobStore.FirstRun(schedule!, Now(), Zone) is null)
         {
             return (null, "That time has already passed. Ask the user for a time in the future.");
         }
 
-        return (new JobDraft(name, prompt, schedule, tools), null);
+        return (new JobDraft(name, prompt, schedule!, tools), null);
     }
 
     /// <summary>
@@ -147,6 +148,12 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
         if (await confirm(new ToolRequest(Tool, summary, ActionTier.ExternalEffect, OfferAlwaysAllow: false), ct) == PermissionAnswer.Deny)
         {
             return (summary, PaletteSession.NotAllowed, true);
+        }
+
+        // The card waits as long as the user likes: a one-off can pass meanwhile, and one with no run left is not stored.
+        if (JobStore.FirstRun(draft.Schedule, Now(), Zone) is null)
+        {
+            return (summary, "That time passed before the user said yes, so nothing was scheduled. Ask the user for a new time.", true);
         }
 
         var (job, taskError, next) = await Task.Run(() =>

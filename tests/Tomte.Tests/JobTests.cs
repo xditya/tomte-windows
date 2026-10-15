@@ -264,6 +264,10 @@ public sealed class JobTests : IDisposable
         Assert.Equal("name must be a short name of 1 to 60 characters.", Error("""{"name":"","prompt":"p","time":"09:00","days":["mon"],"tools":[]}"""));
         Assert.Equal("prompt must say what the job does, in 1 to 2000 characters.", Error("""{"name":"n","time":"09:00","days":["mon"],"tools":[]}"""));
         Assert.Null(Error("""{"name":"n","prompt":"p","time":"09:00","days":["mon"],"tools":[]}"""));
+        // It is 13:45: a one-off due four minutes ago is still taken, one due six minutes ago is not.
+        Assert.Null(Error("""{"name":"n","prompt":"p","time":"13:41","date":"2026-10-14","tools":[]}"""));
+        Assert.Equal("That time has already passed. Ask the user for a time in the future.",
+            Error("""{"name":"n","prompt":"p","time":"13:39","date":"2026-10-14","tools":[]}"""));
     }
 
     [Fact]
