@@ -338,6 +338,9 @@ internal static partial class Program
                 if (started is not null)
                 {
                     PInvoke.AllowSetForegroundWindow((uint)started.Id);
+                    // The window brings the hotkeys back when it closes; this covers a settings process that ended without closing it.
+                    started.EnableRaisingEvents = true;
+                    started.Exited += (_, _) => InputThread.PauseHotkeys(false);
                 }
 
                 return started;

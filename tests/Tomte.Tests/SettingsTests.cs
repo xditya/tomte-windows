@@ -268,6 +268,40 @@ public sealed class SettingsTests : IDisposable
         Assert.Null(chord.CheckFree(HotkeyAction.Summon));
     }
 
+    [Theory]
+    [InlineData(0x4B, HotkeyModifiers.Win | HotkeyModifiers.Alt, HotkeyPress.Chord, "Win+Alt+K")]
+    [InlineData(0x37, HotkeyModifiers.Alt | HotkeyModifiers.Shift | HotkeyModifiers.Ctrl | HotkeyModifiers.Win, HotkeyPress.Chord, "Win+Ctrl+Alt+Shift+7")]
+    [InlineData(0x87, HotkeyModifiers.Win, HotkeyPress.Chord, "Win+F24")]
+    [InlineData(0x20, HotkeyModifiers.Win | HotkeyModifiers.Shift, HotkeyPress.Chord, "Win+Shift+Space")]
+    [InlineData(0xBC, HotkeyModifiers.Alt, HotkeyPress.Chord, "Alt+Comma")]
+    [InlineData(0x4B, HotkeyModifiers.None, HotkeyPress.Chord, "K")]
+    [InlineData(0x5B, HotkeyModifiers.None, HotkeyPress.Preview, "Win+...")]
+    [InlineData(0x12, HotkeyModifiers.Win, HotkeyPress.Preview, "Win+Alt+...")]
+    [InlineData(0xA5, HotkeyModifiers.Win | HotkeyModifiers.Alt, HotkeyPress.Preview, "Win+Alt+...")]
+    [InlineData(0xA0, HotkeyModifiers.Ctrl, HotkeyPress.Preview, "Ctrl+Shift+...")]
+    [InlineData(0x09, HotkeyModifiers.None, HotkeyPress.Pass, "")]
+    [InlineData(0x09, HotkeyModifiers.Shift, HotkeyPress.Pass, "")]
+    [InlineData(0x08, HotkeyModifiers.None, HotkeyPress.Clear, "")]
+    [InlineData(0x2E, HotkeyModifiers.Win, HotkeyPress.Clear, "")]
+    [InlineData(0x1B, HotkeyModifiers.None, HotkeyPress.Restore, "")]
+    [InlineData(0x25, HotkeyModifiers.Win | HotkeyModifiers.Alt, HotkeyPress.Unusable, "")] // Left arrow
+    [InlineData(0x61, HotkeyModifiers.Win | HotkeyModifiers.Alt, HotkeyPress.Unusable, "")] // numpad 1, which is 'a' as a char
+    [InlineData(0x14, HotkeyModifiers.None, HotkeyPress.Unusable, "")] // Caps Lock
+    [InlineData(0, HotkeyModifiers.Win, HotkeyPress.Unusable, "")]
+    public void AKeyPressedInAShortcutBoxRecordsWhatTheChordParsesTo(uint key, HotkeyModifiers held, HotkeyPress press, string text)
+    {
+        Assert.Equal((press, text), Hotkey.Record(key, held));
+        if (press == HotkeyPress.Chord)
+        {
+            Assert.True(Hotkey.TryParse(text, out var parsed, out _));
+            Assert.Equal(new Hotkey(held, key), parsed);
+        }
+    }
+
+    [Fact]
+    public void OnlyLettersDigitsFunctionKeysAndTheNamedKeysMakeAChord() =>
+        Assert.Equal(26 + 10 + 24 + 8, Enumerable.Range(1, 0xFE).Count(k => Hotkey.Record((uint)k, HotkeyModifiers.Win).Press == HotkeyPress.Chord));
+
     [Fact]
     public void APauseExpires()
     {
