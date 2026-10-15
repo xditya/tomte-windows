@@ -43,7 +43,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private double zoneHeight;
     private TomteSettings settings;
     private IslandActivity activity;
-    private bool armed, pointerInside, pointerOn, peekWanted, eventShowing, dragEntered, firstRunShowing;
+    private bool armed, pointerInside, pointerOn, peekWanted, eventShowing, dragEntered, firstRunShowing, arrivalShowing;
     private ArrivalFlight? arrival;
     private Task saving = Task.CompletedTask;
 
@@ -187,6 +187,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         machine.State != IslandState.Compact ? CompactReason.None
         : activity.HasFlag(IslandActivity.Rambling) ? CompactReason.Rambler
         : firstRunShowing ? CompactReason.Hint
+        : arrivalShowing ? CompactReason.Arrival
         : eventShowing ? CompactReason.Event
         : activity.HasFlag(IslandActivity.Peek) ? CompactReason.Peek
         : CompactReason.Summary;
@@ -1171,7 +1172,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var flight = arrival;
         // This morph is the flight's own, which must not end it.
         arrival = null;
+        // Set before the morph, which reads it for the pill's content: the tomte alone.
+        arrivalShowing = settings.FirstRunHintShown;
         bool shown = machine.State == IslandState.Hidden && (settings.FirstRunHintShown ? Reveal(RevealTrigger.Event, IslandState.Compact) : FirstRunHint());
+        arrivalShowing &= shown;
         arrival = shown ? flight : null;
         if (!shown)
         {
@@ -1440,7 +1444,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             finished = null;
         }
 
-        armed = eventShowing = firstRunShowing = dragEntered = false;
+        armed = eventShowing = firstRunShowing = arrivalShowing = dragEntered = false;
         showing = [];
         InputThread.StopTrackingPointer();
         InputThread.SetEscape(false);

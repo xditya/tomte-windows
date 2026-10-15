@@ -32,6 +32,14 @@ public class ArrivalTests
         Assert.False(Arrival.Plays(animations: true, tomte: true, deny, [new AppRule("slides.exe", AppRuleMode.Deny)]));
     }
 
+    [Fact]
+    public void ItsPillShowsTheTomteAlone()
+    {
+        // Nothing to read, load or watch at launch: no line, no timer ring, no now-playing row.
+        Assert.Null(CompactRules.Line(CompactReason.Arrival, [], TimeSpan.FromMinutes(5), DateTimeOffset.Now));
+        Assert.Equal(CompactContent.None, CompactRules.Content(CompactReason.Arrival, IslandEventSource.Other, timerRuns: true, playing: true));
+    }
+
     [Theory]
     [InlineData(1.0, 1920)]
     [InlineData(1.25, 1920)]

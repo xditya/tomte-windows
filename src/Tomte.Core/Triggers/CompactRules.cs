@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace Tomte.Core.Triggers;
 
-/// <summary>Why the Compact pill is up: an edge push, desktop peek, an event, the first-run hint or the rambler.</summary>
+/// <summary>Why the Compact pill is up: an edge push, desktop peek, an event, the first-run hint, the rambler or the launch arrival.</summary>
 public enum CompactReason
 {
     None,
@@ -11,6 +11,9 @@ public enum CompactReason
     Event,
     Hint,
     Rambler,
+
+    /// <summary>The pill the tomte lands in at launch: the tomte alone, so a start reads, loads and watches nothing for it.</summary>
+    Arrival,
 }
 
 /// <summary>Which feature raised an event, so its pill can show that feature's content.</summary>
