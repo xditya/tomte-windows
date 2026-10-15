@@ -218,7 +218,13 @@ internal static partial class Program
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
         tray.Ask += () => AskFromTray(island, triggers, store, logLine);
-        tray.OpenSettings += () => OpenSettings();
+        // The island goes first, as for the Shortcuts tile, and with it the keys it registers while open (Esc among them),
+        // which a settings shortcut box would otherwise not get.
+        tray.OpenSettings += () =>
+        {
+            triggers.Hide();
+            OpenSettings();
+        };
         tray.Paused += triggers.Hide;
         tray.Quit += () => PInvoke.PostQuitMessage(0);
         TellAboutDamagedDatabase(island, triggers, db);
