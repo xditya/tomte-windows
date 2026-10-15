@@ -1,11 +1,34 @@
 using Tomte.AI.Skills;
 using Tomte.Core;
+using Tomte.Core.Rambler;
 
 namespace Tomte.AI.Palette;
 
 /// <summary>Where a rambler transcript goes once it is text.</summary>
 public static class VoiceCommand
 {
+    /// <summary>
+    /// What a choice on the rambler's card does with the words. Insert hands them to <paramref name="insert"/>, which types
+    /// them or says why it cannot; Add to note keeps them; Ask alone makes a session with <paramref name="start"/> and routes
+    /// the words through it as <see cref="RouteAsync"/> does, so nothing reaches a provider before the user picks Ask.
+    /// Returns why Insert could not type, if it could not, and the session Ask ran, if it made one.
+    /// </summary>
+    public static async Task<(string? Refused, PaletteSession? Asked)> PickedAsync(VoiceChoice choice, string transcript, Func<string, string?> insert, Func<string, Task> keep, Func<Task<PaletteSession?>> start, Func<PaletteSession, Task> run)
+    {
+        switch (choice)
+        {
+            case VoiceChoice.Insert:
+                return (insert(transcript), null);
+            case VoiceChoice.Note:
+                await keep(transcript);
+                return (null, null);
+            default:
+                var session = await start();
+                await RouteAsync(transcript, keep, session, run);
+                return (null, session);
+        }
+    }
+
     /// <summary>
     /// Without a session (the AI layer off, or no provider) the transcript is the raw note, which
     /// <paramref name="keep"/> puts on the scratchpad as the rambler has always done. With one, <paramref name="run"/>

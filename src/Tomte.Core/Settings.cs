@@ -64,6 +64,9 @@ public sealed record TomteSettings
     /// <summary>Read the reply to a voice command aloud with Windows speech. Off unless the user turns it on.</summary>
     public bool SpokenReplies { get; init; }
 
+    /// <summary>What Enter picks on the card the words show on after a hold. Insert unless the user changes it; Ask falls back to Insert with no provider.</summary>
+    public Rambler.VoiceChoice VoiceEnter { get; init; }
+
     /// <summary>MCP servers whose tools the AI palette may use; see <see cref="McpServerSettings"/>.</summary>
     public IReadOnlyList<McpServerSettings> McpServers { get; init; } = [];
 

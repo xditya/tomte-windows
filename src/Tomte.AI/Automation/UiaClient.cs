@@ -301,7 +301,7 @@ internal sealed unsafe class UiaClient : IUiAutomation
     /// High integrity or above: elevated, or a system process. Null when the token cannot be read, which is what an
     /// elevated process usually answers a normal one.
     /// </summary>
-    private static bool? Elevated(SafeHandle process)
+    internal static bool? Elevated(SafeHandle process)
     {
         if (!PInvoke.OpenProcessToken(process, TOKEN_ACCESS_MASK.TOKEN_QUERY, out var token))
             return null;

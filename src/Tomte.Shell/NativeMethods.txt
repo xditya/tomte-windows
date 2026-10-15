@@ -59,6 +59,7 @@ KillTimer
 GetCursorPos
 UnregisterHotKey
 GetAsyncKeyState
+SendInput
 RegisterRawInputDevices
 GetRawInputData
 RAWINPUT
