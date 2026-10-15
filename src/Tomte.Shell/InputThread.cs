@@ -39,15 +39,18 @@ internal static unsafe class InputThread
     public const int EscapeHotkeyId = 100;
 
     // Win+Alt+Enter, only while the palette asks to run a voice command. A chord rather than Enter alone, so typing
-    // in another app can never say yes. While the rambler's card offers its choices, between the release and a pick,
-    // this id is Enter alone and the three after it are Alt+I, Alt+A and Alt+N, in VoiceChoice order.
+    // in another app can never say yes.
     public const int ConfirmHotkeyId = 101;
+
+    // While the rambler's card offers its choices, between the release and a pick: Alt+I, Alt+A and Alt+N from the first
+    // id on, in VoiceChoice order, and Enter alone on its own id, which a card that refused Insert does not take.
+    public const int ChoiceHotkeyId = 102, ChoiceEnterHotkeyId = 105;
 
     // Posted to the input window by the UI thread.
     private const uint MsgSetEscape = PInvoke.WM_APP + 10;      // wParam 1 registers Esc, 0 releases it
     private const uint MsgApplySettings = PInvoke.WM_APP + 11;  // re-read the store: thresholds, hooks, hotkeys
     private const uint MsgRawMouse = PInvoke.WM_APP + 12;       // wParam 1 wants raw mouse input for pointer tracking, 0 no longer
-    private const uint MsgSetConfirm = PInvoke.WM_APP + 13;     // wParam 1 registers Win+Alt+Enter, 2 the card's choice keys, 0 releases them
+    private const uint MsgSetConfirm = PInvoke.WM_APP + 13;     // wParam 1 registers Win+Alt+Enter, 2 the card's keys with Enter, 3 without it, 0 releases them
     private const uint MsgSample = PInvoke.WM_APP + 15;         // sample the pointer against the island bounds now
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B, VkReturn = 0x0D;
@@ -147,7 +150,8 @@ internal static unsafe class InputThread
 
     public static void SetConfirm(bool on) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(on ? 1 : 0), 0);
 
-    public static void SetChoices(bool on) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(on ? 2 : 0), 0);
+    /// <summary>The card's keys while it waits: the Alt keys, and Enter unless <paramref name="enter"/> is false.</summary>
+    public static void SetChoices(bool on, bool enter = true) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(!on ? 0 : enter ? 2 : 3), 0);
 
     public static (int X, int Y) Unpack(LPARAM packed) => ((short)(packed.Value & 0xFFFF), (short)((packed.Value >> 16) & 0xFFFF));
 
@@ -287,12 +291,12 @@ internal static unsafe class InputThread
         PInvoke.RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE));
     }
 
-    // Win+Alt+Enter, or Enter and the card's three Alt keys: an id that is not registered is ignored.
+    // Win+Alt+Enter, or the card's three Alt keys and its Enter: an id that is not registered is ignored.
     private static void UnregisterConfirm(HWND hwnd)
     {
-        for (int i = 0; i <= ChoiceLetters.Length; i++)
+        for (int id = ConfirmHotkeyId; id <= ChoiceEnterHotkeyId; id++)
         {
-            PInvoke.UnregisterHotKey(hwnd, ConfirmHotkeyId + i);
+            PInvoke.UnregisterHotKey(hwnd, id);
         }
     }
 
@@ -348,13 +352,18 @@ internal static unsafe class InputThread
 
                     return new LRESULT(0);
                 case MsgSetConfirm:
-                    if (wParam.Value == 2)
+                    if (wParam.Value is 2 or 3)
                     {
                         // A key another app holds is left to it: the card's buttons still take clicks.
-                        PInvoke.RegisterHotKey(hwnd, ConfirmHotkeyId, HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkReturn);
+                        UnregisterConfirm(hwnd);
                         for (int i = 0; i < ChoiceLetters.Length; i++)
                         {
-                            PInvoke.RegisterHotKey(hwnd, ConfirmHotkeyId + 1 + i, HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, ChoiceLetters[i]);
+                            PInvoke.RegisterHotKey(hwnd, ChoiceHotkeyId + i, HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, ChoiceLetters[i]);
+                        }
+
+                        if (wParam.Value == 2)
+                        {
+                            PInvoke.RegisterHotKey(hwnd, ChoiceEnterHotkeyId, HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkReturn);
                         }
                     }
                     else if (wParam.Value == 1 && !PInvoke.RegisterHotKey(hwnd, ConfirmHotkeyId, HOT_KEY_MODIFIERS.MOD_WIN | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkReturn))

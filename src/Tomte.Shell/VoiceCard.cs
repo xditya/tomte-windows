@@ -12,8 +12,9 @@ namespace Tomte.Shell;
 /// <summary>
 /// The rambler's pill grown into a card once the words are text: what was heard, up to three lines beside the tomte,
 /// then Insert, Ask Tomte and Add to note in a row under it, each with the key that picks it, the highlighted one with
-/// Enter. A line under the row says why Ask is off, or why Insert could not type, which turns Insert into Copy. The
-/// buttons are the interaction host's targets, so a click picks too, and the island still never takes the keys.
+/// Enter. A line under the row says why Ask is off, or why Insert could not type, which turns Insert into Copy (Alt+I)
+/// and leaves nothing highlighted, since Enter then goes back to the app in front. The buttons are the interaction
+/// host's targets, so a click picks too, and the island still never takes the keys.
 /// </summary>
 internal sealed class VoiceCard : IInteractive, IDisposable
 {
@@ -29,7 +30,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
     private readonly TextVisual words, line;
     private readonly List<Button> buttons = [];
     private readonly float left, rowY;
-    private VoiceChoice highlighted;
+    private readonly VoiceChoice highlighted;
     private string? refused;
 
     public VoiceCard(IslandWindow island, TextRenderer text, string transcript, VoiceChoice highlighted, bool canAsk)
@@ -79,8 +80,11 @@ internal sealed class VoiceCard : IInteractive, IDisposable
 
     public IReadOnlyList<Target> Targets { get; private set; } = [];
 
-    /// <summary>The choice Enter picks now.</summary>
+    /// <summary>The choice Enter picks while Insert has not been refused.</summary>
     public VoiceChoice Highlighted => highlighted;
+
+    /// <summary>Insert could not type: Copy is in its place, and Enter picks nothing.</summary>
+    public bool Refused => refused is not null;
 
     /// <summary>A provider was set up when the card opened, so Ask is on.</summary>
     public bool CanAsk => canAsk;
@@ -90,10 +94,10 @@ internal sealed class VoiceCard : IInteractive, IDisposable
 
     private float Depth => rowY + PaletteLayout.ButtonHeight + LineGap + LineHeight + Bottom;
 
-    /// <summary>Insert could not type, for this reason: Copy takes its place and its highlight.</summary>
+    /// <summary>Insert could not type, for this reason: Copy takes its place, and nothing is highlighted.</summary>
     public void Refuse(string why)
     {
-        (refused, highlighted) = (why, VoiceChoice.Insert);
+        refused = why;
         Draw();
     }
 
@@ -133,7 +137,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
         {
             var choice = Order[i];
             var b = buttons[i];
-            bool on = choice == highlighted, enabled = choice != VoiceChoice.Ask || canAsk;
+            bool on = refused is null && choice == highlighted, enabled = choice != VoiceChoice.Ask || canAsk;
             var box = new RectangleF(left + i * (width + PaletteLayout.ButtonGap), rowY, width, PaletteLayout.ButtonHeight);
             b.Pill.Offset = new Vector2(box.X, box.Y);
             b.Pill.Size = new Vector2(box.Width, box.Height);

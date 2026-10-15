@@ -80,14 +80,34 @@ internal sealed class Rambler(
     /// <summary>What Insert types with: the window the words were spoken into, and the words. Null when typed, else why not.</summary>
     public Func<nint, string, string?> Insert { get; init; } = DesktopEffects.TypeInto;
 
-    /// <summary>A key on the card: Enter (null) picks the highlighted choice, Alt+I, Alt+A and Alt+N their own. False when no card waits.</summary>
+    /// <summary>
+    /// A key on the card: Enter (null) picks the highlighted choice, Alt+I, Alt+A and Alt+N their own. Enter does nothing
+    /// once Insert was refused, even one already on its way, so it never copies. False when no card waits.
+    /// </summary>
     public bool Choose(VoiceChoice? alt)
     {
         if (card is null || choosing is null)
             return false;
-        if (VoiceChoices.Pick(alt, card.Highlighted, card.CanAsk) is { } picked)
+        if ((alt is not null || !card.Refused) && VoiceChoices.Pick(alt, card.Highlighted, card.CanAsk) is { } picked)
             choosing.TrySetResult(picked);
         return true;
+    }
+
+    /// <summary>
+    /// The window in front changed. While the card waits, any window but the one spoken into (or the island) in front
+    /// means Insert would type nowhere: the card says so and offers Copy, and Enter goes back to the app in front, so
+    /// pressing it there neither picks nor copies.
+    /// </summary>
+    public void ForegroundChanged()
+    {
+        if (choosing is null || card is not { Refused: false } shown)
+            return;
+        nint front = WindowContext.Foreground();
+        if (front == (nint)island.Hwnd || VoiceChoices.Refusal(spokenInto, open: true, front, elevated: false) is not { } why)
+            return;
+        log($"{DateTime.Now:HH:mm:ss.fff} voice: {why}");
+        shown.Refuse(why);
+        InputThread.SetChoices(true, enter: false);
     }
 
     /// <summary>Esc on the card: the words are thrown away. False when no card waits.</summary>
@@ -202,7 +222,6 @@ internal sealed class Rambler(
             RemoveView();
             _ = island.MorphTo(shown.Shape, SpringPreset.Snappy);
             PaletteSession? session = null;
-            string? refused = null;
             while (true)
             {
                 var choice = await ChooseAsync();
@@ -211,13 +230,13 @@ internal sealed class Rambler(
                     break;
                 if (machine.State != IslandState.Compact)
                     RemoveCard();
-                if (picked == VoiceChoice.Insert && refused is not null)
+                if (picked == VoiceChoice.Insert && shown.Refused)
                 {
                     await CopyAsync(transcript);
                     break;
                 }
 
-                (refused, session) = await VoiceCommand.PickedAsync(picked, transcript, words => Insert(spokenInto, words), KeepAsync, StartAsync, s => (palette = new PaletteHost(island, machine, log, text)).RunAsync(s, question));
+                (string? refused, session) = await VoiceCommand.PickedAsync(picked, transcript, words => Insert(spokenInto, words), KeepAsync, StartAsync, s => (palette = new PaletteHost(island, machine, log, text)).RunAsync(s, question));
                 if (refused is null)
                     break;
                 log($"{DateTime.Now:HH:mm:ss.fff} voice: not typed: {refused}");
@@ -289,11 +308,12 @@ internal sealed class Rambler(
 
         machine.Changed += OnState;
         // Esc and the choice keys come to the island only while the card waits; the app in front has them otherwise.
+        // Enter not at all once Insert was refused: the user may be typing in another app by then.
         InputThread.SetEscape(true);
-        InputThread.SetChoices(true);
-        Choosing?.Invoke();
+        InputThread.SetChoices(true, enter: card?.Refused == false);
         try
         {
+            Choosing?.Invoke();
             return await waiting.Task;
         }
         finally

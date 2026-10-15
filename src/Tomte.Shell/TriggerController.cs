@@ -816,15 +816,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
-        if (id >= InputThread.ConfirmHotkeyId && id <= InputThread.ConfirmHotkeyId + 3)
+        if (id == InputThread.ConfirmHotkeyId)
         {
-            // Enter, Alt+I, Alt+A or Alt+N on the rambler's card; with no card, Enter's id is Win+Alt+Enter, a yes.
-            VoiceChoice? alt = id == InputThread.ConfirmHotkeyId ? null : (VoiceChoice)(id - InputThread.ConfirmHotkeyId - 1);
-            if (rambler?.Choose(alt) == false && alt is null)
-            {
-                rambler.Answer(allow: true);
-            }
+            rambler?.Answer(allow: true);
+            return;
+        }
 
+        if (id is >= InputThread.ChoiceHotkeyId and <= InputThread.ChoiceEnterHotkeyId)
+        {
+            // Enter, Alt+I, Alt+A or Alt+N on the rambler's card.
+            rambler?.Choose(id == InputThread.ChoiceEnterHotkeyId ? null : (VoiceChoice)(id - InputThread.ChoiceHotkeyId));
             return;
         }
 
@@ -1043,6 +1044,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     private void OnWindowsChanged()
     {
+        rambler?.ForegroundChanged();
         SchedulePeek();
         if (events.Count > 0)
         {
