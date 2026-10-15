@@ -1,7 +1,9 @@
 using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
@@ -13,8 +15,10 @@ using Tomte.Core.Device;
 using Tomte.Core.Rambler;
 using Windows.ApplicationModel;
 using Windows.Graphics;
+using Windows.UI.Core;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using VirtualKey = Windows.System.VirtualKey;
 
 namespace Tomte.Panels;
 
@@ -192,6 +196,8 @@ public sealed partial class SettingsWindow : Window
         _ = LoadStartupAsync();
         startup.Toggled += async (_, _) => await SetStartupAsync(startup.IsOn);
         Closed += (_, _) => store.Dispose();
+        // A settings window that ended while a shortcut box recorded left Tomte's hotkeys paused; no box records yet.
+        Hotkey.Pause(DataFolder, false);
     }
 
     /// <summary>
@@ -330,42 +336,126 @@ public sealed partial class SettingsWindow : Window
         return box;
     }
 
+    // The box records the keys pressed instead of taking text. While it has focus in the active window, Tomte's own
+    // hotkeys are paused so a chord Tomte uses reaches it; they come back, and the box shows the saved chord again, when
+    // it loses focus or the window goes to the background or closes.
     private UIElement HotkeyRow(HotkeyAction action)
     {
+        const string Hint = "Press the keys. Backspace clears it.";
         var note = Note();
-        var box = new TextBox { Text = store.Current.Hotkeys[action], PlaceholderText = "No shortcut", MinWidth = 200 };
-        void Commit()
+        // Read-only, so typed characters never land in it; the key handlers below take every key but Tab first.
+        var box = new TextBox { Text = store.Current.Hotkeys[action], PlaceholderText = "No shortcut", MinWidth = 200, IsReadOnly = true };
+        AutomationProperties.SetHelpText(box, Hint);
+        bool recording = false, previewing = false;
+
+        void Tell(string? error)
         {
-            string current = store.Current.Hotkeys[action];
-            string chord = Hotkey.TryParse(box.Text, out var parsed, out _) ? parsed.ToString() : box.Text.Trim();
-            if (chord == current)
+            note.Text = error ?? Hint;
+            note.Visibility = Visibility.Visible;
+            note.Foreground = (Brush)Application.Current.Resources[error is null ? "TextFillColorSecondaryBrush" : "SystemFillColorCriticalBrush"];
+            if (error is not null)
             {
-                box.Text = chord;
-                Show(note, null);
+                // Said aloud too: a screen reader stays on the box, not on the note.
+                FrameworkElementAutomationPeer.FromElement(box)?.RaiseNotificationEvent(AutomationNotificationKind.Other, AutomationNotificationProcessing.ImportantMostRecent, error, "HotkeyNote");
+            }
+        }
+
+        void Restore()
+        {
+            previewing = false;
+            box.Text = store.Current.Hotkeys[action];
+        }
+
+        void Commit(string chord)
+        {
+            previewing = false;
+            box.Text = chord;
+            if (chord == store.Current.Hotkeys[action])
+            {
+                Tell(null);
                 return;
             }
 
             // Tomte's own process holds the chords it uses now, so only a new chord is probed.
             string? error = Hotkey.Validate(store.Current.Hotkeys, action, chord)
-                ?? (chord.Length > 0 ? parsed.CheckFree(action) : null);
-            Show(note, error);
+                ?? (Hotkey.TryParse(chord, out var parsed, out _) ? parsed.CheckFree(action) : null);
+            Tell(error);
             if (error is null)
             {
-                box.Text = chord;
                 Save(s => s with { Hotkeys = s.Hotkeys.With(action, chord) });
             }
         }
 
-        box.LostFocus += (_, _) => Commit();
-        box.KeyDown += (_, e) =>
+        void Recording(bool on)
         {
-            if (e.Key == Windows.System.VirtualKey.Enter)
+            if (on == recording)
             {
-                Commit();
-                e.Handled = true;
+                return;
+            }
+
+            recording = on;
+            Hotkey.Pause(DataFolder, on);
+            Restore();
+            if (on)
+            {
+                Tell(null);
+            }
+            else if (note.Text == Hint)
+            {
+                Show(note, null);
+            }
+        }
+
+        box.GotFocus += (_, _) => Recording(true);
+        box.LostFocus += (_, _) => Recording(false);
+        // A window in the background gets no keys; Win alone opens Start and lands here too.
+        Activated += (_, e) => Recording(e.WindowActivationState != WindowActivationState.Deactivated && box.FocusState != FocusState.Unfocused);
+        Closed += (_, _) => Recording(false);
+        box.PreviewKeyDown += (_, e) =>
+        {
+            var (press, text) = Hotkey.Record((uint)e.Key, Held());
+            e.Handled = press != HotkeyPress.Pass;
+            switch (press)
+            {
+                case HotkeyPress.Preview:
+                    previewing = true;
+                    box.Text = text;
+                    break;
+                case HotkeyPress.Chord or HotkeyPress.Clear:
+                    Commit(text);
+                    break;
+                case HotkeyPress.Restore:
+                    Restore();
+                    Tell(null);
+                    break;
+                case HotkeyPress.Unusable:
+                    Tell("Tomte cannot use that key. Use a letter, a digit on the top row, F1 to F24 or Space.");
+                    break;
+            }
+        };
+        // Letting go of the last modifier with no key pressed puts the saved chord back.
+        box.PreviewKeyUp += (_, e) =>
+        {
+            e.Handled = e.Key != VirtualKey.Tab;
+            if (previewing)
+            {
+                var held = Held();
+                previewing = held != HotkeyModifiers.None;
+                box.Text = previewing ? Hotkey.Preview(held) : store.Current.Hotkeys[action];
             }
         };
         return Row(Hotkey.Name(action), note, box);
+    }
+
+    // The modifiers down as the key event being handled came in, from this thread's keyboard state, so a key-up that
+    // went to another window leaves nothing held here.
+    private static HotkeyModifiers Held()
+    {
+        static bool Down(VirtualKey key) => InputKeyboardSource.GetKeyStateForCurrentThread(key).HasFlag(CoreVirtualKeyStates.Down);
+        return (Down(VirtualKey.LeftWindows) || Down(VirtualKey.RightWindows) ? HotkeyModifiers.Win : HotkeyModifiers.None)
+            | (Down(VirtualKey.Control) ? HotkeyModifiers.Ctrl : HotkeyModifiers.None)
+            | (Down(VirtualKey.Menu) ? HotkeyModifiers.Alt : HotkeyModifiers.None)
+            | (Down(VirtualKey.Shift) ? HotkeyModifiers.Shift : HotkeyModifiers.None);
     }
 
     private UIElement AddRuleRow()

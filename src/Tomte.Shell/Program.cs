@@ -218,7 +218,13 @@ internal static partial class Program
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
         tray.Ask += () => AskFromTray(island, triggers, store, logLine);
-        tray.OpenSettings += () => OpenSettings();
+        // The island goes first, as for the Shortcuts tile, and with it the keys it registers while open (Esc among them),
+        // which a settings shortcut box would otherwise not get.
+        tray.OpenSettings += () =>
+        {
+            triggers.Hide();
+            OpenSettings();
+        };
         tray.Paused += triggers.Hide;
         tray.Quit += () => PInvoke.PostQuitMessage(0);
         TellAboutDamagedDatabase(island, triggers, db);
@@ -338,6 +344,10 @@ internal static partial class Program
                 if (started is not null)
                 {
                     PInvoke.AllowSetForegroundWindow((uint)started.Id);
+                    // The window brings the hotkeys back when it closes; this covers a settings process that ended without
+                    // closing it. Through the island's queue, so it lands after any pause the window sent.
+                    started.EnableRaisingEvents = true;
+                    started.Exited += (_, _) => Hotkey.Pause(Path.GetDirectoryName(settingsFile)!, false);
                 }
 
                 return started;

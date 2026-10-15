@@ -460,6 +460,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 }
 
                 return true;
+            case Hotkey.MsgPause:
+                log?.Invoke(wParam == 1 ? "hotkeys: paused for a settings shortcut box" : "hotkeys: back from the settings window");
+                InputThread.PauseHotkeys(wParam == 1);
+                return true;
             case PInvoke.WM_TIMER:
                 OnTimer(wParam);
                 return true;

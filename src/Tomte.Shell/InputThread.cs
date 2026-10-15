@@ -52,6 +52,7 @@ internal static unsafe class InputThread
     private const uint MsgRawMouse = PInvoke.WM_APP + 12;       // wParam 1 wants raw mouse input for pointer tracking, 0 no longer
     private const uint MsgSetConfirm = PInvoke.WM_APP + 13;     // wParam 1 registers Win+Alt+Enter, 2 the card's keys with Enter, 3 without it, 0 releases them
     private const uint MsgSample = PInvoke.WM_APP + 15;         // sample the pointer against the island bounds now
+    private const uint MsgPause = PInvoke.WM_APP + 16;          // wParam 1 releases the action hotkeys, 0 registers them again
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B, VkReturn = 0x0D, VkMenu = 0x12;
     private static readonly ushort[] ChoiceLetters = ['I', 'A', 'N'];
@@ -62,6 +63,7 @@ internal static unsafe class InputThread
     private static SettingsStore store = null!;
     private static RevealSettings reveal = null!;
     private static HotkeySettings? hotkeys;
+    private static bool paused;
     private static EdgePushDetector detector = null!;
     private static HoldDetector hold = null!;
     private static ushort ramblerKey;
@@ -146,6 +148,12 @@ internal static unsafe class InputThread
     /// <summary>The button-down window said HTCLIENT: the next move into the drag band inside the zone reports once.</summary>
     public static void ArmDrag() => Volatile.Write(ref dragArmed, 1);
 
+    /// <summary>
+    /// While a settings shortcut box records keys, the action hotkeys are released so a chord Tomte uses reaches the
+    /// box; settings saved meanwhile are registered when they come back. Asking twice for the same state does nothing.
+    /// </summary>
+    public static void PauseHotkeys(bool on) => PInvoke.PostMessage(window, MsgPause, (nuint)(on ? 1 : 0), 0);
+
     public static void SetEscape(bool on) => PInvoke.PostMessage(window, MsgSetEscape, (nuint)(on ? 1 : 0), 0);
 
     public static void SetConfirm(bool on) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(on ? 1 : 0), 0);
@@ -205,7 +213,10 @@ internal static unsafe class InputThread
         if (settings.Hotkeys != hotkeys)
         {
             hotkeys = settings.Hotkeys;
-            Register(settings.Hotkeys);
+            if (!paused)
+            {
+                Register(settings.Hotkeys);
+            }
         }
     }
 
@@ -229,13 +240,17 @@ internal static unsafe class InputThread
         }
     }
 
-    private static void Register(HotkeySettings chords)
+    private static void Unregister()
     {
         foreach (var r in registrations)
         {
             PInvoke.UnregisterHotKey(window, (int)r.Action + 1);
         }
+    }
 
+    private static void Register(HotkeySettings chords)
+    {
+        Unregister();
         var next = new List<Registration>(5);
         foreach (var action in Enum.GetValues<HotkeyAction>())
         {
@@ -398,6 +413,18 @@ internal static unsafe class InputThread
                 case MsgApplySettings:
                     Apply(store.Current);
                     return new LRESULT(0);
+                case MsgPause when (wParam.Value == 1) != paused:
+                    paused = !paused;
+                    if (paused)
+                    {
+                        Unregister();
+                    }
+                    else
+                    {
+                        Register(hotkeys!);
+                    }
+
+                    return new LRESULT(0);
                 case MsgRawMouse:
                     RawMouse(reveal.EdgePush || wParam.Value == 1);
                     return new LRESULT(0);
@@ -407,11 +434,7 @@ internal static unsafe class InputThread
                     Track(now, asked: true);
                     return new LRESULT(0);
                 case PInvoke.WM_CLOSE:
-                    foreach (var r in registrations)
-                    {
-                        PInvoke.UnregisterHotKey(hwnd, (int)r.Action + 1);
-                    }
-
+                    Unregister();
                     PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
                     UnregisterConfirm(hwnd);
                     if (!hook.IsNull)

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Tomte.Core.Jobs;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
@@ -25,9 +26,34 @@ public enum HotkeyModifiers
     Win = 8,
 }
 
+/// <summary>What a key pressed in a shortcut box does; <see cref="Hotkey.Record"/> works it out.</summary>
+public enum HotkeyPress
+{
+    /// <summary>Tab: not taken, so focus moves on.</summary>
+    Pass,
+
+    /// <summary>Backspace or Delete: no shortcut.</summary>
+    Clear,
+
+    /// <summary>Esc: the saved shortcut again.</summary>
+    Restore,
+
+    /// <summary>A modifier: the box shows what is held, such as "Win+Alt+...", and nothing is saved.</summary>
+    Preview,
+
+    /// <summary>A key a shortcut can use, with the modifiers held: the chord to save.</summary>
+    Chord,
+
+    /// <summary>A key no shortcut can use.</summary>
+    Unusable,
+}
+
 /// <param name="Key">A virtual-key code.</param>
 public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
 {
+    /// <summary>What the settings window posts to the running Tomte while a shortcut box records: wParam 1 pauses Tomte's own hotkeys, 0 brings them back.</summary>
+    public const uint MsgPause = PInvoke.WM_APP + 0x4C;
+
     private const int ProbeId = 0xB000;
 
     private static readonly Dictionary<string, uint> NamedKeys = new(StringComparer.OrdinalIgnoreCase)
@@ -122,14 +148,16 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
             return error;
         }
 
-        if ((hotkey.Modifiers & (HotkeyModifiers.Win | HotkeyModifiers.Ctrl | HotkeyModifiers.Alt)) == 0)
+        // Without Win a global shortcut takes a key other apps use: Ctrl+C, Alt+F4, AltGr's Ctrl+Alt.
+        if (!hotkey.Modifiers.HasFlag(HotkeyModifiers.Win))
         {
-            return "Start with Win, Ctrl or Alt, so the shortcut does not get in the way of typing.";
+            return "Add Win, for example Win+Alt+K, so the shortcut does not take a key other apps use.";
         }
 
-        if (hotkey.Modifiers.HasFlag(HotkeyModifiers.Ctrl | HotkeyModifiers.Alt) && !hotkey.Modifiers.HasFlag(HotkeyModifiers.Win))
+        // Registered while a voice command waits for a yes; bound here, it could not be registered then and every ask would be a no.
+        if (hotkey == new Hotkey(HotkeyModifiers.Win | HotkeyModifiers.Alt, 0x0D))
         {
-            return "Ctrl+Alt shortcuts type characters on keyboards with AltGr. Add Win, or use Win+Alt.";
+            return "Win+Alt+Enter says yes to a voice command. Pick another shortcut.";
         }
 
         foreach (var other in Enum.GetValues<HotkeyAction>())
@@ -142,6 +170,38 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
 
         return null;
     }
+
+    /// <summary>
+    /// A key going down in a shortcut box, with the modifiers held: what it does, and the text to show for a preview or
+    /// a chord. A modifier key counts as held itself, whatever the keyboard state said.
+    /// </summary>
+    public static (HotkeyPress Press, string Text) Record(uint key, HotkeyModifiers held)
+    {
+        HotkeyModifiers own = key switch
+        {
+            0x10 or 0xA0 or 0xA1 => HotkeyModifiers.Shift,
+            0x11 or 0xA2 or 0xA3 => HotkeyModifiers.Ctrl,
+            0x12 or 0xA4 or 0xA5 => HotkeyModifiers.Alt,
+            0x5B or 0x5C => HotkeyModifiers.Win,
+            _ => HotkeyModifiers.None,
+        };
+        return key switch
+        {
+            _ when own != HotkeyModifiers.None => (HotkeyPress.Preview, Preview(held | own)),
+            0x09 => (HotkeyPress.Pass, ""),
+            0x08 or 0x2E => (HotkeyPress.Clear, ""),
+            0x1B => (HotkeyPress.Restore, ""),
+            // A key that prints and parses back to itself: a letter, a digit, F1 to F24 or a named key.
+            _ when key != 0 && KeyCode(KeyName(key)) == key => (HotkeyPress.Chord, new Hotkey(held, key).ToString()),
+            _ => (HotkeyPress.Unusable, ""),
+        };
+    }
+
+    /// <summary>Modifiers held with no key yet, as "Win+Alt+...".</summary>
+    public static string Preview(HotkeyModifiers held) => Prefix(held) + "...";
+
+    /// <summary>Pauses (or brings back) the hotkeys of the Tomte running on <paramref name="dataFolder"/>. False with none running.</summary>
+    public static bool Pause(string dataFolder, bool on) => JobTask.Post(dataFolder, MsgPause, on ? 1u : 0u);
 
     /// <summary>
     /// Registers and releases the chord on the calling thread. Null when it is free; the conflict
@@ -165,16 +225,13 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
     }
 
     /// <summary>The canonical text, modifiers in the order Win, Ctrl, Alt, Shift.</summary>
-    public override string ToString()
-    {
-        var parts = new List<string>(5);
-        if (Modifiers.HasFlag(HotkeyModifiers.Win)) parts.Add("Win");
-        if (Modifiers.HasFlag(HotkeyModifiers.Ctrl)) parts.Add("Ctrl");
-        if (Modifiers.HasFlag(HotkeyModifiers.Alt)) parts.Add("Alt");
-        if (Modifiers.HasFlag(HotkeyModifiers.Shift)) parts.Add("Shift");
-        parts.Add(KeyName(Key));
-        return string.Join('+', parts);
-    }
+    public override string ToString() => Prefix(Modifiers) + KeyName(Key);
+
+    private static string Prefix(HotkeyModifiers m) =>
+        (m.HasFlag(HotkeyModifiers.Win) ? "Win+" : "")
+        + (m.HasFlag(HotkeyModifiers.Ctrl) ? "Ctrl+" : "")
+        + (m.HasFlag(HotkeyModifiers.Alt) ? "Alt+" : "")
+        + (m.HasFlag(HotkeyModifiers.Shift) ? "Shift+" : "");
 
     private static uint KeyCode(string name)
     {

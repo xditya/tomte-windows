@@ -112,7 +112,7 @@ public static class JobTask
     /// <summary>Tells the Tomte running on <paramref name="dataFolder"/>, if any, that its jobs changed. False with none.</summary>
     public static bool Changed(string dataFolder) => Post(dataFolder, MsgJobsChanged, 0);
 
-    private static unsafe bool Post(string dataFolder, uint message, nuint wParam)
+    internal static unsafe bool Post(string dataFolder, uint message, nuint wParam)
     {
         nint tag = FolderValue(dataFolder);
         fixed (char* name = FolderProperty)
