@@ -434,11 +434,7 @@ internal static unsafe class InputThread
                     Track(now, asked: true);
                     return new LRESULT(0);
                 case PInvoke.WM_CLOSE:
-                    foreach (var r in registrations)
-                    {
-                        PInvoke.UnregisterHotKey(hwnd, (int)r.Action + 1);
-                    }
-
+                    Unregister();
                     PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
                     UnregisterConfirm(hwnd);
                     if (!hook.IsNull)
