@@ -206,7 +206,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         ShadowLook();
 
         // The mascot sits above the content and outside the clip, so it can be seen before the shape has any depth.
-        Mascot = new Mascot(() => clock.Elapsed.TotalSeconds, () => ForceReduceMotion || !uiSettings.AnimationsEnabled) { Changed = Wake };
+        Mascot = new Mascot(() => clock.Elapsed.TotalSeconds, () => ReduceMotion) { Changed = Wake };
         mascotVisual = new MascotVisual(compositor);
         live.Children.InsertAtTop(mascotVisual.Visual);
         wakeTimer = Queue.CreateTimer();
@@ -528,7 +528,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         settled ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (ForceReduceMotion || !uiSettings.AnimationsEnabled)
+        if (ReduceMotion)
         {
             Crossfade(to);
             Queue.TryEnqueue(contentReadyHandler);
@@ -557,7 +557,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public void Swell(bool on)
     {
-        if (on == swell || !visible || (on && (ForceReduceMotion || !uiSettings.AnimationsEnabled)))
+        if (on == swell || !visible || (on && ReduceMotion))
         {
             return;
         }
@@ -614,7 +614,7 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         place.Use(SpringPreset.Gentle);
         place.Target = offset;
-        if (!visible || ForceReduceMotion || !uiSettings.AnimationsEnabled)
+        if (!visible || ReduceMotion)
         {
             place.Jump(offset);
             Follow();
