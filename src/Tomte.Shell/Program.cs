@@ -90,6 +90,13 @@ internal static partial class Program
             return 2;
         }
 
+        // Recorded answers hold what the user's own searches sent back: only from a run with its own data folder.
+        if (Arg(args, "--debug-record") is not null && Arg(args, "--debug-settings") is null)
+        {
+            Console.Error.WriteLine("usage: --debug-record <folder> needs --debug-settings <file>, so a recorded run never uses the user's own settings");
+            return 2;
+        }
+
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null || args.Contains("--debug-job");
 
