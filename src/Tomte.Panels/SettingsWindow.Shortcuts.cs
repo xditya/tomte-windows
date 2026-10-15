@@ -40,12 +40,12 @@ public sealed partial class SettingsWindow
         scripts.Toggled += async (_, _) => await RenderShortcutsAsync();
         _ = RenderShortcutsAsync();
         return Card(
-            Note("Tiles in the island's Shortcuts tab. A click opens the app, file, folder or web page. Web addresses start with http or https; files on a network path are not offered."),
+            Note("Tiles in the island's Shortcuts tab. A click opens the app, file, folder or web page. Files on a network path cannot be added."),
             shortcutsList,
             Row("Add an app, a file or a folder", Note("Apps as Start lists them. Browse in the list for any file, folder or script."), app),
             Row("Add a web address", null, new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { webAddress, web } }),
             shortcutsNote,
-            Row("Script shortcuts", Note("Off: script tiles do nothing. On: each script asks once before it runs, showing its full command, and asks again when it changes. Scripts are batch, PowerShell and Windows Script Host files, and every shortcut (.lnk) that passes arguments to a program, browser web apps and profiles included, except apps added from Start's list."), scripts));
+            Row("Script shortcuts", Note("Off: script tiles do nothing. On: a script shows its full command and asks before its first run, and again when it changes. Scripts are batch, PowerShell and Windows Script Host files, and shortcuts (.lnk) that pass arguments to a program, browser web apps included, except apps added from Start's list."), scripts));
     }
 
     /// <summary>

@@ -104,7 +104,7 @@ public sealed partial class SettingsWindow
             Row("Key", Note("Kept in Windows Credential Manager, not in the settings file, and saved only after a test call works. Leave it empty to keep the saved key. A server on this PC usually needs none."), providerKey),
             Row("Default model", Note("Pick one after Fetch models, or type its id. Left empty, Test and save uses the first model the provider lists."), defaultModel),
             Row("Fast model", Note("Optional. A cheaper model for the small calls: routing a voice command and reading a schedule into a job. Empty uses the default model."), fastModel),
-            Row("Daily spend cap", Note($"US dollars a day for this provider, up to {ProviderSetup.MaxDailyCapUsd:0}. Empty means no cap. Spend is estimated from token counts and list prices as of {PriceTable.AsOf:d MMMM yyyy}; a cloud model Tomte has no price for counts at the highest one, and a server on this PC is free."), dailyCap),
+            Row("Daily spend cap", Note($"US dollars a day, up to {ProviderSetup.MaxDailyCapUsd:0}. Empty means no cap. Spend is estimated from token counts and list prices as of {PriceTable.AsOf:d MMMM yyyy}; a cloud model with no known price counts at the highest one, and a server on this PC is free."), dailyCap),
             buttons,
             providerNote);
     }

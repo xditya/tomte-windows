@@ -169,7 +169,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
 
                 if (skill.DropZones is not [var spec, ..])
                 {
-                    Finish(new DropResult($"{title} · {item.Name}", "Nothing sent", $"The {picked} skill is off or has changed since it was turned on. Turn it on in Settings, Skills. Nothing was sent.", true, "", [], []), ok: false);
+                    Finish(new DropResult($"{title} · {item.Name}", "Nothing sent", $"The {picked} skill is off or has changed since it was turned on. Turn it on in Settings, AI tools, Skills. Nothing was sent.", true, "", [], []), ok: false);
                     return;
                 }
 
