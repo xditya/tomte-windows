@@ -92,7 +92,7 @@ internal sealed class PanelHost
     /// <summary>Called when the current panel changes while Panels is open: the triggers re-enter Panels and morph the shape.</summary>
     public Action? Resize { get; set; }
 
-    /// <summary>A click on the tomte in the strip or on the Ask pill: the triggers open the palette.</summary>
+    /// <summary>A click on the Ask pill: the triggers open the palette.</summary>
     public Action? Ask { get; set; }
 
     /// <summary>The current panel's size in DIPs, before the monitor cap (<see cref="PanelSize.Fit"/>).</summary>
@@ -277,7 +277,7 @@ internal sealed class PanelHost
 
     /// <summary>
     /// A press on the body that no registered target took is the panel's once the body shows, so a quick click after
-    /// opening or switching cannot hit a button that is not drawn yet. The strip's tabs, tomte and Ask pill are targets.
+    /// opening or switching cannot hit a button that is not drawn yet. The strip's tabs and Ask pill are targets.
     /// </summary>
     private void OnPressed(Vector2 point)
     {
@@ -328,13 +328,13 @@ internal sealed class PanelHost
     /// The tab labels in the strip row, with a card behind the current one, and the Ask pill at its right end. The
     /// container sits on the shape's live body left edge in every frame of a morph (island space's origin less its own
     /// offset, plus the ramp an attached shape flares into the top edge with, whole pixels), so the labels move with the
-    /// edge they are laid out from; the Ask pill rides the live right edge the same way. Its targets are the tomte and the
-    /// Ask pill, which open the palette, and the tab labels, one group the arrow keys switch along. The wheel is the
-    /// host's.
+    /// edge they are laid out from; the Ask pill rides the live right edge the same way. Its targets are the tab labels,
+    /// one group the arrow keys switch along, and the Ask pill, the one control here that opens the palette. The tomte is
+    /// no target: like the rest of the row it moves the island. The wheel is the host's.
     /// </summary>
     private sealed class Strip : IDisposable, IInteractive
     {
-        private const string Tomte = "tomte", AskId = "ask";
+        private const string AskId = "ask";
         private readonly IslandWindow island;
         private readonly Action<PanelId> select;
         private readonly Action openAsk;
@@ -397,7 +397,7 @@ internal sealed class PanelHost
 
         public ShapeVisual Visual { get; }
 
-        /// <summary>The tomte, the tab labels and the Ask pill, which rides the live right edge as it is drawn.</summary>
+        /// <summary>The tab labels and the Ask pill, which rides the live right edge as it is drawn.</summary>
         public IReadOnlyList<Target> Targets
         {
             get
@@ -418,7 +418,7 @@ internal sealed class PanelHost
 
         public void Activate(string id)
         {
-            if (id is Tomte or AskId)
+            if (id == AskId)
             {
                 openAsk();
             }
@@ -428,19 +428,10 @@ internal sealed class PanelHost
             }
         }
 
-        /// <summary>A drag from the tomte moves the island, as one from the strip's empty row does; from strip space back to island space.</summary>
-        public bool TryDrag(string id, Vector2 at) => island.Drag(new Vector2(at.X - ((float)island.Current.Width / 2), at.Y));
-
         public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot)
         {
             var lines = TabStrip.Labels(tabs, current, width, mascot);
             var list = new List<Target>();
-            if (mascot)
-            {
-                var box = MascotArt.Box(IslandGeometry.Panel(width, PanelSpace.TabStripHeight));
-                list.Add(new(Tomte, box with { X = box.X + (width / 2) }, box.Width / 2, TargetKind.Button, Tip: "Ask Tomte", Draggable: true));
-            }
-
             foreach (var (id, line) in tabs.Zip(lines))
             {
                 list.Add(new(id.ToString(), line.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: id == current));

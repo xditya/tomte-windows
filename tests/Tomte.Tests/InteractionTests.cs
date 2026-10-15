@@ -233,10 +233,10 @@ public class InteractionTests
     [Fact]
     public void TabCrossesViewsAndEntersAGroupWhereItWasLeft()
     {
-        // The strip: the tomte, three tabs with Media current, the Ask pill. The body: a button and three tiles, its own group 1.
+        // The strip: a button, three tabs with Media current, the Ask pill. The body: a button and three tiles, its own group 1.
         IReadOnlyList<Target>[] views =
         [
-            [At("tomte", 0, 0), At("Shelf", 30, 0, group: 1), At("Media", 60, 0, group: 1) with { Checked = true }, At("Clipboard", 90, 0, group: 1), At("ask", 120, 0)],
+            [At("button", 0, 0), At("Shelf", 30, 0, group: 1), At("Media", 60, 0, group: 1) with { Checked = true }, At("Clipboard", 90, 0, group: 1), At("ask", 120, 0)],
             [At("add", 0, 50), At("t1", 30, 50, group: 1), At("t2", 60, 50, group: 1), At("t3", 90, 50, group: 1)],
         ];
         string? last = null;

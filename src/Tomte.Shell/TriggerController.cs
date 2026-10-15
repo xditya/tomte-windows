@@ -504,8 +504,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// The pill's own surface, which a drag moves along the top edge: the rambler's pill, the tab strip's row outside its
-    /// targets (the tabs, the tomte and the Ask pill take their presses first), and the tomte over the palette. Compact's
-    /// targets and the strip's tomte move it through their own drag. Panel bodies and the palette's controls keep their
+    /// targets (the tabs and the Ask pill take their presses first; the tomte is part of the row), and the tomte over the
+    /// palette. Compact's targets move it through their own drag. Panel bodies and the palette's controls keep their
     /// presses, and shelf and result tiles their drag out.
     /// </summary>
     private bool Grabs(System.Numerics.Vector2 at) => machine.State switch
