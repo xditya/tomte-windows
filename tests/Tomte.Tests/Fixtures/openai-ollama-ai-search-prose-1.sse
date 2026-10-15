@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-222","object":"chat.completion.chunk","created":1792090557,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":"","tool_calls":[{"id":"call_7xwngcls","index":0,"type":"function","function":{"name":"find_files","arguments":"{\"words\":\"[\\\"invoices\\\"]\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-222","object":"chat.completion.chunk","created":1792090557,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-222","object":"chat.completion.chunk","created":1792090557,"model":"llama3.2:3b","system_fingerprint":"fp_ollama","choices":[],"usage":{"prompt_tokens":479,"completion_tokens":19,"total_tokens":498}}
+
+data: [DONE]
+
