@@ -10,6 +10,7 @@ using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
+using Tomte.Core.Rambler;
 using Windows.ApplicationModel;
 using Windows.Graphics;
 using Windows.Win32;
@@ -37,6 +38,7 @@ public sealed partial class SettingsWindow : Window
     private readonly ToggleSwitch startup = new() { OnContent = "On", OffContent = "Off" };
     private readonly TextBlock startupNote = Note();
     private readonly TextBlock clearedNote = Note();
+    private readonly TextBlock voiceNote = Note();
     private StartupTask? startupTask;
 
     public SettingsWindow()
@@ -100,6 +102,9 @@ public sealed partial class SettingsWindow : Window
             "Keep history",
             Note($"Keep the last {kept.MaxItems} pieces of text and {kept.MaxImages} images you copy on this PC, for up to {kept.MaxDays} days; an image over {kept.MaxImageBytes >> 20} MB as a PNG is not kept. Items password managers mark are never kept, and nothing is kept while Tomte is paused or an app with a deny rule is in front. Turning it off deletes the history."),
             Toggle(s => s.KeepClipboardHistory, (s, v) => s with { KeepClipboardHistory = v }))));
+
+        page.Children.Add(Header("Voice"));
+        page.Children.Add(Card(Row("When you finish speaking, Enter does", voiceNote, VoiceEnter())));
 
         page.Children.Add(Header("AI provider"));
         page.Children.Add(ProviderSection());
@@ -178,6 +183,38 @@ public sealed partial class SettingsWindow : Window
     {
         var box = new ComboBox { ItemsSource = new[] { "Every monitor", "Primary monitor only" }, SelectedIndex = store.Current.AllMonitors ? 0 : 1, MinWidth = 200 };
         box.SelectionChanged += (_, _) => Save(s => s with { AllMonitors = box.SelectedIndex == 0 });
+        return box;
+    }
+
+    // Insert, Ask Tomte or Add to note, in VoiceChoice order. Ask is off while no provider is set up, and the box shows
+    // Insert then without changing what is saved, so Ask comes back with a provider. It follows a provider set up or
+    // removed while the window is open.
+    private ComboBox VoiceEnter()
+    {
+        var ask = new ComboBoxItem { Content = VoiceChoices.Label(VoiceChoice.Ask) };
+        var box = new ComboBox { MinWidth = 200, Items = { VoiceChoices.Label(VoiceChoice.Insert), ask, VoiceChoices.Label(VoiceChoice.Note) } };
+        bool showing = false;
+        void Show(TomteSettings s)
+        {
+            bool canAsk = s.Provider is { DefaultModel.Length: > 0 };
+            showing = true;
+            ask.IsEnabled = canAsk;
+            box.SelectedIndex = (int)VoiceChoices.Default(s.VoiceEnter, canAsk);
+            showing = false;
+            voiceNote.Text = (canAsk ? "" : VoiceChoices.NoProvider + " Set one up under AI provider below. ")
+                + "After you speak, the words show with Insert, Ask Tomte and Add to note. Alt+I, Alt+A and Alt+N pick each one, and Esc throws the words away.";
+            voiceNote.Visibility = Visibility.Visible;
+        }
+
+        Show(store.Current);
+        box.SelectionChanged += (_, _) =>
+        {
+            if (!showing && box.SelectedIndex >= 0)
+            {
+                Save(s => s with { VoiceEnter = (VoiceChoice)box.SelectedIndex });
+            }
+        };
+        store.Changed += s => DispatcherQueue.TryEnqueue(() => Show(s));
         return box;
     }
 
