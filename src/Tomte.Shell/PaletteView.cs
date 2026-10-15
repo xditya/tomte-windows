@@ -5,7 +5,6 @@ using Tomte.Core;
 using Tomte.Core.Device;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
-using Tomte.Core.Triggers;
 using Windows.System;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
@@ -316,20 +315,11 @@ internal sealed class PaletteView : IDisposable, IInteractive
             case NavKey.PageUp or NavKey.PageDown when session is not null:
                 ScrollTo(layout.Paged(scroll, key == NavKey.PageDown ? 1 : -1, answerHeight, Height));
                 return true;
-        }
-
-        var step = key switch
-        {
-            NavKey.Back => back is null ? EscapeStep.Retract : EscapeStep.Back,
-            NavKey.Escape => RetractionRules.Escape(laidAsk is not null, conversationOpen: false, back is not null),
-            _ => EscapeStep.Retract,
-        };
-        switch (step)
-        {
-            case EscapeStep.Cancel:
+            // Esc cancels an open question first, then goes back to the tab; with neither, the island hides.
+            case NavKey.Escape when laidAsk is not null:
                 return Answer(ConfirmButton.Cancel);
-            case EscapeStep.Back:
-                back!();
+            case NavKey.Escape or NavKey.Back when back is not null:
+                back();
                 return true;
             default:
                 return false;

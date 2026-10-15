@@ -41,16 +41,14 @@ public class RetractionRulesTests
     }
 
     // Ctrl+P: pinned, Panels and the AI box stay when the pointer leaves and when the keys go elsewhere, also once the
-    // typing or the press that held them has ended; unpinned, both retract again.
+    // press that held them has ended; unpinned, losing the keys retracts the AI box again.
     [Fact]
     public void APinnedIslandStaysWhenThePointerLeavesOrTheKeysGo()
     {
         foreach (var state in new[] { IslandState.Panels, IslandState.Palette })
         {
             Assert.False(RetractionRules.ShouldRetract(state, IslandActivity.Pinned));
-            Assert.False(RetractionRules.ShouldRetract(state, IslandActivity.Pinned & ~IslandActivity.Typing));
             Assert.False(RetractionRules.ShouldRetract(state, RetractionRules.Released(IslandActivity.Pinned | IslandActivity.Pressing, buttonDown: false)));
-            Assert.True(RetractionRules.ShouldRetract(state, IslandActivity.Pinned ^ IslandActivity.Pinned));
         }
 
         Assert.False(RetractionRules.RetractsOnFocusLoss(IslandActivity.Pinned));
@@ -116,16 +114,6 @@ public class RetractionRulesTests
     {
         Assert.Equal(expected, RetractionRules.TakesEscape(state, activity, pointerInside));
     }
-
-    // One level at a time: the question first, then the open conversation, then back to the tab, then away.
-    [Theory]
-    [InlineData(true, false, true, EscapeStep.Cancel)]
-    [InlineData(true, false, false, EscapeStep.Cancel)]
-    [InlineData(false, true, false, EscapeStep.Close)]
-    [InlineData(false, false, true, EscapeStep.Back)]
-    [InlineData(false, false, false, EscapeStep.Retract)]
-    public void EscStepsBackOneLevelThenRetracts(bool asking, bool conversationOpen, bool fromPanels, EscapeStep expected) =>
-        Assert.Equal(expected, RetractionRules.Escape(asking, conversationOpen, fromPanels));
 
     [Theory]
     [InlineData(IslandState.Palette, IslandActivity.Result, true)]

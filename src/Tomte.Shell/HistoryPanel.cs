@@ -3,7 +3,6 @@ using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Interaction;
 using Tomte.Core.Text;
-using Tomte.Core.Triggers;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
 
@@ -60,7 +59,7 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
     /// <summary>Esc closes the open conversation to the list, before it retracts the island.</summary>
     public bool Command(NavKey key)
     {
-        if (key != NavKey.Escape || RetractionRules.Escape(asking: false, opened is not null, fromPanels: false) != EscapeStep.Close || layout is null)
+        if (key != NavKey.Escape || opened is null || layout is null)
         {
             return false;
         }

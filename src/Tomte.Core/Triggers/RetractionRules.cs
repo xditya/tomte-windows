@@ -24,15 +24,6 @@ public enum IslandActivity
     Pressing = 128,
 }
 
-/// <summary>What Esc does on the open island: cancel a question, close an opened conversation, go back, or retract.</summary>
-public enum EscapeStep
-{
-    Cancel,
-    Close,
-    Back,
-    Retract,
-}
-
 /// <summary>What a pointer report does to the hover dwell: nothing, start it, or cancel it.</summary>
 public enum HoverStep
 {
@@ -109,14 +100,6 @@ public static class RetractionRules
     /// (<see cref="ShouldRetract"/>), not over a fullscreen app or the lock screen.
     /// </summary>
     public static bool RetractsOnFocusLoss(IslandActivity activity) => !activity.HasFlag(IslandActivity.Pinned);
-
-    /// <summary>
-    /// Esc steps back one level at a time: a question on a card is cancelled, then an opened History conversation closes
-    /// to its list, then the AI box opened from a tab goes back to that tab. With nothing to step back to, the island
-    /// retracts.
-    /// </summary>
-    public static EscapeStep Escape(bool asking, bool conversationOpen, bool fromPanels) =>
-        asking ? EscapeStep.Cancel : conversationOpen ? EscapeStep.Close : fromPanels ? EscapeStep.Back : EscapeStep.Retract;
 
     /// <summary>A press outside the island dismisses a drop zone's result; anywhere else it is the user's own click.</summary>
     public static bool DismissedByClickOutside(IslandState state, IslandActivity activity) =>
