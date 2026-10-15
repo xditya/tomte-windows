@@ -86,7 +86,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     private double lastTickMs = -1;
     private double morphStartMs;
     private bool islandMoving;
-    private double leadMs;
+    private double leadMs, heldLead;
     private IslandGeometry? anchor;
     private float mascotX;
     private double fromWidth, fromDepth;
@@ -206,7 +206,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         ShadowLook();
 
         // The mascot sits above the content and outside the clip, so it can be seen before the shape has any depth.
-        Mascot = new Mascot(() => clock.Elapsed.TotalSeconds, () => ForceReduceMotion || !uiSettings.AnimationsEnabled) { Changed = Wake };
+        Mascot = new Mascot(() => clock.Elapsed.TotalSeconds, () => ReduceMotion) { Changed = Wake };
         mascotVisual = new MascotVisual(compositor);
         live.Children.InsertAtTop(mascotVisual.Visual);
         wakeTimer = Queue.CreateTimer();
@@ -382,6 +382,43 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>Debug aid: crossfade even when Windows animation effects are on.</summary>
     public bool ForceReduceMotion { get; init; }
 
+    /// <summary>Windows animation effects are off, or the debug aid says so: no morphs, crossfades only.</summary>
+    public bool ReduceMotion => ForceReduceMotion || !uiSettings.AnimationsEnabled;
+
+    /// <summary>A driven run cloaked the island (<see cref="Cloak"/>); nothing of Tomte may reach the screen.</summary>
+    public bool Cloaked { get; private set; }
+
+    /// <summary>
+    /// The launch arrival flies a tomte of its own into the pill: the island's stays undrawn while it does, and shows
+    /// again where that one lands.
+    /// </summary>
+    public bool MascotAway
+    {
+        set => mascotVisual.Visual.Opacity = value ? 0 : 1;
+    }
+
+    /// <summary>
+    /// The next morph from rest shows the window at once but holds the shape still for this many seconds: the launch
+    /// arrival opens the pill while its tomte holds still, and the pill grows once the tomte is nearly up. 0 ends a hold
+    /// under way, so a morph that takes over from the arrival moves at once.
+    /// </summary>
+    public void HoldNextMorph(double seconds)
+    {
+        heldLead = seconds;
+        if (seconds <= 0 && islandMoving)
+        {
+            leadMs = Math.Min(leadMs, clock.Elapsed.TotalMilliseconds - morphStartMs);
+        }
+    }
+
+    /// <summary>Where the tomte rests in the Compact pill at the island's place: its box's top-left in screen pixels.</summary>
+    public System.Drawing.PointF MascotLanding()
+    {
+        Rescale(MonitorScale());
+        var shape = attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact;
+        return Arrival.Landing(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth, attached), attached);
+    }
+
     /// <summary>
     /// What the pointer is tracked against for the geometry the current morph is heading for, in physical pixels:
     /// the outline's box and, under the floating pill, the strip up to the screen edge. Not the shadow's room.
@@ -455,7 +492,8 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         targetGeometry = to;
         swell = swellAimed = false;
-        double lead = Mascot.TakeIslandLead();
+        double lead = Math.Max(Mascot.TakeIslandLead(), heldLead);
+        heldLead = 0;
         if (to.Depth <= 0.5 && Dips.Children.Count > 0)
         {
             // Whatever shows inside fades out first; the shape follows.
@@ -490,7 +528,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         settled ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (ForceReduceMotion || !uiSettings.AnimationsEnabled)
+        if (ReduceMotion)
         {
             Crossfade(to);
             Queue.TryEnqueue(contentReadyHandler);
@@ -519,7 +557,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public void Swell(bool on)
     {
-        if (on == swell || !visible || (on && (ForceReduceMotion || !uiSettings.AnimationsEnabled)))
+        if (on == swell || !visible || (on && ReduceMotion))
         {
             return;
         }
@@ -576,7 +614,7 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         place.Use(SpringPreset.Gentle);
         place.Target = offset;
-        if (!visible || ForceReduceMotion || !uiSettings.AnimationsEnabled)
+        if (!visible || ReduceMotion)
         {
             place.Jump(offset);
             Follow();
@@ -595,6 +633,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     {
         BOOL on = true;
         PInvoke.DwmSetWindowAttribute(Hwnd, DWMWINDOWATTRIBUTE.DWMWA_CLOAK, &on, (uint)sizeof(BOOL)).ThrowOnFailure();
+        Cloaked = true;
     }
 
     public void Dispose()
