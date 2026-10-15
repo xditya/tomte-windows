@@ -12,9 +12,6 @@ namespace Tomte.AI.Palette;
 /// <summary>The built-in effects that reach outside the app, for the shell and the harness to hand to <see cref="BuiltInTools"/>, and the rambler's Insert.</summary>
 public static unsafe class DesktopEffects
 {
-    // Assigned to nothing, so a tap of it types nothing; it stands between Alt's press and release so the release opens no menu.
-    private const VIRTUAL_KEY Unassigned = (VIRTUAL_KEY)0xE8;
-
     public static void CopyToClipboard(string text) => ClipboardSnapshot.SetText(text);
 
     /// <summary>The URL is validated by the tool; the shell opens it in the default browser.</summary>
@@ -42,15 +39,13 @@ public static unsafe class DesktopEffects
         if (VoiceChoices.Refusal(window, open, (nint)PInvoke.GetForegroundWindow().Value, elevated) is { } refused)
             return refused;
 
-        var keys = new List<INPUT>(2 * text.Length + 4);
-        // Alt+I picked Insert and Alt is still held: let it go first, or the words arrive as Alt chords.
+        var keys = new List<INPUT>(2 * text.Length + 2);
+        // Alt+I picked Insert and Alt is still held: let it go first, or the words arrive as Alt chords. The input thread
+        // tapped a key assigned to nothing as the hotkey came, so the release opens no menu.
         foreach (var alt in (ReadOnlySpan<VIRTUAL_KEY>)[VIRTUAL_KEY.VK_LMENU, VIRTUAL_KEY.VK_RMENU])
         {
-            if ((PInvoke.GetAsyncKeyState((int)alt) & 0x8000) == 0)
-                continue;
-            if (keys.Count == 0)
-                keys.AddRange([Key(Unassigned, false), Key(Unassigned, true)]);
-            keys.Add(Key(alt, true));
+            if ((PInvoke.GetAsyncKeyState((int)alt) & 0x8000) != 0)
+                keys.Add(Key(alt, true));
         }
 
         foreach (char c in text)

@@ -53,7 +53,7 @@ internal static unsafe class InputThread
     private const uint MsgSetConfirm = PInvoke.WM_APP + 13;     // wParam 1 registers Win+Alt+Enter, 2 the card's keys with Enter, 3 without it, 0 releases them
     private const uint MsgSample = PInvoke.WM_APP + 15;         // sample the pointer against the island bounds now
     private const nuint DwellTimer = 1;
-    private const ushort VkEscape = 0x1B, VkReturn = 0x0D;
+    private const ushort VkEscape = 0x1B, VkReturn = 0x0D, VkMenu = 0x12;
     private static readonly ushort[] ChoiceLetters = ['I', 'A', 'N'];
     private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, which CsWin32 does not emit
 
@@ -291,6 +291,19 @@ internal static unsafe class InputThread
         PInvoke.RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE));
     }
 
+    // Alt+I, Alt+A or Alt+N picked on the card, with Alt still down: a tap of a key assigned to nothing, so the app in
+    // front takes Alt as used in a chord. Letting Alt go then opens no menu, and letters typed after are not menu keys.
+    private static void MaskAlt()
+    {
+        const VIRTUAL_KEY Unassigned = (VIRTUAL_KEY)0xE8;
+        ReadOnlySpan<INPUT> tap =
+        [
+            new() { type = INPUT_TYPE.INPUT_KEYBOARD, Anonymous = { ki = new KEYBDINPUT { wVk = Unassigned } } },
+            new() { type = INPUT_TYPE.INPUT_KEYBOARD, Anonymous = { ki = new KEYBDINPUT { wVk = Unassigned, dwFlags = KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP } } },
+        ];
+        PInvoke.SendInput(tap, sizeof(INPUT));
+    }
+
     // Win+Alt+Enter, or the card's three Alt keys and its Enter: an id that is not registered is ignored.
     private static void UnregisterConfirm(HWND hwnd)
     {
@@ -338,6 +351,11 @@ internal static unsafe class InputThread
 
                     return new LRESULT(0);
                 case PInvoke.WM_HOTKEY:
+                    if ((int)wParam.Value is >= ChoiceHotkeyId and < ChoiceEnterHotkeyId && (PInvoke.GetAsyncKeyState(VkMenu) & 0x8000) != 0)
+                    {
+                        MaskAlt();
+                    }
+
                     PInvoke.PostMessage(island, MsgHotkey, wParam, 0);
                     return new LRESULT(0);
                 case MsgSetEscape:
