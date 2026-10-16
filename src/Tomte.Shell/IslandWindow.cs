@@ -87,7 +87,6 @@ internal sealed unsafe class IslandWindow : IDisposable
     private double morphStartMs;
     private bool islandMoving;
     private double leadMs, heldLead;
-    private IslandGeometry? anchor;
     private float mascotX;
     private double fromWidth, fromDepth;
     private bool contentPending;
@@ -305,7 +304,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     public Mascot Mascot { get; }
 
     /// <summary>Whether an island point is on the tomte's box at the shape's left edge, while the tomte is on.</summary>
-    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(anchor ?? Current).Contains(at.X, at.Y);
+    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(Current).Contains(at.X, at.Y);
 
     /// <summary>The island is pinned (Ctrl+P): a small mark at the tomte's lower right says so.</summary>
     public bool Pinned
@@ -492,7 +491,7 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         targetGeometry = to;
         swell = swellAimed = false;
-        double lead = Math.Max(Mascot.TakeIslandLead(), heldLead);
+        double lead = heldLead;
         heldLead = 0;
         if (to.Depth <= 0.5 && Dips.Children.Count > 0)
         {
@@ -502,9 +501,6 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         (fromWidth, fromDepth) = (from.Width, from.Depth);
         contentPending = to.Depth > 0.5;
-        // a retarget mid-reveal drops the anchor and the mascot jumps to the live edge in one frame; give the
-        // mascot its own x spring if that shows.
-        anchor = MascotArt.Anchor(from, to);
         TargetBounds = PointerTarget();
         crossfadeGeneration++; // a crossfade still in flight must not settle this morph
         foreach (var spring in springs)
@@ -769,7 +765,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         bool finished = false;
         if (islandMoving)
         {
-            // The tomte drops in from above the edge; the shape starts 70 ms later.
+            // A close waits for the content to fade out, and the launch arrival can hold a pill; the shape starts after.
             double islandDt = now - morphStartMs < leadMs ? 0 : dt;
             bool done = true;
             foreach (var spring in springs)
@@ -886,7 +882,6 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         var g = Current;
-        anchor = null;
         if (g.Depth <= 0.5)
         {
             // Hidden costs nothing: no beat may wake the tick, and the next show starts from a clean tomte at its place.
@@ -974,13 +969,13 @@ internal sealed unsafe class IslandWindow : IDisposable
         PlaceMascot(g);
     }
 
-    /// <summary>Put the tomte at the left edge of the shape, or of the anchor shape during a reveal or retract.</summary>
+    /// <summary>Put the tomte at the left edge of the live shape, at the size and opacity the shape's depth gives it.</summary>
     private void PlaceMascot(in IslandGeometry g)
     {
-        var box = MascotArt.Box(anchor ?? g);
+        var box = MascotArt.Box(g);
         float s = (float)scale;
         mascotX = (float)(g.OuterWidth / 2 + box.X) * s;
-        mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s);
+        mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s, (float)MascotArt.Ride(g));
     }
 
     private void ClearRegion()

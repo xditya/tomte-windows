@@ -107,28 +107,21 @@ public class MascotTests
         Assert.Equal(0xC2C2C2u, MascotArt.Shade(0xFFFFFF));
     }
 
+    // The tomte opens and closes with the pill, which sizes and fades it: it has no move of its own on the way in or
+    // out, and it is drawn until the island parks it once the pill has gone.
     [Fact]
-    public void RevealPeeksFromAboveAndLeadsTheIsland()
+    public void OpeningAndClosingHaveNoMoveOfTheirOwn()
     {
         var m = NewMascot();
         Assert.False(m.Visible);
         m.Follow(IslandState.Hidden, IslandState.Compact);
         Assert.True(m.Visible);
-        Assert.Equal(MascotStates.PeekFromY, m.RootY);
-        Assert.Equal(MascotStates.IslandLeadSeconds, m.TakeIslandLead());
-        Assert.Equal(0, m.TakeIslandLead());
-        Run(m, 0.6, x => x.RootY);
-        Assert.InRange(m.RootY, -0.25, 0.25);
-    }
-
-    [Fact]
-    public void AReactionSetDuringTheRevealKeepsTheDropInSnappy()
-    {
-        var m = NewMascot();
-        m.Follow(IslandState.Hidden, IslandState.Palette);
-        m.Set(MascotState.Thinking);
-        Run(m, 0.35, x => 0);
-        Assert.InRange(m.RootY, -1, 1); // gentle would still be about 5 units up
+        Assert.Equal(0, Run(m, 0.6, x => x.RootY + x.RootX));
+        m.Follow(IslandState.Compact, IslandState.Hidden);
+        Assert.Equal(0, Run(m, 0.6, x => x.RootY + x.RootX));
+        Assert.True(m.Visible);
+        m.Park();
+        Assert.False(m.Visible);
     }
 
     // Under the pointer the tomte lifts 1.5 DIP on the snappy spring, turns back from mid-flight when the pointer
@@ -153,7 +146,7 @@ public class MascotTests
         Run(m, 0.5, x => 0);
         Assert.InRange(m.RootY, up - 0.25, up + 0.25);
         m.Park();
-        Assert.Equal(MascotStates.PeekFromY, m.RootY);
+        Assert.Equal(0, m.RootY);
     }
 
     // A click on the pill opens Panels and one on the tomte asks Tomte: the tomte sits on top, and the peek badge is all tomte.
@@ -273,7 +266,6 @@ public class MascotTests
         var m = NewMascot(reduce: true);
         m.Follow(IslandState.Hidden, IslandState.Compact);
         Assert.Equal(0, m.RootY);
-        Assert.Equal(0, m.TakeIslandLead());
         Assert.Null(m.WakeIn); // no sway
         m.Set(MascotState.Thinking);
         Run(m, 0.5, x => 0);
@@ -293,15 +285,15 @@ public class MascotTests
         m.Set(MascotState.Thinking);
         m.Follow(IslandState.Palette, IslandState.Hidden);
         Run(m, 0.6, x => 0);
-        Assert.False(m.Visible);
         Assert.False(m.Step(FrameDt));
         Assert.Null(m.WakeIn);
+        m.Park();
+        Assert.False(m.Visible);
 
         var off = NewMascot();
         off.Enabled = false;
         off.Follow(IslandState.Hidden, IslandState.Compact);
         Assert.False(off.Visible);
-        Assert.Equal(0, off.TakeIslandLead());
         Assert.False(off.Step(FrameDt));
     }
 
@@ -337,28 +329,143 @@ public class MascotTests
         Assert.Equal(IslandGeometry.Peek.Width - peek.Max(p => p.X), peek.Min(p => p.X), 0.1);
     }
 
-    // Through a reveal of the palette, frame by frame, the tomte stays on the growing outline rather than where the
-    // palette's edge will be; the pill and the peek pill still open around a tomte that has dropped in; a retract keeps it.
+    // Shallower than the pill, the tomte is its resting self scaled about the shape's top-left corner, in step with the
+    // depth, and as faint: half a pill deep, half its size and half seen; a hidden island, nothing.
     [Fact]
-    public void ARevealWiderThanThePillCarriesTheTomteOnItsEdge()
+    public void BelowThePillsDepthTheTomteShrinksAndFadesWithIt()
     {
-        var palette = IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight);
-        Assert.Null(MascotArt.Anchor(IslandGeometry.Hidden, palette));
-        for (double t = 0; t <= 1; t += 0.05)
+        Assert.Equal(1, MascotArt.Ride(IslandGeometry.Compact));
+        Assert.Equal(1, MascotArt.Ride(IslandGeometry.Panel(PanelSize.Width, 140)));
+        Assert.Equal(0, MascotArt.Ride(IslandGeometry.Hidden));
+        var half = new IslandGeometry(170, IslandGeometry.Compact.Depth / 2, 9.5);
+        Assert.Equal(0.5, MascotArt.Ride(half));
+        var rest = MascotArt.Box(IslandGeometry.Compact);
+        var box = MascotArt.Box(half);
+        Assert.Equal(rest.X + 110, (box.X + 85) * 2, 3);
+        Assert.Equal(rest.Y, box.Y * 2, 3);
+        Assert.Equal(rest.Width, box.Width * 2, 3);
+    }
+
+    // Opening and closing every shape the tomte sits in, on the island's springs frame by frame: the tomte is in the live
+    // outline at its left edge with room in proportion to its size, never beside a shape still on its way, and its size
+    // goes up with an open and down with a close, to nothing by the time the pill has gone.
+    [Fact]
+    public void TheTomteOpensAndClosesWithThePill()
+    {
+        IslandGeometry[] shapes =
+        [
+            IslandGeometry.Compact, IslandGeometry.Peek, IslandGeometry.Compact with { Width = 262 }, IslandGeometry.Compact with { Width = 330 },
+            IslandGeometry.ShelfDrop, IslandGeometry.Panel(PanelSize.Width, 140), IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight),
+        ];
+        foreach (var open in shapes)
         {
-            var live = new IslandGeometry(120 + t * (palette.Width - 120), t * palette.Depth, 22);
-            var box = MascotArt.Box(MascotArt.Anchor(IslandGeometry.Hidden, palette) ?? live);
-            Assert.True(box.X >= -live.Width / 2, $"at {t:F2} the tomte is at {box.X}, left of the outline's {-live.Width / 2}");
+            foreach (var preset in new[] { SpringPreset.Snappy, SpringPreset.Gentle })
+            {
+                foreach (var (from, to) in new[] { (IslandGeometry.Hidden, open), (open, IslandGeometry.Hidden) })
+                {
+                    var frames = Frames(from, to, preset);
+                    double last = MascotArt.Ride(from);
+                    foreach (var live in frames)
+                    {
+                        double ride = MascotArt.Ride(live);
+                        Assert.True(to.Depth > from.Depth ? ride >= last : ride <= last, $"{from} to {to}: the tomte turned back at {live}");
+                        last = ride;
+                        TomteIsInside(live);
+                    }
+
+                    Assert.InRange(Math.Abs(MascotArt.Ride(to) - MascotArt.Ride(frames[^1])), 0, 0.01);
+                }
+            }
+        }
+    }
+
+    // A close turned round partway, as when the pointer comes back, keeps the tomte on the pill: from one frame to the
+    // next it moves with the outline's left edge, also as the springs change course from Panels closing to Compact.
+    [Fact]
+    public void AClosingPillTurnedRoundKeepsItsTomte()
+    {
+        var panels = IslandGeometry.Panel(PanelSize.Width, 260);
+        foreach (double turnAt in new[] { 0.05, 0.12, 0.2 })
+        {
+            var frames = Frames(panels, IslandGeometry.Hidden, SpringPreset.Snappy, turnAt, IslandGeometry.Compact);
+            for (int i = 1; i < frames.Count; i++)
+            {
+                System.Drawing.RectangleF a = MascotArt.Box(frames[i - 1]), b = MascotArt.Box(frames[i]);
+                double edgeMoved = (frames[i - 1].Width - frames[i].Width) / 2, deepened = Math.Abs(frames[i].Depth - frames[i - 1].Depth);
+                Assert.True(
+                    Math.Abs(b.X - a.X - edgeMoved) < 0.5 && Math.Abs(b.Y - a.Y) <= deepened / 2 + 0.01 && Math.Abs(b.Width - a.Width) <= deepened + 0.01,
+                    $"turned at {turnAt}s: the tomte jumped from {a} to {b}");
+                TomteIsInside(frames[i]);
+            }
+
+            Assert.InRange(MascotArt.Ride(frames[^1]), 0.99, 1);
+        }
+    }
+
+    // The island's width, depth and corner springs stepped from one shape to another at 165 Hz until they settle, and
+    // turned toward another shape after a while if asked.
+    private static List<IslandGeometry> Frames(IslandGeometry from, IslandGeometry to, SpringPreset preset, double turnAt = 0, IslandGeometry? turnTo = null)
+    {
+        Spring width = new(), depth = new(), corner = new();
+        Spring[] springs = [width, depth, corner];
+        width.Jump(from.Width);
+        depth.Jump(from.Depth);
+        corner.Jump(from.Corner);
+        Aim(to);
+        var frames = new List<IslandGeometry>();
+        for (double t = FrameDt; t < 3; t += FrameDt)
+        {
+            if (turnTo is { } next && t >= turnAt)
+            {
+                Aim(next);
+                turnTo = null;
+            }
+
+            foreach (var spring in springs)
+            {
+                spring.Step(FrameDt);
+            }
+
+            frames.Add(new(width.Value, depth.Value, corner.Value));
+            if (turnTo is null && Array.TrueForAll(springs, s => s.Settled))
+            {
+                break;
+            }
         }
 
-        Assert.Equal(IslandGeometry.Compact, MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.Compact));
-        Assert.Equal(IslandGeometry.Peek, MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.Peek));
-        // The rambler's pill is wider than Compact but a pill all the same: the tomte drops in there too.
-        var rambler = IslandGeometry.Compact with { Width = 262 };
-        Assert.Equal(rambler, MascotArt.Anchor(IslandGeometry.Hidden, rambler));
-        Assert.Null(MascotArt.Anchor(IslandGeometry.Hidden, IslandGeometry.ShelfDrop));
-        Assert.Equal(palette, MascotArt.Anchor(palette, IslandGeometry.Hidden));
-        Assert.Null(MascotArt.Anchor(IslandGeometry.Compact, palette));
+        return frames;
+
+        void Aim(IslandGeometry g)
+        {
+            foreach (var spring in springs)
+            {
+                spring.Use(preset);
+            }
+
+            (width.Target, depth.Target, corner.Target) = (g.Width, g.Depth, g.Corner);
+        }
+    }
+
+    // All of the tomte's art inside the live outline, with room around it in proportion to its size (6 DIP at rest).
+    private static void TomteIsInside(in IslandGeometry live)
+    {
+        if (live.Depth < 1)
+        {
+            return;
+        }
+
+        var art = Art(live);
+        var segments = new List<OutlineSegment>();
+        var outline = new List<Vector2>();
+        IslandOutline.Build(live, attached: false, segments);
+        IslandOutline.Flatten(segments, outline);
+        foreach (var p in art)
+        {
+            Assert.True(Inside(p, outline), $"{live}: {p} is outside the outline");
+        }
+
+        float room = art.Min(p => Distance(p, outline));
+        Assert.True(room >= 6 * MascotArt.Ride(live) - 0.05, $"{live}: the art comes within {room:F2} DIP of the outline");
     }
 
     // A click on the tomte opens the palette, so its box must be where it is drawn and apart from what else takes clicks.
@@ -388,7 +495,7 @@ public class MascotTests
     {
         var box = MascotArt.Box(shape);
         var at = new Vector2(box.X + (float)shape.Width / 2, box.Y);
-        float k = MascotArt.SizeDips / MascotArt.ViewBox;
+        float k = box.Width / MascotArt.ViewBox;
         var points = new List<Vector2>();
         var flat = new List<Vector2>();
         foreach (var path in new[] { MascotArt.Beard, MascotArt.BeardShade, MascotArt.CapCone, MascotArt.TipCurl, MascotArt.Brim })

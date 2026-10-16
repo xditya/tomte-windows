@@ -52,8 +52,8 @@ internal sealed class MascotVisual
         place = Group(compositor, Vector2.Zero, root, pin);
         place.IsVisible = false;
 
-        // Nothing of the tomte shows above the island's top edge. The notch has the screen edge there; the floating
-        // pill has the gap, and the drop-in comes out of the line the pill grows from, not down across the gap.
+        // Nothing of the tomte shows above the island's top edge: the notch has the screen edge there, and the floating
+        // pill has the gap.
         place.Size = new Vector2(MascotArt.ViewBox);
         float far = 4 * MascotArt.ViewBox;
         edge = compositor.CreateInsetClip(-far, 0, -far, -far);
@@ -68,20 +68,27 @@ internal sealed class MascotVisual
         set => pin.IsVisible = value;
     }
 
-    /// <summary>Copy the pose onto the visuals, the box's top-left at <paramref name="offsetPx"/> from the island's. Property sets only; nothing is allocated per frame.</summary>
-    public void Apply(Mascot mascot, Vector2 offsetPx, float scale)
+    /// <summary>
+    /// Copy the pose onto the visuals, the box's top-left at <paramref name="offsetPx"/> from the island's, drawn at
+    /// <paramref name="ride"/> of its size and opacity (<see cref="MascotArt.Ride"/>). Property sets only; nothing is
+    /// allocated per frame.
+    /// </summary>
+    public void Apply(Mascot mascot, Vector2 offsetPx, float scale, float ride = 1)
     {
-        place.IsVisible = mascot.Visible;
-        if (!mascot.Visible)
+        bool shown = mascot.Visible && ride > 0;
+        place.IsVisible = shown;
+        if (!shown)
         {
             return;
         }
 
-        float k = SizeDips / MascotArt.ViewBox * scale;
+        float k = SizeDips / MascotArt.ViewBox * scale * ride;
         place.Offset = new Vector3(offsetPx, 0);
         place.Scale = new Vector3(k, k, 1);
         // The box sits lower in a deeper row; the clip stays on the island's top edge, in viewBox units.
         edge.TopInset = -offsetPx.Y / k;
+        // On the tomte, not the place: the launch arrival hides the place while its own tomte flies in.
+        root.Opacity = ride;
         root.RotationAngleInDegrees = (float)mascot.RootRotate;
         root.Offset = new Vector3((float)mascot.RootX, (float)mascot.RootY, 0);
         body.Scale = new Vector3((float)mascot.ScaleX, (float)mascot.ScaleY, 1);
