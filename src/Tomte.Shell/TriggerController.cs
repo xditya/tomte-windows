@@ -546,6 +546,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case Hotkey.MsgPause:
                 log?.Invoke(wParam == 1 ? "hotkeys: paused for a settings shortcut box" : "hotkeys: back from the settings window");
                 InputThread.PauseHotkeys(wParam == 1);
+                // The undo pill goes too and lets Win+Alt+Z go, so the box hears it and says it is taken; the kept view
+                // runs out its time.
+                if (wParam == 1 && activity.HasFlag(IslandActivity.Undo))
+                {
+                    Hide();
+                }
+
                 return true;
             case PInvoke.WM_TIMER:
                 OnTimer(wParam);
