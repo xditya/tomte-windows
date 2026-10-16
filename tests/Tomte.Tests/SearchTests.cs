@@ -533,7 +533,7 @@ public sealed class AiSearchRowTests
         Assert.Equal([Ai, Ask], ranked);
         Assert.Equal([Ai, Ask], SearchRank.AiFirst(ranked, typed));
         // The AI row is a group of its own after files and before Ask, so Tab reaches it.
-        Assert.Equal((3, 4), (Ai.Group, Ask.Group));
+        Assert.Equal((4, 5), (Ai.Group, Ask.Group));
     }
 
     [Fact]
@@ -563,6 +563,6 @@ public sealed class AiSearchRowTests
         Assert.Equal([-1, 0, 1], lines.Select(l => l.Row));
         Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight), lines[^1].Top + lines[^1].Height);
         Assert.Empty(SearchLayout.Lines([], "AI · nothing"));
-        Assert.Equal("AI", SearchLayout.KindLabel(SearchKind.AiSearch));
+        Assert.Equal("AI", SearchLayout.KindLabel(Ai));
     }
 }

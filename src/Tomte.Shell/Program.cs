@@ -436,6 +436,12 @@ internal static partial class Program
         {
             Ask = words => AskFromSearch(island, triggers, store, log, words),
             Back = () => island.Queue.TryEnqueue(() => GoBack(island, triggers)),
+            Tab = id => island.Queue.TryEnqueue(() =>
+            {
+                triggers.OpenPanel(id);
+                KeysToPanels(island);
+            }),
+            Settings = section => OpenSettings(section),
             AiSearch = words => AiSearchSession(store, words, log),
         };
         triggers.SearchOpened = search.Open;

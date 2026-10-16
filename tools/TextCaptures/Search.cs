@@ -56,7 +56,18 @@ internal static partial class Program
             "Sending to Anthropic · claude-haiku-5-5", grown: AiRows, ai: true),
         SearchScene("search-ai-results", Sentence, AiPicked, 0, "", "Sent to Anthropic · claude-haiku-5-5", grown: AiRows, ai: true,
             lead: "AI · The September invoice is invoice-2026-09-globex.pdf, and the Invoices folder in Work holds the rest of your invoices."),
+        // Places: under an app that matches, then first for "display settings", and Tomte's own beside Windows'.
+        SearchScene("search-places", "sound", PlaceRows("sound"), 0, SearchLayout.NoResults, "Files: Everything"),
+        SearchScene("search-places-first", "display settings", PlaceRows("display settings"), 0, SearchLayout.NoResults, "Files: Everything"),
+        SearchScene("search-places-tomte", "clipboard", PlaceRows("clipboard"), 1, SearchLayout.NoResults, "Files: Everything"),
     ];
+
+    // The rows a search gives with two apps beside the places, and Ask. Tomte's places take this program's icon here.
+    private static IReadOnlyList<SearchItem> PlaceRows(string typed)
+    {
+        SearchItem[] apps = [new(SearchKind.App, "Sound Recorder", "app:sr", "", Path.Combine(WinDir, "System32", "SoundRecorder.exe")), new(SearchKind.App, "Settings", "app:s", "", Places.SettingsApp)];
+        return [.. SearchRank.Order(apps.Concat(Places.Rows(apps)), typed, new Dictionary<string, Launches>()), new(SearchKind.Ask, "Ask Tomte", typed, $"\"{typed}\"")];
+    }
 
     private const string Sentence = "the invoices I got last month";
 

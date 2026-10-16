@@ -33,11 +33,11 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     /// <summary>The selected row: a lighter fill and the accent's outline, which shows whether the pointer is there or not.</summary>
     public const uint SelectedFill = 0x24FFFFFF, SelectedLine = 0x996FA8FF;
 
-    public const string Placeholder = "Search apps, files and folders";
+    public const string Placeholder = "Search apps, settings, files and folders";
     public const string Keys = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc clears";
     public const string KeysEmpty = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc closes";
     public const string KeysBack = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc goes back";
-    public const string NothingYet = "Type to search your apps, files and folders. What you open from here is listed first next time.";
+    public const string NothingYet = "Type to search your apps, settings, files and folders. What you open from here is listed first next time.";
     public const string NoResults = "Nothing found.";
     public const string AiRow = "Search with AI";
     public const string AiKeys = "Enter opens · Ctrl+Enter shows in folder · Esc back to all results";
@@ -129,14 +129,16 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public static string? HeadingFor(int group) => group switch
     {
         0 => "Apps",
-        1 => "Shortcuts and shelf",
-        2 => "Files and folders",
+        1 => "Settings and tools",
+        2 => "Shortcuts and shelf",
+        3 => "Files and folders",
         _ => null,
     };
 
     /// <summary>The word at a row's right end: what it is.</summary>
-    public static string KindLabel(SearchKind kind) => kind switch
+    public static string KindLabel(SearchItem item) => item.Kind switch
     {
+        SearchKind.Place => Places.Label(item.Target),
         SearchKind.App => "App",
         SearchKind.Shortcut => "Shortcut",
         SearchKind.Shelf => "On the shelf",
@@ -161,7 +163,7 @@ public sealed class SearchLayout(float width, bool mascot, float height)
         return (row, icon,
             new(item.Name, Name, new RectangleF(x, top, nameWidth, RowHeight)),
             new(item.Detail, Detail, new RectangleF(detailX, top, Math.Max(0, kindX - DetailGap - detailX), RowHeight)),
-            new(KindLabel(item.Kind), Kind, new RectangleF(kindX, top, KindWidth, RowHeight)));
+            new(KindLabel(item), Kind, new RectangleF(kindX, top, KindWidth, RowHeight)));
     }
 
     /// <summary>The scroll that shows the line from <paramref name="top"/> to <paramref name="bottom"/> whole, moving as little as it can.</summary>

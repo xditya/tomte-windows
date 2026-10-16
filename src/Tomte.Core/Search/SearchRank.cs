@@ -1,8 +1,11 @@
+using System.Text.RegularExpressions;
+
 namespace Tomte.Core.Search;
 
 /// <summary>
-/// What a search row is. Rows are grouped in this order: apps, then tiles and shelf items, then files and folders, then
-/// AI search, then Ask.
+/// What a search row is. Rows are grouped in this order: apps, then places (settings pages, Tomte's own places and
+/// Windows tools), then tiles and shelf items, then files and folders, then AI search, then Ask. The launch counts store
+/// a kind by its number: new kinds go at the end.
 /// </summary>
 public enum SearchKind
 {
@@ -20,24 +23,28 @@ public enum SearchKind
 
     /// <summary>The row that hands the typed words to the AI box.</summary>
     Ask,
+
+    /// <summary>A Windows Settings page, one of Tomte's own places or a Windows tool, from <see cref="Places"/>.</summary>
+    Place,
 }
 
 /// <summary>
 /// One row. <paramref name="Target"/> is what opening it uses: a Start app's shell:AppsFolder path, a tile's id, or a
 /// path. <paramref name="Detail"/> is the dim text after the name (a file's folder). <paramref name="Icon"/> is the shell
 /// item its icon is read from, null for none. <paramref name="Location"/> is the file or folder Ctrl+Enter shows in its
-/// folder, null when the row has none.
+/// folder, null when the row has none. <paramref name="Words"/> are more words it answers to besides its name (a place's).
 /// </summary>
-public sealed record SearchItem(SearchKind Kind, string Name, string Target, string Detail = "", string? Icon = null, string? Location = null)
+public sealed record SearchItem(SearchKind Kind, string Name, string Target, string Detail = "", string? Icon = null, string? Location = null, string Words = "")
 {
     /// <summary>The group the row is listed in, 0 first.</summary>
     public int Group => Kind switch
     {
         SearchKind.App => 0,
-        SearchKind.Shortcut or SearchKind.Shelf => 1,
-        SearchKind.Folder or SearchKind.File or SearchKind.GetEverything => 2,
-        SearchKind.AiSearch => 3,
-        _ => 4,
+        SearchKind.Place => 1,
+        SearchKind.Shortcut or SearchKind.Shelf => 2,
+        SearchKind.Folder or SearchKind.File or SearchKind.GetEverything => 3,
+        SearchKind.AiSearch => 4,
+        _ => 5,
     };
 
     /// <summary>What the launch counts are kept under: the kind and the target, case ignored, as Windows treats paths.</summary>
@@ -64,7 +71,8 @@ public static class SearchMatch
     /// </summary>
     public const int TypoLength = 5;
 
-    public static int Score(string name, string query)
+    /// <param name="wordStarts">True stops after the word-start tier: no initials, no match inside a word, no letters in order, no typo.</param>
+    public static int Score(string name, string query, bool wordStarts = false)
     {
         string q = Collapse(query);
         if (q.Length == 0)
@@ -90,6 +98,11 @@ public static class SearchMatch
         if (Assign(typed, nameWords, (w, word) => word.StartsWith(w, StringComparison.Ordinal)))
         {
             return WordStarts + extra;
+        }
+
+        if (wordStarts)
+        {
+            return 0;
         }
 
         if (qJoined.Length >= 2 && Pieces(qJoined, 0, nameWords, 0))
@@ -314,42 +327,60 @@ public static class SearchMatch
 }
 
 /// <summary>
-/// The rows a search shows, in order: apps first whenever any app matches, then tiles and shelf items, then files and
-/// folders, then Ask, each group capped. Inside a group the better match comes first; a row opened from search before
-/// gains a little, enough to lead its tier, never enough to pass a better tier. Pure, so it runs on every keystroke.
+/// The rows a search shows, in order: apps first whenever any app matches, then places, then tiles and shelf items, then
+/// files and folders, then Ask, each group capped. A place that matches every typed word goes above apps that do not.
+/// Inside a group the better match comes first; a row opened from search before gains a little, enough to lead its tier,
+/// never enough to pass a better tier. Pure, so it runs on every keystroke.
 /// </summary>
-public static class SearchRank
+public static partial class SearchRank
 {
+    /// <summary>The caps: apps; places, and tiles and shelf items, each group its own; files.</summary>
     public const int MaxApps = 5, MaxPlaces = 3, MaxFiles = 8;
+
+    private const int PlacesGroup = 1;
+
+    /// <summary>The typed text as searched: a leading "open", "go to" or "show" is dropped when something follows it.</summary>
+    public static string Query(string typed) => Verb().Replace(typed, "", 1);
 
     /// <summary>
     /// The candidates that match <paramref name="query"/>, grouped, ordered and capped. Files and folders came from a file
     /// search that already matched every typed word, so one this matcher does not follow (accents, say) still shows, last.
     /// The offer, AI search and Ask rows are kept as they are, at the end of their groups.
     /// </summary>
-    public static IReadOnlyList<SearchItem> Order(IEnumerable<SearchItem> candidates, string query, IReadOnlyDictionary<string, Launches> launches) =>
-        Grouped(candidates.Select(item => (Item: item, Score: item.Kind switch
+    public static IReadOnlyList<SearchItem> Order(IEnumerable<SearchItem> candidates, string query, IReadOnlyDictionary<string, Launches> launches)
+    {
+        var scored = candidates.Select(item => (Item: item, Score: item.Kind switch
         {
             SearchKind.GetEverything or SearchKind.AiSearch or SearchKind.Ask => -1,
             SearchKind.File or SearchKind.Folder => Math.Max(1, SearchMatch.Score(item.Name, query)),
-            _ => SearchMatch.Score(item.Name, query),
+            _ => Score(item, query),
         }))
             .Where(scored => scored.Score != 0)
-            .Select(scored => (scored.Item, Rank: scored.Score < 0 ? int.MinValue : scored.Score + Boost(launches, scored.Item))));
+            .ToList();
+
+        // The substring tier and better match every typed word; letters in order and a typo match only loosely. So
+        // "display settings" lists the Display page above the apps when none has both words.
+        bool placesFirst = Best(scored, SearchKind.Place) >= SearchMatch.Substring && Best(scored, SearchKind.App) < SearchMatch.Substring;
+        return Grouped(scored.Select(s => (s.Item, Rank: s.Score < 0 ? int.MinValue : s.Score + Boost(launches, s.Item))), placesFirst);
+    }
+
+    /// <summary>How well a row's name, or a place's name and words, match the query; 0 is no match.</summary>
+    public static int Score(SearchItem item, string query) =>
+        item.Kind == SearchKind.Place ? Places.Score(item, query) : SearchMatch.Score(item.Name, query);
 
     /// <summary>Typed text of this many words or more reads as a sentence, which AI search may answer better than names do.</summary>
     public const int SentenceWords = 3;
 
     /// <summary>
     /// The rows with the AI search row moved first, so it is the one selected, when the text reads as a sentence and
-    /// nothing local matches it well: no file or folder (a file search found every word in their names) and no app, tile
-    /// or shelf item with every word in its name. Otherwise the rows as they are.
+    /// nothing local matches it well: no file or folder (a file search found every word in their names) and no app, place,
+    /// tile or shelf item with every word in its name. Otherwise the rows as they are.
     /// </summary>
     public static IReadOnlyList<SearchItem> AiFirst(IReadOnlyList<SearchItem> ranked, string query)
     {
         int ai = ranked.ToList().FindIndex(r => r.Kind == SearchKind.AiSearch);
         bool matched = ranked.Any(r => r.Kind is SearchKind.File or SearchKind.Folder
-            || (r.Kind is SearchKind.App or SearchKind.Shortcut or SearchKind.Shelf && SearchMatch.Score(r.Name, query) >= SearchMatch.Substring));
+            || (r.Kind is SearchKind.App or SearchKind.Place or SearchKind.Shortcut or SearchKind.Shelf && Score(r, query) >= SearchMatch.Substring));
         return ai <= 0 || matched || FileQuery.Words(query).Count < SentenceWords ? ranked : [ranked[ai], .. ranked.Where((_, i) => i != ai)];
     }
 
@@ -367,10 +398,17 @@ public static class SearchRank
     public static int Boost(IReadOnlyDictionary<string, Launches> launches, SearchItem item) =>
         launches.TryGetValue(item.Key, out var seen) ? 10 * Math.Min(4, seen.Count) : 0;
 
-    private static IReadOnlyList<SearchItem> Grouped(IEnumerable<(SearchItem Item, int Rank)> ranked) =>
+    // A command word before what is looked for: "open display settings" looks for "display settings".
+    [GeneratedRegex(@"^\s*(?:open|go\s+to|show)\s+(?=\S)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex Verb();
+
+    private static int Best(IEnumerable<(SearchItem Item, int Score)> scored, SearchKind kind) =>
+        scored.Where(s => s.Item.Kind == kind).Select(s => s.Score).DefaultIfEmpty().Max();
+
+    private static IReadOnlyList<SearchItem> Grouped(IEnumerable<(SearchItem Item, int Rank)> ranked, bool placesFirst = false) =>
         [.. ranked
             .GroupBy(r => r.Item.Group)
-            .OrderBy(g => g.Key)
+            .OrderBy(g => placesFirst && g.Key == PlacesGroup ? -1 : g.Key)
             .SelectMany(g => Cap(g.Key, g
                 .OrderByDescending(r => r.Rank)
                 .ThenBy(r => r.Item.Name.Length)
@@ -380,7 +418,7 @@ public static class SearchRank
     // The fixed rows (the offer, Ask) are not counted against a group's cap.
     private static IEnumerable<SearchItem> Cap(int group, IEnumerable<SearchItem> items)
     {
-        int cap = group switch { 0 => MaxApps, 1 => MaxPlaces, _ => MaxFiles };
+        int cap = group switch { 0 => MaxApps, 1 or 2 => MaxPlaces, _ => MaxFiles };
         int shown = 0;
         foreach (var item in items)
         {
