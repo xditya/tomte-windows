@@ -460,7 +460,7 @@ internal sealed class SearchHost
     private string Source() => filesFrom.Length > 0 ? filesFrom : source switch
     {
         FileSource.Everything => "Files: Everything",
-        FileSource.EverythingStopped => "Files: starting Everything",
+        FileSource.EverythingStopped => "Starting Everything",
         _ => "Files: Windows index",
     };
 
@@ -495,7 +495,7 @@ internal sealed class SearchHost
 
         log?.Invoke($"search: {found.Hits?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "no"} files from {(found.Everything ? "Everything" : "the Windows index")} in {watch.ElapsedMilliseconds} ms");
         files = found.Hits?.Select(h => h.Item()).ToList() ?? [];
-        filesFrom = found.Everything ? "Files: Everything" : found.Hits is null ? "Files: Windows Search is off" : "Files: Windows index";
+        filesFrom = found.Everything ? "Files: Everything" : found.Hits is null ? "Files: index is off" : "Files: Windows index";
         if (found.Everything)
         {
             source = FileSource.Everything;

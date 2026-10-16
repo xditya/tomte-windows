@@ -613,16 +613,21 @@ public sealed class AiSearchRowTests
     public void CtrlEnterSearchesWithAiAndCtrlShiftEnterShowsTheFolder(bool ctrl, bool shift, SearchEnter does) =>
         Assert.Equal(does, SearchLayout.Enter(ctrl, shift));
 
-    [Theory]
-    [InlineData(SearchLayout.Keys, "Files: Windows index")]
-    [InlineData(SearchLayout.KeysEmpty, "Files: Windows index")]
-    [InlineData(SearchLayout.KeysBack, "Files: Windows index")]
-    [InlineData(SearchLayout.AiKeys, "Sent to Anthropic · claude-haiku-5-5")]
-    public void TheFooterFitsTheNarrowestBox(string keys, string source)
+    [Fact]
+    public void TheFooterFitsTheNarrowestBox()
     {
-        var (left, right) = new SearchLayout(SearchLayout.NarrowestWidth, mascot: true, 300).Footer(keys, source);
-        Assert.Contains("Ctrl+Shift+Enter in folder", keys, StringComparison.Ordinal);
-        Assert.True(Tomte.Core.Text.TextSlot.Measure(keys, SearchLayout.Foot, 1000) <= left.Slot.Width, $"{keys} beside {source}");
-        Assert.True(left.Slot.Right <= right.Slot.Left);
+        // Every file source the list shows beside the list's footers, and AI search's beside a provider line that fills
+        // its 40% (a long model name).
+        string[] sources = ["Files: Everything", "Files: Windows index", "Files: index is off", "Starting Everything"];
+        var pairs = new[] { SearchLayout.Keys, SearchLayout.KeysEmpty, SearchLayout.KeysBack }.SelectMany(keys => sources.Select(source => (keys, source)))
+            .Append((SearchLayout.AiKeys, "Sent to Anthropic · claude-haiku-5-5"))
+            .Append((SearchLayout.AiKeys, "Sent to OpenRouter · " + new string('m', 200)));
+        foreach (var (keys, source) in pairs)
+        {
+            var (left, right) = new SearchLayout(SearchLayout.NarrowestWidth, mascot: true, 300).Footer(keys, source);
+            Assert.Contains("Ctrl+Shift+Enter in folder", keys, StringComparison.Ordinal);
+            Assert.True(Tomte.Core.Text.TextSlot.Measure(keys, SearchLayout.Foot, 1000) <= left.Slot.Width, $"{keys} beside {source}");
+            Assert.True(left.Slot.Right <= right.Slot.Left);
+        }
     }
 }

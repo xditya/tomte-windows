@@ -50,7 +50,7 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public const string NothingYet = "Type to search your apps, settings, files and folders. What you open from here is listed first next time.";
     public const string NoResults = "Nothing found.";
     public const string AiRow = "Search with AI";
-    public const string AiKeys = "Enter opens · Ctrl+Shift+Enter in folder · Esc goes back";
+    public const string AiKeys = "Enter opens · Ctrl+Shift+Enter in folder · Esc back";
 
     /// <summary>The narrowest the search box gets: 60% of an 800 DIP wide screen.</summary>
     public const float NarrowestWidth = 480;
