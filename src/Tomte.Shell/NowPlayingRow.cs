@@ -3,6 +3,7 @@ using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
+using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
@@ -20,8 +21,6 @@ internal sealed class NowPlayingRow
 {
     // Island space, x from the centre line; where things sit is CompactLayout's.
     private const float BarsLeft = CompactLayout.BarsLeft, BarsTop = CompactLayout.BarsTop, BarsHeight = CompactLayout.BarsHeight;
-    private static readonly RectangleF Art = CompactLayout.Art;
-    private static readonly RectangleF Title = CompactLayout.Title;
 
     // The four bars: how far each one reaches and how long one of its breaths takes.
     private static readonly float[] Reach = CompactLayout.BarReach;
@@ -122,7 +121,7 @@ internal sealed class NowPlayingRow
             Release();
             // The peek pill and the pill kept while music plays are ambient and can stay up for hours, so nothing
             // moves in them: no bars.
-            view = new View(island.Compositor, text, bars: reason is not (CompactReason.Peek or CompactReason.Playing));
+            view = new View(island.Compositor, text, island.Mascot.Enabled, bars: reason is not (CompactReason.Peek or CompactReason.Playing));
             view.Root.Opacity = 0;
             island.Dips.Children.InsertAtTop(view.Root);
             view.Root.StartAnimation("Opacity", fadeIn);
@@ -148,18 +147,23 @@ internal sealed class NowPlayingRow
     {
         private readonly ShapeVisual shapes;
         private readonly TextVisual title;
+        private readonly RectangleF titleSlot;
+        private readonly TextStyle titleStyle;
 
-        public View(Compositor compositor, TextRenderer text, bool bars)
+        public View(Compositor compositor, TextRenderer text, bool mascot, bool bars)
         {
             Root = compositor.CreateContainerVisual();
-            Art = new ArtVisual(compositor, NowPlayingRow.Art, CompactLayout.ArtCorner);
+            Art = new ArtVisual(compositor, CompactLayout.Art(mascot), CompactLayout.ArtCorner);
             Root.Children.InsertAtTop(Art.Visual);
             title = text.Create(Root);
+            // With no bars after it the title ends the pill, at its trailing end.
+            titleSlot = CompactLayout.Title(mascot, bars);
+            titleStyle = bars ? CompactLayout.TitleStyle : CompactLayout.Ending(CompactLayout.TitleStyle, led: true);
 
             // One shape visual from the title slot's left edge to the pill's right padding.
             shapes = compositor.CreateShapeVisual();
-            shapes.Offset = new Vector3(Title.X, 0, 0);
-            shapes.Size = new Vector2(BarsLeft + Reach.Length * (Waveform.BarWidth + Waveform.Gap) - Title.X, (float)IslandGeometry.Compact.Depth);
+            shapes.Offset = new Vector3(titleSlot.X, 0, 0);
+            shapes.Size = new Vector2(BarsLeft + Reach.Length * (Waveform.BarWidth + Waveform.Gap) - titleSlot.X, (float)IslandGeometry.Compact.Depth);
             Root.Children.InsertAtTop(shapes);
 
             if (!bars)
@@ -173,7 +177,7 @@ internal sealed class NowPlayingRow
             var ease = compositor.CreateCubicBezierEasingFunction(new Vector2(0.42f, 0), new Vector2(0.58f, 1));
             for (int i = 0; i < Reach.Length; i++)
             {
-                float x = BarsLeft - Title.X + i * (Waveform.BarWidth + Waveform.Gap), reach = Reach[i];
+                float x = BarsLeft - titleSlot.X + i * (Waveform.BarWidth + Waveform.Gap), reach = Reach[i];
                 var bar = compositor.CreateRoundedRectangleGeometry();
                 bar.CornerRadius = new Vector2(Waveform.BarWidth / 2);
                 var shape = compositor.CreateSpriteShape(bar);
@@ -209,7 +213,7 @@ internal sealed class NowPlayingRow
         public ArtVisual Art { get; }
 
         /// <summary>The title in its slot: 13 DIP semibold, white, one line, ellipsis.</summary>
-        public void DrawTextRuns(NowPlaying playing) => title.Show(playing.Title, CompactLayout.TitleStyle, Title);
+        public void DrawTextRuns(NowPlaying playing) => title.Show(playing.Title, titleStyle, titleSlot);
 
         public void Dispose()
         {

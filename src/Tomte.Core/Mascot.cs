@@ -49,6 +49,9 @@ public static class MascotArt
     /// <summary>The art's middle row, between the cap tip (1) and the bottom of the beard (61).</summary>
     public const float MiddleY = 31;
 
+    /// <summary>Where the art starts across the viewBox: the brim's leftmost point.</summary>
+    public const float ArtLeft = 8.1f;
+
     /// <summary>Whole character and body: bottom centre. Cap: brim centre. Tip: where it leaves the cone.</summary>
     public static readonly Vector2 RootPivot = new(32, 61);
     public static readonly Vector2 BodyPivot = new(32, 61);

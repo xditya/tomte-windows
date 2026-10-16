@@ -454,8 +454,8 @@ internal static unsafe partial class Program
             c.Mascot();
         }
 
-        c.Gradient(CompactLayout.Art, CompactLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
-        c.Text(title, CompactLayout.TitleStyle, CompactLayout.Title, Vector2.Zero);
+        c.Gradient(CompactLayout.Art(mascot), CompactLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
+        c.Text(title, bars ? CompactLayout.TitleStyle : CompactLayout.Ending(CompactLayout.TitleStyle, led: true), CompactLayout.Title(mascot, bars), Vector2.Zero);
         for (int i = 0; bars && i < CompactLayout.BarReach.Length; i++)
         {
             float h = Waveform.MinHeight + Waveform.Swing * CompactLayout.BarReach[i] * 0.7f;
@@ -486,7 +486,7 @@ internal static unsafe partial class Program
             c.Ring(new Vector2(left + CompactLayout.RingSize / 2, (float)pill.Depth / 2), (CompactLayout.RingSize - CompactLayout.RingStroke) / 2, CompactLayout.RingStroke, fill);
         }
 
-        c.Text(line, tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle, CompactLayout.Line(mascot, ring is not null), Vector2.Zero);
+        c.Text(line, CompactLayout.Ending(tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle, led: mascot || ring is not null), CompactLayout.Line(mascot, ring is not null), Vector2.Zero);
     }
 
     // The voice key's pill while it records, as the rambler draws it: the microphone and seven bars mid-word, centred

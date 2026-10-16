@@ -6,13 +6,19 @@ namespace Tomte.Core;
 
 /// <summary>
 /// Where things sit on the 220 x 38 Compact pill, in island space: x from the pill's centre line, y from its top.
-/// The tomte on the left, then the timer's ring, the now-playing row (art, title, four bars) or a line of words;
-/// 12 DIPs stay free on the right.
+/// The tomte on the left, then the timer's ring, the now-playing row (art, title, four bars) or a line of words. Words
+/// that nothing follows end the pill at its trailing end, as far in as the tomte starts at the leading end.
 /// </summary>
 public static class CompactLayout
 {
-    /// <summary>The gap after the tomte and after the ring, the room before the first thing with the tomte off, and the room kept free on the right.</summary>
-    public const float Gap = 9, LeftPad = 8, RightPad = 12;
+    /// <summary>The gap after the tomte, after the ring and after the art.</summary>
+    public const float Gap = 9;
+
+    /// <summary>
+    /// The room at either end of the pill: the tomte's art starts this far in at the leading end, words that end the
+    /// pill stop this far in at the trailing end, and with the tomte off the first thing starts this far in.
+    /// </summary>
+    public const float EndInset = MascotArt.InsetX + (MascotArt.ArtLeft * MascotArt.SizeDips / MascotArt.ViewBox);
 
     public const float RingSize = 18, RingStroke = 3.5f;
 
@@ -22,9 +28,7 @@ public static class CompactLayout
     /// <summary>How far each of the four bars reaches, as a share of the waveform's swing.</summary>
     public static readonly float[] BarReach = [.35f, .62f, .85f, 1f];
 
-    public static readonly RectangleF Art = new(-69.5f, 8, 22, 22);
     public const float ArtCorner = 6;
-    public static readonly RectangleF Title = new(-38.5f, 9, 109.5f, 20);
 
     /// <summary>The pill's one line is 13 DIP semibold white; the timer's countdown keeps its digits still.</summary>
     public static readonly TextStyle TitleStyle = new(13, 600);
@@ -51,8 +55,25 @@ public static class CompactLayout
             : [open, ask with { Bounds = MascotArt.Box(shape), Corner = MascotArt.SizeDips / 2 }];
     }
 
-    /// <summary>Where the ring starts, from the pill's left edge: after the tomte, or at the left padding when it is off.</summary>
-    public static float RingLeft(bool mascot) => mascot ? MascotArt.InsetX + MascotArt.SizeDips + Gap : LeftPad;
+    /// <summary>Where the ring or the art starts, from the pill's left edge: after the tomte, or at the end inset when it is off.</summary>
+    public static float RingLeft(bool mascot) => mascot ? MascotArt.InsetX + MascotArt.SizeDips + Gap : EndInset;
+
+    /// <summary>The now-playing row's art, where the ring would be.</summary>
+    public static RectangleF Art(bool mascot) => new(-Width / 2 + RingLeft(mascot), 8, 22, 22);
+
+    /// <summary>The title's slot after the art: up to the bars, or to the end inset on a pill that shows no bars.</summary>
+    public static RectangleF Title(bool mascot, bool bars)
+    {
+        float x = Art(mascot).Right + Gap;
+        return new(x, 9, (bars ? BarsLeft - Gap : (Width / 2) - EndInset) - x, 20);
+    }
+
+    /// <summary>
+    /// How words sit in their slot when nothing follows them on the pill: at the trailing end, across the pill from the
+    /// tomte, ring or art that leads them, or centred when nothing leads them either, so neither end of the pill is
+    /// left empty.
+    /// </summary>
+    public static TextStyle Ending(TextStyle style, bool led) => style with { Align = led ? TextAlign.Trailing : TextAlign.Center };
 
     /// <summary>The undo pill's button sits this far inside the pill on the right, above and below, and pads its words this much.</summary>
     public const float UndoInset = 6, UndoPadX = 12, UndoKeyGap = 6;
@@ -71,10 +92,13 @@ public static class CompactLayout
         return (width, new RectangleF(left, 0, box.X - Gap - left, depth), box);
     }
 
-    /// <summary>The line's slot: where the ring would start, or after the ring when it shows, to the right padding.</summary>
+    /// <summary>
+    /// The line's slot: where the ring would start, or after the ring when it shows, to the end inset. The words sit in it
+    /// as <see cref="Ending"/> says.
+    /// </summary>
     public static RectangleF Line(bool mascot, bool ring)
     {
         float x = -Width / 2 + RingLeft(mascot) + (ring ? RingSize + Gap : 0);
-        return new RectangleF(x, 0, Width / 2 - RightPad - x, (float)IslandGeometry.Compact.Depth);
+        return new RectangleF(x, 0, Width / 2 - EndInset - x, (float)IslandGeometry.Compact.Depth);
     }
 }

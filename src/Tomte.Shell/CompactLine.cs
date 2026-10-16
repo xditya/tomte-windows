@@ -100,13 +100,14 @@ internal sealed class CompactLine
 
         bool ring = triggers.CompactShows(playing: false) == CompactContent.TimerRing;
         bool clock = left is null && triggers.Compact == CompactReason.Summary;
-        var slot = CompactLayout.Line(island.Mascot.Enabled, ring);
+        bool mascot = island.Mascot.Enabled;
+        var slot = CompactLayout.Line(mascot, ring);
         if (clock)
         {
             line = CompactRules.Glance(now, Facts(now), slot.Width, Measure);
         }
 
-        view.Text.Show(line, left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle, slot);
+        view.Text.Show(line, CompactLayout.Ending(left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle, led: mascot || ring), slot);
 
         if (left is { } l && l > TimeSpan.Zero)
         {

@@ -128,18 +128,55 @@ public class TextTests
     [Fact]
     public void TheCompactLinesFitThe220Pill()
     {
-        // The pill is 220 wide; the tomte and its gap take 5.5 + 26 + 9 on the left, 12 stay free on the right,
-        // and the timer's ring takes 18 + 9 more on its done pill.
+        // The pill is 220 wide; the tomte and its gap take 5.5 + 26 + 9 on the left, as much stays free on the right as
+        // the tomte's art leaves on the left (8.8), and the timer's ring takes 18 + 9 more on its done pill.
         var free = CompactLayout.Line(mascot: true, ring: false);
         var afterRing = CompactLayout.Line(mascot: true, ring: true);
         using var hint = Lay("Push your cursor up here", CompactLayout.LineStyle, free.Width);
         using var done = Lay("Timer done · 25:00", CompactLayout.LineStyle, afterRing.Width);
 
-        Assert.Equal(new RectangleF(-69.5f, 0, 167.5f, 38), free);
-        Assert.Equal(new RectangleF(-42.5f, 0, 140.5f, 38), afterRing);
-        Assert.Equal(new RectangleF(-102, 0, 200, 38), CompactLayout.Line(mascot: false, ring: false));
+        Assert.Equal(8.79, CompactLayout.EndInset, 2);
+        Assert.Equal((-69.5f, 0f, 38f), (free.X, free.Y, free.Height));
+        Assert.Equal(-42.5f, afterRing.X);
+        Assert.All([free.Right, afterRing.Right], right => Assert.Equal(110 - CompactLayout.EndInset, right, 3));
+        var alone = CompactLayout.Line(mascot: false, ring: false);
+        Assert.Equal(CompactLayout.EndInset - 110, alone.X, 3);
+        Assert.Equal(110 - CompactLayout.EndInset, alone.Right, 3);
         Assert.False(hint.Trimmed);
         Assert.False(done.Trimmed);
+    }
+
+    // No Compact pill leaves one end empty. What ends a pill stops as far in from its trailing end as the tomte's art
+    // starts from the leading end; words with the tomte, the ring or the art before them sit at the trailing end of
+    // their slot, and words alone are centred on the pill. With the tomte off the row's art starts at that inset too.
+    [Fact]
+    public void EveryCompactPillUsesBothEnds()
+    {
+        var flat = new List<Vector2>();
+        float artLeft = new[] { MascotArt.Beard, MascotArt.BeardShade, MascotArt.CapCone, MascotArt.TipCurl, MascotArt.Brim }.Min(path =>
+        {
+            IslandOutline.Flatten([.. path], flat);
+            return flat.Min(p => p.X);
+        });
+        float tomteLeft = MascotArt.Box(IslandGeometry.Compact).X + 110 + (artLeft * MascotArt.SizeDips / MascotArt.ViewBox);
+        Assert.InRange(Math.Abs(tomteLeft - CompactLayout.EndInset), 0, 0.05);
+
+        foreach (bool mascot in new[] { true, false })
+        {
+            Assert.All([CompactLayout.Line(mascot, ring: false), CompactLayout.Line(mascot, ring: true), CompactLayout.Title(mascot, bars: false)], slot =>
+                Assert.Equal(110 - CompactLayout.EndInset, slot.Right, 3));
+            Assert.Equal(mascot ? CompactLayout.RingLeft(true) - 110 : CompactLayout.EndInset - 110, CompactLayout.Art(mascot).X, 3);
+        }
+
+        Assert.Equal(TextAlign.Trailing, CompactLayout.Ending(CompactLayout.LineStyle, led: true).Align);
+        Assert.Equal(TextAlign.Center, CompactLayout.Ending(CompactLayout.ClockStyle, led: false).Align);
+        Assert.True(CompactLayout.Ending(CompactLayout.ClockStyle, led: true).Tabular);
+        var alone = CompactLayout.Line(mascot: false, ring: false);
+        Assert.Equal(0, alone.X + (alone.Width / 2), 3);
+
+        // The push pill's row keeps its title after the art and up to the bars, as it was.
+        Assert.Equal(new RectangleF(-69.5f, 8, 22, 22), CompactLayout.Art(mascot: true));
+        Assert.Equal(new RectangleF(-38.5f, 9, 109.5f, 20), CompactLayout.Title(mascot: true, bars: true));
     }
 
     [Fact]
