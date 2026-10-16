@@ -162,6 +162,12 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
             return "Win+Alt+Enter says yes to a voice command. Pick another shortcut.";
         }
 
+        // The same for Undo on the pill after an AI view closed.
+        if (hotkey == Triggers.UndoClose.Chord)
+        {
+            return "Win+Alt+Z brings back a closed AI answer. Pick another shortcut.";
+        }
+
         foreach (var other in Enum.GetValues<HotkeyAction>())
         {
             if (other != action && TryParse(bindings[other], out var taken, out _) && taken == hotkey)

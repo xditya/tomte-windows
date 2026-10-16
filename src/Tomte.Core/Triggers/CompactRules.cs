@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace Tomte.Core.Triggers;
 
-/// <summary>Why the Compact pill is up: an edge push, desktop peek, an event, the first-run hint, the rambler or the launch arrival.</summary>
+/// <summary>Why the Compact pill is up: an edge push, desktop peek, an event, the first-run hint, the rambler, the launch arrival or a closed AI view's Undo.</summary>
 public enum CompactReason
 {
     None,
@@ -14,6 +14,9 @@ public enum CompactReason
 
     /// <summary>The pill the tomte lands in at launch: the tomte alone, so a start reads, loads and watches nothing for it.</summary>
     Arrival,
+
+    /// <summary>A closed AI view's pill: what closed and Undo, both its own, so the pill's line shows nothing.</summary>
+    Undo,
 }
 
 /// <summary>Which feature raised an event, so its pill can show that feature's content.</summary>

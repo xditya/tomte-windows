@@ -54,6 +54,23 @@ public static class CompactLayout
     /// <summary>Where the ring starts, from the pill's left edge: after the tomte, or at the left padding when it is off.</summary>
     public static float RingLeft(bool mascot) => mascot ? MascotArt.InsetX + MascotArt.SizeDips + Gap : LeftPad;
 
+    /// <summary>The undo pill's button sits this far inside the pill on the right, above and below, and pads its words this much.</summary>
+    public const float UndoInset = 6, UndoPadX = 12, UndoKeyGap = 6;
+
+    /// <summary>
+    /// The pill after a closed AI view, from the measured widths of its line and of what its button says: as wide as
+    /// they need and never narrower than Compact. The line starts where the ring would and ends before the button, which
+    /// sits at the right end. In island space, like the rest.
+    /// </summary>
+    public static (float Width, RectangleF Line, RectangleF Button) Undo(bool mascot, float line, float button)
+    {
+        float depth = (float)IslandGeometry.Compact.Depth, pad = button + 2 * UndoPadX;
+        float width = Math.Max(Width, RingLeft(mascot) + line + Gap + pad + UndoInset);
+        float left = -width / 2 + RingLeft(mascot);
+        var box = new RectangleF((width / 2) - UndoInset - pad, UndoInset, pad, depth - (2 * UndoInset));
+        return (width, new RectangleF(left, 0, box.X - Gap - left, depth), box);
+    }
+
     /// <summary>The line's slot: where the ring would start, or after the ring when it shows, to the right padding.</summary>
     public static RectangleF Line(bool mascot, bool ring)
     {
