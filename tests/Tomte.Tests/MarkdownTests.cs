@@ -97,6 +97,30 @@ public class MarkdownTests
         }
     }
 
+    [Theory]
+    // A marker not closed yet waits with what comes after it on its line.
+    [InlineData("The total is **$3,", "The total is ")]
+    [InlineData("Run `npm i", "Run ")]
+    [InlineData("- **Cost", "- ")]
+    [InlineData("# **Ti", "# ")]
+    // A run at the very end may be half of a marker, an opener or a closer.
+    [InlineData("The total is **", "The total is ")]
+    [InlineData("**bold*", "")]
+    [InlineData("5 *", "5 ")]
+    // A list item's marker before its text would show as a dash or a number for a moment.
+    [InlineData("Costs:\n-", "Costs:\n")]
+    [InlineData("Steps:\n  12.", "Steps:\n")]
+    [InlineData("Costs:\n- r", "Costs:\n- r")]
+    // Closed, or never a marker: shown as it is.
+    [InlineData("The total is **$3,720** for", "The total is **$3,720** for")]
+    [InlineData("5 * 3", "5 * 3")]
+    // An earlier line is done: what it left open stays as text.
+    [InlineData("a **b\nc", "a **b\nc")]
+    // Code shows as it comes; only a fence coming in at the end waits.
+    [InlineData("```\nx = 2*y", "```\nx = 2*y")]
+    [InlineData("```\nx\n``", "```\nx\n")]
+    public void AStreamingAnswerShowsAMarkerOnlyOnceItIsClosed(string text, string shown) => Assert.Equal(shown, Markdown.Settled(text));
+
     [Fact]
     public void CodeIsKeptAsItIsAndRulesGo()
     {

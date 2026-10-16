@@ -106,6 +106,63 @@ public static class Markdown
     /// </summary>
     public static IReadOnlyList<MarkdownBlock> Note(string text, int from, int to, bool fenced) => Parse(text, from, to, fenced, note: true);
 
+    /// <summary>
+    /// What of an answer still coming in can show now, so that no marker shows as text and then turns into a look: a
+    /// run of * or ` at the very end may be half of one, a last line that is only a list item's marker waits for its
+    /// text, and the last line stops before a ` or a * against the text after it that is not closed yet. A * before
+    /// white space opens nothing and shows. Inside a code block only the run at the end waits.
+    /// </summary>
+    public static string Settled(string text)
+    {
+        int end = text.Length;
+        while (end > 0 && text[end - 1] is '*' or '`')
+        {
+            end--;
+        }
+
+        if (Parse(text[..end]) is not [.., var last] || last.Kind == MarkdownKind.Code)
+        {
+            return text[..end];
+        }
+
+        // A list item's marker with nothing after it yet reads as text until its space comes.
+        int line = text.LastIndexOf('\n', Math.Max(0, end - 1)) + 1;
+        var tail = text.AsSpan(line, end - line).TrimStart();
+        if (Item($"{tail} ", note: false) is (_, int width) && width == tail.Length + 1)
+        {
+            return text[..line];
+        }
+
+        // Only text in the block's own look is left as written: a marker inside bold, italic or code is part of it.
+        var plain = last.Kind == MarkdownKind.Heading ? MarkdownLook.Bold : MarkdownLook.Plain;
+        foreach (var span in last.Spans.Where(s => s.Source >= line && s.Look == plain))
+        {
+            for (int i = span.Source; i < span.Source + span.Text.Length; i++)
+            {
+                if (text[i] == '`')
+                {
+                    return text[..i];
+                }
+
+                // A run of * here ends before the end, which is not a *.
+                int after = i;
+                while (text[after] == '*')
+                {
+                    after++;
+                }
+
+                if (after > i && !char.IsWhiteSpace(text[after]))
+                {
+                    return text[..i];
+                }
+
+                i = Math.Max(i, after - 1);
+            }
+        }
+
+        return text[..end];
+    }
+
     private static IReadOnlyList<MarkdownBlock> Parse(string text, int from, int to, bool fenced, bool note)
     {
         var blocks = new List<MarkdownBlock>();
