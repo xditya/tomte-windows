@@ -17,7 +17,8 @@ namespace Tomte.Shell;
 /// The search box on the island, in the Palette state and the AI box's look: a one-line text box after the tomte, the
 /// results under it by group with a heading each, and a footer with the keys and where files come from. The box keeps
 /// every key: Up and Down move the selection through all rows and wrap, Tab and Shift+Tab jump to the next or previous
-/// group, Enter opens, Ctrl+Enter shows the row's file in its folder, Page Up and Page Down move a page, Esc clears the
+/// group, Enter opens, Ctrl+Shift+Enter shows the row's file in its folder, Ctrl+Enter searches with AI, Page Up and Page
+/// Down move a page, Esc clears the
 /// box, then goes back or closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
 /// the pointer's hover is the interaction host's, and a click opens a row. A card (getting Everything) can take the
 /// list's place: Tab moves between its buttons, Enter presses the focused one, which starts on the safe one. Icons come
@@ -149,8 +150,8 @@ internal sealed class SearchView : IDisposable, IInteractive
     /// <summary>A row was clicked: it opens.</summary>
     public event Action<SearchItem>? Clicked;
 
-    /// <summary>Enter (false) or Ctrl+Enter (true) in the box: the host opens the selected row, or shows it in its folder.</summary>
-    public event Action<bool>? Entered;
+    /// <summary>Enter in the box, with what its modifiers ask for: open the selected row, show it in its folder, or search with AI.</summary>
+    public event Action<SearchEnter>? Entered;
 
     /// <summary>A card's button, by its id: a click, or Enter on the focused one. Esc says null.</summary>
     public event Action<string?>? CardAnswered;
@@ -574,7 +575,7 @@ internal sealed class SearchView : IDisposable, IInteractive
                 CardAnswered?.Invoke(card.Buttons.Count > 0 ? card.Buttons[Math.Clamp(cardFocus, 0, card.Buttons.Count - 1)].Id : null);
                 return true;
             case NavKeys.Return:
-                Entered?.Invoke(ctrl);
+                Entered?.Invoke(SearchLayout.Enter(ctrl, shift));
                 return true;
             case NavKeys.Tab when card is not null:
                 if (card.Buttons.Count > 0)

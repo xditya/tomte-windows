@@ -4,8 +4,8 @@ namespace Tomte.Core.Search;
 
 /// <summary>
 /// What a search row is. Rows are grouped in this order: apps, then places (settings pages, Tomte's own places and
-/// Windows tools), then tiles and shelf items, then files and folders, then AI search, then Ask. The launch counts store
-/// a kind by its number: new kinds go at the end.
+/// Windows tools), then tiles and shelf items, then files and folders, then the AI rows: Ask, then AI search. The launch
+/// counts store a kind by its number: new kinds go at the end.
 /// </summary>
 public enum SearchKind
 {
@@ -18,7 +18,7 @@ public enum SearchKind
     /// <summary>The row that offers to get Everything, last among the files.</summary>
     GetEverything,
 
-    /// <summary>The row that asks the AI provider to pick files for the typed words; a group of its own, so Tab reaches it.</summary>
+    /// <summary>The row that asks the AI provider to pick files for the typed words; after Ask, in the AI rows.</summary>
     AiSearch,
 
     /// <summary>The row that hands the typed words to the AI box.</summary>
@@ -31,7 +31,7 @@ public enum SearchKind
 /// <summary>
 /// One row. <paramref name="Target"/> is what opening it uses: a Start app's shell:AppsFolder path, a tile's id, or a
 /// path. <paramref name="Detail"/> is the dim text after the name (a file's folder). <paramref name="Icon"/> is the shell
-/// item its icon is read from, null for none. <paramref name="Location"/> is the file or folder Ctrl+Enter shows in its
+/// item its icon is read from, null for none. <paramref name="Location"/> is the file or folder Ctrl+Shift+Enter shows in its
 /// folder, null when the row has none. <paramref name="Words"/> are more words it answers to besides its name (a place's).
 /// </summary>
 public sealed record SearchItem(SearchKind Kind, string Name, string Target, string Detail = "", string? Icon = null, string? Location = null, string Words = "")
@@ -43,8 +43,7 @@ public sealed record SearchItem(SearchKind Kind, string Name, string Target, str
         SearchKind.Place => 1,
         SearchKind.Shortcut or SearchKind.Shelf => 2,
         SearchKind.Folder or SearchKind.File or SearchKind.GetEverything => 3,
-        SearchKind.AiSearch => 4,
-        _ => 5,
+        _ => 4,
     };
 
     /// <summary>What the launch counts are kept under: the kind and the target, case ignored, as Windows treats paths.</summary>
@@ -345,7 +344,7 @@ public static partial class SearchRank
     /// <summary>
     /// The candidates that match <paramref name="query"/>, grouped, ordered and capped. Files and folders came from a file
     /// search that already matched every typed word, so one this matcher does not follow (accents, say) still shows, last.
-    /// The offer, AI search and Ask rows are kept as they are, at the end of their groups.
+    /// The offer and the AI rows are kept as they are, at the end of their groups: Ask Tomte, then Search with AI.
     /// </summary>
     public static IReadOnlyList<SearchItem> Order(IEnumerable<SearchItem> candidates, string query, IReadOnlyDictionary<string, Launches> launches)
     {
@@ -361,7 +360,7 @@ public static partial class SearchRank
         // The substring tier and better match every typed word; letters in order and a typo match only loosely. So
         // "display settings" lists the Display page above the apps when none has both words.
         bool placesFirst = Best(scored, SearchKind.Place) >= SearchMatch.Substring && Best(scored, SearchKind.App) < SearchMatch.Substring;
-        return Grouped(scored.Select(s => (s.Item, Rank: s.Score < 0 ? int.MinValue : s.Score + Boost(launches, s.Item))), placesFirst);
+        return Grouped(scored.Select(s => (s.Item, Rank: s.Score >= 0 ? s.Score + Boost(launches, s.Item) : s.Item.Kind == SearchKind.Ask ? int.MinValue + 1 : int.MinValue)), placesFirst);
     }
 
     /// <summary>How well a row's name, or a place's name and words, match the query; 0 is no match.</summary>
@@ -372,16 +371,18 @@ public static partial class SearchRank
     public const int SentenceWords = 3;
 
     /// <summary>
-    /// The rows with the AI search row moved first, so it is the one selected, when the text reads as a sentence and
+    /// The rows with the AI rows moved first, Ask Tomte first of them so Enter asks, when the text reads as a sentence and
     /// nothing local matches it well: no file or folder (a file search found every word in their names) and no app, place,
     /// tile or shelf item with every word in its name. Otherwise the rows as they are.
     /// </summary>
     public static IReadOnlyList<SearchItem> AiFirst(IReadOnlyList<SearchItem> ranked, string query)
     {
-        int ai = ranked.ToList().FindIndex(r => r.Kind == SearchKind.AiSearch);
+        bool ai = ranked.Any(r => r.Kind == SearchKind.AiSearch);
         bool matched = ranked.Any(r => r.Kind is SearchKind.File or SearchKind.Folder
             || (r.Kind is SearchKind.App or SearchKind.Place or SearchKind.Shortcut or SearchKind.Shelf && Score(r, query) >= SearchMatch.Substring));
-        return ai <= 0 || matched || FileQuery.Words(query).Count < SentenceWords ? ranked : [ranked[ai], .. ranked.Where((_, i) => i != ai)];
+        return !ai || matched || FileQuery.Words(query).Count < SentenceWords ? ranked : [.. ranked.Where(IsAi), .. ranked.Where(r => !IsAi(r))];
+
+        static bool IsAi(SearchItem r) => r.Kind is SearchKind.Ask or SearchKind.AiSearch;
     }
 
     /// <summary>For an empty box: what was opened from search before, most often first, then most recently, grouped and capped.</summary>

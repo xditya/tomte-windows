@@ -6,6 +6,14 @@ namespace Tomte.Core.Search;
 /// <summary>A line of the result list: a group's heading, or a row with its index in the rows.</summary>
 public readonly record struct SearchLine(float Top, float Height, string? Heading, int Row);
 
+/// <summary>What Enter does in the search box: open the row, show its file in its folder, or search with AI.</summary>
+public enum SearchEnter
+{
+    Open,
+    ShowInFolder,
+    SearchWithAi,
+}
+
 /// <summary>
 /// A card over the list that asks or tells something (getting Everything), with its buttons left to right.
 /// <paramref name="Focus"/> is the button Enter presses until Tab moves on: the safe one, never one that installs.
@@ -34,13 +42,21 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public const uint SelectedFill = 0x24FFFFFF, SelectedLine = 0x996FA8FF;
 
     public const string Placeholder = "Search apps, settings, files and folders";
-    public const string Keys = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc clears";
-    public const string KeysEmpty = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc closes";
-    public const string KeysBack = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc goes back";
+    // The footers fit a box 480 DIPs wide (60% of an 800 DIP screen) beside where files come from; the longer ones leave
+    // Tab out.
+    public const string Keys = "Enter opens · Ctrl+Shift+Enter in folder · Tab next section · Esc clears";
+    public const string KeysEmpty = "Enter opens · Ctrl+Shift+Enter in folder · Tab next section · Esc closes";
+    public const string KeysBack = "Enter opens · Ctrl+Shift+Enter in folder · Esc goes back";
     public const string NothingYet = "Type to search your apps, settings, files and folders. What you open from here is listed first next time.";
     public const string NoResults = "Nothing found.";
     public const string AiRow = "Search with AI";
-    public const string AiKeys = "Enter opens · Ctrl+Enter shows in folder · Esc back to all results";
+    public const string AiKeys = "Enter opens · Ctrl+Shift+Enter in folder · Esc goes back";
+
+    /// <summary>The narrowest the search box gets: 60% of an 800 DIP wide screen.</summary>
+    public const float NarrowestWidth = 480;
+
+    /// <summary>Enter opens; Ctrl+Shift+Enter shows the row in its folder; Ctrl+Enter searches with AI from any row.</summary>
+    public static SearchEnter Enter(bool ctrl, bool shift) => !ctrl ? SearchEnter.Open : shift ? SearchEnter.ShowInFolder : SearchEnter.SearchWithAi;
 
     private readonly PaletteLayout prompt = new(width, mascot);
 
@@ -144,7 +160,8 @@ public sealed class SearchLayout(float width, bool mascot, float height)
         SearchKind.Shelf => "On the shelf",
         SearchKind.Folder => "Folder",
         SearchKind.File => "File",
-        SearchKind.Ask or SearchKind.AiSearch => "AI",
+        SearchKind.Ask => "AI",
+        SearchKind.AiSearch => "Ctrl+Enter",
         _ => "",
     };
 

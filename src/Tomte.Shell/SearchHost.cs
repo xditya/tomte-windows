@@ -218,10 +218,23 @@ internal sealed class SearchHost
         }
     }
 
-    // Enter in the box. Before Start's app list has been read for the first time the best app is not known yet, so Enter
-    // waits for it, then the list is ranked again and the top row opens; with the list known, the selected row opens.
-    private void Entered(bool folder)
+    // Enter in the box. Ctrl+Enter searches with AI for the typed text whatever row is selected (not again over its own
+    // results: each search is a send). Before Start's app list has been read for the first time the best app is not known
+    // yet, so Enter waits for it, then the list is ranked again and the top row opens; with the list known, the selected
+    // row opens, or Ctrl+Shift+Enter shows it in its folder.
+    private void Entered(SearchEnter how)
     {
+        if (how == SearchEnter.SearchWithAi)
+        {
+            if (!aiShowing && view?.Text.Trim() is { Length: > 0 } words)
+            {
+                AiRun = RunAiAsync(words);
+            }
+
+            return;
+        }
+
+        bool folder = how == SearchEnter.ShowInFolder;
         if (appsPending && !aiShowing)
         {
             held = folder;
@@ -414,8 +427,8 @@ internal sealed class SearchHost
         if (store.Current.Provider is { } provider)
         {
             candidates = candidates
-                .Append(new SearchItem(SearchKind.AiSearch, SearchLayout.AiRow, typed.Trim(), $"Sends file names to {ProviderSetup.NameOf(provider.Id)}, never what is in them"))
-                .Append(new SearchItem(SearchKind.Ask, "Ask Tomte", typed.Trim(), $"\"{typed.Trim()}\""));
+                .Append(new SearchItem(SearchKind.Ask, "Ask Tomte", typed.Trim(), $"\"{typed.Trim()}\""))
+                .Append(new SearchItem(SearchKind.AiSearch, SearchLayout.AiRow, typed.Trim(), $"Sends file names to {ProviderSetup.NameOf(provider.Id)}, never what is in them"));
         }
 
         long ranking = Stopwatch.GetTimestamp();

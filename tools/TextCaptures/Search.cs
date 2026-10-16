@@ -73,8 +73,8 @@ internal static partial class Program
 
     private static readonly SearchItem[] AiRows =
     [
-        new(SearchKind.AiSearch, SearchLayout.AiRow, Sentence, "Sends file names to Anthropic, never what is in them"),
         new(SearchKind.Ask, "Ask Tomte", Sentence, $"\"{Sentence}\""),
+        new(SearchKind.AiSearch, SearchLayout.AiRow, Sentence, "Sends file names to Anthropic, never what is in them"),
     ];
 
     private static readonly SearchItem[] AiPicked =

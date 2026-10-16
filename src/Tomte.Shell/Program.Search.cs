@@ -196,9 +196,10 @@ internal static partial class Program
     /// <summary>
     /// --debug-search "words" with --debug-log=path: opens the search box as its hotkey does, types the words a letter at a
     /// time as a person would, logs the rows after each letter and once the file search has answered, presses the keys in
-    /// --debug-keys (Down, Up, Tab, ShiftTab, Enter, CtrlEnter, Esc; comma separated; WaitAi waits for an AI search to end and
-    /// logs what it shows) and logs the selection after each, then hides the island. Opens nothing: a row Enter would open
-    /// is logged instead; Enter on Search with AI does run the AI search. --debug-race types the words and
+    /// --debug-keys (Down, Up, Tab, ShiftTab, Enter, CtrlEnter, CtrlShiftEnter, Esc; comma separated; WaitAi waits for an AI
+    /// search to end and logs what it shows) and logs the selection after each, then hides the island. Opens nothing: a row
+    /// Enter would open is logged instead; Search with AI (its row, or Ctrl+Enter) does run, and a row for one of the
+    /// island's tabs does show it. --debug-race types the words and
     /// presses Enter at once, before Start's app list has been read, to show Enter waiting for it. --debug-everything name
     /// searches a named Everything instance instead of the usual one, and --debug-quit ends Tomte half a second after the
     /// island hid.
@@ -254,7 +255,7 @@ internal static partial class Program
             bool took = key switch
             {
                 "Esc" => view.OnEscape(),
-                "Enter" or "CtrlEnter" => view.Press(0x0D, ctrl: key == "CtrlEnter", shift: false),
+                "Enter" or "CtrlEnter" or "CtrlShiftEnter" => view.Press(0x0D, ctrl: key != "Enter", shift: key == "CtrlShiftEnter"),
                 _ => view.Press(key switch { "Down" => 0x28, "Up" => 0x26, "Tab" or "ShiftTab" => 0x09, _ => 0 }, ctrl: false, shift: key == "ShiftTab"),
             };
             await Task.Delay(50);

@@ -524,16 +524,18 @@ public sealed class AiSearchRowTests
     private static readonly SearchItem Ask = new(SearchKind.Ask, "Ask Tomte", "x");
 
     [Fact]
-    public void ASentenceWithNoGoodLocalMatchPutsAiSearchFirst()
+    public void ASentenceWithNoGoodLocalMatchPutsTheAiRowsFirstWithAskOnTop()
     {
         string typed = "the invoices I got last month";
         var app = new SearchItem(SearchKind.App, "Invoice Ninja", "a");
-        var ranked = SearchRank.Order([app, Ai, Ask], typed, new Dictionary<string, Launches>());
+        var file = new FileHit(@"D:\Bills\invoices.pdf", false).Item();
+        var ranked = SearchRank.Order([Ai, app, Ask], typed, new Dictionary<string, Launches>());
 
-        Assert.Equal([Ai, Ask], ranked);
-        Assert.Equal([Ai, Ask], SearchRank.AiFirst(ranked, typed));
-        // The AI row is a group of its own after files and before Ask, so Tab reaches it.
-        Assert.Equal((4, 5), (Ai.Group, Ask.Group));
+        Assert.Equal([Ask, Ai], ranked);
+        Assert.Equal([Ask, Ai], SearchRank.AiFirst(ranked, typed));
+        // The AI rows are one section, the last, Ask Tomte first.
+        Assert.Equal((4, 4), (Ask.Group, Ai.Group));
+        Assert.Equal([file, Ask, Ai], SearchRank.Order([Ai, Ask, file], "invoices", new Dictionary<string, Launches>()));
     }
 
     [Fact]
@@ -545,7 +547,7 @@ public sealed class AiSearchRowTests
 
         // A name that matches only loosely (one typo, the other words nowhere) is no good match.
         var chrome = new SearchItem(SearchKind.App, "Chrome", "c");
-        Assert.Equal([Ai, chrome, Ask], SearchRank.AiFirst([chrome, Ai, Ask], "crhome web browser"));
+        Assert.Equal([Ask, Ai, chrome], SearchRank.AiFirst([chrome, Ask, Ai], "crhome web browser"));
         // Two words read as a name.
         Assert.Equal(Ask, SearchRank.AiFirst([app, Ask, Ai], "tax return")[1]);
         Assert.Equal(app, SearchRank.AiFirst(SearchRank.Order([app, Ai, Ask], "visual studio code", none), "visual studio code")[0]);
@@ -563,6 +565,27 @@ public sealed class AiSearchRowTests
         Assert.Equal([-1, 0, 1], lines.Select(l => l.Row));
         Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight), lines[^1].Top + lines[^1].Height);
         Assert.Empty(SearchLayout.Lines([], "AI · nothing"));
-        Assert.Equal("AI", SearchLayout.KindLabel(Ai));
+        Assert.Equal(("AI", "Ctrl+Enter"), (SearchLayout.KindLabel(Ask), SearchLayout.KindLabel(Ai)));
+    }
+
+    [Theory]
+    [InlineData(false, false, SearchEnter.Open)]
+    [InlineData(false, true, SearchEnter.Open)]
+    [InlineData(true, false, SearchEnter.SearchWithAi)]
+    [InlineData(true, true, SearchEnter.ShowInFolder)]
+    public void CtrlEnterSearchesWithAiAndCtrlShiftEnterShowsTheFolder(bool ctrl, bool shift, SearchEnter does) =>
+        Assert.Equal(does, SearchLayout.Enter(ctrl, shift));
+
+    [Theory]
+    [InlineData(SearchLayout.Keys, "Files: Windows index")]
+    [InlineData(SearchLayout.KeysEmpty, "Files: Windows index")]
+    [InlineData(SearchLayout.KeysBack, "Files: Windows index")]
+    [InlineData(SearchLayout.AiKeys, "Sent to Anthropic · claude-haiku-5-5")]
+    public void TheFooterFitsTheNarrowestBox(string keys, string source)
+    {
+        var (left, right) = new SearchLayout(SearchLayout.NarrowestWidth, mascot: true, 300).Footer(keys, source);
+        Assert.Contains("Ctrl+Shift+Enter in folder", keys, StringComparison.Ordinal);
+        Assert.True(Tomte.Core.Text.TextSlot.Measure(keys, SearchLayout.Foot, 1000) <= left.Slot.Width, $"{keys} beside {source}");
+        Assert.True(left.Slot.Right <= right.Slot.Left);
     }
 }
