@@ -2,9 +2,10 @@ namespace Tomte.Core.Search;
 
 /// <summary>
 /// One row of the settings window as its Find a setting box sees it: the page it is on, the section header above it (""
-/// for none), its title and its explanation ("" for none).
+/// for none), its title and its explanation ("" for none). <paramref name="Setting"/> is false for a row with nothing to
+/// change, such as an AI tool's description.
 /// </summary>
-public sealed record SettingRow(string Page, string Section, string Title, string Note);
+public sealed record SettingRow(string Page, string Section, string Title, string Note, bool Setting = true);
 
 /// <summary>
 /// Ranks the settings window's rows for the text typed in its Find a setting box, with the search box's matcher. Pure, so
@@ -23,7 +24,8 @@ public static class SettingsFind
     /// in the title (word starts, initials, letters in order, one typo in a word of five letters or more) beats one that
     /// needs the section or page, which beats one in the explanation. Inside the title tier the matcher's order holds;
     /// inside the others the window's order does. The words people type for a page or section ("privacy" for Clipboard)
-    /// count only when no row matches otherwise, so "retract" lists the Retract rows and not every row on their page.
+    /// count only when no row matches otherwise, so "retract" lists the Retract rows and not every row on their page. Rows
+    /// with nothing to change come after every setting that matches.
     /// </summary>
     public static IReadOnlyList<int> Rank(IReadOnlyList<SettingRow> rows, string query)
     {
@@ -33,7 +35,7 @@ public static class SettingsFind
             scored.RemoveAll(r => r.Score == ByWords);
         }
 
-        return [.. scored.OrderByDescending(r => r.Score).ThenBy(r => r.i).Take(MaxResults).Select(r => r.i)];
+        return [.. scored.OrderByDescending(r => rows[r.i].Setting).ThenByDescending(r => r.Score).ThenBy(r => r.i).Take(MaxResults).Select(r => r.i)];
     }
 
     private static int Score(SettingRow row, string query)

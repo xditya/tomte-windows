@@ -113,7 +113,7 @@ public sealed partial class SettingsWindow
                         return;
                     case Grid { Tag: RowParts parts } row:
                         string note = parts.Note is { Visibility: Visibility.Visible } shown ? shown.Text : "";
-                        rows.Add(new FoundRow(new SettingRow((string)page.Content, inside?.Header as string ?? section, parts.Title.Text, note), page, row, parts.Control, inside));
+                        rows.Add(new FoundRow(new SettingRow((string)page.Content, inside?.Header as string ?? section, parts.Title.Text, note, parts.Control is not TextBlock), page, row, parts.Control, inside));
                         return;
                     case Panel panel:
                         foreach (var child in panel.Children)

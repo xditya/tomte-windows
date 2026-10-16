@@ -25,6 +25,7 @@ public sealed class SettingsFindTests
         new("AI", "AI history", "Undo after closing", "After you close an AI answer, Undo on the island brings it back for this long."),
         new("AI", "AI history", "Keep history", "Keeps your last 100 AI conversations, on this PC. Nothing leaves this PC."),
         new("AI", "AI history", "Clear history", ""),
+        new("AI tools", "All tools", "copy_to_clipboard", "Copies text to the clipboard.", false),
     ];
 
     private static List<string> Find(string query) => [.. SettingsFind.Rank(Rows, query).Select(i => $"{Rows[i].Title}, {Rows[i].Page}")];
@@ -43,7 +44,8 @@ public sealed class SettingsFindTests
     public void OneTypoInALongWordAndInitialsStillFind()
     {
         Assert.Equal("Keep history, Clipboard", Find("histroy")[0]);
-        Assert.Equal(["Keep history, Clipboard"], Find("clipbaord"));
+        // A typo in a tool's name is a title match, but a tool has nothing to change: the setting comes first.
+        Assert.Equal(["Keep history, Clipboard", "copy_to_clipboard, AI tools"], Find("clipbaord"));
         Assert.Equal(["Start with Windows, General"], Find("sww"));
         Assert.Equal(["Keep history, Clipboard", "Keep history, AI"], Find("kh").Take(2));
         Assert.Empty(Find("srch2"));
