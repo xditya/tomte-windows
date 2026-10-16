@@ -66,14 +66,14 @@ public sealed class PanelTabs
 
 /// <summary>
 /// The tab labels in the 42 DIP strip, in DIPs from the panel's left edge and top: after the tomte (or the left
-/// padding with it off), each label centred in a pill 10 DIP wider than its text on each side, 2 DIP apart, the
-/// current one white, the others at 60%. The Ask pill, which opens the palette, always ends at the right padding, with
-/// the search button just before it; a label that would run into them is cut to the room left, and one with almost no
-/// room is left out.
+/// padding with it off), each label centred in a pill 10 DIP wider than its text on each side (less, down to 6, on a
+/// strip too short for that), 2 DIP apart, the current one white, the others at 60%. The Ask pill, which opens the
+/// palette, always ends at the right padding, with the search button just before it; a label that would still run into
+/// them is cut to the room left, and one with almost no room is left out.
 /// </summary>
 public static class TabStrip
 {
-    public const float PadX = 10, Gap = 2, Height = 28, Corner = 8, AfterMascot = 6, LeftPad = 8, RightPad = 10, MinWidth = 32;
+    public const float PadX = 10, MinPadX = 6, Gap = 2, Height = 28, Corner = 8, AfterMascot = 6, LeftPad = 8, RightPad = 10, MinWidth = 32;
 
     /// <summary>The sparkle before the Ask pill's word: this tall, this far before the word.</summary>
     public const float GlyphHeight = 11, GlyphGap = 5;
@@ -130,8 +130,12 @@ public static class TabStrip
         float x = mascot ? MascotArt.InsetX + MascotArt.SizeDips + AfterMascot : LeftPad;
         float y = (PanelSpace.TabStripHeight - Height) / 2;
         float end = SearchButton(panelWidth).Card.Left - Gap;
+        var words = tabs.Select(id => (Text: Name(id), Style: id == current ? Current : Label)).ToList();
+        var widths = words.Select(w => TextSlot.Measure(w.Text, w.Style, panelWidth)).ToList();
+        // Short of room, every label's padding gives way first, down to MinPadX, before the last ones are cut or left out.
+        float pad = Math.Clamp((end - x - widths.Sum() - (Gap * (words.Count - 1))) / (2 * Math.Max(1, words.Count)), MinPadX, PadX);
         var labels = new List<TextSlot>();
-        foreach (var id in tabs)
+        for (int i = 0; i < words.Count; i++)
         {
             float room = end - x;
             if (room < MinWidth)
@@ -139,9 +143,8 @@ public static class TabStrip
                 break;
             }
 
-            var style = id == current ? Current : Label;
-            float width = TextSlot.Measure(Name(id), style, panelWidth) + 2 * PadX;
-            labels.Add(new(Name(id), style, new(x, y, Math.Min(width, room), Height)));
+            float width = widths[i] + (2 * pad);
+            labels.Add(new(words[i].Text, words[i].Style, new(x, y, Math.Min(width, room), Height)));
             x += width + Gap;
         }
 
