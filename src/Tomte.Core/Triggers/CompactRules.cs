@@ -186,4 +186,12 @@ public static class CompactRules
     /// (null). A hover, a scroll and the hotkeys always open the tab last open.
     /// </summary>
     public static PanelId? ClickOpens(bool nowPlayingShows) => nowPlayingShows ? PanelId.Media : null;
+
+    /// <summary>
+    /// The tab to put back when the island hides after a click on the track opened Media: the one current before the
+    /// click, so hover and the hotkeys keep opening the tab the user chose. Null when the user went on to another tab
+    /// by hand, or nothing was clicked.
+    /// </summary>
+    public static PanelId? TabAfterClick(PanelId? beforeClick, PanelId? current) =>
+        beforeClick is { } back && current == PanelId.Media ? back : null;
 }

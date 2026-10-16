@@ -156,4 +156,15 @@ public class KeptPillTests
         // Gone, or another app's paused session in its place: not even the five seconds.
         Assert.False(Keeps(kept: true, stoppedFor: RetractionRules.StoppedFor(playing: false, sameApp: false, TimeSpan.Zero)));
     }
+
+    [Fact]
+    public void ALookAtTheTrackLeavesTheTabTheUserChoseForHoverAndTheHotkeys()
+    {
+        // Shelf was current, the click opened Media: the hide puts Shelf back.
+        Assert.Equal(PanelId.Shelf, CompactRules.TabAfterClick(PanelId.Shelf, PanelId.Media));
+        // The user went on to another tab by hand: that one stays.
+        Assert.Null(CompactRules.TabAfterClick(PanelId.Shelf, PanelId.Clipboard));
+        // No click on the track, or a hover that opened Media because it was the tab last open: nothing to put back.
+        Assert.Null(CompactRules.TabAfterClick(null, PanelId.Media));
+    }
 }

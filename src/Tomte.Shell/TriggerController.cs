@@ -55,6 +55,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private long stoppedAt;
     private string? playedBy;
 
+    // The tab that was current before a click on the track opened Media; put back when the island hides.
+    private PanelId? tabBeforeClick;
+
     public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
     {
         this.island = island;
@@ -625,6 +628,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     if (tab is { } id)
                     {
+                        tabBeforeClick = Panels?.Current;
                         Panels?.Select(id);
                     }
 
@@ -1731,6 +1735,18 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (machine.State != IslandState.Hidden)
         {
             Go(IslandState.Hidden);
+        }
+
+        // A look at the track leaves the tab the user chose as the one the next hover or hotkey opens. A hide for a state
+        // that opens next (the AI box from Media, and its way back) is part of that look.
+        if (!holdEvents)
+        {
+            if (CompactRules.TabAfterClick(tabBeforeClick, Panels?.Current) is { } back)
+            {
+                Panels?.Select(back);
+            }
+
+            tabBeforeClick = null;
         }
 
         // The rambler retracts on its own, so Go may not have run: make sure no ring animation outlives the pill.
