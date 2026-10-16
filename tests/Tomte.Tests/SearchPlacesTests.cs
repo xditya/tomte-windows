@@ -208,3 +208,40 @@ public sealed class SearchPlacesTests
 
     private static string RepoRoot([CallerFilePath] string here = "") => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(here)!, "..", ".."));
 }
+
+public sealed unsafe class SettingsSectionTests
+{
+    [Fact]
+    public void OnlyTomtesMessageWithAShortTextIsRead()
+    {
+        Assert.Equal("Hotkeys", Read(SettingsSection.Tag, "Hotkeys"));
+        Assert.Equal("Opening and closing", Read(SettingsSection.Tag, "Opening and closing"));
+        Assert.Null(Read(SettingsSection.Tag + 1, "Hotkeys")); // another program's WM_COPYDATA
+        Assert.Null(Read(SettingsSection.Tag, new string('x', SettingsSection.MaxLength + 1)));
+        Assert.Null(Read(SettingsSection.Tag, ""));
+        Assert.False(SettingsSection.TryRead(0, out _));
+
+        // An odd byte count is no UTF-16 text.
+        fixed (char* text = "Hotkeys")
+        {
+            var data = new Windows.Win32.System.DataExchange.COPYDATASTRUCT { dwData = SettingsSection.Tag, cbData = 5, lpData = text };
+            Assert.False(SettingsSection.TryRead((nint)(&data), out _));
+        }
+    }
+
+    [Fact]
+    public void NothingIsSentWithoutAWindowOrWithATooLongText()
+    {
+        Assert.False(SettingsSection.Send(0, "Hotkeys"));
+        Assert.False(SettingsSection.Send(1, new string('x', SettingsSection.MaxLength + 1)));
+    }
+
+    private static string? Read(nuint tag, string section)
+    {
+        fixed (char* text = section)
+        {
+            var data = new Windows.Win32.System.DataExchange.COPYDATASTRUCT { dwData = tag, cbData = (uint)(section.Length * sizeof(char)), lpData = text };
+            return SettingsSection.TryRead((nint)(&data), out string read) ? read : null;
+        }
+    }
+}
