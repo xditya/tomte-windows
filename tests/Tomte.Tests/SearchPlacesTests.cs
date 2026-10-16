@@ -138,6 +138,8 @@ public sealed class SearchPlacesTests
         Assert.Equal("Search", section);
         Assert.Equal(page, Search("open everything settings")[0]);
         Assert.Equal(page, Search("web search engine")[0]);
+        // A search engine's name is a web search, not Tomte's settings.
+        Assert.All(new[] { "bing", "google", "duckduckgo" }, engine => Assert.DoesNotContain(Search(engine), r => r.Target == "tomte:settings:Search"));
         Assert.Contains("everything", Places.TomteWords("Search"), StringComparison.Ordinal);
         Assert.Equal("", Places.TomteWords("Nowhere"));
     }

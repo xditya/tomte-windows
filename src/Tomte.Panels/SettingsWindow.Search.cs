@@ -44,7 +44,7 @@ public sealed partial class SettingsWindow
         var card = Card(
             Row("Search shortcut", shortcut, change),
             Row("File search", fileSearchNote, getEverything),
-            Row("Web search", Note("What Open in browser in the search box searches with."), WebSearchEngines()),
+            Row("Web search", Note("What Open in browser in the search box searches with: Google, Bing or DuckDuckGo."), WebSearchEngines()),
             Note(AiSearchNote));
         // A row names its control after the row; a screen reader should hear what the link and the button do.
         AutomationProperties.SetName(change, "Change the search shortcut in Hotkeys");

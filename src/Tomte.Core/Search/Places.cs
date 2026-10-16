@@ -23,7 +23,7 @@ public static class Places
         ("General", "General", "start with windows startup desktop peek track changes monitors island position"),
         ("Opening and closing", "Opening and closing", "edge push dwell reveal drag reveal retract delay open close"),
         ("Hotkeys", "Hotkeys", "shortcut keys keyboard shortcuts key bindings hotkey"),
-        ("Search", "Search", "file search everything windows index whole disk files web search engine google bing duckduckgo"),
+        ("Search", "Search", "file search everything windows index whole disk files web search engine"),
         ("Shelf and shortcuts", "Shelf and shortcuts", "shelf tiles drag out"),
         ("Clipboard", "Clipboard", "clipboard history keep history memory privacy"),
         ("Voice", "Voice", "rambler speech dictation spoken replies microphone"),

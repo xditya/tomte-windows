@@ -19,7 +19,7 @@ public sealed class SettingsFindTests
         new("Hotkeys", "", "Search", ""),
         new("Search", "", "Search shortcut", "Win+Alt+Space opens the search box."),
         new("Search", "", "File search", "The Windows Search index: only the folders Windows indexes. Get Everything (free, from voidtools) to search every drive."),
-        new("Search", "", "Web search", "What Open in browser in the search box searches with."),
+        new("Search", "", "Web search", "What Open in browser in the search box searches with: Google, Bing or DuckDuckGo."),
         new("Clipboard", "", "Keep history", "Keeps the last 50 pieces of text and 10 images you copy, on this PC, for up to 7 days."),
         new("AI", "AI provider", "Key", "Kept in Windows Credential Manager, not in the settings file."),
         new("AI", "AI history", "Undo after closing", "After you close an AI answer, Undo on the island brings it back for this long."),
@@ -67,6 +67,7 @@ public sealed class SettingsFindTests
     {
         Assert.Equal(["Summon island, Hotkeys", "Scratchpad, Hotkeys", "Search, Hotkeys"], Find("hotkey"));
         Assert.Equal("File search, Search", Find("everything")[0]);
+        Assert.Equal(["Web search, Search"], Find("bing"));
         // "startup" is only in the words for the General page.
         Assert.Equal("Start with Windows, General", Find("startup")[0]);
         // The words for Opening and closing name its retract rows, but rows with the word themselves leave the rest out.
