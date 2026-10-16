@@ -87,6 +87,9 @@ internal sealed class TimerRing
 
         visual.IsVisible = false;
         arc.StopAnimation("TrimEnd");
+        // Out of its frame, so a close with nothing showing does not wait for a fade; Show puts it back.
+        frame?.Children.Remove(visual);
+        frame = null;
     }
 
     private static CompositionSpriteShape Circle(Compositor compositor, Color color, out CompositionEllipseGeometry geometry)

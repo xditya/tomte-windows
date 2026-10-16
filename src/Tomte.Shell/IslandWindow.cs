@@ -517,7 +517,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         swell = swellAimed = false;
         double lead = heldLead;
         heldLead = 0;
-        if (to.Depth <= 0.5 && Dips.Children.Count > 0)
+        // Trailing is always one of Dips' children, so only what is in it, or a second child, has anything to fade.
+        if (to.Depth <= 0.5 && (Dips.Children.Count > 1 || Trailing.Children.Count > 0))
         {
             // Whatever shows inside fades out first; the shape follows.
             lead = Math.Max(lead, ContentFadeOutSeconds);
