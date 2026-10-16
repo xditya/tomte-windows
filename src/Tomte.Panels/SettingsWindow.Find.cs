@@ -30,6 +30,14 @@ public sealed partial class SettingsWindow
         // Without a tooltip of its own: WinUI's would cover the title bar each time the box takes the focus.
         AutomationProperties.SetAcceleratorKey(box, "Ctrl+F");
         box.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;
+        // The box's own text field is what takes the focus, so a screen reader hears the key from there.
+        box.GotFocus += (_, e) =>
+        {
+            if (e.OriginalSource is TextBox text)
+            {
+                AutomationProperties.SetAcceleratorKey(text, "Ctrl+F");
+            }
+        };
         var find = new KeyboardAccelerator { Key = VirtualKey.F, Modifiers = VirtualKeyModifiers.Control };
         find.Invoked += (_, e) =>
         {
