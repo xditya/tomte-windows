@@ -134,4 +134,16 @@ public class KeptPillTests
     [InlineData(IslandState.Panels, IslandActivity.None, CompactReason.None, false)]
     public void AnEdgePushTakesOverTheKeptPillAsItDoesPeek(IslandState state, IslandActivity activity, CompactReason reason, bool shows) =>
         Assert.Equal(shows, RetractionRules.PushShows(state, activity, reason));
+
+    [Fact]
+    public void ThePointerHoldsThePillPastItsTimeButNotPastADenyRuleThePauseOrTheSettingOff()
+    {
+        var player = Clear with { ForegroundExe = "player.exe" };
+        AppRule[] deny = [new AppRule("player", AppRuleMode.Deny)];
+        Assert.True(RetractionRules.HoldsKeptPill(on: true, paused: false, Clear, [], pointerInside: true, IslandActivity.Playing));
+        Assert.False(RetractionRules.HoldsKeptPill(on: true, paused: false, Clear, [], pointerInside: false, IslandActivity.Playing));
+        Assert.False(RetractionRules.HoldsKeptPill(on: true, paused: false, player, deny, pointerInside: true, IslandActivity.Playing));
+        Assert.False(RetractionRules.HoldsKeptPill(on: false, paused: false, Clear, [], pointerInside: true, IslandActivity.Playing));
+        Assert.False(RetractionRules.HoldsKeptPill(on: true, paused: true, Clear, [], pointerInside: true, IslandActivity.Playing));
+    }
 }

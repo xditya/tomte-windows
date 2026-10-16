@@ -1162,7 +1162,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         TimeSpan? stoppedFor = mediaPlaying ? null : TimeSpan.FromMilliseconds(Environment.TickCount64 - stoppedAt);
         if (!RetractionRules.KeepsPill(settings.KeepWhilePlaying, kept, stoppedFor, Paused, watch.State, settings.AppRules))
         {
-            if (kept && stoppedFor is not null && RetractionRules.HoldsPastItsTime(pointerInside, activity))
+            if (kept && stoppedFor is not null && RetractionRules.HoldsKeptPill(settings.KeepWhilePlaying, Paused, watch.State, settings.AppRules, pointerInside, activity))
             {
                 PInvoke.SetTimer(island.Hwnd, KeepTimer, EventHoldMs, null);
             }

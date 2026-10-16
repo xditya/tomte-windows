@@ -109,6 +109,14 @@ public static class RetractionRules
         && Suppression.Allows(RevealTrigger.Peek, desktop, rules);
 
     /// <summary>
+    /// The kept pill whose time after playback has run out stays while the pointer is on it or a drag moves it, as an
+    /// event pill does, but only when nothing else refuses it: a deny rule coming to the front, the pause or the setting
+    /// turned off hide it at once.
+    /// </summary>
+    public static bool HoldsKeptPill(bool on, bool paused, SuppressionState desktop, IReadOnlyList<AppRule> rules, bool pointerInside, IslandActivity activity) =>
+        KeepsPill(on, kept: true, TimeSpan.Zero, paused, desktop, rules) && HoldsPastItsTime(pointerInside, activity);
+
+    /// <summary>
     /// An edge push shows the push pill, with its ring, countdown and glance line, where the island is hidden or shows an
     /// ambient pill (peek, the pill kept while music plays, the launch arrival's): those give way to it and come back once
     /// it retracts. Elsewhere the island is already up and the push does nothing.
