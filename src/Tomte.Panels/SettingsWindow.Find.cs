@@ -76,9 +76,10 @@ public sealed partial class SettingsWindow
                 _ = ShowAsync(chosen);
             }
         };
+        // Every Esc: the box's own would bring back the last text typed once the box is empty.
         box.PreviewKeyDown += (_, e) =>
         {
-            if (e.Key == VirtualKey.Escape && box.Text.Length > 0)
+            if (e.Key == VirtualKey.Escape)
             {
                 e.Handled = true;
                 Clear();
