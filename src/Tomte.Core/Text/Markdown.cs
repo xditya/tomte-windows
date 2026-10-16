@@ -108,11 +108,12 @@ public static class Markdown
 
     /// <summary>
     /// What of an answer still coming in can show now, so that no marker shows as text and then turns into a look: a
-    /// run of * or ` at the very end may be half of one; a last line that is so far only a list item's marker waits
-    /// for its text; and the last line stops before a ` or a * against the text after it that shows as text, since
-    /// either may still open or close a look. A cut can leave a marker before it open again, so cutting repeats until
-    /// nothing changes; bold around a * that is not a marker, as in **5*3**, waits for its line to end. A * before
-    /// white space opens nothing and shows. Inside a code block only the run at the end waits.
+    /// run of * or ` at the very end may be half of one; a last line that is so far only a list item's marker, a
+    /// number, or a run of - or _ waits for what makes it an item, a rule or words; and the last line stops before a
+    /// ` or a * against the text after it that shows as text, since either may still open or close a look. A cut can
+    /// leave a marker before it open again, so cutting repeats until nothing changes; bold around a * that is not a
+    /// marker, as in **5*3**, waits for its line to end. A * before white space opens nothing and shows. Inside a code
+    /// block only the run at the end waits.
     /// </summary>
     public static string Settled(string text)
     {
@@ -139,10 +140,11 @@ public static class Markdown
             return text[..end];
         }
 
-        // A list item's marker with nothing after it yet reads as text until its space comes.
+        // A last line that may still turn into a list item or a rule waits for what comes next.
         int line = text.LastIndexOf('\n', Math.Max(0, end - 1)) + 1;
         var tail = text.AsSpan(line, end - line).TrimStart();
-        if (Item($"{tail} ", note: false) is (_, int width) && width == tail.Length + 1)
+        if (tail.Length > 0 && (!tail.ContainsAnyExceptInRange('0', '9') || !tail.ContainsAnyExcept('-') || !tail.ContainsAnyExcept('_')
+            || (Item($"{tail} ", note: false) is (_, int width) && width == tail.Length + 1)))
         {
             return text[..line];
         }

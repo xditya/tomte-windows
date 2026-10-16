@@ -111,6 +111,11 @@ public class MarkdownTests
     [InlineData("Costs:\n-", "Costs:\n")]
     [InlineData("Steps:\n  12.", "Steps:\n")]
     [InlineData("Costs:\n- r", "Costs:\n- r")]
+    // A number or a run of - or _ alone on the last line may still become an item or a rule.
+    [InlineData("Steps:\n1", "Steps:\n")]
+    [InlineData("1. one\n2", "1. one\n")]
+    [InlineData("--", "")]
+    [InlineData("a\n__", "a\n")]
     // ** falls back to * while its closer has not come: the * left as text waits, with the run it starts.
     [InlineData("**Do *not* delete this file.**", "")]
     [InlineData("**a*b", "")]
