@@ -161,7 +161,7 @@ internal sealed class NowPlayingRow
             title = text.Create(Root);
             titleSlot = CompactLayout.Title(mascot);
 
-            // One shape visual from the title slot's left edge to the pill's right padding.
+            // One shape visual from the title slot's left edge to the end of the bars.
             shapes = compositor.CreateShapeVisual();
             shapes.Offset = new Vector3(titleSlot.X, 0, 0);
             shapes.Size = new Vector2(BarsLeft + Reach.Length * (Waveform.BarWidth + Waveform.Gap) - titleSlot.X, (float)IslandGeometry.Compact.Depth);

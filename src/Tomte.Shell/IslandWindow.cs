@@ -216,7 +216,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         ghost.Visual.Opacity = 0;
         ShadowLook();
 
-        // The mascot sits above the content and outside the clip, so it can be seen before the shape has any depth.
+        // The mascot sits above the content and outside its clip; it keeps inside the shape by being sized from its depth.
         Mascot = new Mascot(() => clock.Elapsed.TotalSeconds, () => ReduceMotion) { Changed = Wake };
         mascotVisual = new MascotVisual(compositor);
         live.Children.InsertAtTop(mascotVisual.Visual);
