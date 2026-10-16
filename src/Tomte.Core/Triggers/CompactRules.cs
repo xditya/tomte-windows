@@ -2,7 +2,7 @@ using System.Globalization;
 
 namespace Tomte.Core.Triggers;
 
-/// <summary>Why the Compact pill is up: an edge push, desktop peek, an event, the first-run hint, the rambler, the launch arrival or a closed AI view's Undo.</summary>
+/// <summary>Why the Compact pill is up: an edge push, desktop peek, an event, the first-run hint, the rambler, the launch arrival, a closed AI view's Undo or music playing.</summary>
 public enum CompactReason
 {
     None,
@@ -17,6 +17,9 @@ public enum CompactReason
 
     /// <summary>A closed AI view's pill: what closed and Undo, both its own, so the pill's line shows nothing.</summary>
     Undo,
+
+    /// <summary>The pill kept while music plays, when the user turned that on: what plays, as long as it plays.</summary>
+    Playing,
 }
 
 /// <summary>Which feature raised an event, so its pill can show that feature's content.</summary>
@@ -157,13 +160,15 @@ public static class CompactRules
     /// <summary>
     /// One rule for the pill's one line. The push pill shows the timer ring while a timer runs (or has ended
     /// and waits for its done pill), else what plays. An event pill shows only its own event's content. The peek
-    /// pill holds the tomte alone; with the tomte off it is the full pill with what plays, never the ring. A digest of
-    /// several events, the first-run hint and the rambler show neither.
+    /// pill holds the tomte alone; with the tomte off it is the full pill with what plays, never the ring. The pill kept
+    /// while music plays shows what plays, also in the seconds it stays after playback stops. A digest of several events,
+    /// the first-run hint and the rambler show neither.
     /// </summary>
     public static CompactContent Content(CompactReason reason, IslandEventSource shown, bool timerRuns, bool playing, bool tomte = true) => reason switch
     {
         CompactReason.Summary => timerRuns ? CompactContent.TimerRing : playing ? CompactContent.NowPlaying : CompactContent.None,
         CompactReason.Peek when !tomte && playing => CompactContent.NowPlaying,
+        CompactReason.Playing => CompactContent.NowPlaying,
         CompactReason.Event when shown == IslandEventSource.Timer => CompactContent.TimerRing,
         CompactReason.Event when shown == IslandEventSource.TrackChange && playing => CompactContent.NowPlaying,
         _ => CompactContent.None,
@@ -175,4 +180,21 @@ public static class CompactRules
     /// </summary>
     public static IslandEventSource Owner(IReadOnlyList<IslandEvent> shown) =>
         shown is [var only] ? only.Source : IslandEventSource.Other;
+
+    /// <summary>
+    /// The tab a click on the pill opens Panels on: Media when the now-playing row shows on it, else the tab last open
+    /// (null). A hover, a scroll and the hotkeys always open the tab last open.
+    /// </summary>
+    public static PanelId? ClickOpens(bool nowPlayingShows) => nowPlayingShows ? PanelId.Media : null;
+
+    /// <summary>
+    /// The tab to put back when the island hides after a click on the track opened Media: the one current before the
+    /// click, so hover and the hotkeys keep opening the tab the user chose. Null when the user went on to another tab
+    /// by hand, or nothing was clicked.
+    /// </summary>
+    public static PanelId? TabAfterClick(PanelId? beforeClick, PanelId? current) =>
+        beforeClick is { } back && current == PanelId.Media ? back : null;
+
+    /// <summary>The track-change pill shows when the user turned it on, except over the kept pill, whose row already shows the new track.</summary>
+    public static bool AnnouncesTrack(bool on, CompactReason showing) => on && showing != CompactReason.Playing;
 }

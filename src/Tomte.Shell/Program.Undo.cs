@@ -23,7 +23,8 @@ internal static partial class Program
     /// closed and left to run out, then Tomte stays hidden to be measured. voice: with --rambler, --debug-hold,
     /// --debug-choice ask and a provider, Esc on the voice command's reply and Win+Alt+Z (the hold driver quits). events: an
     /// event raised with the AI box open and one raised while the undo pill shows, each before the pill, then a settings
-    /// shortcut box starting to record.
+    /// shortcut box starting to record. music: with "Keep showing while music plays" on and something playing, an answer
+    /// closed and left to run out, then another closed, brought back by a click on Undo, closed again and left to run out.
     /// </summary>
     private static async Task DebugUndo(IslandWindow island, TriggerController triggers, SettingsStore store, string mode, Action<string> log)
     {
@@ -52,6 +53,9 @@ internal static partial class Program
                 return;
             case "events":
                 await Events();
+                break;
+            case "music":
+                await Music();
                 break;
         }
 
@@ -181,6 +185,33 @@ internal static partial class Program
             PInvoke.PostMessage(island.Hwnd, Tomte.Core.Hotkey.MsgPause, 0, 0);
             await Task.Delay(5000);
             await Step("the undo time ran out");
+        }
+
+        // The undo pill comes before the pill kept while music plays, and the kept pill once the undo time is up.
+        async Task Music()
+        {
+            var time = UndoClose.Time(store.Current.UndoSeconds) ?? TimeSpan.Zero;
+            await Until(() => triggers.Compact == CompactReason.Playing, 20000);
+            await Step("music plays");
+            Hotkey(HotkeyAction.Palette);
+            await Until(() => hotkeyPalette?.View is { Session: not null } && triggers.Machine.State == IslandState.Palette);
+            await Send("Write a long list");
+            Post(InputThread.EscapeHotkeyId);
+            await Step("Esc");
+            await Task.Delay(time);
+            await Step("the undo time ran out");
+
+            Hotkey(HotkeyAction.Palette);
+            await Until(() => hotkeyPalette?.View is { Session: not null } && triggers.Machine.State == IslandState.Palette);
+            await Send("Write a long list");
+            Post(InputThread.EscapeHotkeyId);
+            await Step("Esc again");
+            Click();
+            await Step("Undo clicked");
+            Post(InputThread.EscapeHotkeyId);
+            await Step("Esc after Undo");
+            await Task.Delay(time);
+            await Step("the undo time ran out again");
         }
 
         // With --rambler, --debug-hold, --debug-choice ask and a provider: Esc on the voice command's reply, then Win+Alt+Z.

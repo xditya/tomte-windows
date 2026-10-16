@@ -113,6 +113,9 @@ internal sealed class PanelHost
     /// <summary>The next state change is the AI box going back to the tab it was opened from (<see cref="IPanel.ShownBack"/>).</summary>
     public void GoingBack() => back = true;
 
+    /// <summary>The tab Panels shows, or opens on next time.</summary>
+    public PanelId? Current => tabs.Current;
+
     /// <summary>Make a panel the current one. Open, that is a tab switch; closed, Panels opens on it next time.</summary>
     public void Select(PanelId id)
     {

@@ -103,7 +103,7 @@ internal static partial class Program
         // The undo driver sends to the provider in settings and puts a file on the shelf: only with a run's own settings.
         if (args.Contains("--debug-undo") && Arg(args, "--debug-settings") is null)
         {
-            Console.Error.WriteLine("usage: --debug-undo palette|search|zone|card|voice|idle|events needs --debug-settings <file>, so it sends to the run's own provider and shelf");
+            Console.Error.WriteLine("usage: --debug-undo palette|search|zone|card|voice|idle|events|music needs --debug-settings <file>, so it sends to the run's own provider and shelf");
             return 2;
         }
 
@@ -288,6 +288,11 @@ internal static partial class Program
             _ = DebugSwell(island, logLine);
         }
 
+        if (int.TryParse(Arg(args, "--debug-pause"), out int pauseAfter) && logLine is not null)
+        {
+            _ = DebugPause(triggers, pause, pauseAfter, logLine);
+        }
+
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
         {
@@ -420,9 +425,9 @@ internal static partial class Program
     }
 
     /// <summary>
-    /// The panel host with the Shelf and Media panels, the Compact now-playing row and the track-change event.
-    /// The event is the one thing that listens to media while the island is hidden, and only when the user
-    /// turned it on in settings.
+    /// The panel host with the Shelf and Media panels, the Compact now-playing row, the track-change event and the
+    /// pill kept while music plays. The event and the kept pill are the only things that listen to media while the
+    /// island is hidden, and only when the user turned them on in settings.
     /// </summary>
     private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ShortcutStore shortcuts, ClipboardWatch clipboard, Action<string>? log)
     {
@@ -475,31 +480,44 @@ internal static partial class Program
         panels.Register(new HistoryPanel(island, History!, text, item => island.Queue.TryEnqueue(() => ContinueInPalette(triggers, item)), answer => CopyAnswer(answer, log), log));
         triggers.Panels = panels;
         // The row and the line live on the state changes and ContentReady they listen to.
-        _ = new CompactLine(island, triggers, text, new NowPlayingRow(island, triggers, media, text, log), log);
+        var row = new NowPlayingRow(island, triggers, media, text, log);
+        triggers.NowPlayingShows = () => row.Showing;
+        _ = new CompactLine(island, triggers, text, row, log);
 
-        bool announcing = false;
+        bool announcing = false, keeping = false;
         media.TrackChanged += playing =>
         {
-            if (announcing)
+            if (CompactRules.AnnouncesTrack(announcing, triggers.Compact))
             {
                 log?.Invoke($"media: track changed, raising the event ({playing.App})");
                 triggers.Raise(new IslandEvent(playing.Title, DateTimeOffset.Now) { Source = IslandEventSource.TrackChange });
             }
+            else if (announcing)
+            {
+                log?.Invoke("media: track changed, the kept pill shows it");
+            }
         };
+        media.Changed += () => triggers.MediaChanged(media.Current);
         Apply(store.Current);
         // Changed arrives on a pool thread.
         store.Changed += settings => island.Queue.TryEnqueue(() => Apply(settings));
 
         void Apply(TomteSettings settings)
         {
-            if (settings.MediaTrackChangeEvent == announcing)
+            Listen(ref announcing, settings.MediaTrackChangeEvent);
+            Listen(ref keeping, settings.KeepWhilePlaying);
+        }
+
+        // No positions and no art: a hidden island needs only the title and whether it plays.
+        void Listen(ref bool listening, bool wanted)
+        {
+            if (wanted == listening)
             {
                 return;
             }
 
-            announcing = settings.MediaTrackChangeEvent;
-            // No positions and no art: a hidden island needs only the title to know the track changed.
-            if (announcing)
+            listening = wanted;
+            if (wanted)
             {
                 media.Watch(timeline: false, art: false);
             }
@@ -527,6 +545,21 @@ internal static partial class Program
         triggers.Dropped += drop => shelf.Accept(drop);
         zones = new DropZones(island, triggers, shelf, text, store, db, log);
         return new ShelfPanel(island, triggers, shelf, text, log);
+    }
+
+    /// <summary>
+    /// --debug-pause seconds with --debug-log=path: the tray's "Pause for 1 hour" that long after the start, with no menu,
+    /// then its resume as long after that. Logs the island's state after each.
+    /// </summary>
+    private static async Task DebugPause(TriggerController triggers, PauseState pause, int seconds, Action<string> log)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        pause.PauseFor(TimeSpan.FromHours(1), DateTimeOffset.Now);
+        triggers.Hide();
+        log($"debug pause: paused, island {triggers.State}");
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        pause.Resume();
+        log($"debug pause: resumed, island {triggers.State}");
     }
 
     /// <summary>

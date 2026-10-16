@@ -23,11 +23,11 @@ public sealed class TriggerQueue
 
     /// <summary>
     /// The island is showing something an event pill must not replace: anything but Hidden, except the desktop
-    /// peek pill, which is ambient, and the undo pill, which comes back for its time left; both give way. An event that
-    /// arrives now waits until the island hides.
+    /// peek pill and the pill kept while music plays, which are ambient, and the undo pill, which comes back for its time
+    /// left; all give way. An event that arrives now waits until the island hides.
     /// </summary>
     public static bool IslandBusy(IslandState state, IslandActivity activity) =>
-        state != IslandState.Hidden && (activity & (IslandActivity.Peek | IslandActivity.Undo)) == 0;
+        state != IslandState.Hidden && (activity & (IslandActivity.Peek | IslandActivity.Undo | IslandActivity.Playing)) == 0;
 
     /// <summary>
     /// Whether an event waits now: while the tray pause is on, while the suppression check refuses events
