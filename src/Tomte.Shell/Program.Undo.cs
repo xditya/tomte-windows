@@ -21,7 +21,9 @@ internal static partial class Program
     /// brought back, closed by a press outside. card: with --rambler, --debug-hold, --debug-transcript and
     /// --debug-choice esc, Undo after each Esc on the card (the hold driver quits). idle: an answer and an AI search, each
     /// closed and left to run out, then Tomte stays hidden to be measured. voice: with --rambler, --debug-hold,
-    /// --debug-choice ask and a provider, Esc on the voice command's reply and Win+Alt+Z (the hold driver quits).
+    /// --debug-choice ask and a provider, Esc on the voice command's reply and Win+Alt+Z (the hold driver quits). events: an
+    /// event raised with the AI box open and one raised while the undo pill shows, each before the pill, then a settings
+    /// shortcut box starting to record.
     /// </summary>
     private static async Task DebugUndo(IslandWindow island, TriggerController triggers, SettingsStore store, string mode, Action<string> log)
     {
@@ -48,6 +50,9 @@ internal static partial class Program
             case "voice":
                 await Voice();
                 return;
+            case "events":
+                await Events();
+                break;
         }
 
         triggers.Hide();
@@ -147,6 +152,37 @@ internal static partial class Program
             await Step("both ran out; hidden from here on");
         }
 
+        // Events and the undo pill: one raised while the AI box is open shows first at its close, then the pill for its time
+        // left; one raised while the pill shows takes its place at once, then the pill comes back for the time left.
+        async Task Events()
+        {
+            Hotkey(HotkeyAction.Palette);
+            await Until(() => hotkeyPalette?.View is { Session: not null } && triggers.Machine.State == IslandState.Palette);
+            await Send("Write a long list");
+            triggers.Raise(new IslandEvent("Volume 30%.", DateTimeOffset.Now));
+            await Step("an event raised with the AI box open");
+            Post(InputThread.EscapeHotkeyId);
+            await Step("Esc");
+            await Task.Delay(3000);
+            await Step("the event's time is up");
+            Post(InputThread.UndoHotkeyId);
+            await Step("Win+Alt+Z");
+
+            Post(InputThread.EscapeHotkeyId);
+            await Step("Esc");
+            triggers.Raise(new IslandEvent("Timer set for 5:00.", DateTimeOffset.Now));
+            await Step("an event raised while the pill shows");
+            await Task.Delay(3000);
+            await Step("the event's time is up");
+
+            // A settings shortcut box starts recording, as the settings window posts it: the pill goes with Win+Alt+Z.
+            PInvoke.PostMessage(island.Hwnd, Tomte.Core.Hotkey.MsgPause, 1, 0);
+            await Step("a settings shortcut box records");
+            PInvoke.PostMessage(island.Hwnd, Tomte.Core.Hotkey.MsgPause, 0, 0);
+            await Task.Delay(5000);
+            await Step("the undo time ran out");
+        }
+
         // With --rambler, --debug-hold, --debug-choice ask and a provider: Esc on the voice command's reply, then Win+Alt+Z.
         async Task Voice()
         {
@@ -234,7 +270,7 @@ internal static partial class Program
                     + $"{session.Status}, answer {session.AnswerText.Length} chars, {session.Conversation.Count} turns",
                 _ => "",
             };
-            log($"debug undo: {what}: island {triggers.Machine.State}, compact {triggers.Compact}, {shows}");
+            log($"debug undo: {what}: island {triggers.Machine.State}, compact {triggers.Compact}, tomte {island.Mascot.State}, {shows}");
             // Time to capture the screen.
             await Task.Delay(800);
         }
