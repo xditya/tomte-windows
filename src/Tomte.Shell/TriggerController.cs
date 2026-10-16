@@ -496,10 +496,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         switch (message)
         {
             case InputThread.MsgEdgeReveal:
-                if (machine.State == IslandState.Hidden || activity.HasFlag(IslandActivity.Peek) || Compact == CompactReason.Arrival)
+                if (RetractionRules.PushShows(machine.State, activity, Compact))
                 {
                     log?.Invoke(wParam == 1 ? "edge push: dwell" : "edge push: counts");
-                    // The launch arrival's pill gives way to a push as peek does: the pushed pill, with its line.
+                    // The launch arrival's pill gives way to a push as peek and the kept pill do: the pushed pill, with its line.
                     arrivalShowing = false;
                     if (Reveal(RevealTrigger.EdgePush, IslandState.Compact))
                     {

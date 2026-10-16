@@ -109,6 +109,14 @@ public static class RetractionRules
         && Suppression.Allows(RevealTrigger.Peek, desktop, rules);
 
     /// <summary>
+    /// An edge push shows the push pill, with its ring, countdown and glance line, where the island is hidden or shows an
+    /// ambient pill (peek, the pill kept while music plays, the launch arrival's): those give way to it and come back once
+    /// it retracts. Elsewhere the island is already up and the push does nothing.
+    /// </summary>
+    public static bool PushShows(IslandState state, IslandActivity activity, CompactReason reason) =>
+        state == IslandState.Hidden || (activity & (IslandActivity.Peek | IslandActivity.Playing)) != 0 || reason == CompactReason.Arrival;
+
+    /// <summary>
     /// The voice key turns the island into the rambler's pill from every state but Shelf-drop, where a file is being
     /// dragged onto it and a drop on the pill would open the shelf over the recording. From an open state the state
     /// passes through Hidden (what shows leaves as on a retract) on its way to Compact.

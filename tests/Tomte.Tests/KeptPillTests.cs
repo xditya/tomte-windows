@@ -123,4 +123,15 @@ public class KeptPillTests
         Assert.Equal(PanelId.Media, CompactRules.ClickOpens(nowPlayingShows: true));
         Assert.Null(CompactRules.ClickOpens(nowPlayingShows: false));
     }
+
+    [Theory]
+    [InlineData(IslandState.Hidden, IslandActivity.None, CompactReason.None, true)]
+    [InlineData(IslandState.Compact, IslandActivity.Peek, CompactReason.Peek, true)]
+    [InlineData(IslandState.Compact, IslandActivity.Playing, CompactReason.Playing, true)] // the push pill, with its ring and glance line
+    [InlineData(IslandState.Compact, IslandActivity.None, CompactReason.Arrival, true)]
+    [InlineData(IslandState.Compact, IslandActivity.None, CompactReason.Summary, false)] // already the push pill
+    [InlineData(IslandState.Compact, IslandActivity.None, CompactReason.Event, false)]
+    [InlineData(IslandState.Panels, IslandActivity.None, CompactReason.None, false)]
+    public void AnEdgePushTakesOverTheKeptPillAsItDoesPeek(IslandState state, IslandActivity activity, CompactReason reason, bool shows) =>
+        Assert.Equal(shows, RetractionRules.PushShows(state, activity, reason));
 }
