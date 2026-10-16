@@ -85,6 +85,12 @@ public sealed record TomteSettings
     /// </summary>
     public bool MediaTrackChangeEvent { get; init; }
 
+    /// <summary>
+    /// While something plays, the island stays as the Compact pill showing it instead of hiding. Off by default; on,
+    /// Tomte listens for media changes while the island is hidden.
+    /// </summary>
+    public bool KeepWhilePlaying { get; init; }
+
     /// <summary>Skills the user turned on, by folder name. A skill not listed is off, so a new one starts off.</summary>
     public IReadOnlyList<string> EnabledSkills { get; init; } = [];
 

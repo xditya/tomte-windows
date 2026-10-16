@@ -69,7 +69,10 @@ public sealed class MediaTracker
     /// <summary>Why the last transport command did nothing, for the text renderer; null after one that worked.</summary>
     public string? Failure => failure;
 
-    /// <summary>Raised once for a burst of changes; read <see cref="Current"/> for where things stand.</summary>
+    /// <summary>
+    /// Raised once for a burst of changes, and once after each <see cref="Watch"/> when what plays has been read, so a
+    /// new watcher hears where things stand; read <see cref="Current"/> for that.
+    /// </summary>
     public event Action? Changed;
 
     /// <summary>Another track started playing while watched. The track found when a watch begins is not announced.</summary>
@@ -113,6 +116,8 @@ public sealed class MediaTracker
         {
             ReadTrack();
         }
+
+        NotifyChanged();
     });
 
     /// <summary>Takes back one <see cref="Watch"/> with the same arguments.</summary>
@@ -244,6 +249,7 @@ public sealed class MediaTracker
         // track is known once the first read of it lands.
         trackKnown = picked is null;
         announced = current;
+        NotifyChanged();
     }
 
     /// <summary>The set of sessions changed: listen to the playback state of each, then pick.</summary>

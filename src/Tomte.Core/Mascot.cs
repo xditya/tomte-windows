@@ -199,6 +199,7 @@ public sealed class Mascot
     private bool enabled = true;
     private uint capColor = MascotArt.CapRed;
     private bool reduce;
+    private bool still;
     private Beat next;
     private double nextAt;
     private double enteredAt;
@@ -257,6 +258,29 @@ public sealed class Mascot
     }
 
     public MascotState State { get; private set; } = MascotState.Hidden;
+
+    /// <summary>
+    /// Rest without the sway, on a pill that can stay up for hours, so nothing moves while nothing changes. A sway
+    /// already under way finishes; turned off on a resting tomte, the next one is scheduled.
+    /// </summary>
+    public bool Still
+    {
+        get => still;
+        set
+        {
+            if (still == value)
+            {
+                return;
+            }
+
+            still = value;
+            if (!value && next == Beat.None)
+            {
+                ScheduleSway();
+                Changed?.Invoke();
+            }
+        }
+    }
 
     /// <summary>Drawn while on and not hidden, and while the retract lift is still moving.</summary>
     public bool Visible => enabled && (State != MascotState.Hidden || !AtRest);
@@ -442,7 +466,7 @@ public sealed class Mascot
             case Beat.Rest:
                 ScheduleSway();
                 break;
-            case Beat.SwayLeft:
+            case Beat.SwayLeft when !still:
                 To(rootRotate, -MascotStates.SwayAngle, SpringPreset.Gentle);
                 At(MascotStates.SwayStepSeconds, Beat.SwayRight);
                 break;
@@ -481,7 +505,7 @@ public sealed class Mascot
 
     private void ScheduleSway()
     {
-        if (State == MascotState.Compact && !reduce)
+        if (State == MascotState.Compact && !reduce && !still)
         {
             At(MascotStates.SwayPauseMinSeconds + Random.Shared.NextDouble() * (MascotStates.SwayPauseMaxSeconds - MascotStates.SwayPauseMinSeconds), Beat.SwayLeft);
         }

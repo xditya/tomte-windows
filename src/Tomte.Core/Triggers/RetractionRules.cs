@@ -25,6 +25,12 @@ public enum IslandActivity
 
     /// <summary>The pill after a closed AI view, with Undo: it holds the island for the undo time, wherever the pointer is, and a rest on it opens nothing.</summary>
     Undo = 256,
+
+    /// <summary>
+    /// The pill kept while music plays: the pointer leaving does not retract it; playback stopping does, after
+    /// <see cref="RetractionRules.KeptAfterPlayback"/>.
+    /// </summary>
+    Playing = 512,
 }
 
 /// <summary>What a pointer report does to the hover dwell: nothing, start it, or cancel it.</summary>
@@ -82,10 +88,25 @@ public static class RetractionRules
 
     /// <summary>
     /// What is left when a state the user asked for takes the island over: the peek pill's "retract when a window
-    /// comes under" rule and the rambler's hold on the pill end, so a hold that ends later cannot retract it, and a
-    /// drop zone's result, which the new state replaces, no longer holds the island.
+    /// comes under" rule, the hold of the pill kept while music plays and the rambler's hold on the pill end, so a hold
+    /// that ends later cannot retract it, and a drop zone's result, which the new state replaces, no longer holds the
+    /// island.
     /// </summary>
-    public static IslandActivity TakenOver(IslandActivity activity) => activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result);
+    public static IslandActivity TakenOver(IslandActivity activity) =>
+        activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result | IslandActivity.Playing);
+
+    /// <summary>How long the pill kept while music plays stays once playback pauses or stops, so it does not come and go between tracks.</summary>
+    public static readonly TimeSpan KeptAfterPlayback = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// Whether the pill kept while music plays shows: the setting is on and something plays (<paramref name="stoppedFor"/>
+    /// null), or the pill is up (<paramref name="kept"/>) and playback stopped less than <see cref="KeptAfterPlayback"/>
+    /// ago. Never while Tomte is paused, over a fullscreen app, on the lock screen or a secure surface, or while an app
+    /// with a deny rule is in front.
+    /// </summary>
+    public static bool KeepsPill(bool on, bool kept, TimeSpan? stoppedFor, bool paused, SuppressionState desktop, IReadOnlyList<AppRule> rules) =>
+        on && (stoppedFor is null || (kept && stoppedFor < KeptAfterPlayback)) && !paused && !desktop.Fullscreen
+        && Suppression.Allows(RevealTrigger.Peek, desktop, rules);
 
     /// <summary>
     /// The voice key turns the island into the rambler's pill from every state but Shelf-drop, where a file is being
