@@ -1405,7 +1405,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (activity.HasFlag(IslandActivity.Rambling))
         {
             // The pill, or a voice reply that has had its time to be read, retracts on its own: nobody closed it, so
-            // nothing is kept to undo (a pill then would also hold back the events the command raised).
+            // nothing is kept to undo.
             ownRetract = true;
             try
             {
@@ -1629,15 +1629,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
             SchedulePeek();
         }
 
-        // A view closed with something from a provider: its undo pill, unless the pill is what went, or another state
-        // opens right after this hide.
+        // Events that arrived while the island was showing something waited for this.
+        ReleaseEvents();
+
+        // A view closed with something from a provider: its undo pill, unless the pill is what went, another state opens
+        // right after this hide, or an event pill took the island first (its own hide brings the undo pill back).
         if (!wasUndo && !holdEvents)
         {
             ShowUndo();
         }
-
-        // Events that arrived while the island was showing something waited for this.
-        ReleaseEvents();
     }
 
     /// <summary>
@@ -1790,10 +1790,10 @@ internal sealed partial class TriggerController
         {
             machine.TransitionTo(IslandState.Hidden);
             island.Mascot.Follow(IslandState.Capture, IslandState.Hidden);
-            // An undo kept when the lasso took the island, and an event raised while the overlay was up, waited for the
+            // An event raised while the overlay was up, and an undo kept when the lasso took the island, waited for the
             // island to be free; this path skips Hide().
-            ShowUndo();
             ReleaseEvents();
+            ShowUndo();
         }
     }
 }

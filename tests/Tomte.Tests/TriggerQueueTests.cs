@@ -35,13 +35,14 @@ public class TriggerQueueTests
     [Theory]
     [InlineData(IslandState.Hidden, IslandActivity.None, false)]
     [InlineData(IslandState.Compact, IslandActivity.Peek, false)] // the peek pill gives way to an event
+    [InlineData(IslandState.Compact, IslandActivity.Undo, false)] // so does the undo pill, which comes back after it
     [InlineData(IslandState.Compact, IslandActivity.None, true)] // an edge push, the first-run hint, another event
     [InlineData(IslandState.Compact, IslandActivity.Rambling, true)]
     [InlineData(IslandState.ShelfDrop, IslandActivity.DragInProgress, true)]
     [InlineData(IslandState.Panels, IslandActivity.None, true)]
     [InlineData(IslandState.Palette, IslandActivity.AiTask, true)]
     [InlineData(IslandState.Capture, IslandActivity.None, true)] // the island is hidden under the overlay, but an event waits
-    public void AnIslandThatIsShowingSomethingIsBusyExceptForThePeekPill(IslandState state, IslandActivity activity, bool busy) =>
+    public void AnIslandThatIsShowingSomethingIsBusyExceptForThePeekAndUndoPills(IslandState state, IslandActivity activity, bool busy) =>
         Assert.Equal(busy, TriggerQueue.IslandBusy(state, activity));
 
     [Fact]
