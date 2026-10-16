@@ -423,8 +423,6 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         ShowChips();
 
-        // every streamed word lays the answer out again (and its run once more to draw it); cache the blocks
-        // that did not change if long answers cost frames.
         // While a tool's question is open the model has stopped writing, so its text is whole even though the send goes on.
         var (answer, measured) = layout.Answer(Blocks(session, followUp: typed), streaming: session.Status == PaletteStatus.Sending && asked is null);
         // The host caps the island at half the monitor's height; the answer band gives way first, so a tall card and its

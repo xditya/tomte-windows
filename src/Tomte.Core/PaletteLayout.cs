@@ -161,6 +161,9 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     private IReadOnlyList<LaidChip>? row;
     private float? askHeight, includeWidth;
 
+    // What each run of the last answer measured.
+    private Dictionary<TextRun, (float Width, float Height, int Lines, bool Trimmed)> measured = [];
+
     public float Width => width;
 
     /// <summary>The back arrow: as big as Send, level with the prompt's first line, after the tomte.</summary>
@@ -355,9 +358,23 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// height of them all. Blocks in <see cref="AnswerText"/> are the model's words, read as Markdown as the drop result
     /// reads them; while the answer is <paramref name="streaming"/> the last block shows only what has settled
     /// (<see cref="Markdown.Settled"/>). Tool steps, an error and the follow-up line stay plain. Empty blocks take no room.
+    /// A run the last answer had is not laid out again, so a streamed word costs about the block it changed.
     /// </summary>
     public (IReadOnlyList<TextAt> Runs, float Height) Answer(IReadOnlyList<(string Text, TextStyle Style)> blocks, bool streaming = false)
     {
+        var before = measured;
+        measured = [];
+        (float Width, float Height, int Lines, bool Trimmed) Measure(TextRun run)
+        {
+            if (!before.TryGetValue(run, out var size))
+            {
+                size = DropResultLayout.Measure(run);
+            }
+
+            measured[run] = size;
+            return size;
+        }
+
         float y = 0;
         var runs = new List<TextAt>();
         for (int i = 0; i < blocks.Count; i++)
@@ -367,7 +384,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
             if (style == AnswerText)
             {
                 string shown = streaming && i == blocks.Count - 1 ? Markdown.Settled(block) : block;
-                var (laid, height) = DropResultLayout.Lay(Markdown.Parse(shown), style, AnswerWidth, cut: false, maxLines: int.MaxValue);
+                var (laid, height) = DropResultLayout.Lay(Markdown.Parse(shown), style, AnswerWidth, cut: false, maxLines: int.MaxValue, measure: Measure);
                 if (laid.Count > 0)
                 {
                     // Lay starts its runs at the drop result's padding, not the palette's.
@@ -377,9 +394,9 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
             }
             else if (block.Length > 0)
             {
-                using var layout = TextLayout.Of(new TextRun(block, style, AnswerWidth, Lines: int.MaxValue));
-                runs.Add(new(new TextRun(block, style, AnswerWidth, layout.LineCount), new Vector2(Pad, top)));
-                y = top + layout.Height;
+                var size = Measure(new TextRun(block, style, AnswerWidth, Lines: int.MaxValue));
+                runs.Add(new(new TextRun(block, style, AnswerWidth, size.Lines), new Vector2(Pad, top)));
+                y = top + size.Height;
             }
         }
 

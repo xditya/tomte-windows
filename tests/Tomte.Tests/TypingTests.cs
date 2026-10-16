@@ -257,6 +257,10 @@ public sealed class TypingTests : IDisposable
         Assert.Equal([14, 14, 14, 14 + DropResultLayout.Indent], runs.Take(4).Select(r => r.At.X));
         Assert.Equal(18 + PaletteLayout.BlockGap, runs[1].At.Y, 1);
         Assert.Equal(runs[^1].At.Y + 20, measured, 1);
+        // The same answer again takes what was measured the first time and lays out the same.
+        var (again, height) = layout.Answer(answer);
+        Assert.Equal(runs, again);
+        Assert.Equal(measured, height);
 
         // While it streams, bold not closed yet waits instead of showing its asterisks; a finished answer shows a lone *.
         Assert.Equal("You spent", Assert.Single(layout.Answer([("You spent **$3,", PaletteLayout.AnswerText)], streaming: true).Runs).Run.Text);
