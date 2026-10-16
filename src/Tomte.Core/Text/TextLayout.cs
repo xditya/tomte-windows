@@ -166,6 +166,8 @@ public sealed class TextLayout : IDisposable
             // After a cut DirectWrite still counts the lines it dropped; the height is that of the lines kept.
             var final = Metrics(made);
             (Width, Height, LineCount) = (final.width, final.height, Math.Min((int)final.lineCount, lines));
+            // The text font has no italic of its own: DirectWrite slants it, and the slant leans past the line's width.
+            Ink = run.Italic.Count > 0 && ReferenceEquals(text, run.Text) ? Math.Max(Width, maxWidth + Overhang(made).right) : Width;
             native = Marshal.GetComInterfaceForObject<IDWriteTextLayout, IDWriteTextLayout>(made);
         }
         catch
@@ -185,6 +187,9 @@ public sealed class TextLayout : IDisposable
 
     /// <summary>The widest line as drawn, ellipsis included, without trailing spaces. DIPs.</summary>
     public float Width { get; }
+
+    /// <summary>How far the ink reaches from the left: past <see cref="Width"/> only where italic parts slant. DIPs.</summary>
+    public float Ink { get; }
 
     /// <summary>The lines shown, top of the first to the bottom of the last. DIPs.</summary>
     public float Height { get; }
@@ -224,6 +229,14 @@ public sealed class TextLayout : IDisposable
         DWRITE_TEXT_METRICS metrics;
         layout.GetMetrics(&metrics);
         return metrics;
+    }
+
+    /// <summary>How far the ink reaches past each edge of the layout's box; negative short of it.</summary>
+    private static unsafe DWRITE_OVERHANG_METRICS Overhang(IDWriteTextLayout layout)
+    {
+        DWRITE_OVERHANG_METRICS overhang;
+        layout.GetOverhangMetrics(&overhang);
+        return overhang;
     }
 
     /// <summary>Every line's metrics; the buffer is sized from the layout's own count, which GetLineMetrics wants exactly.</summary>

@@ -100,6 +100,7 @@ internal static unsafe partial class Program
         report.Add($"per run: layout {Stats(LayoutMs)}, draw {Stats(DrawMs)} ({LayoutMs.Count} runs)");
         report.Add($"runs whose surface does not start on a whole pixel: {OffGrid} of {DrawMs.Count}");
         report.Add($"a two-line run cut with an ellipsis draws nothing below its second line: {TwoLinesOnly(dc)}");
+        report.Add($"an italic word ending a run stays on the run's surface at 100%, 125% and 150%: {ItalicFits(dc)}");
 
         dc->Release();
         d2d->Release();
@@ -212,6 +213,42 @@ internal static unsafe partial class Program
                 if (pixels[(y * width + x) * 4 + 3] != 0)
                 {
                     return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// An italic word ending a run, drawn as the island draws a run: alone, at the pad, on the surface its block asks for,
+    /// here with room to spare on the right, at each scale. No ink may fall in the spare room. The text font has no
+    /// italic of its own, so DirectWrite slants it, and the slant leans past the line's width.
+    /// </summary>
+    private static bool ItalicFits(ID2D1DeviceContext* dc)
+    {
+        const int Spare = 16;
+        foreach (double scale in Scales)
+        {
+            foreach (var run in new[]
+            {
+                new TextRun("Food", PaletteLayout.AnswerText, 600, 9) { Italic = [(0, 4)] },
+                new TextRun("Click Update", DropResultLayout.BodyStyle, 600, 9) { Italic = [(6, 6)] },
+            })
+            {
+                using var block = new TextBlock();
+                block.Set(run, scale);
+                var (w, h) = block.Pixels;
+                var pixels = Canvas.Render(dc, w + Spare, h, scale, block.Layout!, new Vector2((float)(TextBlock.Pad / scale)));
+                for (int y = 0; y < h; y++)
+                {
+                    for (int x = w; x < w + Spare; x++)
+                    {
+                        if (pixels[(y * (w + Spare) + x) * 4 + 3] != 0)
+                        {
+                            return false;
+                        }
+                    }
                 }
             }
         }

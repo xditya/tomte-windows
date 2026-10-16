@@ -38,11 +38,11 @@ public sealed class TextBlock : IDisposable
     public (float Width, float Height) Size => Layout is { } l ? (l.Width, l.Height) : (0, 0);
 
     /// <summary>
-    /// The surface in pixels: the text box plus the pad. A leading run is as wide as its text; a centred or
-    /// trailing one is as wide as its run's width, inside which DirectWrite places it.
+    /// The surface in pixels: the text box plus the pad. A leading run is as wide as its ink, slanted italic included;
+    /// a centred or trailing one is as wide as its run's width, inside which DirectWrite places it.
     /// </summary>
     public (int Width, int Height) Pixels => Layout is { } l
-        ? (PixelGrid.Cover(l.Run.Style.Align == TextAlign.Leading ? l.Width : l.Run.MaxWidth, Scale) + 2 * Pad, PixelGrid.Cover(l.Height, Scale) + 2 * Pad)
+        ? (PixelGrid.Cover(l.Run.Style.Align == TextAlign.Leading ? l.Ink : l.Run.MaxWidth, Scale) + 2 * Pad, PixelGrid.Cover(l.Height, Scale) + 2 * Pad)
         : (0, 0);
 
     /// <summary>True when the pixels must be drawn again.</summary>
