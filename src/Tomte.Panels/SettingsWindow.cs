@@ -13,6 +13,7 @@ using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
 using Tomte.Core.Rambler;
+using Tomte.Core.Triggers;
 using Windows.ApplicationModel;
 using Windows.Graphics;
 using Windows.UI.Core;
@@ -125,6 +126,7 @@ public sealed partial class SettingsWindow : Window
                 ProviderSection(),
                 Header("AI history"),
                 Card(
+                    Row("Undo after closing", Note("After you close an AI answer, an AI search, a drop zone result or the words you spoke, Undo on the island (or Win+Alt+Z) brings it back for this long. A request still running goes on until then."), UndoAfterClosing()),
                     Row("Keep history",
                         Note($"Keeps your last {AiHistory.MaxItems} AI conversations and drop zone results, on this PC, for up to {AiHistory.MaxDays} days: what you asked, the names of what you attached, the answers, the model and the cost. Attached content is never kept, and nothing leaves this PC. Turning it off deletes the history."),
                         KeepHistory()),
@@ -288,6 +290,16 @@ public sealed partial class SettingsWindow : Window
             }
         };
         store.Changed += s => DispatcherQueue.TryEnqueue(() => Show(s));
+        return box;
+    }
+
+    // Off, 5 seconds or 10 seconds; a hand-edited number shows as the choice it acts as.
+    private ComboBox UndoAfterClosing()
+    {
+        int[] seconds = [0, 5, 10];
+        var box = new ComboBox { ItemsSource = new[] { "Off", "5 seconds", "10 seconds" }, MinWidth = 200 };
+        box.SelectedIndex = Array.IndexOf(seconds, (int)(UndoClose.Time(store.Current.UndoSeconds)?.TotalSeconds ?? 0));
+        box.SelectionChanged += (_, _) => Save(s => s with { UndoSeconds = seconds[Math.Max(0, box.SelectedIndex)] });
         return box;
     }
 
