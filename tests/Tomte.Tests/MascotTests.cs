@@ -475,7 +475,7 @@ public class MascotTests
         // Island space: x from the shape's centre line. Compact's box ends before its line of words starts.
         var compact = MascotArt.Box(IslandGeometry.Compact);
         Assert.Equal(-110 + MascotArt.InsetX, compact.X);
-        Assert.True(compact.Right <= CompactLayout.Line(mascot: true, ring: false).X);
+        Assert.True(compact.Right <= CompactLayout.Line(mascot: true).X);
 
         // The peek pill is little more than the box, centred on its centre line.
         var peek = MascotArt.Box(IslandGeometry.Peek);

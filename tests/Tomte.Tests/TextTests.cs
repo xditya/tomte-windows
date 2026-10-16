@@ -4,6 +4,7 @@ using Tomte.Core;
 using Tomte.Core.Media;
 using Tomte.Core.Shortcuts;
 using Tomte.Core.Text;
+using Tomte.Core.Triggers;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -129,17 +130,18 @@ public class TextTests
     public void TheCompactLinesFitThe220Pill()
     {
         // The pill is 220 wide; the tomte and its gap take 5.5 + 26 + 9 on the left, as much stays free on the right as
-        // the tomte's art leaves on the left (8.8), and the timer's ring takes 18 + 9 more on its done pill.
-        var free = CompactLayout.Line(mascot: true, ring: false);
-        var afterRing = CompactLayout.Line(mascot: true, ring: true);
+        // the tomte's art leaves on the left (8.8), and the timer's ring takes 18 + 9 before its words on its done pill.
+        var free = CompactLayout.Line(mascot: true);
         using var hint = Lay("Push your cursor up here", CompactLayout.LineStyle, free.Width);
-        using var done = Lay("Timer done · 25:00", CompactLayout.LineStyle, afterRing.Width);
+        float doneWidth = TextSlot.Measure("Timer done · 25:00", CompactLayout.LineStyle, 4096);
+        var (_, _, room) = CompactLayout.Group(mascot: true, CompactLayout.RingSize, doneWidth);
+        using var done = Lay("Timer done · 25:00", CompactLayout.LineStyle, room);
 
         Assert.Equal(8.79, CompactLayout.EndInset, 2);
         Assert.Equal((-69.5f, 0f, 38f), (free.X, free.Y, free.Height));
-        Assert.Equal(-42.5f, afterRing.X);
-        Assert.All([free.Right, afterRing.Right], right => Assert.Equal(110 - CompactLayout.EndInset, right, 3));
-        var alone = CompactLayout.Line(mascot: false, ring: false);
+        Assert.Equal(110 - CompactLayout.EndInset, free.Right, 3);
+        Assert.Equal(doneWidth, room);
+        var alone = CompactLayout.Line(mascot: false);
         Assert.Equal(CompactLayout.EndInset - 110, alone.X, 3);
         Assert.Equal(110 - CompactLayout.EndInset, alone.Right, 3);
         Assert.False(hint.Trimmed);
@@ -163,7 +165,7 @@ public class TextTests
 
         foreach (bool mascot in new[] { true, false })
         {
-            Assert.All([CompactLayout.Line(mascot, ring: false), CompactLayout.Line(mascot, ring: true), CompactLayout.Title(mascot, bars: false)], slot =>
+            Assert.All([CompactLayout.Line(mascot), CompactLayout.Title(mascot, bars: false)], slot =>
                 Assert.Equal(110 - CompactLayout.EndInset, slot.Right, 3));
             Assert.Equal(mascot ? CompactLayout.RingLeft(true) - 110 : CompactLayout.EndInset - 110, CompactLayout.Art(mascot).X, 3);
         }
@@ -171,12 +173,49 @@ public class TextTests
         Assert.Equal(TextAlign.Trailing, CompactLayout.Ending(CompactLayout.LineStyle, led: true).Align);
         Assert.Equal(TextAlign.Center, CompactLayout.Ending(CompactLayout.ClockStyle, led: false).Align);
         Assert.True(CompactLayout.Ending(CompactLayout.ClockStyle, led: true).Tabular);
-        var alone = CompactLayout.Line(mascot: false, ring: false);
+        var alone = CompactLayout.Line(mascot: false);
         Assert.Equal(0, alone.X + (alone.Width / 2), 3);
 
         // The push pill's row keeps its title after the art and up to the bars, as it was.
         Assert.Equal(new RectangleF(-69.5f, 8, 22, 22), CompactLayout.Art(mascot: true));
         Assert.Equal(new RectangleF(-38.5f, 9, 109.5f, 20), CompactLayout.Title(mascot: true, bars: true));
+    }
+
+    // The timer's ring and its countdown are one group: the ring a gap before the words, the group ending at the end
+    // inset with the tomte on and centred on the pill with it off. The ring moves with the words' width, as the countdown
+    // goes from 1:00:00 to 59:59, and words wider than the room are cut to it, never pushing the ring onto the tomte.
+    [Fact]
+    public void TheRingAndItsWordsAreOneGroup()
+    {
+        float Width(string words) => TextSlot.Measure(words, CompactLayout.ClockStyle, 4096);
+        string hour = CompactRules.Countdown(TimeSpan.FromHours(1)), under = CompactRules.Countdown(TimeSpan.FromSeconds(3599));
+        Assert.Equal(("1:00:00", "59:59"), (hour, under));
+        foreach (bool mascot in new[] { true, false })
+        {
+            foreach (string words in new[] { "25:00", under, hour, "Timer done · 25:00" })
+            {
+                var (ring, x, width) = CompactLayout.Group(mascot, CompactLayout.RingSize, Width(words));
+                Assert.Equal(ring + CompactLayout.RingSize + CompactLayout.Gap, x, 3);
+                Assert.Equal(Width(words), width);
+                float end = x + width, start = ring;
+                if (mascot)
+                {
+                    Assert.Equal(110 - CompactLayout.EndInset, end, 3);
+                }
+                else
+                {
+                    Assert.Equal(0, (start + end) / 2, 3);
+                }
+            }
+        }
+
+        var (atHour, _, _) = CompactLayout.Group(mascot: true, CompactLayout.RingSize, Width(hour));
+        var (atUnder, _, _) = CompactLayout.Group(mascot: true, CompactLayout.RingSize, Width(under));
+        Assert.True(atUnder > atHour, "the ring follows the shorter countdown toward the end");
+
+        var (cutRing, cutX, cut) = CompactLayout.Group(mascot: true, CompactLayout.RingSize, 500);
+        Assert.Equal(CompactLayout.RingLeft(true) - 110, cutRing, 3);
+        Assert.Equal(110 - CompactLayout.EndInset, cutX + cut, 3);
     }
 
     [Fact]

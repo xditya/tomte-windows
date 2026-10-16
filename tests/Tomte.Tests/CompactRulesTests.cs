@@ -240,7 +240,7 @@ public class GlanceTests
     [Fact]
     public void TheLineFitsThePillAsDirectWriteLaysItOut()
     {
-        var slot = CompactLayout.Line(mascot: true, ring: false);
+        var slot = CompactLayout.Line(mascot: true);
         float Measure(string line) => TextSlot.Measure(line, CompactLayout.LineStyle, 4096);
         var facts = All with { Job = ("Send the weekly status report to the whole team", Now.AddMinutes(19)) };
         string line = CompactRules.Glance(Now, facts, slot.Width, Measure, British);

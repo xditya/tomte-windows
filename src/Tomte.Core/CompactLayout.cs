@@ -95,13 +95,23 @@ public static class CompactLayout
         return (width, new RectangleF(left, 0, box.X - Gap - left, depth), box);
     }
 
-    /// <summary>
-    /// The line's slot: where the ring would start, or after the ring when it shows, to the end inset. The words sit in it
-    /// as <see cref="Ending"/> says.
-    /// </summary>
-    public static RectangleF Line(bool mascot, bool ring)
+    /// <summary>The line's slot when nothing leads it but the tomte: from where the ring would start to the end inset. The words sit in it as <see cref="Ending"/> says.</summary>
+    public static RectangleF Line(bool mascot)
     {
-        float x = -Width / 2 + RingLeft(mascot) + (ring ? RingSize + Gap : 0);
+        float x = -Width / 2 + RingLeft(mascot);
         return new RectangleF(x, 0, Width / 2 - EndInset - x, (float)IslandGeometry.Compact.Depth);
+    }
+
+    /// <summary>
+    /// A lead (the timer's ring, a track's art) and its words as one group, in island space: ending at the end inset with
+    /// the tomte on, centred on the pill with it off, the lead a gap before the words. Words wider than the room are cut
+    /// to it. Returns where the lead starts and the words' slot across.
+    /// </summary>
+    public static (float Lead, float WordsX, float WordsWidth) Group(bool mascot, float lead, float words)
+    {
+        float left = -Width / 2 + RingLeft(mascot), right = Width / 2 - EndInset;
+        words = Math.Min(words, right - left - lead - Gap);
+        float group = lead + Gap + words, end = mascot ? right : group / 2;
+        return (end - group, end - words, words);
     }
 }

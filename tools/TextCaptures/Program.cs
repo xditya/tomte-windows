@@ -468,12 +468,13 @@ internal static unsafe partial class Program
     private static readonly DateTimeOffset GlanceNow = new(DateTime.Today.AddHours(18).AddMinutes(41));
 
     private static string Glance(GlanceFacts facts, bool mascot = true) =>
-        CompactRules.Glance(GlanceNow, facts, CompactLayout.Line(mascot, ring: false).Width, line => TextSlot.Measure(line, CompactLayout.LineStyle, 4096));
+        CompactRules.Glance(GlanceNow, facts, CompactLayout.Line(mascot).Width, line => TextSlot.Measure(line, CompactLayout.LineStyle, 4096));
 
-    // The Compact line in its slot, after the ring when the ring shows.
+    // The Compact line in its slot, or with the ring as one group when the ring shows.
     private static void CompactLine(Canvas c, string line, float? ring, bool tabular = false, bool mascot = true)
     {
         var pill = IslandGeometry.Compact;
+        var style = tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle;
         c.Pill();
         if (mascot)
         {
@@ -482,11 +483,13 @@ internal static unsafe partial class Program
 
         if (ring is { } fill)
         {
-            float left = (float)(-pill.Width / 2) + CompactLayout.RingLeft(mascot);
+            var (left, x, width) = CompactLayout.Group(mascot, CompactLayout.RingSize, TextSlot.Measure(line, style, 4096));
             c.Ring(new Vector2(left + CompactLayout.RingSize / 2, (float)pill.Depth / 2), (CompactLayout.RingSize - CompactLayout.RingStroke) / 2, CompactLayout.RingStroke, fill);
+            c.Text(line, style, new RectangleF(x, 0, width, (float)pill.Depth), Vector2.Zero);
+            return;
         }
 
-        c.Text(line, CompactLayout.Ending(tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle, led: mascot || ring is not null), CompactLayout.Line(mascot, ring is not null), Vector2.Zero);
+        c.Text(line, CompactLayout.Ending(style, led: mascot), CompactLayout.Line(mascot), Vector2.Zero);
     }
 
     // The voice key's pill while it records, as the rambler draws it: the microphone and seven bars mid-word, centred

@@ -101,13 +101,24 @@ internal sealed class CompactLine
 
         bool ring = triggers.CompactShows(playing: false) == CompactContent.TimerRing;
         bool clock = left is null && triggers.Compact == CompactReason.Summary;
-        var slot = CompactLayout.Line(mascot, ring);
-        if (clock)
+        var style = left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle;
+        if (ring)
         {
-            line = CompactRules.Glance(now, Facts(now), slot.Width, Measure);
+            // The ring and its words are one group; the ring follows the words' width, which changes at 1:00:00 to 59:59.
+            var (lead, x, width) = CompactLayout.Group(mascot, CompactLayout.RingSize, TextSlot.Measure(line, style, MeasureWidth));
+            view.Text.Show(line, style, view.Place(new(x, 0, width, (float)IslandGeometry.Compact.Depth)));
+            triggers.PlaceRing(view.At(lead));
         }
+        else
+        {
+            var slot = CompactLayout.Line(mascot);
+            if (clock)
+            {
+                line = CompactRules.Glance(now, Facts(now), slot.Width, Measure);
+            }
 
-        view.Text.Show(line, CompactLayout.Ending(left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle, led: mascot || ring), view.Place(slot));
+            view.Text.Show(line, CompactLayout.Ending(style, led: mascot), view.Place(slot));
+        }
 
         if (left is { } l && l > TimeSpan.Zero)
         {
@@ -201,8 +212,10 @@ internal sealed class CompactLine
 
         public TextVisual Text { get; }
 
-        /// <summary>A slot of island space as this view's frame measures it: from the pill's trailing end, or from its centre.</summary>
-        public System.Drawing.RectangleF Place(System.Drawing.RectangleF slot) => fromEnd ? slot with { X = slot.X - CompactLayout.End } : slot;
+        /// <summary>An x of island space as this view's frame measures it: from the pill's trailing end, or from its centre.</summary>
+        public float At(float x) => fromEnd ? x - CompactLayout.End : x;
+
+        public System.Drawing.RectangleF Place(System.Drawing.RectangleF slot) => slot with { X = At(slot.X) };
 
         public void Dispose()
         {
