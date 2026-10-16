@@ -407,10 +407,17 @@ internal static partial class Program
         search = new SearchHost(island, triggers, text, typing, store, db, shortcuts, log)
         {
             Ask = words => AskFromSearch(island, triggers, store, log, words),
+            Back = () => island.Queue.TryEnqueue(() => GoBack(island, triggers)),
             AiSearch = words => AiSearchSession(store, words, log),
         };
         triggers.SearchOpened = search.Open;
-        var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels, Ask = triggers.AskClicked };
+        var panels = new PanelHost(island, triggers.Machine, text, log)
+        {
+            Resize = triggers.ResizePanels,
+            Ask = triggers.AskClicked,
+            Search = triggers.SearchClicked,
+            SearchKey = () => store.Current.Hotkeys.Search,
+        };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, text, log));

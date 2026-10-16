@@ -493,13 +493,13 @@ internal sealed class PaletteView : IDisposable, IInteractive
         return visual;
     }
 
-    // A glyph's figures in a container shape, all in one ink: filled, or stroked along their outlines.
-    private void Draw(CompositionContainerShape into, GlyphFigure[] figures, CompositionColorBrush ink)
+    /// <summary>A glyph's figures in a container shape, all in one ink: filled, or stroked along their outlines.</summary>
+    internal static void Draw(CompositionContainerShape into, GlyphFigure[] figures, CompositionColorBrush ink)
     {
         into.Shapes.Clear();
         foreach (var figure in figures)
         {
-            var shape = island.Compositor.CreateSpriteShape(island.Compositor.CreatePathGeometry(IslandWindow.BuildPath(figure.Path, 1)));
+            var shape = ink.Compositor.CreateSpriteShape(ink.Compositor.CreatePathGeometry(IslandWindow.BuildPath(figure.Path, 1)));
             if (figure.Stroked)
             {
                 shape.StrokeBrush = ink;

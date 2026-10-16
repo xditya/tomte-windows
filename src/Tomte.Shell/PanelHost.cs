@@ -95,6 +95,12 @@ internal sealed class PanelHost
     /// <summary>A click on the Ask pill: the triggers open the palette.</summary>
     public Action? Ask { get; set; }
 
+    /// <summary>A click on the search button: the triggers open the search box.</summary>
+    public Action? Search { get; set; }
+
+    /// <summary>The search shortcut as set in Settings, which the search button's tooltip names.</summary>
+    public Func<string>? SearchKey { get; set; }
+
     /// <summary>The current panel's size in DIPs, before the monitor cap (<see cref="PanelSize.Fit"/>).</summary>
     public (double W, double H) Size => PanelSize.Of(tabs.Current ?? PanelId.Shelf);
 
@@ -193,7 +199,7 @@ internal sealed class PanelHost
         var (width, height) = PanelSize.Fit(Size, island.MonitorSize);
         if (strip is null)
         {
-            strip = new Strip(island, text, Select, () => Ask?.Invoke());
+            strip = new Strip(island, text, Select, () => Ask?.Invoke(), () => Search?.Invoke());
             strip.Visual.Opacity = 0;
             stripFadePending = true;
             // From the shape's live body edge, as the strip is drawn, so a press mid-morph finds what is under it.
@@ -201,7 +207,7 @@ internal sealed class PanelHost
         }
 
         // On a tab switch the strip stays and the highlight moves; the labels are set for the new width.
-        strip.Show(tabs.Order, tabs.Current, (float)width, island.Mascot.Enabled);
+        strip.Show(tabs.Order, tabs.Current, (float)width, island.Mascot.Enabled, TabStrip.SearchTip(SearchKey?.Invoke() ?? ""));
         bodySize = new Vector2((float)width, (float)height - PanelSpace.TabStripHeight);
         body = island.Compositor.CreateContainerVisual();
         body.Offset = new Vector3(-bodySize.X / 2, PanelSpace.TabStripHeight, 0);
@@ -279,7 +285,8 @@ internal sealed class PanelHost
 
     /// <summary>
     /// A press on the body that no registered target took is the panel's once the body shows, so a quick click after
-    /// opening or switching cannot hit a button that is not drawn yet. The strip's tabs and Ask pill are targets.
+    /// opening or switching cannot hit a button that is not drawn yet. The strip's tabs, search button and Ask pill are
+    /// targets.
     /// </summary>
     private void OnPressed(Vector2 point)
     {
@@ -327,22 +334,23 @@ internal sealed class PanelHost
     }
 
     /// <summary>
-    /// The tab labels in the strip row, with a card behind the current one, and the Ask pill at its right end. The
-    /// container sits on the shape's live body left edge in every frame of a morph (island space's origin less its own
-    /// offset, plus the ramp an attached shape flares into the top edge with, whole pixels), so the labels move with the
-    /// edge they are laid out from; the Ask pill rides the live right edge the same way. Its targets are the tab labels,
-    /// one group the arrow keys switch along, and the Ask pill, the one control here that opens the palette. The tomte is
-    /// no target: like the rest of the row it moves the island. The wheel is the host's.
+    /// The tab labels in the strip row, with a card behind the current one, and the search button and the Ask pill at its
+    /// right end. The container sits on the shape's live body left edge in every frame of a morph (island space's origin
+    /// less its own offset, plus the ramp an attached shape flares into the top edge with, whole pixels), so the labels move
+    /// with the edge they are laid out from; the search button and the Ask pill ride the live right edge the same way. Its
+    /// targets are the tab labels, one group the arrow keys switch along, the search button, which opens the search box,
+    /// and the Ask pill, which opens the palette. The tomte is no target: like the rest of the row it moves the island.
+    /// The wheel is the host's.
     /// </summary>
     private sealed class Strip : IDisposable, IInteractive
     {
-        private const string AskId = "ask";
+        private const string AskId = "ask", SearchId = "search";
         private readonly IslandWindow island;
         private readonly Action<PanelId> select;
-        private readonly Action openAsk;
+        private readonly Action openAsk, openSearch;
         private readonly TextRenderer text;
-        private readonly CompositionRoundedRectangleGeometry pill, askCard;
-        private readonly CompositionContainerShape sparkle;
+        private readonly CompositionRoundedRectangleGeometry pill, askCard, searchCard;
+        private readonly CompositionContainerShape sparkle, magnifier;
         private readonly ShapeVisual askVisual;
         private readonly ExpressionAnimation askEdge;
         private readonly TextVisual ask;
@@ -350,12 +358,13 @@ internal sealed class PanelHost
         private Target[] targets = [];
         private float askWidth, askFor;
 
-        public Strip(IslandWindow island, TextRenderer text, Action<PanelId> select, Action onAsk)
+        public Strip(IslandWindow island, TextRenderer text, Action<PanelId> select, Action onAsk, Action onSearch)
         {
             this.island = island;
             this.text = text;
             this.select = select;
             openAsk = onAsk;
+            openSearch = onSearch;
             var compositor = island.Compositor;
             Visual = compositor.CreateShapeVisual();
             var edge = compositor.CreateExpressionAnimation("Vector3((Floor(live.RampW * dips.Scale.X + 0.5) - dips.Offset.X) / dips.Scale.X, 0, 0)");
@@ -368,20 +377,29 @@ internal sealed class PanelHost
             shape.FillBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(28, 255, 255, 255));
             Visual.Shapes.Add(shape);
 
-            // The Ask pill in a visual of its own, "right" DIPs (its width and the right padding) short of the body's
-            // live right edge, which is as far from island space's origin as the left one.
+            // The search button and the Ask pill in a visual of their own, "right" DIPs (their width and the right padding)
+            // short of the body's live right edge, which is as far from island space's origin as the left one.
             askVisual = compositor.CreateShapeVisual();
             askEdge = compositor.CreateExpressionAnimation(
                 "Vector3((dips.Offset.X * 2 - Floor(live.RampW * dips.Scale.X + 0.5) * 2 - Floor(right * dips.Scale.X + 0.5)) / dips.Scale.X, 0, 0)");
             askEdge.SetReferenceParameter("dips", island.Dips);
             askEdge.SetReferenceParameter("live", island.Live);
+            var fill = compositor.CreateColorBrush(Argb(TabStrip.AskCard));
+            var ink = compositor.CreateColorBrush(Argb(TabStrip.AskColor));
+            searchCard = compositor.CreateRoundedRectangleGeometry();
+            searchCard.CornerRadius = new Vector2(TabStrip.Corner);
+            var searchShape = compositor.CreateSpriteShape(searchCard);
+            searchShape.FillBrush = fill;
+            askVisual.Shapes.Add(searchShape);
+            magnifier = compositor.CreateContainerShape();
+            PaletteView.Draw(magnifier, TabStrip.SearchGlyph, ink);
+            askVisual.Shapes.Add(magnifier);
             askCard = compositor.CreateRoundedRectangleGeometry();
             askCard.CornerRadius = new Vector2(TabStrip.Corner);
             var card = compositor.CreateSpriteShape(askCard);
-            card.FillBrush = compositor.CreateColorBrush(Argb(TabStrip.AskCard));
+            card.FillBrush = fill;
             askVisual.Shapes.Add(card);
             sparkle = compositor.CreateContainerShape();
-            var ink = compositor.CreateColorBrush(Argb(TabStrip.AskColor));
             foreach (var star in TabStrip.Sparkle)
             {
                 var figure = compositor.CreateSpriteShape(compositor.CreatePathGeometry(IslandWindow.BuildPath(star, 1)));
@@ -399,7 +417,7 @@ internal sealed class PanelHost
 
         public ShapeVisual Visual { get; }
 
-        /// <summary>The tab labels and the Ask pill, which rides the live right edge as it is drawn.</summary>
+        /// <summary>The tab labels, the search button and the Ask pill, which ride the live right edge as they are drawn.</summary>
         public IReadOnlyList<Target> Targets
         {
             get
@@ -408,6 +426,7 @@ internal sealed class PanelHost
                 if (targets.Length > 0 && width != askFor)
                 {
                     askFor = width;
+                    targets[^2] = targets[^2] with { Bounds = SearchCard(width) };
                     targets[^1] = targets[^1] with { Bounds = AskCard(width) };
                 }
 
@@ -418,11 +437,18 @@ internal sealed class PanelHost
         private RectangleF AskCard(float width) =>
             new(width - TabStrip.RightPad - askWidth, (PanelSpace.TabStripHeight - TabStrip.Height) / 2, askWidth, TabStrip.Height);
 
+        private RectangleF SearchCard(float width) =>
+            new(AskCard(width).Left - TabStrip.Gap - TabStrip.Height, (PanelSpace.TabStripHeight - TabStrip.Height) / 2, TabStrip.Height, TabStrip.Height);
+
         public void Activate(string id)
         {
             if (id == AskId)
             {
                 openAsk();
+            }
+            else if (id == SearchId)
+            {
+                openSearch();
             }
             else if (Enum.TryParse<PanelId>(id, out var tab))
             {
@@ -452,7 +478,7 @@ internal sealed class PanelHost
             return true;
         }
 
-        public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot)
+        public void Show(IEnumerable<PanelId> tabs, PanelId? current, float width, bool mascot, string searchTip)
         {
             var lines = TabStrip.Labels(tabs, current, width, mascot);
             var list = new List<Target>();
@@ -467,7 +493,8 @@ internal sealed class PanelHost
                 labels.Add(text.Create(Visual));
             }
 
-            // New labels go on top; the Ask pill stays over them while a morph slides it across their row.
+            // New labels go on top; the search button and the Ask pill stay over them while a morph slides them across
+            // their row.
             Visual.Children.Remove(askVisual);
             Visual.Children.InsertAtTop(askVisual);
 
@@ -480,20 +507,25 @@ internal sealed class PanelHost
             pill.Offset = new Vector2(on.X, on.Y);
             pill.Size = new Vector2(on.Width, on.Height);
 
-            // Laid out from the card's left edge, which the expression keeps on the live right end.
+            // Laid out from the search button's left edge, which the expression keeps that far from the live right end.
             var (card, glyph, word) = TabStrip.AskPill(width);
+            var (search, lens) = TabStrip.SearchButton(width);
             askWidth = card.Width;
             askFor = (float)island.Current.Width;
+            list.Add(new(SearchId, SearchCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: searchTip));
             list.Add(new(AskId, AskCard(askFor), TabStrip.Corner, TargetKind.Button, Tip: "Ask Tomte anything", Key: "Ctrl+K"));
             targets = [.. list];
-            askVisual.Size = new Vector2(card.Width, PanelSpace.TabStripHeight);
-            askEdge.SetScalarParameter("right", width - card.X);
+            askVisual.Size = new Vector2(card.Right - search.X, PanelSpace.TabStripHeight);
+            askEdge.SetScalarParameter("right", width - search.X);
             askVisual.StartAnimation("Offset", askEdge);
-            askCard.Offset = new Vector2(0, card.Y);
+            searchCard.Offset = new Vector2(0, search.Y);
+            searchCard.Size = new Vector2(search.Width, search.Height);
+            magnifier.Offset = new Vector2(lens.X - search.X, lens.Y);
+            askCard.Offset = new Vector2(card.X - search.X, card.Y);
             askCard.Size = new Vector2(card.Width, card.Height);
-            sparkle.Offset = new Vector2(glyph.X - card.X, glyph.Y);
+            sparkle.Offset = new Vector2(glyph.X - search.X, glyph.Y);
             sparkle.Scale = new Vector2(glyph.Height / TabStrip.SparkleBox.Y);
-            ask.Show(word.Text, word.Style, new System.Drawing.RectangleF(word.Slot.X - card.X, word.Slot.Y, word.Slot.Width, word.Slot.Height));
+            ask.Show(word.Text, word.Style, new System.Drawing.RectangleF(word.Slot.X - search.X, word.Slot.Y, word.Slot.Width, word.Slot.Height));
             TargetsChanged?.Invoke();
         }
 

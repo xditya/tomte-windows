@@ -261,11 +261,13 @@ internal static unsafe partial class Program
             // Every panel is one width; a narrower strip is a panel cut to 60% of an 800 x 600 screen.
             new("strip-ask-narrowest", IslandGeometry.Panel(480, 64), c => Strip(c, PanelId.Media, (480, PanelSize.Media.H))),
             // The interaction host's looks over the strip: hover and pressed on a tab, the focus ring on the current one,
-            // the Ask pill's tooltip and a "Copied" acknowledgement.
+            // the Ask pill's tooltip, a "Copied" acknowledgement, and the search button's focus ring and tooltip.
             new("strip-hover", StripLooks, c => StripLook(c, layer: StateLook.Hover)),
             new("strip-pressed", StripLooks, c => StripLook(c, layer: StateLook.Pressed)),
             new("strip-focus", StripLooks, c => StripLook(c, ring: true)),
             new("strip-tip", StripLooks, c => StripLook(c, tip: "Ask Tomte anything")),
+            new("strip-search-focus", StripLooks, c => StripLook(c, ring: true, search: true)),
+            new("strip-search-tip", StripLooks, c => StripLook(c, tip: TabStrip.SearchTip(new HotkeySettings().Search), search: true)),
             new("strip-acknowledged", StripLooks, c => StripLook(c, tip: "Copied", tick: true)),
             new("shelf", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems, PanelSize.Shelf)),
             new("shelf-hover", Panel(PanelSize.Shelf), c => Shelf(c, ShelfItems, PanelSize.Shelf, owner: 2)),
@@ -472,6 +474,9 @@ internal static unsafe partial class Program
             c.Text(line, strip);
         }
 
+        var (search, lens) = TabStrip.SearchButton((float)size.W);
+        c.RoundRect(Offset(search, strip), TabStrip.Corner, TabStrip.AskCard);
+        c.Figures(TabStrip.SearchGlyph, new Vector2(lens.X, lens.Y) + strip, TabStrip.AskColor);
         var (card, glyph, word) = TabStrip.AskPill((float)size.W);
         c.RoundRect(Offset(card, strip), TabStrip.Corner, TabStrip.AskCard);
         c.Sparkle(Offset(glyph, strip), TabStrip.AskColor);
@@ -490,14 +495,15 @@ internal static unsafe partial class Program
 
     // The strip on the Shelf tab with what the interaction host draws over it, from the numbers it draws with: a state
     // layer on the Shortcuts tab, the focus ring on the current one, or a card under the Ask pill (a tooltip) or under
-    // the Shortcuts tab (an acknowledgement with its tick).
-    private static void StripLook(Canvas c, uint? layer = null, bool ring = false, string? tip = null, bool tick = false)
+    // the Shortcuts tab (an acknowledgement with its tick). With search, the ring and the tooltip are the search button's.
+    private static void StripLook(Canvas c, uint? layer = null, bool ring = false, string? tip = null, bool tick = false, bool search = false)
     {
         var size = PanelSize.Shelf;
         Strip(c, PanelId.Shelf, size);
         var strip = new Vector2((float)(-size.W / 2), 0);
         var labels = TabStrip.Labels(Enum.GetValues<PanelId>(), PanelId.Shelf, (float)size.W, mascot: true);
         var shortcuts = Offset(labels[1].Slot, strip);
+        var button = Offset(TabStrip.SearchButton((float)size.W).Card, strip);
         if (layer is { } fill)
         {
             c.RoundRect(shortcuts, TabStrip.Corner, fill);
@@ -505,13 +511,13 @@ internal static unsafe partial class Program
 
         if (ring)
         {
-            var (line, corner) = StateLook.FocusRing(Offset(labels[0].Slot, strip), TabStrip.Corner);
+            var (line, corner) = StateLook.FocusRing(search ? button : Offset(labels[0].Slot, strip), TabStrip.Corner);
             c.Stroke(line, corner, StateLook.Accent, StateLook.FocusWidth);
         }
 
         if (tip is not null)
         {
-            var target = tick ? shortcuts : Offset(TabStrip.AskPill((float)size.W).Card, strip);
+            var target = tick ? shortcuts : search ? button : Offset(TabStrip.AskPill((float)size.W).Card, strip);
             var g = StripLooks;
             var (card, mark, label) = StateLook.Tip(tip, tick, target, new RectangleF((float)(-g.Width / 2), 0, (float)g.Width, (float)g.Depth));
             c.RoundRect(card, StateLook.TipCorner, StateLook.TipFill);

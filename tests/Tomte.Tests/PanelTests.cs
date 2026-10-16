@@ -290,6 +290,44 @@ public class PanelTests
     }
 
     [Fact]
+    public void TheSearchButtonSitsJustBeforeAskAndEveryLabelStaysWholeAtThePanelWidth()
+    {
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
+        // The panel width, and 480 for a panel cut to an 800 x 600 monitor.
+        foreach (float width in new[] { (float)PanelSize.Width, 480 })
+        {
+            var ask = TabStrip.AskPill(width).Card;
+            var (card, glyph) = TabStrip.SearchButton(width);
+            Assert.Equal(ask.Left - TabStrip.Gap, card.Right, 0.01);
+            Assert.Equal((ask.Y, ask.Height), (card.Y, card.Height));
+            Assert.Equal(card.Height, card.Width);
+            Assert.Equal(card.X + card.Width / 2, glyph.X + glyph.Width / 2, 0.01);
+            Assert.Equal(PanelSpace.TabStripHeight / 2, glyph.Y + glyph.Height / 2, 0.01);
+            foreach (bool mascot in new[] { true, false })
+            {
+                foreach (var current in all)
+                {
+                    var labels = TabStrip.Labels(all, current, width, mascot);
+                    Assert.True(labels.Count >= 3, $"{labels.Count} labels at {width}");
+                    Assert.All(labels, label => Assert.True(label.Slot.Right <= card.Left - TabStrip.Gap + 0.01, $"{label.Text} ends at {label.Slot.Right}, search starts at {card.Left}"));
+                }
+            }
+        }
+
+        // At the island's one panel width the corner leaves every tab its whole label, with the tomte on.
+        var whole = TabStrip.Labels(all, PanelId.Scratchpad, (float)PanelSize.Width, mascot: true);
+        Assert.Equal(all.Length, whole.Count);
+        Assert.All(whole, label => Assert.Equal(Tomte.Core.Text.TextSlot.Measure(label.Text, label.Style, 560) + 2 * TabStrip.PadX, label.Slot.Width, 0.01));
+    }
+
+    [Theory]
+    [InlineData("Win+Alt+Space", "Search (Win+Alt+Space)")]
+    [InlineData("alt + win + f", "Search (Win+Alt+F)")]
+    [InlineData("", "Search")]
+    [InlineData("Win+Alt", "Search")]
+    public void TheSearchButtonsTipNamesTheShortcutSetInSettings(string chord, string tip) => Assert.Equal(tip, TabStrip.SearchTip(chord));
+
+    [Fact]
     public void AnAttachedStripStartsAtTheBodyNotAtTheRamps()
     {
         PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];

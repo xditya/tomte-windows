@@ -158,6 +158,9 @@ internal sealed class SearchView : IDisposable, IInteractive
     /// <summary>Esc while AI search shows: back to the results for the typed text.</summary>
     public event Action? Back;
 
+    /// <summary>Opened from a tab: Esc with nothing else to step back goes back to it. Set before the view first shows.</summary>
+    public Action? Leave { get; set; }
+
     /// <summary>The line above AI search's rows; null when AI search is not showing.</summary>
     public string? Lead => ai ? lead ?? hint : null;
 
@@ -257,9 +260,18 @@ internal sealed class SearchView : IDisposable, IInteractive
         }
     }
 
-    /// <summary>Page Up and Page Down reach here from the box: the selection moves a page.</summary>
+    /// <summary>
+    /// Page Up and Page Down reach here from the box: the selection moves a page. So does an Esc the box had nothing for,
+    /// which goes back to the tab the search was opened from.
+    /// </summary>
     public bool Command(NavKey key)
     {
+        if (key == NavKey.Escape && !disposed && card is null && Leave is { } leave)
+        {
+            leave();
+            return true;
+        }
+
         if (disposed || card is not null || key is not (NavKey.PageUp or NavKey.PageDown) || rows.Count == 0)
         {
             return false;
@@ -339,7 +351,7 @@ internal sealed class SearchView : IDisposable, IInteractive
         Grow();
         placeholder.Show(typed.Length == 0 ? SearchLayout.Placeholder : "", PaletteLayout.Placeholder, layout.Editor);
         boxLine.Color = Argb(focus.Focused == editor ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine);
-        var (left, right) = layout.Footer(card is not null ? "" : ai ? SearchLayout.AiKeys : typed.Length > 0 ? SearchLayout.Keys : SearchLayout.KeysEmpty, card is null ? source : "");
+        var (left, right) = layout.Footer(card is not null ? "" : ai ? SearchLayout.AiKeys : typed.Length > 0 ? SearchLayout.Keys : Leave is null ? SearchLayout.KeysEmpty : SearchLayout.KeysBack, card is null ? source : "");
         footLeft.Show(left);
         footRight.Show(right);
         band.IsVisible = card is null;

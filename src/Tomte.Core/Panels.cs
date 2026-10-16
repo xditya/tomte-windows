@@ -67,8 +67,9 @@ public sealed class PanelTabs
 /// <summary>
 /// The tab labels in the 42 DIP strip, in DIPs from the panel's left edge and top: after the tomte (or the left
 /// padding with it off), each label centred in a pill 10 DIP wider than its text on each side, 2 DIP apart, the
-/// current one white, the others at 60%. The Ask pill, which opens the palette, always ends at the right padding; a
-/// label that would run into it is cut to the room left, and one with almost no room is left out.
+/// current one white, the others at 60%. The Ask pill, which opens the palette, always ends at the right padding, with
+/// the search button just before it; a label that would run into them is cut to the room left, and one with almost no
+/// room is left out.
 /// </summary>
 public static class TabStrip
 {
@@ -81,6 +82,23 @@ public static class TabStrip
     public const uint AskColor = 0xFFBCD3FF, AskCard = 0x1FBCD3FF;
 
     public const string AskText = "Ask";
+
+    /// <summary>The magnifier's box in the search button, in DIPs.</summary>
+    public const float SearchGlyphSize = 14;
+
+    /// <summary>The magnifier in its 14 DIP box: a ring stroked round (5.75, 5.75) and a handle off it to the lower right.</summary>
+    public static readonly GlyphFigure[] SearchGlyph =
+    [
+        new(
+        [
+            OutlineSegment.Move(new(9.75f, 5.75f)),
+            OutlineSegment.Cubic(new(9.75f, 7.96f), new(7.96f, 9.75f), new(5.75f, 9.75f)),
+            OutlineSegment.Cubic(new(3.54f, 9.75f), new(1.75f, 7.96f), new(1.75f, 5.75f)),
+            OutlineSegment.Cubic(new(1.75f, 3.54f), new(3.54f, 1.75f), new(5.75f, 1.75f)),
+            OutlineSegment.Cubic(new(7.96f, 1.75f), new(9.75f, 3.54f), new(9.75f, 5.75f)),
+        ], Stroked: true),
+        new(Polygon(8.93f, 7.87f, 13.13f, 12.07f, 12.07f, 13.13f, 7.87f, 8.93f)),
+    ];
 
     public static readonly TextStyle Label = new(12.5f, Color: TextStyle.SecondaryColor, Align: TextAlign.Center);
     public static readonly TextStyle Current = Label with { Color = TextStyle.WhiteColor };
@@ -111,7 +129,7 @@ public static class TabStrip
     {
         float x = mascot ? MascotArt.InsetX + MascotArt.SizeDips + AfterMascot : LeftPad;
         float y = (PanelSpace.TabStripHeight - Height) / 2;
-        float end = AskPill(panelWidth).Card.Left - Gap;
+        float end = SearchButton(panelWidth).Card.Left - Gap;
         var labels = new List<TextSlot>();
         foreach (var id in tabs)
         {
@@ -161,6 +179,17 @@ public static class TabStrip
             new(x + PadX, (PanelSpace.TabStripHeight - GlyphHeight) / 2, glyph, GlyphHeight),
             new(AskText, AskLabel, new(x + PadX + glyph + GlyphGap, y, text, Height)));
     }
+
+    /// <summary>The search button just before the Ask pill: a square card as tall as a tab's, with the magnifier centred in it.</summary>
+    public static (System.Drawing.RectangleF Card, System.Drawing.RectangleF Glyph) SearchButton(float panelWidth)
+    {
+        var ask = AskPill(panelWidth).Card;
+        float x = ask.Left - Gap - Height, inset = (Height - SearchGlyphSize) / 2;
+        return (new(x, ask.Y, Height, Height), new(x + inset, ask.Y + inset, SearchGlyphSize, SearchGlyphSize));
+    }
+
+    /// <summary>The search button's tooltip: the search shortcut as set in Settings, or Search alone when none is set.</summary>
+    public static string SearchTip(string chord) => Hotkey.TryParse(chord, out var key, out _) ? $"Search ({key})" : "Search";
 
     /// <summary>Whether <paramref name="x"/>, in DIPs from the panel's left edge, is on the Ask pill.</summary>
     public static bool OnAsk(float x, float panelWidth)

@@ -94,6 +94,9 @@ internal sealed class SearchHost
     /// <summary>The Ask row: the AI box opens with these words, and sends nothing until Enter there.</summary>
     public Action<string>? Ask { get; set; }
 
+    /// <summary>Esc in a search opened from a tab: the island goes back to that tab.</summary>
+    public Action? Back { get; set; }
+
     /// <summary>
     /// The Search with AI row: a send of the typed sentence to the AI box's provider, with its cap, send log and history,
     /// that picks files through the local file search. Null when no provider can be used. Made only when the row is chosen.
@@ -109,7 +112,10 @@ internal sealed class SearchHost
     /// <summary>The debug driver's runs: a row that would open is logged and the island hides; nothing opens, nothing is counted.</summary>
     public bool Dry { get; set; }
 
-    /// <summary>The search hotkey opened the Palette state as the search box: its content, and the box takes the keys.</summary>
+    /// <summary>
+    /// The search hotkey, the search button or the tray opened the Palette state as the search box: its content, and the
+    /// box takes the keys.
+    /// </summary>
     public void Open()
     {
         var (width, height) = triggers.SearchSize;
@@ -119,6 +125,7 @@ internal sealed class SearchHost
         shown.Entered += Entered;
         shown.CardAnswered += Answered;
         shown.Back += LeaveAi;
+        shown.Leave = triggers.FromPanels ? Back : null;
         shown.HeightChanged += () =>
         {
             if (view == shown && triggers.Searching)
