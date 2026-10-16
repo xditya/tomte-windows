@@ -108,11 +108,25 @@ public static class Markdown
 
     /// <summary>
     /// What of an answer still coming in can show now, so that no marker shows as text and then turns into a look: a
-    /// run of * or ` at the very end may be half of one, a last line that is only a list item's marker waits for its
-    /// text, and the last line stops before a ` or a * against the text after it that is not closed yet. A * before
+    /// run of * or ` at the very end may be half of one; a last line that is so far only a list item's marker waits
+    /// for its text; and the last line stops before a ` or a * against the text after it that shows as text, since
+    /// either may still open or close a look. A cut can leave a marker before it open again, so cutting repeats until
+    /// nothing changes; bold around a * that is not a marker, as in **5*3**, waits for its line to end. A * before
     /// white space opens nothing and shows. Inside a code block only the run at the end waits.
     /// </summary>
     public static string Settled(string text)
+    {
+        string cut = Cut(text);
+        while (cut.Length < text.Length)
+        {
+            text = cut;
+            cut = Cut(text);
+        }
+
+        return text;
+    }
+
+    private static string Cut(string text)
     {
         int end = text.Length;
         while (end > 0 && text[end - 1] is '*' or '`')
@@ -133,30 +147,36 @@ public static class Markdown
             return text[..line];
         }
 
-        // Only text in the block's own look is left as written: a marker inside bold, italic or code is part of it.
-        var plain = last.Kind == MarkdownKind.Heading ? MarkdownLook.Bold : MarkdownLook.Plain;
-        foreach (var span in last.Spans.Where(s => s.Source >= line && s.Look == plain))
+        // Nothing inside code is a marker. Elsewhere a * run may be partly read as a marker already, as ** falls back
+        // to * while its closer has not come, so the cut goes back to where the run starts.
+        foreach (var span in last.Spans.Where(s => s.Source >= line && (s.Look & MarkdownLook.Code) == 0))
         {
             for (int i = span.Source; i < span.Source + span.Text.Length; i++)
             {
-                if (text[i] == '`')
+                char c = text[i];
+                if (c is not ('*' or '`'))
                 {
-                    return text[..i];
+                    continue;
                 }
 
-                // A run of * here ends before the end, which is not a *.
+                // A run here ends before the end, which is neither.
                 int after = i;
-                while (text[after] == '*')
+                while (text[after] == c)
                 {
                     after++;
                 }
 
-                if (after > i && !char.IsWhiteSpace(text[after]))
+                if (c == '`' || !char.IsWhiteSpace(text[after]))
                 {
+                    while (i > line && text[i - 1] == c)
+                    {
+                        i--;
+                    }
+
                     return text[..i];
                 }
 
-                i = Math.Max(i, after - 1);
+                i = after - 1;
             }
         }
 

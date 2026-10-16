@@ -111,6 +111,13 @@ public class MarkdownTests
     [InlineData("Costs:\n-", "Costs:\n")]
     [InlineData("Steps:\n  12.", "Steps:\n")]
     [InlineData("Costs:\n- r", "Costs:\n- r")]
+    // ** falls back to * while its closer has not come: the * left as text waits, with the run it starts.
+    [InlineData("**Do *not* delete this file.**", "")]
+    [InlineData("**a*b", "")]
+    [InlineData("# **a*b** c", "# ")]
+    // So bold around a * that is not a marker waits for its line to end.
+    [InlineData("**5*3** and", "")]
+    [InlineData("**5*3** and\nmore", "**5*3** and\nmore")]
     // Closed, or never a marker: shown as it is.
     [InlineData("The total is **$3,720** for", "The total is **$3,720** for")]
     [InlineData("5 * 3", "5 * 3")]
