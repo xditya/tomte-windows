@@ -18,7 +18,7 @@ namespace Tomte.Shell;
 /// results under it by group with a heading each, and a footer with the keys and where files come from. The box keeps
 /// every key: Up and Down move the selection through all rows and wrap, Tab and Shift+Tab jump to the next or previous
 /// group, Enter opens, Ctrl+Enter shows the row's file in its folder, Page Up and Page Down move a page, Esc clears the
-/// box and then closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
+/// box, then goes back or closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
 /// the pointer's hover is the interaction host's, and a click opens a row. A card (getting Everything) can take the
 /// list's place: Tab moves between its buttons, Enter presses the focused one, which starts on the safe one. Icons come
 /// from the shell, read off this thread and kept for the session. Island thread only.
