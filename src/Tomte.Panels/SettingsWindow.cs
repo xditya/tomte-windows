@@ -42,6 +42,7 @@ public sealed partial class SettingsWindow : Window
 
     // The process's one settings window, for the message procedure, which Windows calls with no object.
     private static SettingsWindow? shown;
+    private static Microsoft.UI.Dispatching.DispatcherQueue? shownQueue;
     private readonly SettingsStore store = new(settingsFile);
     private readonly NavigationView nav;
     private readonly StackPanel rulesList = new() { Spacing = 4 };
@@ -206,6 +207,7 @@ public sealed partial class SettingsWindow : Window
         Content = nav;
         // The shell asks this window, once open, for another page: a search row for one of Tomte's settings pages.
         shown = this;
+        shownQueue = DispatcherQueue;
         Subclass(WinRT.Interop.WindowNative.GetWindowHandle(this));
 
         RenderRules();
@@ -277,9 +279,10 @@ public sealed partial class SettingsWindow : Window
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
     private static LRESULT OnMessage(HWND hwnd, uint message, WPARAM wParam, LPARAM lParam, nuint id, nuint data)
     {
-        if (message == PInvoke.WM_COPYDATA && shown is { } window && SettingsSection.TryRead(lParam, out string section))
+        // An exception here would end the process, so nothing is read off the window object.
+        if (message == PInvoke.WM_COPYDATA && shownQueue is { } queue && SettingsSection.TryRead(lParam, out string section))
         {
-            window.DispatcherQueue.TryEnqueue(() => window.GoTo(section));
+            queue.TryEnqueue(() => shown?.GoTo(section));
             return new LRESULT(1);
         }
 
