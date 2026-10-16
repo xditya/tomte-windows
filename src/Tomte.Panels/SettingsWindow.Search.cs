@@ -33,7 +33,8 @@ public sealed partial class SettingsWindow
             box.Items.Add(WebSearch.Name(engine));
         }
 
-        box.SelectedIndex = (int)store.Current.WebSearch;
+        // A number written into settings.json by hand may name no engine; the list then shows Google, as the search does.
+        box.SelectedIndex = Enum.IsDefined(store.Current.WebSearch) ? (int)store.Current.WebSearch : 0;
         box.SelectionChanged += (_, _) =>
         {
             if (box.SelectedIndex >= 0)
