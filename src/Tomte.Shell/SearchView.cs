@@ -17,13 +17,12 @@ namespace Tomte.Shell;
 /// The search box on the island, in the Palette state and the AI box's look: a one-line text box after the tomte, the
 /// results under it by group with a heading each, and a footer with the keys and where files come from. The box keeps
 /// every key: Up and Down move the selection through all rows and wrap, Tab and Shift+Tab jump to the next or previous
-/// section and wrap, Enter opens, Ctrl+Shift+Enter shows the row's file in its folder, Ctrl+Enter searches with AI, Page Up and Page
-/// Down move a page, Esc clears the
-/// box, then goes back or closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
-/// the pointer's hover is the interaction host's, and a click opens a row. A file or folder row, selected or under the
-/// pointer, shows a show in folder button at its right end. A card (getting Everything) can take the
-/// list's place: Tab moves between its buttons, Enter presses the focused one, which starts on the safe one. Icons come
-/// from the shell, read off this thread and kept for the session. Island thread only.
+/// section and wrap, Enter opens, Ctrl+Shift+Enter shows the row's file in its folder, Ctrl+Enter searches with AI, Page
+/// Up and Page Down move a page, Esc clears the box, then goes back or closes. Left, Right, Home and End stay the box's.
+/// The selected row always shows, filled and outlined; the pointer's hover is the interaction host's, and a click opens a
+/// row. A file or folder row, selected or under the pointer, shows a show in folder button at its right end. A card
+/// (getting Everything) can take the list's place: Tab moves between its buttons, Enter presses the focused one, which
+/// starts on the safe one. Icons come from the shell, read off this thread and kept for the session. Island thread only.
 /// </summary>
 internal sealed class SearchView : IDisposable, IInteractive
 {
