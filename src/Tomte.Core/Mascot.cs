@@ -156,7 +156,7 @@ public static class MascotStates
 
     public static readonly IReadOnlyDictionary<MascotState, MascotReaction> Table = new Dictionary<MascotState, MascotReaction>
     {
-        // Closing has no move of its own: the pose settles while the island shrinks the tomte with the pill.
+        // Not used for the pose: a close holds the pose it has, and parking puts it back to rest.
         [MascotState.Hidden] = new(SpringPreset.Snappy, default, default),
         [MascotState.Compact] = new(SpringPreset.Gentle, default, default),
         [MascotState.ShelfDrop] = new(SpringPreset.Snappy, default, default),
@@ -336,16 +336,28 @@ public sealed class Mascot
         State = state;
         enteredAt = clock();
         next = Beat.None;
-        var reaction = MascotStates.Table[state];
-        var pose = reduce ? reaction.ReducedPose : reaction.Pose;
-        var preset = peek ? SpringPreset.Snappy : reaction.Preset;
-        To(rootRotate, pose.RootRotate, preset);
-        To(rootX, pose.RootX, preset);
-        To(rootY, pose.RootY, preset);
-        To(scaleX, 0, preset);
-        To(scaleY, 0, preset);
-        To(capRotate, pose.CapRotate, preset);
-        To(tipRotate, pose.TipRotate, preset);
+        if (state == MascotState.Hidden)
+        {
+            // A close has no move of its own: the pose holds as it is, a drive folded in, while the pill takes it away.
+            foreach (var spring in springs)
+            {
+                spring.Jump(spring.Value);
+            }
+        }
+        else
+        {
+            var reaction = MascotStates.Table[state];
+            var pose = reduce ? reaction.ReducedPose : reaction.Pose;
+            var preset = peek ? SpringPreset.Snappy : reaction.Preset;
+            To(rootRotate, pose.RootRotate, preset);
+            To(rootX, pose.RootX, preset);
+            To(rootY, pose.RootY, preset);
+            To(scaleX, 0, preset);
+            To(scaleY, 0, preset);
+            To(capRotate, pose.CapRotate, preset);
+            To(tipRotate, pose.TipRotate, preset);
+        }
+
         if (peek && !reduce)
         {
             // It comes out with the opening pill; the sway waits until that is over.
@@ -395,10 +407,10 @@ public sealed class Mascot
     public void Park()
     {
         Set(MascotState.Hidden);
-        lift.Target = 0;
+        // Every neutral value is 0: the next open starts from the resting pose.
         foreach (var spring in springs)
         {
-            spring.Jump(spring.Target);
+            spring.Jump(0);
         }
 
         parked = true;

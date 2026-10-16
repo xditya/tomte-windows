@@ -124,6 +124,35 @@ public class MascotTests
         Assert.False(m.Visible);
     }
 
+    // A close takes the tomte away as it is: a droop, or a tip caught mid-flop while thinking, holds through the close and
+    // nothing springs back on its own; parking puts every value back to rest for the next open.
+    [Fact]
+    public void AClosingTomteHoldsItsPoseUntilParked()
+    {
+        var m = NewMascot();
+        m.Follow(IslandState.Hidden, IslandState.Palette);
+        m.Set(MascotState.Error);
+        Run(m, 1.5, x => 0);
+        var drooped = (m.TipRotate, m.CapRotate, m.RootY);
+        Assert.InRange(drooped.TipRotate, 37.75, 38.25);
+        m.Follow(IslandState.Palette, IslandState.Hidden);
+        Run(m, 0.3, x => 0);
+        Assert.Equal(drooped, (m.TipRotate, m.CapRotate, m.RootY));
+        Assert.False(m.Step(FrameDt));
+        m.Park();
+        Assert.Equal((0d, 0d, 0d, 0d, 1d), (m.TipRotate, m.CapRotate, m.RootY, m.RootRotate, m.ScaleY));
+
+        var thinking = NewMascot();
+        thinking.Follow(IslandState.Hidden, IslandState.Palette);
+        thinking.Set(MascotState.Thinking);
+        Run(thinking, 0.3, x => 0);
+        double tip = thinking.TipRotate;
+        Assert.NotEqual(0, tip);
+        thinking.Follow(IslandState.Palette, IslandState.Hidden);
+        Run(thinking, 0.3, x => 0);
+        Assert.Equal(tip, thinking.TipRotate, 6);
+    }
+
     // Under the pointer the tomte lifts 1.5 DIP on the snappy spring, turns back from mid-flight when the pointer
     // leaves, and settles where it was; hiding drops the lift.
     [Fact]
