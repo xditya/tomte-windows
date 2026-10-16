@@ -78,6 +78,12 @@ internal sealed class Rambler(
     /// <summary>The card shows the words and waits for a choice.</summary>
     public event Action? Choosing;
 
+    /// <summary>Esc threw the card's words away; Undo can bring the card back with them (<see cref="Reopen"/>).</summary>
+    public event Action<string>? Discarded;
+
+    /// <summary>What a voice command's closed palette gives the undo (<see cref="PaletteHost.Triggers"/>).</summary>
+    public TriggerController? Triggers { get; init; }
+
     /// <summary>What Insert types with: the window the words were spoken into, the field in it that had the keys, and the words. Null when typed, else why not.</summary>
     public Func<nint, nint, string, string?> Insert { get; init; } = DesktopEffects.TypeInto;
 
@@ -231,63 +237,7 @@ internal sealed class Rambler(
                 return;
             }
 
-            log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{transcript}\"");
-            string? off = voice is null ? VoiceChoices.NoProvider : askOff();
-            var shown = card = new VoiceCard(island, text, transcript, VoiceChoices.Default(enterDoes(), off is null), off);
-            shown.Picked += c => choosing?.TrySetResult(c);
-            RemoveView();
-            _ = island.MorphTo(shown.Shape, SpringPreset.Snappy);
-            PaletteSession? session = null;
-            while (true)
-            {
-                var choice = await ChooseAsync();
-                // A takedown picks Note; a pick may also land in the same turn as one.
-                bool takenDown = machine.State != IslandState.Compact;
-                log($"{DateTime.Now:HH:mm:ss.fff} voice: {(choice is null ? "thrown away" : "picked " + choice)}{(takenDown ? ", the card was taken down" : "")}");
-                if (choice is not { } picked)
-                    break;
-                if (takenDown)
-                    RemoveCard();
-                if (picked == VoiceChoice.Insert && shown.Refused)
-                {
-                    await CopyAsync(transcript);
-                    break;
-                }
-
-                (string? refused, session) = await VoiceCommand.PickedAsync(picked, transcript, words => Insert(spokenInto, spokenField, words), KeepAsync, StartAsync, s => (palette = new PaletteHost(island, machine, log, text)).RunAsync(s, question));
-                if (refused is null)
-                    break;
-                log($"{DateTime.Now:HH:mm:ss.fff} voice: not typed: {refused}");
-                if (card is null)
-                {
-                    // The card was taken down with the pick, so there is no Copy to offer: the words go to the note.
-                    await KeepAsync(transcript);
-                    break;
-                }
-
-                shown.Refuse(refused);
-            }
-
-            if (session is not null)
-            {
-                log($"{DateTime.Now:HH:mm:ss.fff} voice: {session.Status}{(session.Error is null ? "" : ": " + session.Error)} steps={session.ToolSteps} reply=\"{session.AnswerText.ReplaceLineEndings(" | ")}\"");
-                CommandDone?.Invoke(session);
-                // A reply in words stays up long enough to read, at about 15 characters a second; Esc, anything else
-                // the user opens, or a new hold ends it sooner.
-                if (session.Status == PaletteStatus.Done && session.AnswerText.Trim() is { Length: > 0 } reply && machine.State == IslandState.Palette)
-                {
-                    var hold = replyHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    void OnState(IslandState from, IslandState to)
-                    {
-                        if (to != IslandState.Palette)
-                            hold.TrySetResult();
-                    }
-
-                    machine.Changed += OnState;
-                    await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(Math.Clamp(reply.Length / 15.0, 4, 15))), hold.Task);
-                    machine.Changed -= OnState;
-                }
-            }
+            await OfferAsync(transcript);
         }
         catch (Exception e)
         {
@@ -296,20 +246,124 @@ internal sealed class Rambler(
         finally
         {
             machine.Changed -= Covered;
-            transcribing = false;
-            replyHold = null;
-            // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill. A
-            // new hold that ended the reply's hold owns the island, so nothing here takes it away.
-            bool handedOver = palette is not null;
-            command = null;
-            palette = null;
-            if (capture is not null)
-                log($"{DateTime.Now:HH:mm:ss.fff} rambler: the reply gave way to a new hold");
-            else if (handedOver)
-                Retracted?.Invoke();
-            else
-                await Retract();
+            await Ended();
         }
+    }
+
+    /// <summary>
+    /// Undo after Esc threw the card's words away: the card again with the same words and choices, as the hold left it,
+    /// with Insert typing where the hold was. The triggers have taken the undo pill down; the state comes from Hidden.
+    /// </summary>
+    public async void Reopen(string transcript)
+    {
+        if (!CanBegin)
+            return;
+        transcribing = true;
+        var from = machine.State;
+        if (IslandStateMachine.CanTransition(from, IslandState.Compact))
+        {
+            machine.TransitionTo(IslandState.Compact);
+            island.Mascot.Follow(from, IslandState.Compact);
+        }
+
+        island.Mascot.Set(MascotState.Compact);
+        try
+        {
+            await OfferAsync(transcript);
+        }
+        catch (Exception e)
+        {
+            log($"{DateTime.Now:HH:mm:ss.fff} rambler: failed: {e.Message}");
+        }
+        finally
+        {
+            await Ended();
+        }
+    }
+
+    // The card with the words and its choices, and what the choice does: Insert, the note, or Ask with its palette and reply.
+    private async Task OfferAsync(string transcript)
+    {
+        log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{transcript}\"");
+        string? off = voice is null ? VoiceChoices.NoProvider : askOff();
+        var shown = card = new VoiceCard(island, text, transcript, VoiceChoices.Default(enterDoes(), off is null), off);
+        shown.Picked += c => choosing?.TrySetResult(c);
+        RemoveView();
+        _ = island.MorphTo(shown.Shape, SpringPreset.Snappy);
+        PaletteSession? session = null;
+        while (true)
+        {
+            var choice = await ChooseAsync();
+            // A takedown picks Note; a pick may also land in the same turn as one.
+            bool takenDown = machine.State != IslandState.Compact;
+            log($"{DateTime.Now:HH:mm:ss.fff} voice: {(choice is null ? "thrown away" : "picked " + choice)}{(takenDown ? ", the card was taken down" : "")}");
+            if (choice is not { } picked)
+            {
+                // Esc: the words go, and Undo can bring the card back for a while.
+                Discarded?.Invoke(transcript);
+                break;
+            }
+
+            if (takenDown)
+                RemoveCard();
+            if (picked == VoiceChoice.Insert && shown.Refused)
+            {
+                await CopyAsync(transcript);
+                break;
+            }
+
+            (string? refused, session) = await VoiceCommand.PickedAsync(picked, transcript, words => Insert(spokenInto, spokenField, words), KeepAsync, StartAsync, s => (palette = new PaletteHost(island, machine, log, text) { Triggers = Triggers }).RunAsync(s, question));
+            if (refused is null)
+                break;
+            log($"{DateTime.Now:HH:mm:ss.fff} voice: not typed: {refused}");
+            if (card is null)
+            {
+                // The card was taken down with the pick, so there is no Copy to offer: the words go to the note.
+                await KeepAsync(transcript);
+                break;
+            }
+
+            shown.Refuse(refused);
+        }
+
+        if (session is not null)
+        {
+            log($"{DateTime.Now:HH:mm:ss.fff} voice: {session.Status}{(session.Error is null ? "" : ": " + session.Error)} steps={session.ToolSteps} reply=\"{session.AnswerText.ReplaceLineEndings(" | ")}\"");
+            CommandDone?.Invoke(session);
+            // A reply in words stays up long enough to read, at about 15 characters a second; Esc, anything else
+            // the user opens, or a new hold ends it sooner.
+            if (session.Status == PaletteStatus.Done && session.AnswerText.Trim() is { Length: > 0 } reply && machine.State == IslandState.Palette)
+            {
+                var hold = replyHold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                void OnState(IslandState from, IslandState to)
+                {
+                    if (to != IslandState.Palette)
+                        hold.TrySetResult();
+                }
+
+                machine.Changed += OnState;
+                await Task.WhenAny(Task.Delay(TimeSpan.FromSeconds(Math.Clamp(reply.Length / 15.0, 4, 15))), hold.Task);
+                machine.Changed -= OnState;
+            }
+        }
+    }
+
+    // The words were dealt with: the island goes back to the triggers, or the pill retracts.
+    private async Task Ended()
+    {
+        transcribing = false;
+        replyHold = null;
+        // Once the palette took the pill over, the triggers own the retract: what shows now may be an event pill. A
+        // new hold that ended the reply's hold owns the island, so nothing here takes it away.
+        bool handedOver = palette is not null;
+        command = null;
+        palette = null;
+        if (capture is not null)
+            log($"{DateTime.Now:HH:mm:ss.fff} rambler: the reply gave way to a new hold");
+        else if (handedOver)
+            Retracted?.Invoke();
+        else
+            await Retract();
     }
 
     /// <summary>The raw words as a note. A locked database does not lose it: it waits in memory and is saved as soon as it can be.</summary>

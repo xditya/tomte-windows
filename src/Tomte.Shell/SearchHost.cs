@@ -81,6 +81,9 @@ internal sealed class SearchHost
     private bool aiShowing;
     private PaletteSession? ai;
 
+    // An AI search that closed, on its way back with Undo: the next open shows it as it was.
+    private Shut? restoring;
+
     public SearchHost(IslandWindow island, TriggerController triggers, TextRenderer text, TypingFocus focus, SettingsStore store, TomteDb db, ShortcutStore shortcuts, Action<string>? log)
     {
         (this.island, this.triggers, this.text, this.focus, this.store, this.shortcuts, this.log) = (island, triggers, text, focus, store, shortcuts, log);
@@ -145,13 +148,24 @@ internal sealed class SearchHost
             }
         };
         triggers.Machine.Changed += Gone;
-        files = [];
-        filesFrom = "";
+        (files, filesFrom) = restoring is { } back ? (back.Files, back.FilesFrom) : ([], "");
         held = null;
         trim?.Stop();
         searched = true;
         shown.TakeKeys();
-        Refresh();
+        if (restoring is { } was)
+        {
+            // Undo: the text, the AI search with what arrived meanwhile, and the row and scroll it had.
+            shown.Restore(was.Text);
+            (ai, aiShowing) = (was.Ai, true);
+            Refresh();
+            shown.Reselect(was.Selected, was.Scroll);
+        }
+        else
+        {
+            Refresh();
+        }
+
         _ = LoadAsync(shown);
 
         void Gone(IslandState from, IslandState to)
@@ -160,13 +174,41 @@ internal sealed class SearchHost
             {
                 triggers.Machine.Changed -= Gone;
                 fileSearch?.Cancel();
-                LeaveAi(refresh: false);
                 held = null;
+                if (ai is { Holds: true } session)
+                {
+                    // AI search went to the provider: kept for Undo, its send going on meanwhile.
+                    var shut = new Shut(session, shown.Text, shown.Selected?.Key, shown.Scroll, files, filesFrom);
+                    (ai, aiShowing) = (null, false);
+                    triggers.Closed(AiSearchClosed, () => Reopen(shut), session.Cancel);
+                }
+                else
+                {
+                    LeaveAi(refresh: false);
+                }
+
                 if (view == shown)
                 {
                     view = null;
                 }
             }
+        }
+    }
+
+    /// <summary>What the undo pill says after an AI search closed.</summary>
+    internal const string AiSearchClosed = "AI search closed";
+
+    // Undo: the search box in the pill's place, as the tray's Search opens it, showing the AI search as it was.
+    private bool Reopen(Shut shut)
+    {
+        restoring = shut;
+        try
+        {
+            return triggers.OpenSearch(ignorePause: true);
+        }
+        finally
+        {
+            restoring = null;
         }
     }
 
@@ -517,6 +559,9 @@ internal sealed class SearchHost
             }
         }
     }
+
+    // An AI search as it closed: its send, the box's text, the selected row, the scroll, and the files found for the text.
+    private sealed record Shut(PaletteSession Ai, string Text, string? Selected, float Scroll, IReadOnlyList<SearchItem> Files, string FilesFrom);
 
     private void Chosen(SearchItem item, bool folder)
     {

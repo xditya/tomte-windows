@@ -77,6 +77,13 @@ internal sealed class DropResultView : IInteractive
 
     public bool Open { get; private set; } = true;
 
+    /// <summary>Where the answer is scrolled to; set before the first <see cref="Show"/> to start there.</summary>
+    public float Scroll
+    {
+        get => scroll;
+        set => scroll = value;
+    }
+
     /// <summary>The panel's height for what it shows now, in DIPs.</summary>
     public float Height => layout?.Height ?? (float)PanelSize.PaletteMinHeight;
 

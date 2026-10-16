@@ -26,7 +26,8 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed class PaletteView : IDisposable, IInteractive
 {
-    private const string ChipId = "chip:", SendId = "send";
+    internal const string SendId = "send";
+    private const string ChipId = "chip:";
     private static readonly Color Card = Color.FromArgb(15, 255, 255, 255), Clear = default;
 
     private readonly IslandWindow island;
@@ -204,6 +205,23 @@ internal sealed class PaletteView : IDisposable, IInteractive
             // The caret after it, where the user would go on typing.
             prompt.Services.Selection = (prompted.Length, prompted.Length);
         }
+    }
+
+    /// <summary>What the palette shows, for the debug driver.</summary>
+    internal IPaletteSession? Session => session;
+
+    /// <summary>What the prompt box holds, typed and not sent; empty with no box.</summary>
+    public string PromptText => prompt is not null && !disposed ? prompt.Services.Text : "";
+
+    /// <summary>Where the answer is scrolled to, and whether it follows its newest line.</summary>
+    public (float Scroll, bool Pinned) Scrolled => (scroll, pinned);
+
+    /// <summary>The palette as it was when it closed: the prompt's text, and the answer scrolled where it was.</summary>
+    public void Restore(string typed, (float Scroll, bool Pinned) scrolled)
+    {
+        Fill(typed);
+        (scroll, pinned) = scrolled;
+        Update();
     }
 
     /// <summary>The palette's height for what it shows now, in DIPs.</summary>
@@ -997,6 +1015,12 @@ internal sealed partial class PaletteHost
 {
     private PaletteView? typed;
 
+    /// <summary>The palette <see cref="Type"/> last opened, for the debug driver.</summary>
+    internal PaletteView? View => typed;
+
+    /// <summary>What a closed AI box gives the undo: <see cref="TriggerController.Closed"/>. Null keeps nothing (a driven run).</summary>
+    public TriggerController? Triggers { get; init; }
+
     /// <summary>The prompt of the palette <see cref="Type"/> last opened takes the keys again, while that palette is still up. False when it has none or Windows refused.</summary>
     public bool TakeKeys() => typed?.TakeKeys() == true;
 
@@ -1013,14 +1037,22 @@ internal sealed partial class PaletteHost
     /// the palette says the AI layer is off and takes no keys. <paramref name="back"/> is the back arrow's action, for a
     /// palette opened from the panels; with none, Esc hides the island as before.
     /// </summary>
-    public void Type(PaletteSession? session, Action? back = null)
+    public void Type(PaletteSession? session, Action? back = null) => Type(session, back, null);
+
+    // Shut is the AI box as it closed, for Undo: the same session, question and send, the prompt's text and the scroll.
+    private void Type(PaletteSession? session, Action? back, Shut? shut)
     {
         // The triggers opened the palette at its smallest; growth starts from there.
         _targetHeight = PanelSize.PaletteMinHeight;
-        var question = new ToolQuestion();
-        Task sending = Task.CompletedTask;
+        var question = shut?.Question ?? new ToolQuestion();
+        Task sending = shut?.Sending ?? Task.CompletedTask;
         PaletteView? view = null;
         view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question) { OpenHistory = OpenHistory, Back = back };
+        if (shut is not null)
+        {
+            view.Restore(shut.Typed, shut.Scrolled);
+        }
+
         typed = view;
         view.HeightChanged += () => Grow(view.Height);
         if (hide is not null)
@@ -1031,7 +1063,11 @@ internal sealed partial class PaletteHost
         if (session is not null)
         {
             session.ConfirmTool = question.AskAsync;
-            question.Changed += () => RestWhileAsked(question);
+            if (shut is null)
+            {
+                question.Changed += () => RestWhileAsked(question);
+            }
+
             machine.Changed += Closed;
         }
 
@@ -1063,10 +1099,37 @@ internal sealed partial class PaletteHost
             }
 
             machine.Changed -= Closed;
+            // Something from the provider, or a send on its way, is kept for Undo: the send goes on meanwhile, and an
+            // open question waits for the box to come back. Undo off, or the time up, ends it as a close always did.
+            var closing = new Shut(question, sending, view!.PromptText, view.Scrolled);
+            if (Triggers is { } triggers && session!.Holds)
+            {
+                triggers.Closed(AnswerClosed, () => triggers.Reopen(PanelSize.PaletteMinHeight) && Reopened(session, closing), Free);
+            }
+            else
+            {
+                Free();
+            }
+        }
+
+        void Free()
+        {
             session!.Cancel();
             _ = ReleaseAsync(session, sending);
         }
     }
+
+    /// <summary>What the undo pill says after an AI answer closed.</summary>
+    internal const string AnswerClosed = "AI answer closed";
+
+    // Undo: the AI box in the pill's place, as it closed. It opened from the pill, so it has no back arrow.
+    private bool Reopened(PaletteSession session, Shut shut)
+    {
+        Type(session, null, shut);
+        return true;
+    }
+
+    private sealed record Shut(ToolQuestion Question, Task Sending, string Typed, (float Scroll, bool Pinned) Scrolled);
 
     // Once the last send has ended, nothing uses the session's servers or its automation thread any more. Each is
     // stopped on its own, so one that fails does not keep the other running.

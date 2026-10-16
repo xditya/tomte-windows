@@ -11,12 +11,12 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// Turns trigger messages into state changes on the UI thread. The pause and the suppression check run before
-/// every MorphTo. Owns the retraction, hover, event, peek, first-run, drag, timer-done and quiet-recheck timers,
+/// every MorphTo. Owns the retraction, hover, event, peek, first-run, drag, timer-done, quiet-recheck and undo timers,
 /// all SetTimer one-shots on the island window, so nothing runs while nothing happens.
 /// </summary>
 internal sealed unsafe partial class TriggerController : IDisposable
 {
-    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6, TimerDoneTimer = 7, QuietTimer = 8;
+    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6, TimerDoneTimer = 7, QuietTimer = 8, UndoTimer = 9;
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
 
@@ -35,11 +35,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private readonly IslandTimer timer;
     private readonly TimerRing ring;
     private readonly CompactTargets compact;
+    private readonly UndoClose undo = new();
+    private UndoPill? undoPill;
     private TimerRun? finished;
     private IReadOnlyList<IslandEvent> showing = [];
     private Rambler? rambler;
     private CaptureOverlay? overlay;
-    private bool capturing, holdEvents;
+    private bool capturing, holdEvents, ownRetract;
     private double zoneHeight;
     private TomteSettings settings;
     private IslandActivity activity;
@@ -144,6 +146,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             if (value is not null)
             {
                 value.Retracted += OnRamblerRetracted;
+                // Esc on the card threw the words away: Undo brings the card back; there is nothing to let go.
+                value.Discarded += words => Closed(TranscriptClosed, () => ReopenCard(words), () => { });
             }
         }
     }
@@ -249,6 +253,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     public CompactReason Compact =>
         machine.State != IslandState.Compact ? CompactReason.None
         : activity.HasFlag(IslandActivity.Rambling) ? CompactReason.Rambler
+        : activity.HasFlag(IslandActivity.Undo) ? CompactReason.Undo
         : firstRunShowing ? CompactReason.Hint
         : arrivalShowing ? CompactReason.Arrival
         : eventShowing ? CompactReason.Event
@@ -512,6 +517,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 // The session retracts itself once the note is written; Retracted then releases the rest.
                 rambler?.End(keep: wParam == 1);
                 return true;
+            case InputThread.MsgUndoUnavailable:
+                log?.Invoke($"hotkey conflict: Win+Alt+Z could not be registered (error {wParam}); the undo pill shows the button only");
+                if (undoPill is { } pill && activity.HasFlag(IslandActivity.Undo))
+                {
+                    pill.KeyTaken();
+                    _ = island.MorphTo(IslandGeometry.Compact with { Width = pill.Width }, SpringPreset.Snappy);
+                    InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+                }
+
+                return true;
             case InputThread.MsgConfirmUnavailable:
                 log?.Invoke($"hotkey conflict: Win+Alt+Enter could not be registered (error {wParam})");
                 rambler?.Answer(allow: false);
@@ -600,7 +615,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>
     /// The Compact pill and the peek badge for the interaction host, in island space: a click on the pill opens Panels,
     /// one on the tomte asks Tomte, a drag on either moves the island, and the tomte lifts while the pointer is on it.
-    /// An event pill has no action of its own, so it is the pill. None on the rambler's pill, where a click does nothing.
+    /// An event pill has no action of its own, so it is the pill. None on the rambler's pill, where a click does nothing,
+    /// nor on the undo pill, whose one target is its Undo button.
     /// </summary>
     private sealed class CompactTargets(TriggerController owner) : IInteractive
     {
@@ -615,7 +631,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         /// <summary>The state, the shape or the rambling changed: the targets again, registered while in Compact, and say so.</summary>
         public void Changed()
         {
-            Targets = owner.machine.State == IslandState.Compact && !owner.activity.HasFlag(IslandActivity.Rambling)
+            Targets = owner.machine.State == IslandState.Compact && (owner.activity & (IslandActivity.Rambling | IslandActivity.Undo)) == 0
                 ? CompactLayout.Targets(owner.island.Heading, owner.island.Mascot.Enabled)
                 : [];
             if (owner.machine.State == IslandState.Compact)
@@ -753,6 +769,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case QuietTimer:
                 // A change in the answer comes back through OnSuppressionChanged, which releases the queue.
                 watch.ReadNotificationState();
+                break;
+            case UndoTimer:
+                bool pill = activity.HasFlag(IslandActivity.Undo);
+                log?.Invoke($"undo: time up for \"{undo.Line}\", let go");
+                undo.End();
+                if (pill)
+                {
+                    Hide();
+                }
+
                 break;
             case TimerDoneTimer:
                 var run = timer.Run;
@@ -915,6 +941,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
+        if (id == InputThread.UndoHotkeyId)
+        {
+            Undo();
+            return;
+        }
+
         if (id == InputThread.ConfirmHotkeyId)
         {
             rambler?.Answer(allow: true);
@@ -988,13 +1020,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                     // Begin opens the 262 wide pill and sets the mascot itself, without Go.
                     EndArrival();
                     rambler.Begin(watch.LastApp);
-                    // The pill is the rambler's now: no click, dwell, event or edge push takes it away mid-recording.
-                    activity |= IslandActivity.Rambling;
-                    // The rambler's pill has no room for the ring, and it changes state without Go; nor does a click on it do anything.
-                    UpdateRing();
-                    compact.Changed();
-                    pointerInside = pointerOn = false;
-                    InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+                    HandedToRambler();
                 }
 
                 break;
@@ -1345,11 +1371,50 @@ internal sealed unsafe partial class TriggerController : IDisposable
         return true;
     }
 
+    /// <summary>What the undo pill says after Esc threw the card's words away.</summary>
+    private const string TranscriptClosed = "Transcript closed";
+
+    // The pill is the rambler's now: no click, dwell, event or edge push takes it away mid-recording or while its card
+    // waits. The rambler's pill has no room for the ring, and it changes state without Go; nor does a click on it do anything.
+    private void HandedToRambler()
+    {
+        activity |= IslandActivity.Rambling;
+        UpdateRing();
+        compact.Changed();
+        pointerInside = pointerOn = false;
+        InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+    }
+
+    // Undo after Esc on the card: the card again in the undo pill's place, as the voice key's hold left it.
+    private bool ReopenCard(string words)
+    {
+        if (rambler is not { CanBegin: true } voice || !Allowed(RevealTrigger.Hotkey, ignorePause: true))
+        {
+            return false;
+        }
+
+        HideForNext();
+        EndArrival();
+        voice.Reopen(words);
+        HandedToRambler();
+        return true;
+    }
+
     private void OnRamblerRetracted()
     {
         if (activity.HasFlag(IslandActivity.Rambling))
         {
-            Hide();
+            // The pill, or a voice reply that has had its time to be read, retracts on its own: nobody closed it, so
+            // nothing is kept to undo (a pill then would also hold back the events the command raised).
+            ownRetract = true;
+            try
+            {
+                Hide();
+            }
+            finally
+            {
+                ownRetract = false;
+            }
         }
     }
 
@@ -1361,6 +1426,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
     {
         EndArrival();
+        // The undo pill goes with any change; what it brings back keeps its time, and the pill comes back when the island
+        // is free again before that is up.
+        EndUndoPill();
         var from = machine.State;
         // A palette growing keeps where it came from; any other change forgets it, and a panel action sets it again. The
         // same for search, which the search hotkey sets again after this.
@@ -1407,7 +1475,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         island.Mascot.Follow(from, state);
         island.PanelLook = state is IslandState.Panels or IslandState.Palette;
         var (width, height) = PanelSize.Fit(size, island.MonitorSize);
-        var geometry = peek ? IslandGeometry.Peek : IslandGeometry.For(state, width, height);
+        // Compact is the 220 pill unless it is given a width: the undo pill is as wide as its words and button.
+        var geometry = peek ? IslandGeometry.Peek : state == IslandState.Compact && width > 0 ? IslandGeometry.Compact with { Width = width } : IslandGeometry.For(state, width, height);
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.
@@ -1533,7 +1602,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             PInvoke.KillTimer(island.Hwnd, id);
         }
 
-        bool wasPeek = activity.HasFlag(IslandActivity.Peek);
+        bool wasPeek = activity.HasFlag(IslandActivity.Peek), wasUndo = EndUndoPill();
         activity = IslandActivity.None;
         if (eventShowing && showing.Any(IsTimerDone))
         {
@@ -1560,8 +1629,96 @@ internal sealed unsafe partial class TriggerController : IDisposable
             SchedulePeek();
         }
 
+        // A view closed with something from a provider: its undo pill, unless the pill is what went, or another state
+        // opens right after this hide.
+        if (!wasUndo && !holdEvents)
+        {
+            ShowUndo();
+        }
+
         // Events that arrived while the island was showing something waited for this.
         ReleaseEvents();
+    }
+
+    /// <summary>
+    /// A view holding something from a provider closed, whichever way: it is kept for the undo time from now in place of
+    /// one kept before, with a pill saying <paramref name="line"/> and Undo once the island is free, and
+    /// <paramref name="restore"/> brings it back in the pill's place (false when it could not). With undo off, and when
+    /// the time is up, <paramref name="free"/> lets it go: a request it still runs is cancelled then. Called while the
+    /// island leaves the view, so the pill comes at the end of the hide.
+    /// </summary>
+    internal void Closed(string line, Func<bool> restore, Action free)
+    {
+        PInvoke.KillTimer(island.Hwnd, UndoTimer);
+        var time = ownRetract ? null : UndoClose.Time(settings.UndoSeconds);
+        if (undo.Keep(line, restore, free, DateTimeOffset.Now, time))
+        {
+            PInvoke.SetTimer(island.Hwnd, UndoTimer, (uint)time!.Value.TotalMilliseconds, null);
+            log?.Invoke($"undo: \"{line}\" kept for {time.Value.TotalSeconds:0} s");
+        }
+    }
+
+    /// <summary>
+    /// The Palette state at this height in the undo pill's place, for a closed view to come back into. The pill was up,
+    /// so the pause has had its say. False when it did not open.
+    /// </summary>
+    internal bool Reopen(double height) => Reveal(RevealTrigger.Hotkey, IslandState.Palette, (PanelSize.PaletteWidth, height), ignorePause: true);
+
+    /// <summary>The undo pill showing now, for the debug driver; null with none.</summary>
+    internal UndoPill? UndoShowing => activity.HasFlag(IslandActivity.Undo) ? undoPill : null;
+
+    /// <summary>Undo on the pill, or Win+Alt+Z while it shows: the closed view comes back in its place.</summary>
+    internal void Undo()
+    {
+        if (!activity.HasFlag(IslandActivity.Undo))
+        {
+            return;
+        }
+
+        PInvoke.KillTimer(island.Hwnd, UndoTimer);
+        log?.Invoke($"undo: \"{undo.Line}\" brought back");
+        if (!undo.Undo(DateTimeOffset.Now) && activity.HasFlag(IslandActivity.Undo))
+        {
+            log?.Invoke("undo: it could not come back");
+            Hide();
+        }
+    }
+
+    // The pill for the kept view while the island is free and its time is not up: it holds the island until then, takes
+    // Win+Alt+Z, and nothing on it but Undo takes a click. It follows the user's own close, so it opens as a hotkey would,
+    // but never over a fullscreen app, which took the view down itself.
+    private void ShowUndo()
+    {
+        if (undo.Line is not { } line || !undo.Live(DateTimeOffset.Now) || machine.State != IslandState.Hidden || Program.Text is not { } text
+            || watch.State.Fullscreen || !Allowed(RevealTrigger.Hotkey))
+        {
+            return;
+        }
+
+        var pill = undoPill = new UndoPill(island, machine, text, line, () => island.Queue.TryEnqueue(Undo));
+        Go(IslandState.Compact, (pill.Width, 0));
+        activity |= IslandActivity.Undo;
+        // Like an event pill: not armed, so the pointer's first "outside" does not retract it; the undo timer owns the end.
+        armed = false;
+        PInvoke.KillTimer(island.Hwnd, RetractTimer);
+        InputThread.SetUndo(true);
+        compact.Changed();
+        UpdateRing();
+        log?.Invoke($"undo: pill \"{line}\" for {undo.Left(DateTimeOffset.Now).TotalSeconds:0.0} s");
+    }
+
+    // The undo pill goes (its view leaves with the state change), and with it Win+Alt+Z. True when it was showing.
+    private bool EndUndoPill()
+    {
+        if (!activity.HasFlag(IslandActivity.Undo))
+        {
+            return false;
+        }
+
+        activity &= ~IslandActivity.Undo;
+        undoPill = null;
+        InputThread.SetUndo(false);
+        return true;
     }
 
     /// <summary>A hide for a state that opens right after it: a waiting event must not show in between.</summary>
@@ -1633,7 +1790,9 @@ internal sealed partial class TriggerController
         {
             machine.TransitionTo(IslandState.Hidden);
             island.Mascot.Follow(IslandState.Capture, IslandState.Hidden);
-            // An event raised while the overlay was up waited for the island to be free; this path skips Hide().
+            // An undo kept when the lasso took the island, and an event raised while the overlay was up, waited for the
+            // island to be free; this path skips Hide().
+            ShowUndo();
             ReleaseEvents();
         }
     }

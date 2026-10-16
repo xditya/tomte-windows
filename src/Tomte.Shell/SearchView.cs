@@ -193,6 +193,31 @@ internal sealed class SearchView : IDisposable, IInteractive
         }
     }
 
+    /// <summary>Where the list is scrolled to.</summary>
+    public float Scroll => scroll;
+
+    /// <summary>The box's text as it was when the search closed, taken as already searched: nothing is searched or ended again.</summary>
+    public void Restore(string words)
+    {
+        if (!disposed)
+        {
+            typed = words;
+            Fill(words);
+            Draw();
+        }
+    }
+
+    /// <summary>The row with this key selected again, once the rows are back, and the list scrolled where it was.</summary>
+    public void Reselect(string? key, float at)
+    {
+        int row = Enumerable.Range(0, rows.Count).FirstOrDefault(i => rows[i].Key == key, -1);
+        if (!disposed && row >= 0)
+        {
+            scroll = at;
+            Select(row);
+        }
+    }
+
     /// <summary>
     /// New results. The first row is selected, so Enter opens the best match, never the row that offers Everything; once
     /// the user has moved the selection, results that arrive later for the same text (files, the app list) keep that row,

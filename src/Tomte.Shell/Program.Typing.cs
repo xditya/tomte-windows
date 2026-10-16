@@ -251,11 +251,12 @@ internal static partial class Program
 
     /// <summary>
     /// The typed palette's host, whose footer button opens the History tab on the next turn, after the click. It goes
-    /// when it loses the keys, unless the island is pinned.
+    /// when it loses the keys, unless the island is pinned, and what it held can come back with Undo for a while.
     /// </summary>
     private static PaletteHost NewPaletteHost(IslandWindow island, TriggerController triggers, Action<string>? log) =>
         new(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.FocusLost)
         {
+            Triggers = triggers,
             OpenHistory = () => island.Queue.TryEnqueue(() =>
             {
                 triggers.OpenPanel(PanelId.History);
