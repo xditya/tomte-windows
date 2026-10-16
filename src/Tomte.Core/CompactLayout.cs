@@ -64,11 +64,11 @@ public static class CompactLayout
     /// <summary>The now-playing row's art, where the ring would be.</summary>
     public static RectangleF Art(bool mascot) => new(-Width / 2 + RingLeft(mascot), 8, 22, 22);
 
-    /// <summary>The title's slot after the art: up to the bars, or to the end inset on a pill that shows no bars.</summary>
-    public static RectangleF Title(bool mascot, bool bars)
+    /// <summary>The title's slot after the art, up to the bars. On a pill with no bars the art and the title are a <see cref="Group"/>.</summary>
+    public static RectangleF Title(bool mascot)
     {
         float x = Art(mascot).Right + Gap;
-        return new(x, 9, (bars ? BarsLeft - Gap : (Width / 2) - EndInset) - x, 20);
+        return new(x, 9, BarsLeft - Gap - x, 20);
     }
 
     /// <summary>

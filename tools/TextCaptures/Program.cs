@@ -454,8 +454,17 @@ internal static unsafe partial class Program
             c.Mascot();
         }
 
-        c.Gradient(CompactLayout.Art(mascot), CompactLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
-        c.Text(title, bars ? CompactLayout.TitleStyle : CompactLayout.Ending(CompactLayout.TitleStyle, led: true), CompactLayout.Title(mascot, bars), Vector2.Zero);
+        var art = CompactLayout.Art(mascot);
+        var slot = CompactLayout.Title(mascot);
+        if (!bars)
+        {
+            // The art and its title as one group, as the row lays them out on a pill with no bars.
+            var (lead, x, width) = CompactLayout.Group(mascot, art.Width, TextSlot.Measure(title, CompactLayout.TitleStyle, 4096));
+            (art.X, slot.X, slot.Width) = (lead, x, width);
+        }
+
+        c.Gradient(art, CompactLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
+        c.Text(title, CompactLayout.TitleStyle, slot, Vector2.Zero);
         for (int i = 0; bars && i < CompactLayout.BarReach.Length; i++)
         {
             float h = Waveform.MinHeight + Waveform.Swing * CompactLayout.BarReach[i] * 0.7f;

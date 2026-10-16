@@ -149,8 +149,8 @@ public class TextTests
     }
 
     // No Compact pill leaves one end empty. What ends a pill stops as far in from its trailing end as the tomte's art
-    // starts from the leading end; words with the tomte, the ring or the art before them sit at the trailing end of
-    // their slot, and words alone are centred on the pill. With the tomte off the row's art starts at that inset too.
+    // starts from the leading end; words the tomte leads sit at the trailing end of their slot, and words alone are
+    // centred on the pill. With the tomte off the row's art starts at that inset too.
     [Fact]
     public void EveryCompactPillUsesBothEnds()
     {
@@ -165,8 +165,7 @@ public class TextTests
 
         foreach (bool mascot in new[] { true, false })
         {
-            Assert.All([CompactLayout.Line(mascot), CompactLayout.Title(mascot, bars: false)], slot =>
-                Assert.Equal(110 - CompactLayout.EndInset, slot.Right, 3));
+            Assert.Equal(110 - CompactLayout.EndInset, CompactLayout.Line(mascot).Right, 3);
             Assert.Equal(mascot ? CompactLayout.RingLeft(true) - 110 : CompactLayout.EndInset - 110, CompactLayout.Art(mascot).X, 3);
         }
 
@@ -178,7 +177,20 @@ public class TextTests
 
         // The push pill's row keeps its title after the art and up to the bars, as it was.
         Assert.Equal(new RectangleF(-69.5f, 8, 22, 22), CompactLayout.Art(mascot: true));
-        Assert.Equal(new RectangleF(-38.5f, 9, 109.5f, 20), CompactLayout.Title(mascot: true, bars: true));
+        Assert.Equal(new RectangleF(-38.5f, 9, 109.5f, 20), CompactLayout.Title(mascot: true));
+    }
+
+    // On the pills with no bars (kept while music plays, peek with the tomte off) the art and its title are one group,
+    // like the ring and its countdown: the art a gap before the title, ending at the end inset or centred.
+    [Fact]
+    public void TheArtAndItsTitleAreOneGroupWithoutBars()
+    {
+        float title = TextSlot.Measure("Nightfall", CompactLayout.TitleStyle, 4096);
+        var (art, x, width) = CompactLayout.Group(mascot: true, CompactLayout.Art(true).Width, title);
+        Assert.Equal(art + 22 + CompactLayout.Gap, x, 3);
+        Assert.Equal(110 - CompactLayout.EndInset, x + width, 3);
+        var (alone, aloneX, aloneWidth) = CompactLayout.Group(mascot: false, CompactLayout.Art(false).Width, title);
+        Assert.Equal(0, (alone + aloneX + aloneWidth) / 2, 3);
     }
 
     // The timer's ring and its countdown are one group: the ring a gap before the words, the group ending at the end
