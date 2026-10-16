@@ -207,6 +207,16 @@ internal sealed class PaletteView : IDisposable, IInteractive
         }
     }
 
+    /// <summary>The words in the prompt, sent at once as the Send button sends them: the search box's Ask row.</summary>
+    public void FillAndSend(string words)
+    {
+        Fill(words);
+        if (send is not null && prompt is not null && !disposed && words.Trim().Length > 0)
+        {
+            send(prompt.Services.Text);
+        }
+    }
+
     /// <summary>What the palette shows, for the debug driver.</summary>
     internal IPaletteSession? Session => session;
 
@@ -1026,6 +1036,9 @@ internal sealed partial class PaletteHost
 
     /// <summary>Words in the prompt of the palette <see cref="Type"/> last opened, with the caret after them; nothing is sent.</summary>
     public void Fill(string words) => typed?.Fill(words);
+
+    /// <summary>Sends the words from the open AI box, as Enter in its prompt would.</summary>
+    public void Send(string words) => typed?.FillAndSend(words);
 
     /// <summary>
     /// The palette hotkey or a click on the tomte, once the triggers have opened the Palette state: the prompt box takes
