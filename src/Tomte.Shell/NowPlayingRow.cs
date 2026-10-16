@@ -12,7 +12,8 @@ namespace Tomte.Shell;
 /// <summary>
 /// The Compact pill's now-playing row: the art, the title and four bars that move while something
 /// plays. It shows where <see cref="TriggerController.CompactShows"/> puts it: the push pill when no
-/// timer runs, the peek pill with the tomte off, and the track-change event's own pill. The media
+/// timer runs, the peek pill with the tomte off, the track-change event's own pill and the pill kept
+/// while music plays. The media
 /// tracker is watched while such a pill is up; the visuals exist only while the row shows.
 /// </summary>
 internal sealed class NowPlayingRow
@@ -119,8 +120,9 @@ internal sealed class NowPlayingRow
         if (view is null)
         {
             Release();
-            // The peek pill is ambient and can stay up for hours, so nothing moves in it: no bars.
-            view = new View(island.Compositor, text, bars: reason != CompactReason.Peek);
+            // The peek pill and the pill kept while music plays are ambient and can stay up for hours, so nothing
+            // moves in them: no bars.
+            view = new View(island.Compositor, text, bars: reason is not (CompactReason.Peek or CompactReason.Playing));
             view.Root.Opacity = 0;
             island.Dips.Children.InsertAtTop(view.Root);
             view.Root.StartAnimation("Opacity", fadeIn);

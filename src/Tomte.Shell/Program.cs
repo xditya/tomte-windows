@@ -420,9 +420,9 @@ internal static partial class Program
     }
 
     /// <summary>
-    /// The panel host with the Shelf and Media panels, the Compact now-playing row and the track-change event.
-    /// The event is the one thing that listens to media while the island is hidden, and only when the user
-    /// turned it on in settings.
+    /// The panel host with the Shelf and Media panels, the Compact now-playing row, the track-change event and the
+    /// pill kept while music plays. The event and the kept pill are the only things that listen to media while the
+    /// island is hidden, and only when the user turned them on in settings.
     /// </summary>
     private static void StartPanels(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, ShortcutStore shortcuts, ClipboardWatch clipboard, Action<string>? log)
     {
@@ -477,7 +477,7 @@ internal static partial class Program
         // The row and the line live on the state changes and ContentReady they listen to.
         _ = new CompactLine(island, triggers, text, new NowPlayingRow(island, triggers, media, text, log), log);
 
-        bool announcing = false;
+        bool announcing = false, keeping = false;
         media.TrackChanged += playing =>
         {
             if (announcing)
@@ -486,20 +486,27 @@ internal static partial class Program
                 triggers.Raise(new IslandEvent(playing.Title, DateTimeOffset.Now) { Source = IslandEventSource.TrackChange });
             }
         };
+        media.Changed += () => triggers.MediaChanged(media.Current.IsPlaying);
         Apply(store.Current);
         // Changed arrives on a pool thread.
         store.Changed += settings => island.Queue.TryEnqueue(() => Apply(settings));
 
         void Apply(TomteSettings settings)
         {
-            if (settings.MediaTrackChangeEvent == announcing)
+            Listen(ref announcing, settings.MediaTrackChangeEvent);
+            Listen(ref keeping, settings.KeepWhilePlaying);
+        }
+
+        // No positions and no art: a hidden island needs only the title and whether it plays.
+        void Listen(ref bool listening, bool wanted)
+        {
+            if (wanted == listening)
             {
                 return;
             }
 
-            announcing = settings.MediaTrackChangeEvent;
-            // No positions and no art: a hidden island needs only the title to know the track changed.
-            if (announcing)
+            listening = wanted;
+            if (wanted)
             {
                 media.Watch(timeline: false, art: false);
             }

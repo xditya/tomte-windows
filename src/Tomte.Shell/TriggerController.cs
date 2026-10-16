@@ -11,12 +11,12 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// Turns trigger messages into state changes on the UI thread. The pause and the suppression check run before
-/// every MorphTo. Owns the retraction, hover, event, peek, first-run, drag, timer-done, quiet-recheck and undo timers,
-/// all SetTimer one-shots on the island window, so nothing runs while nothing happens.
+/// every MorphTo. Owns the retraction, hover, event, peek, first-run, drag, timer-done, quiet-recheck, undo and kept-pill
+/// timers, all SetTimer one-shots on the island window, so nothing runs while nothing happens.
 /// </summary>
 internal sealed unsafe partial class TriggerController : IDisposable
 {
-    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6, TimerDoneTimer = 7, QuietTimer = 8, UndoTimer = 9;
+    private const nuint RetractTimer = 1, HoverTimer = 2, EventTimer = 3, PeekTimer = 4, FirstRunTimer = 5, DragTimer = 6, TimerDoneTimer = 7, QuietTimer = 8, UndoTimer = 9, KeepTimer = 10;
     private static readonly nuint[] HideTimers = [RetractTimer, HoverTimer, EventTimer, FirstRunTimer, DragTimer];
     private const int HitTestTimeoutMs = 50;
 
@@ -48,6 +48,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private bool armed, pointerInside, pointerOn, peekWanted, eventShowing, dragEntered, firstRunShowing, arrivalShowing;
     private ArrivalFlight? arrival;
     private Task saving = Task.CompletedTask;
+
+    // Something plays, as last heard while the pill kept while music plays is on, and when it last stopped (TickCount64).
+    private bool mediaPlaying;
+    private long stoppedAt;
 
     public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
     {
@@ -258,6 +262,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         : arrivalShowing ? CompactReason.Arrival
         : eventShowing ? CompactReason.Event
         : activity.HasFlag(IslandActivity.Peek) ? CompactReason.Peek
+        : activity.HasFlag(IslandActivity.Playing) ? CompactReason.Playing
         : CompactReason.Summary;
 
     /// <summary>
@@ -283,6 +288,22 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// settled, or the timer started or ended. Raised wherever the ring is brought up to date.
     /// </summary>
     public event Action? CompactChanged;
+
+    /// <summary>
+    /// Whether something plays, raised with every media change. With "Keep showing while music plays" on, the pill comes
+    /// when playback starts and goes <see cref="RetractionRules.KeptAfterPlayback"/> after it stops.
+    /// </summary>
+    public void MediaChanged(bool playing)
+    {
+        // Heard only while the setting is on, so turning it on never acts on what played when it was last read.
+        playing &= settings.KeepWhilePlaying;
+        if (playing != mediaPlaying)
+        {
+            mediaPlaying = playing;
+            stoppedAt = Environment.TickCount64;
+            KeepWhilePlaying();
+        }
+    }
 
     /// <summary>
     /// An internal event: shows Compact for the hold time. It waits while the tray pause, Focus, DND or fullscreen
@@ -453,6 +474,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
             Hide();
         }
 
+        if (!settings.KeepWhilePlaying)
+        {
+            mediaPlaying = false;
+        }
+
+        KeepWhilePlaying();
         SchedulePeek();
     }
 
@@ -773,6 +800,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case PeekTimer:
                 EvaluatePeek();
                 break;
+            case KeepTimer:
+                KeepWhilePlaying();
+                break;
             case QuietTimer:
                 // A change in the answer comes back through OnSuppressionChanged, which releases the queue.
                 watch.ReadNotificationState();
@@ -838,7 +868,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (step == HoverStep.Start && RetractionRules.OpensPanels(machine.State, activity))
         {
             PInvoke.SetTimer(island.Hwnd, HoverTimer, (uint)settings.Reveal.ExpandDwellHeldMs, null);
-            island.Swell(Compact == CompactReason.Summary);
+            island.Swell(Compact is CompactReason.Summary or CompactReason.Playing);
         }
         else if (step == HoverStep.Cancel)
         {
@@ -1090,19 +1120,67 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// One digest for everything that waited, once nothing holds events back; its content is the panel work's.
-    /// Called when the suppression changes, when the island hides and when a pause ends, the ways a wait can end.
+    /// One digest for everything that waited, once nothing holds events back; its content is the panel work's. Then the
+    /// pill kept while music plays, which waits for the island to come free in the same way. Called when the suppression
+    /// changes, when the island hides and when a pause ends, the ways a wait can end.
     /// </summary>
     private void ReleaseEvents()
     {
-        if (events.Count == 0 || holdEvents || EventsWait())
+        if (holdEvents)
         {
             return;
         }
 
-        var waited = events.Release();
-        log?.Invoke($"events: showing digest of {waited.Count}");
-        ShowEvent(waited);
+        if (events.Count > 0 && !EventsWait())
+        {
+            var waited = events.Release();
+            log?.Invoke($"events: showing digest of {waited.Count}");
+            ShowEvent(waited);
+        }
+
+        KeepWhilePlaying();
+    }
+
+    /// <summary>
+    /// The pill kept while music plays, by <see cref="RetractionRules.KeepsPill"/>: it comes where the island is free
+    /// (hidden, the peek pill or the launch arrival's pill, which give way to it as to an edge push), and once playback
+    /// stops it waits out the rest of <see cref="RetractionRules.KeptAfterPlayback"/> and goes, later while the pointer
+    /// is on it. Called wherever the answer can change.
+    /// </summary>
+    private void KeepWhilePlaying()
+    {
+        bool kept = activity.HasFlag(IslandActivity.Playing);
+        TimeSpan? stoppedFor = mediaPlaying ? null : TimeSpan.FromMilliseconds(Environment.TickCount64 - stoppedAt);
+        if (!RetractionRules.KeepsPill(settings.KeepWhilePlaying, kept, stoppedFor, Paused, watch.State, settings.AppRules))
+        {
+            if (kept && stoppedFor is not null && RetractionRules.HoldsPastItsTime(pointerInside, activity))
+            {
+                PInvoke.SetTimer(island.Hwnd, KeepTimer, EventHoldMs, null);
+            }
+            else if (kept)
+            {
+                log?.Invoke("kept pill: hidden");
+                Hide();
+            }
+        }
+        else if (kept && stoppedFor is { } stopped)
+        {
+            // What is left of the wait; a one-shot that fires early comes back here for the rest.
+            PInvoke.SetTimer(island.Hwnd, KeepTimer, (uint)Math.Ceiling((RetractionRules.KeptAfterPlayback - stopped).TotalMilliseconds), null);
+        }
+        else if (!kept && arrival is null && (machine.State == IslandState.Hidden || activity.HasFlag(IslandActivity.Peek) || Compact == CompactReason.Arrival))
+        {
+            arrivalShowing = false;
+            if (Reveal(RevealTrigger.Peek, IslandState.Compact))
+            {
+                activity |= IslandActivity.Playing;
+                // The pill can stay up for hours: the tomte rests without its sway.
+                island.Mascot.Still = true;
+                log?.Invoke("kept pill: shown while music plays");
+                // Settled only now, after Go; the kept pill carries no ring.
+                UpdateRing();
+            }
+        }
     }
 
     private void ShowEvent(IReadOnlyList<IslandEvent> shown)
@@ -1145,13 +1223,17 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>
     /// A pause, a sleep or a clock change ended a wait. Focus and quiet hours may have started during it with no event
     /// to hear, so the notification state is read fresh before the queue goes out, as Raise does. No event waiting,
-    /// no read.
+    /// no read, and only the pill kept while music plays is looked at again.
     /// </summary>
     private void ReadThenRelease()
     {
         if (events.Count > 0)
         {
             watch.ReadNotificationState(ReleaseEvents);
+        }
+        else
+        {
+            KeepWhilePlaying();
         }
     }
 
@@ -1464,6 +1546,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             // Whatever shows now was asked for: the peek pill's window rule and the rambler's hold on the island end here.
             activity = RetractionRules.TakenOver(activity);
+            // The tomte sways again on whatever takes over from the pill kept while music plays.
+            island.Mascot.Still = false;
         }
 
         if (state is not (IslandState.Panels or IslandState.Palette))
