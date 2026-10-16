@@ -395,8 +395,9 @@ public static partial class SearchRank
 
     /// <summary>
     /// Whether the places go above the apps: a place has every typed word and no app has them all ("display settings" is
-    /// Display, not the Settings app), or a place has the text as whole words or starts a word with it and no app starts
-    /// with it or has it whole ("wifi" is Wi-Fi, not the Firewall app's initials; "tom" is Tomte, not Power Automate).
+    /// Display, not the Settings app), or, with no app that starts with the text or has it whole, a place's name has it
+    /// whole ("wifi" is Wi-Fi, not the Firewall app's initials) or a place has it in its words or starts a word of its name
+    /// with it while no app starts a word with it ("tom" is Tomte, not Power Automate; "man" stays Task Manager).
     /// Start's "Uninstall ..." entries never keep a matching place below them: Enter must not start another program's
     /// uninstaller when Installed apps was meant.
     /// </summary>
@@ -411,9 +412,12 @@ public static partial class SearchRank
 
         // The substring tier and better match every typed word; letters in order and a typo match only loosely.
         bool every = places.Max(s => s.Score) >= SearchMatch.Substring && apps.All(s => s.Score < SearchMatch.Substring);
-        bool whole = places.Any(s => s.Score >= SearchMatch.WordStarts || SearchMatch.WholeWords(s.Item.Name, query) || SearchMatch.WholeWords(s.Item.Words, query))
-            && !apps.Any(s => s.Score >= SearchMatch.Prefix || SearchMatch.WholeWords(s.Item.Name, query));
-        return every || whole;
+        bool appWhole = apps.Any(s => s.Score >= SearchMatch.Prefix || SearchMatch.WholeWords(s.Item.Name, query));
+        bool appStart = apps.Any(s => s.Score >= SearchMatch.WordStarts);
+        bool nameWhole = places.Any(s => SearchMatch.WholeWords(s.Item.Name, query));
+        // A place's word list is long, so a word start there or in its name wins only when no app starts a word with the text.
+        bool loose = places.Any(s => SearchMatch.WholeWords(s.Item.Words, query) || SearchMatch.Score(s.Item.Name, query, wordStarts: true) >= SearchMatch.WordStarts);
+        return every || (!appWhole && (nameWhole || (loose && !appStart)));
     }
 
     /// <summary>How well a row's name, or a place's name and words, match the query; 0 is no match.</summary>

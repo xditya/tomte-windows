@@ -95,12 +95,17 @@ public sealed class SearchPlacesTests
     [InlineData("tom", "Tomte settings")] // Power Automate holds "tom" only inside a word
     [InlineData("uninstall", "Installed apps")] // another program's uninstaller never comes first
     [InlineData("taskbar", "Taskbar")] // SmartTaskbar is no whole word "taskbar"
+    [InlineData("edg", "Microsoft Edge")] // a word start in a place's long word list does not beat an app's
+    [InlineData("man", "Task Manager")]
+    [InlineData("record", "Sound Recorder")]
+    [InlineData("edit", "Registry Editor")]
     public void APlaceWithTheTextWholeGoesAboveAppsThatOnlyHoldIt(string typed, string first)
     {
         SearchItem[] apps =
         [
             App("Windows Defender Firewall with Advanced Security"), App("WinDbg"), App("HMA VPN"), App("qBittorrent"),
             App("Power Automate"), App("Uninstall"), App("Uninstall Node.js"), App("SmartTaskbar"),
+            App("Microsoft Edge"), App("Task Manager"), App("Sound Recorder"), App("Registry Editor"),
         ];
         var rows = SearchRank.Order(apps.Concat(Places.Rows(apps)), SearchRank.Query(typed), None);
         Assert.Equal(first, rows[0].Name);
