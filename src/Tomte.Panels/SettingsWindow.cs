@@ -163,6 +163,7 @@ public sealed partial class SettingsWindow : Window
             IsPaneToggleButtonVisible = false,
             IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
             IsSettingsVisible = false,
+            AutoSuggestBox = Finder(),
         };
         // Up and Down in the page list open each page as they reach it, so Tab goes on into the page that shows. Tab and
         // Shift+Tab come back into the list at the open page, not at the first one, and open nothing; Windows does not
@@ -719,13 +720,15 @@ public sealed partial class SettingsWindow : Window
         };
     }
 
-    // Label and note on the left, the control on the right, as in Windows Settings.
+    // Label and note on the left, the control on the right, as in Windows Settings. The row keeps its parts, so Find a
+    // setting reads the rows the pages show.
     private static Grid Row(string label, TextBlock? note, FrameworkElement control)
     {
-        var grid = new Grid { ColumnSpacing = 16 };
+        var title = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap };
+        var grid = new Grid { ColumnSpacing = 16, Tag = new RowParts(title, note, control) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Children = { new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap } } };
+        var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Children = { title } };
         if (note is not null)
         {
             text.Children.Add(note);
