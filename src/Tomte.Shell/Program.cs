@@ -97,6 +97,13 @@ internal static partial class Program
             return 2;
         }
 
+        // The strip driver types into the note: only into a run's own data folder, never the user's.
+        if (args.Contains("--debug-strip") && Arg(args, "--debug-settings") is null)
+        {
+            Console.Error.WriteLine("usage: --debug-strip needs --debug-settings <file>, so the note it types into is the run's own");
+            return 2;
+        }
+
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null || args.Contains("--debug-job");
 
@@ -237,6 +244,11 @@ internal static partial class Program
             _ = DebugSearch(triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
         }
 
+        if (args.Contains("--debug-strip") && logLine is not null)
+        {
+            _ = DebugStrip(island, triggers, logLine);
+        }
+
         // After the lasso the palette opens with the region on, for the user to type the question; the driver asks its own.
         triggers.Captured = captureQuestion is null
             ? (overlay, crop, foreground) => CaptureToPalette(island, triggers, store, logLine, overlay, crop, foreground)
@@ -245,6 +257,7 @@ internal static partial class Program
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
         tray.Ask += () => AskFromTray(island, triggers, store, logLine);
+        tray.Search += () => triggers.OpenSearch(ignorePause: true);
         // The island goes first, as for the Shortcuts tile, and with it the keys it registers while open (Esc among them),
         // which a settings shortcut box would otherwise not get.
         tray.OpenSettings += () =>
@@ -407,10 +420,17 @@ internal static partial class Program
         search = new SearchHost(island, triggers, text, typing, store, db, shortcuts, log)
         {
             Ask = words => AskFromSearch(island, triggers, store, log, words),
+            Back = () => island.Queue.TryEnqueue(() => GoBack(island, triggers)),
             AiSearch = words => AiSearchSession(store, words, log),
         };
         triggers.SearchOpened = search.Open;
-        var panels = new PanelHost(island, triggers.Machine, text, log) { Resize = triggers.ResizePanels, Ask = triggers.AskClicked };
+        var panels = new PanelHost(island, triggers.Machine, text, log)
+        {
+            Resize = triggers.ResizePanels,
+            Ask = triggers.AskClicked,
+            Search = triggers.SearchClicked,
+            SearchKey = () => store.Current.Hotkeys.Search,
+        };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, text, log));

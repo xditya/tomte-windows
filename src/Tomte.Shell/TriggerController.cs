@@ -185,25 +185,37 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// The search hotkey (and the --debug-search driver): the Palette state as the search box. Over the AI box or a drop
-    /// zone's result, which share the state, the search takes their place. False when it did not open.
+    /// zone's result, which share the state, the search takes their place. Opened by the search button on the open
+    /// panels it can go back there (<see cref="FromPanels"/>); from the tray it ignores the pause, as the tray's other
+    /// items do. False when it did not open.
     /// </summary>
-    internal bool OpenSearch()
+    internal bool OpenSearch(bool fromPanels = false, bool ignorePause = false)
     {
         if (machine.State == IslandState.Palette)
         {
             HideForNext();
         }
 
-        // At the palette's smallest; the search grows to what it shows.
-        if (!Reveal(RevealTrigger.Hotkey, IslandState.Palette, (SearchSize.W, PanelSize.PaletteMinHeight)))
+        // At the palette's smallest; the search grows to what it shows. The island the button is on was up, so the pause
+        // has had its say.
+        if (!Reveal(RevealTrigger.Hotkey, IslandState.Palette, (SearchSize.W, PanelSize.PaletteMinHeight), ignorePause || fromPanels))
         {
             return false;
         }
 
-        Searching = true;
+        (Searching, FromPanels) = (true, fromPanels);
         SearchOpened?.Invoke();
         return true;
     }
+
+    /// <summary>The search button on the open panels: the search box in their place, on the next turn, after the click or key.</summary>
+    internal void SearchClicked() => island.Queue.TryEnqueue(() =>
+    {
+        if (machine.State == IslandState.Panels)
+        {
+            OpenSearch(fromPanels: true);
+        }
+    });
 
     // The search box and the AI box share the Palette state, and a view of one stays through Palette to Palette: the
     // search goes first, so the other opens in its place instead of on top of it.
@@ -340,15 +352,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// The palette showing now was opened by a panel action (the Ask button, Ctrl+K, History's Continue), so it can go
-    /// back there. Not by a hotkey, the tray or anything else that opens it while Panels happen to show.
+    /// The palette showing now was opened by a panel action (the Ask button, Ctrl+K, History's Continue, the search
+    /// button), so it can go back there. Not by a hotkey, the tray or anything else that opens it while Panels happen to
+    /// show.
     /// </summary>
     internal bool FromPanels { get; private set; }
 
     /// <summary>That panel action was a key while the island had the keyboard: the AI box keeps the keyboard, prompt or not.</summary>
     internal bool AskedByKey { get; private set; }
 
-    /// <summary>The AI box opened from Panels goes back to the tab it was opened from, as that tab was left.</summary>
+    /// <summary>The AI box or the search box opened from Panels goes back to the tab it was opened from, as that tab was left.</summary>
     internal void Back()
     {
         if (machine.State == IslandState.Palette && FromPanels)
@@ -572,9 +585,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// The pill's own surface, which a drag moves along the top edge: the rambler's pill, the tab strip's row outside its
-    /// targets (the tabs and the Ask pill take their presses first; the tomte is part of the row), and the tomte over the
-    /// palette. Compact's targets move it through their own drag. Panel bodies and the palette's controls keep their
-    /// presses, and shelf and result tiles their drag out.
+    /// targets (the tabs, the search button and the Ask pill take their presses first; the tomte is part of the row), and
+    /// the tomte over the palette. Compact's targets move it through their own drag. Panel bodies and the palette's
+    /// controls keep their presses, and shelf and result tiles their drag out.
     /// </summary>
     private bool Grabs(System.Numerics.Vector2 at) => machine.State switch
     {

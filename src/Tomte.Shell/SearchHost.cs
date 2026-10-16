@@ -66,6 +66,10 @@ internal sealed class SearchHost
     private bool? held;
     private DispatcherQueueTimer? trim;
 
+    // A search opened since the last trim: the next time the island hides, whatever it went to from the search (the tab
+    // it came from, the AI box), its pages are handed back.
+    private bool searched;
+
     // This search's own.
     private SearchView? view;
     private IReadOnlyList<SearchItem> files = [];
@@ -89,10 +93,20 @@ internal sealed class SearchHost
                 triggers.FocusLost();
             }
         };
+        triggers.Machine.Changed += (_, to) =>
+        {
+            if (to == IslandState.Hidden && searched)
+            {
+                TrimLater();
+            }
+        };
     }
 
     /// <summary>The Ask row: the AI box opens with these words, and sends nothing until Enter there.</summary>
     public Action<string>? Ask { get; set; }
+
+    /// <summary>Esc in a search opened from a tab: the island goes back to that tab.</summary>
+    public Action? Back { get; set; }
 
     /// <summary>
     /// The Search with AI row: a send of the typed sentence to the AI box's provider, with its cap, send log and history,
@@ -109,7 +123,10 @@ internal sealed class SearchHost
     /// <summary>The debug driver's runs: a row that would open is logged and the island hides; nothing opens, nothing is counted.</summary>
     public bool Dry { get; set; }
 
-    /// <summary>The search hotkey opened the Palette state as the search box: its content, and the box takes the keys.</summary>
+    /// <summary>
+    /// The search hotkey, the search button or the tray opened the Palette state as the search box: its content, and the
+    /// box takes the keys.
+    /// </summary>
     public void Open()
     {
         var (width, height) = triggers.SearchSize;
@@ -119,6 +136,7 @@ internal sealed class SearchHost
         shown.Entered += Entered;
         shown.CardAnswered += Answered;
         shown.Back += LeaveAi;
+        shown.Leave = triggers.FromPanels ? Back : null;
         shown.HeightChanged += () =>
         {
             if (view == shown && triggers.Searching)
@@ -131,6 +149,7 @@ internal sealed class SearchHost
         filesFrom = "";
         held = null;
         trim?.Stop();
+        searched = true;
         shown.TakeKeys();
         Refresh();
         _ = LoadAsync(shown);
@@ -146,11 +165,6 @@ internal sealed class SearchHost
                 if (view == shown)
                 {
                     view = null;
-                }
-
-                if (to == IslandState.Hidden)
-                {
-                    TrimLater();
                 }
             }
         }
@@ -189,6 +203,7 @@ internal sealed class SearchHost
                     return;
                 }
 
+                searched = false;
                 long before = Environment.WorkingSet;
                 bool trimmed = PInvoke.SetProcessWorkingSetSize(PInvoke.GetCurrentProcess(), nuint.MaxValue, nuint.MaxValue);
                 log?.Invoke($"search: working set trimmed ({trimmed}) from {before / 1048576.0:F1} MB to {Environment.WorkingSet / 1048576.0:F1} MB");

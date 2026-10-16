@@ -36,6 +36,7 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public const string Placeholder = "Search apps, files and folders";
     public const string Keys = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc clears";
     public const string KeysEmpty = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc closes";
+    public const string KeysBack = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc goes back";
     public const string NothingYet = "Type to search your apps, files and folders. What you open from here is listed first next time.";
     public const string NoResults = "Nothing found.";
     public const string AiRow = "Search with AI";

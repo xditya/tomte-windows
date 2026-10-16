@@ -290,6 +290,52 @@ public class PanelTests
     }
 
     [Fact]
+    public void TheSearchButtonSitsJustBeforeAskAndEveryTabKeepsItsWholeWordFrom476To560()
+    {
+        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
+        // From a panel cut to 60% of a 1024 px screen at 125% (491 DIP) and of an 800 px one (480), and a bit below,
+        // up to the panel width: every tab shown, every word whole, all short of the search button.
+        for (float width = 476; width <= (float)PanelSize.Width; width += 0.5f)
+        {
+            var ask = TabStrip.AskPill(width).Card;
+            var (card, glyph) = TabStrip.SearchButton(width);
+            Assert.Equal(ask.Left - TabStrip.Gap, card.Right, 0.01);
+            Assert.Equal((ask.Y, ask.Height), (card.Y, card.Height));
+            Assert.Equal(card.Height, card.Width);
+            Assert.Equal(card.X + card.Width / 2, glyph.X + glyph.Width / 2, 0.01);
+            Assert.Equal(PanelSpace.TabStripHeight / 2, glyph.Y + glyph.Height / 2, 0.01);
+            foreach (bool mascot in new[] { true, false })
+            {
+                foreach (var current in all)
+                {
+                    var labels = TabStrip.Labels(all, current, width, mascot);
+                    Assert.Equal(all.Length, labels.Count);
+                    Assert.All(labels, label =>
+                    {
+                        Assert.True(label.Slot.Width >= Tomte.Core.Text.TextSlot.Measure(label.Text, label.Style, width), $"{label.Text} cut at {width}");
+                        Assert.True(label.Slot.Right <= card.Left - TabStrip.Gap + 0.01, $"{label.Text} ends at {label.Slot.Right}, search starts at {card.Left}");
+                    });
+                }
+            }
+        }
+
+        // At the panel width the padding is whole too, with the tomte on.
+        var full = TabStrip.Labels(all, PanelId.Scratchpad, (float)PanelSize.Width, mascot: true);
+        Assert.All(full, label => Assert.Equal(Tomte.Core.Text.TextSlot.Measure(label.Text, label.Style, 560) + 2 * TabStrip.PadX, label.Slot.Width, 0.01));
+
+        // Narrower, the padding gives way before a label is cut: at 490 every label keeps more than the least padding.
+        var tight = TabStrip.Labels(all, PanelId.Shelf, 490, mascot: true);
+        Assert.All(tight, label => Assert.InRange(label.Slot.Width - Tomte.Core.Text.TextSlot.Measure(label.Text, label.Style, 490), 2 * TabStrip.MinPadX - 0.01, 2 * TabStrip.PadX - 0.01));
+    }
+
+    [Theory]
+    [InlineData("Win+Alt+Space", "Search (Win+Alt+Space)")]
+    [InlineData("alt + win + f", "Search (Win+Alt+F)")]
+    [InlineData("", "Search")]
+    [InlineData("Win+Alt", "Search")]
+    public void TheSearchButtonsTipNamesTheShortcutSetInSettings(string chord, string tip) => Assert.Equal(tip, TabStrip.SearchTip(chord));
+
+    [Fact]
     public void AnAttachedStripStartsAtTheBodyNotAtTheRamps()
     {
         PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];

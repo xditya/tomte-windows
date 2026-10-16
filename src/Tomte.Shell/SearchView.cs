@@ -18,7 +18,7 @@ namespace Tomte.Shell;
 /// results under it by group with a heading each, and a footer with the keys and where files come from. The box keeps
 /// every key: Up and Down move the selection through all rows and wrap, Tab and Shift+Tab jump to the next or previous
 /// group, Enter opens, Ctrl+Enter shows the row's file in its folder, Page Up and Page Down move a page, Esc clears the
-/// box and then closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
+/// box, then goes back or closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
 /// the pointer's hover is the interaction host's, and a click opens a row. A card (getting Everything) can take the
 /// list's place: Tab moves between its buttons, Enter presses the focused one, which starts on the safe one. Icons come
 /// from the shell, read off this thread and kept for the session. Island thread only.
@@ -158,6 +158,9 @@ internal sealed class SearchView : IDisposable, IInteractive
     /// <summary>Esc while AI search shows: back to the results for the typed text.</summary>
     public event Action? Back;
 
+    /// <summary>Opened from a tab: Esc with nothing else to step back goes back to it. Set before the view first shows.</summary>
+    public Action? Leave { get; set; }
+
     /// <summary>The line above AI search's rows; null when AI search is not showing.</summary>
     public string? Lead => ai ? lead ?? hint : null;
 
@@ -257,9 +260,17 @@ internal sealed class SearchView : IDisposable, IInteractive
         }
     }
 
-    /// <summary>Page Up and Page Down reach here from the box: the selection moves a page.</summary>
+    /// <summary>
+    /// Page Up and Page Down reach here from the box: the selection moves a page. In a search opened from a tab, so does
+    /// the Esc hotkey while the island does not have the keys; it steps back as Esc in the box does.
+    /// </summary>
     public bool Command(NavKey key)
     {
+        if (key == NavKey.Escape && !disposed && Leave is not null)
+        {
+            return OnEscape();
+        }
+
         if (disposed || card is not null || key is not (NavKey.PageUp or NavKey.PageDown) || rows.Count == 0)
         {
             return false;
@@ -339,7 +350,7 @@ internal sealed class SearchView : IDisposable, IInteractive
         Grow();
         placeholder.Show(typed.Length == 0 ? SearchLayout.Placeholder : "", PaletteLayout.Placeholder, layout.Editor);
         boxLine.Color = Argb(focus.Focused == editor ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine);
-        var (left, right) = layout.Footer(card is not null ? "" : ai ? SearchLayout.AiKeys : typed.Length > 0 ? SearchLayout.Keys : SearchLayout.KeysEmpty, card is null ? source : "");
+        var (left, right) = layout.Footer(card is not null ? "" : ai ? SearchLayout.AiKeys : typed.Length > 0 ? SearchLayout.Keys : Leave is null ? SearchLayout.KeysEmpty : SearchLayout.KeysBack, card is null ? source : "");
         footLeft.Show(left);
         footRight.Show(right);
         band.IsVisible = card is null;
@@ -579,8 +590,9 @@ internal sealed class SearchView : IDisposable, IInteractive
             : firsts[(at - 1 + firsts.Count) % firsts.Count];
     }
 
-    // Esc closes a card first, then leaves AI search for the results it came from, then clears the box, then leaves the
-    // island to hide.
+    // Esc closes a card first, then leaves AI search for the results it came from, then clears the box, then goes back to
+    // the tab the search was opened from, else leaves the island to hide. The back is here, not only in Command, so it
+    // works from the first frame: the view joins the interaction host only as it fades in.
     internal bool OnEscape()
     {
         if (card is not null)
@@ -598,6 +610,18 @@ internal sealed class SearchView : IDisposable, IInteractive
         if (typed.Length > 0)
         {
             island.Queue.TryEnqueue(() => Fill(""));
+            return true;
+        }
+
+        if (Leave is { } leave)
+        {
+            // Esc pressed in the box is a key, so focus shows on the tab, as after any key there.
+            if (focus.Focused == editor)
+            {
+                island.Interaction.ShowFocus();
+            }
+
+            leave();
             return true;
         }
 
