@@ -37,6 +37,9 @@ public static class CompactLayout
 
     private static float Width => (float)IslandGeometry.Compact.Width;
 
+    /// <summary>The pill's trailing end in island space; what is laid out here sits this far left in a frame measured from that end.</summary>
+    public static float End => Width / 2;
+
     public const string PillId = "pill", TomteId = "tomte", AskTip = "Ask Tomte";
 
     /// <summary>

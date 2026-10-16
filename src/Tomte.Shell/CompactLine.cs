@@ -89,25 +89,25 @@ internal sealed class CompactLine
             return;
         }
 
+        bool mascot = island.Mascot.Enabled;
         if (view is null)
         {
             Release();
-            view = new View(island.Compositor, text);
+            // Words the tomte leads end the pill, so they go with its trailing end; alone they keep to its centre.
+            view = new View(island.Compositor, text, mascot ? island.Trailing : island.Dips, fromEnd: mascot);
             view.Root.Opacity = 0;
-            island.Dips.Children.InsertAtTop(view.Root);
             view.Root.StartAnimation("Opacity", fadeIn);
         }
 
         bool ring = triggers.CompactShows(playing: false) == CompactContent.TimerRing;
         bool clock = left is null && triggers.Compact == CompactReason.Summary;
-        bool mascot = island.Mascot.Enabled;
         var slot = CompactLayout.Line(mascot, ring);
         if (clock)
         {
             line = CompactRules.Glance(now, Facts(now), slot.Width, Measure);
         }
 
-        view.Text.Show(line, CompactLayout.Ending(left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle, led: mascot || ring), slot);
+        view.Text.Show(line, CompactLayout.Ending(left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle, led: mascot || ring), view.Place(slot));
 
         if (left is { } l && l > TimeSpan.Zero)
         {
@@ -180,25 +180,33 @@ internal sealed class CompactLine
         if (leaving is { } gone)
         {
             leaving = null;
-            island.Dips.Children.Remove(gone.Root);
             gone.Dispose();
         }
     }
 
     private sealed class View : IDisposable
     {
-        public View(Compositor compositor, TextRenderer text)
+        private readonly ContainerVisual frame;
+        private readonly bool fromEnd;
+
+        public View(Compositor compositor, TextRenderer text, ContainerVisual frame, bool fromEnd)
         {
             Root = compositor.CreateContainerVisual();
             Text = text.Create(Root);
+            (this.frame, this.fromEnd) = (frame, fromEnd);
+            frame.Children.InsertAtTop(Root);
         }
 
         public ContainerVisual Root { get; }
 
         public TextVisual Text { get; }
 
+        /// <summary>A slot of island space as this view's frame measures it: from the pill's trailing end, or from its centre.</summary>
+        public System.Drawing.RectangleF Place(System.Drawing.RectangleF slot) => fromEnd ? slot with { X = slot.X - CompactLayout.End } : slot;
+
         public void Dispose()
         {
+            frame.Children.Remove(Root);
             Text.Dispose();
             Root.Dispose();
         }

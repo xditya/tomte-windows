@@ -196,6 +196,18 @@ internal sealed unsafe class IslandWindow : IDisposable
         Live = compositor.CreatePropertySet();
         Live.InsertScalar("RampW", 0);
 
+        // The body's trailing end in every frame, and the middle of the live top row against the pill's, each a whole
+        // number of pixels from Dips' origin, so text placed in it lands on the pixel grid as it does there. At rest on
+        // the pill, both are exactly where Dips puts the pill's own right edge and middle.
+        Trailing = compositor.CreateContainerVisual();
+        var end = compositor.CreateExpressionAnimation(FormattableString.Invariant(
+            $"Vector3(Ceil((content.Size.X - {2 * Margin}) / 2 - live.RampW * dips.Scale.X) / dips.Scale.X, Floor((Min(content.Size.Y - {2 * Margin}, {PanelSpace.TabStripHeight} * dips.Scale.X) - Ceil({IslandGeometry.Compact.Depth} * dips.Scale.X)) / 2) / dips.Scale.X, 0)"));
+        end.SetReferenceParameter("content", Content);
+        end.SetReferenceParameter("dips", Dips);
+        end.SetReferenceParameter("live", Live);
+        Trailing.StartAnimation("Offset", end);
+        Dips.Children.InsertAtTop(Trailing);
+
         live = compositor.CreateContainerVisual();
         live.Children.InsertAtBottom(pill.Visual);
         live.Children.InsertAtTop(Content);
@@ -243,6 +255,14 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     /// <summary>Clipped by the outline and morphing with it, in physical pixels.</summary>
     public ContainerVisual Content { get; }
+
+    /// <summary>
+    /// Inside <see cref="Dips"/>, in DIPs measured from the body's trailing end: x = 0 at the live outline's right edge
+    /// through every frame of a morph, and y kept as far from the middle of the live top row as it is from the resting
+    /// pill's. What ends the Compact pill sits here, so it opens, closes and swells with that end and is never cut by a
+    /// pill still growing toward where it rests.
+    /// </summary>
+    public ContainerVisual Trailing { get; }
 
     /// <summary>
     /// Inside <see cref="Content"/>, in island space: DIPs, x = 0 on the island's centre line, y = 0 at the
