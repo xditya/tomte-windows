@@ -288,6 +288,11 @@ internal static partial class Program
             _ = DebugSwell(island, logLine);
         }
 
+        if (int.TryParse(Arg(args, "--debug-pause"), out int pauseAfter) && logLine is not null)
+        {
+            _ = DebugPause(triggers, pause, pauseAfter, logLine);
+        }
+
         MSG message;
         while (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value > 0)
         {
@@ -536,6 +541,21 @@ internal static partial class Program
         triggers.Dropped += drop => shelf.Accept(drop);
         zones = new DropZones(island, triggers, shelf, text, store, db, log);
         return new ShelfPanel(island, triggers, shelf, text, log);
+    }
+
+    /// <summary>
+    /// --debug-pause seconds with --debug-log=path: the tray's "Pause for 1 hour" that long after the start, with no menu,
+    /// then its resume as long after that. Logs the island's state after each.
+    /// </summary>
+    private static async Task DebugPause(TriggerController triggers, PauseState pause, int seconds, Action<string> log)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        pause.PauseFor(TimeSpan.FromHours(1), DateTimeOffset.Now);
+        triggers.Hide();
+        log($"debug pause: paused, island {triggers.State}");
+        await Task.Delay(TimeSpan.FromSeconds(seconds));
+        pause.Resume();
+        log($"debug pause: resumed, island {triggers.State}");
     }
 
     /// <summary>
