@@ -261,15 +261,14 @@ internal sealed class SearchView : IDisposable, IInteractive
     }
 
     /// <summary>
-    /// Page Up and Page Down reach here from the box: the selection moves a page. So does an Esc the box had nothing for,
-    /// which goes back to the tab the search was opened from.
+    /// Page Up and Page Down reach here from the box: the selection moves a page. In a search opened from a tab, so does
+    /// the Esc hotkey while the island does not have the keys; it steps back as Esc in the box does.
     /// </summary>
     public bool Command(NavKey key)
     {
-        if (key == NavKey.Escape && !disposed && card is null && Leave is { } leave)
+        if (key == NavKey.Escape && !disposed && Leave is not null)
         {
-            leave();
-            return true;
+            return OnEscape();
         }
 
         if (disposed || card is not null || key is not (NavKey.PageUp or NavKey.PageDown) || rows.Count == 0)
@@ -591,8 +590,9 @@ internal sealed class SearchView : IDisposable, IInteractive
             : firsts[(at - 1 + firsts.Count) % firsts.Count];
     }
 
-    // Esc closes a card first, then leaves AI search for the results it came from, then clears the box, then leaves the
-    // island to hide.
+    // Esc closes a card first, then leaves AI search for the results it came from, then clears the box, then goes back to
+    // the tab the search was opened from, else leaves the island to hide. The back is here, not only in Command, so it
+    // works from the first frame: the view joins the interaction host only as it fades in.
     internal bool OnEscape()
     {
         if (card is not null)
@@ -610,6 +610,18 @@ internal sealed class SearchView : IDisposable, IInteractive
         if (typed.Length > 0)
         {
             island.Queue.TryEnqueue(() => Fill(""));
+            return true;
+        }
+
+        if (Leave is { } leave)
+        {
+            // Esc pressed in the box is a key, so focus shows on the tab, as after any key there.
+            if (focus.Focused == editor)
+            {
+                island.Interaction.ShowFocus();
+            }
+
+            leave();
             return true;
         }
 
