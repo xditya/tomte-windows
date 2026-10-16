@@ -103,7 +103,7 @@ internal static partial class Program
         // The undo driver sends to the provider in settings and puts a file on the shelf: only with a run's own settings.
         if (args.Contains("--debug-undo") && Arg(args, "--debug-settings") is null)
         {
-            Console.Error.WriteLine("usage: --debug-undo palette|search|zone|card|voice|idle|events needs --debug-settings <file>, so it sends to the run's own provider and shelf");
+            Console.Error.WriteLine("usage: --debug-undo palette|search|zone|card|voice|idle|events|music needs --debug-settings <file>, so it sends to the run's own provider and shelf");
             return 2;
         }
 
