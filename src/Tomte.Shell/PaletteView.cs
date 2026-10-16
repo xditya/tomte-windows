@@ -1126,6 +1126,7 @@ internal sealed partial class PaletteHost
     private bool Reopened(PaletteSession session, Shut shut)
     {
         Type(session, null, shut);
+        Face(session);
         return true;
     }
 

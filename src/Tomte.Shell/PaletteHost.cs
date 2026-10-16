@@ -126,8 +126,18 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
         view.HeightChanged += () => Grow(view.Height);
         Grow(view.Height);
         Watch(session, question);
+        Face(session);
         return true;
     }
+
+    // The tomte as the view left it: thinking while the send runs, the answer's face once it is done.
+    private void Face(PaletteSession session) => island.Mascot.Set(session.Status switch
+    {
+        PaletteStatus.Sending => MascotState.Thinking,
+        PaletteStatus.Done => MascotState.Result,
+        PaletteStatus.Failed => MascotState.Error,
+        _ => MascotState.Compact,
+    });
 
     // The tomte rests while the palette waits for the user's answer, and thinks again once it is given.
     private void RestWhileAsked(ToolQuestion question)
