@@ -222,13 +222,13 @@ internal static partial class Program
         hotkeyPalette.Type(session, back);
         if (words is not null)
         {
-            // From the search box's Ask row: the words wait in the prompt for Enter, with what the chips add.
-            hotkeyPalette.Fill(words);
+            // From the search box's Ask row: choosing the row was the send, so the words go at once with the chips as they are.
+            hotkeyPalette.Send(words);
         }
     }
 
     /// <summary>
-    /// The search box's Ask row: the AI box in the search's place with the typed words in its prompt. The island keeps the
+    /// The search box's Ask row: the AI box in the search's place, sending the typed words at once. The island keeps the
     /// keys through the AI box's short wait, as for any open from the keyboard, so nothing typed meanwhile reaches the app
     /// behind.
     /// </summary>
