@@ -8,6 +8,7 @@ using Tomte.Core.Device;
 using Tomte.Core.Search;
 using Tomte.Core.Shortcuts;
 using Tomte.Core.Storage;
+using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Windows.System;
 using Windows.Win32;
@@ -566,7 +567,8 @@ internal sealed class SearchHost
                 shown.Show([.. picked.Select(f => new FileHit(f.Path, f.Folder).Item())], sent, "", aiSearch: true, why: finder.Reason.Length > 0 ? $"AI · {finder.Reason}" : "AI");
                 break;
             case PaletteStatus.Done:
-                string said = finder.Picked is not null ? finder.Reason : session.AnswerText.Trim();
+                // The note is one plain look: the model's own words keep their text and lose Markdown's characters.
+                string said = finder.Picked is not null ? finder.Reason : string.Join('\n', Markdown.Parse(session.AnswerText).Select(b => b.Text));
                 shown.Show([], sent, $"AI search found nothing that fits.{(said.Length > 0 ? " " + said : "")}", aiSearch: true);
                 break;
             case PaletteStatus.Failed:
