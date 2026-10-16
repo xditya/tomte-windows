@@ -183,6 +183,34 @@ public sealed class SearchLayout(float width, bool mascot, float height)
             new(KindLabel(item), Kind, new RectangleF(kindX, top, KindWidth, RowHeight)));
     }
 
+    /// <summary>The show in folder button: a card this big, 4 DIPs in from the row's right end and centred down it, in the kind's place.</summary>
+    public const float FolderSize = 28, FolderGlyphSize = 14, FolderInset = 4, FolderCorner = 6;
+
+    /// <summary>The button's card is the tab strip's faint white; its folder is drawn in the name's white.</summary>
+    public const uint FolderFill = 0x1CFFFFFF, FolderInk = TextStyle.WhiteColor;
+
+    public const string FolderTip = "Show in folder", FolderKey = "Ctrl+Shift+Enter";
+
+    /// <summary>The folder in its 14 DIP box: the outline of a folder with its tab at the top left, and the line under the tab.</summary>
+    public static readonly GlyphFigure[] FolderGlyph =
+    [
+        new(TabStrip.Polygon(1.75f, 2.75f, 5.5f, 2.75f, 7, 4.25f, 12.25f, 4.25f, 12.25f, 11.75f, 1.75f, 11.75f), Stroked: true),
+        new(TabStrip.Polygon(1.75f, 5.75f, 12.25f, 5.75f, 12.25f, 7.25f, 1.75f, 7.25f)),
+    ];
+
+    /// <summary>
+    /// Whether a row gets the show in folder button: one that is a file or a folder (a file, a folder, a shelf item, a
+    /// tile for a file or folder, AI search's picks). Apps, places and the AI rows have nothing to show in a folder.
+    /// </summary>
+    public static bool HasFolder(SearchItem item) => item.Location is not null;
+
+    /// <summary>The show in folder button's card and its folder's box, in band space, for a row whose top is <paramref name="top"/>.</summary>
+    public (RectangleF Card, RectangleF Glyph) Folder(float top)
+    {
+        float x = Band.Width - FolderInset - FolderSize, y = top + ((RowHeight - FolderSize) / 2), inset = (FolderSize - FolderGlyphSize) / 2;
+        return (new(x, y, FolderSize, FolderSize), new(x + inset, y + inset, FolderGlyphSize, FolderGlyphSize));
+    }
+
     /// <summary>The scroll that shows the line from <paramref name="top"/> to <paramref name="bottom"/> whole, moving as little as it can.</summary>
     public float ScrollTo(float scroll, float top, float bottom, float content) =>
         Math.Clamp(bottom > scroll + Band.Height ? bottom - Band.Height : top < scroll ? top : scroll, 0, Math.Max(0, content - Band.Height));

@@ -1,4 +1,5 @@
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Search;
 using Xunit;
 
@@ -239,6 +240,42 @@ public sealed class SearchLayoutTests
         Assert.True(icon.Right < name.Slot.Left && name.Slot.Right <= detail.Slot.Left && detail.Slot.Right < kind.Slot.Left);
         Assert.True(kind.Slot.Right <= row.Right);
         Assert.Equal("File", kind.Text);
+    }
+
+    [Fact]
+    public void FilesAndFoldersGetTheFolderButtonAndNothingElseDoes()
+    {
+        SearchItem[] with =
+        [
+            new FileHit(@"D:\Work\notes.txt", false).Item(),
+            new FileHit(@"D:\Work", true).Item(),
+            new(SearchKind.Shelf, "draft.docx", @"C:\Shelf\draft.docx", @"C:\Shelf", @"C:\Shelf\draft.docx", @"C:\Shelf\draft.docx"),
+            new(SearchKind.Shortcut, "Projects", "4", @"D:\Projects", null, @"D:\Projects"),
+        ];
+        SearchItem[] without =
+        [
+            new(SearchKind.App, "Paint", @"shell:AppsFolder\Paint"),
+            new(SearchKind.Shortcut, "Mail", "5", "https://mail.example.com"),
+            new(SearchKind.Place, "Display", "ms-settings:display", "System"),
+            new(SearchKind.Place, "Hotkeys", "tomte:settings:Hotkeys", "Tomte settings"),
+            new(SearchKind.Ask, "Ask Tomte", "x"),
+            new(SearchKind.AiSearch, SearchLayout.AiRow, "x"),
+            new(SearchKind.GetEverything, "Search every drive", ""),
+        ];
+        Assert.All(with, item => Assert.True(SearchLayout.HasFolder(item), item.Name));
+        Assert.All(without, item => Assert.False(SearchLayout.HasFolder(item), item.Name));
+    }
+
+    [Fact]
+    public void TheFolderButtonSitsInTheKindsPlaceInsideItsRow()
+    {
+        var item = new SearchItem(SearchKind.File, new string('x', 200), @"C:\x", new string('y', 300), Location: @"C:\x");
+        var (row, _, _, detail, kind) = Layout.Row(36, item);
+        var (card, glyph) = Layout.Folder(36);
+        Assert.True(card.Left >= kind.Slot.Left && card.Right <= row.Right && card.Left > detail.Slot.Right);
+        Assert.Equal((row.Top + row.Bottom) / 2, (card.Top + card.Bottom) / 2);
+        Assert.True(card.Contains(glyph) && card.Height >= StateLook.MinTarget);
+        Assert.Equal("Show in folder (Ctrl+Shift+Enter)", new Target("folder:0", card, SearchLayout.FolderCorner, TargetKind.Button, Tip: SearchLayout.FolderTip, Key: SearchLayout.FolderKey).TipWith(keys: true));
     }
 
     [Fact]

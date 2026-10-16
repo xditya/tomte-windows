@@ -251,7 +251,7 @@ internal static partial class Program
 
         if (Arg(args, "--debug-search") is { } searched && logLine is not null)
         {
-            _ = DebugSearch(triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
+            _ = DebugSearch(island, triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
         }
 
         if (args.Contains("--debug-strip") && logLine is not null)

@@ -142,6 +142,7 @@ internal sealed class SearchHost
         var shown = view = new SearchView(island, triggers.Machine, text, focus, (float)width, (float)height);
         shown.Typed += _ => Typed();
         shown.Clicked += item => Chosen(item, folder: false);
+        shown.FolderClicked += item => Chosen(item, folder: true);
         shown.Entered += Entered;
         shown.CardAnswered += Answered;
         shown.Back += LeaveAi;

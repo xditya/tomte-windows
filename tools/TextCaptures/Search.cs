@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Numerics;
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Search;
 using Tomte.Core.Shortcuts;
 using Tomte.Core.Text;
@@ -19,10 +20,10 @@ internal static partial class Program
         new(SearchKind.App, "Code Writer", "app:1", "", Path.Combine(WinDir, "notepad.exe")),
         new(SearchKind.App, "Codec Settings", "app:2", "", Path.Combine(WinDir, "System32", "control.exe")),
         new(SearchKind.App, "Command Prompt", "app:3", "", Path.Combine(WinDir, "System32", "cmd.exe")),
-        new(SearchKind.Shortcut, "Code projects", "4", @"D:\Projects\code", Path.Combine(WinDir, "Web")),
-        new(SearchKind.File, "code review notes.md", @"D:\Work\code review notes.md", @"D:\Work", Path.Combine(WinDir, "win.ini")),
-        new(SearchKind.Folder, "code", @"D:\Projects\code", @"D:\Projects", Path.Combine(WinDir, "Web")),
-        new(SearchKind.File, "Codes and passwords for the very long named family accounts spreadsheet.xlsx", @"D:\Home\Codes.xlsx", @"D:\Home\Paperwork\Accounts\Family\2026\Shared with everyone in the house", Path.Combine(WinDir, "win.ini")),
+        new(SearchKind.Shortcut, "Code projects", "4", @"D:\Projects\code", Path.Combine(WinDir, "Web"), @"D:\Projects\code"),
+        new(SearchKind.File, "code review notes.md", @"D:\Work\code review notes.md", @"D:\Work", Path.Combine(WinDir, "win.ini"), @"D:\Work\code review notes.md"),
+        new(SearchKind.Folder, "code", @"D:\Projects\code", @"D:\Projects", Path.Combine(WinDir, "Web"), @"D:\Projects\code"),
+        new(SearchKind.File, "Codes and passwords for the very long named family accounts spreadsheet.xlsx", @"D:\Home\Codes.xlsx", @"D:\Home\Paperwork\Accounts\Family\2026\Shared with everyone in the house", Path.Combine(WinDir, "win.ini"), @"D:\Home\Codes.xlsx"),
         new(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"),
         new(SearchKind.Ask, "Ask Tomte", "code", "\"code\""),
     ];
@@ -60,6 +61,9 @@ internal static partial class Program
         SearchScene("search-places", "sound", PlaceRows("sound"), 0, SearchLayout.NoResults, "Files: Everything"),
         SearchScene("search-places-first", "display settings", PlaceRows("display settings"), 0, SearchLayout.NoResults, "Files: Everything"),
         SearchScene("search-places-tomte", "clipboard", PlaceRows("clipboard"), 1, SearchLayout.NoResults, "Files: Everything"),
+        // The show in folder button on a selected file, and under the pointer with its state layer and tooltip.
+        SearchScene("search-folder", "code", CodeRows, 4, SearchLayout.NoResults, "Files: Everything"),
+        SearchScene("search-folder-tip", "code", CodeRows, 4, SearchLayout.NoResults, "Files: Everything", folderTip: true),
     ];
 
     // The rows a search gives with two apps beside the places, and Ask. Tomte's places take this program's icon here.
@@ -79,21 +83,23 @@ internal static partial class Program
 
     private static readonly SearchItem[] AiPicked =
     [
-        new(SearchKind.File, "invoice-2026-09-globex.pdf", @"D:\Work\Invoices\invoice-2026-09-globex.pdf", @"D:\Work\Invoices", Path.Combine(WinDir, "win.ini")),
-        new(SearchKind.Folder, "Invoices", @"D:\Work\Invoices", @"D:\Work", Path.Combine(WinDir, "Web")),
+        new(SearchKind.File, "invoice-2026-09-globex.pdf", @"D:\Work\Invoices\invoice-2026-09-globex.pdf", @"D:\Work\Invoices", Path.Combine(WinDir, "win.ini"), @"D:\Work\Invoices\invoice-2026-09-globex.pdf"),
+        new(SearchKind.Folder, "Invoices", @"D:\Work\Invoices", @"D:\Work", Path.Combine(WinDir, "Web"), @"D:\Work\Invoices"),
     ];
 
     // A scene at the height the view grows to for these rows (or for <paramref name="grown"/>, shown earlier).
-    private static Scene SearchScene(string name, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, IReadOnlyList<SearchItem>? grown = null, float tallest = (float)PanelSize.PaletteMaxHeight, bool ai = false, string? lead = null)
+    private static Scene SearchScene(string name, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, IReadOnlyList<SearchItem>? grown = null, float tallest = (float)PanelSize.PaletteMaxHeight, bool ai = false, string? lead = null, bool folderTip = false)
     {
         float height = Math.Max(SearchLayout.Fit((float)PanelSize.PaletteWidth, true, rows, card, tallest, lead), SearchLayout.Fit((float)PanelSize.PaletteWidth, true, grown ?? [], null, tallest));
-        return new(name, IslandGeometry.Panel(PanelSize.PaletteWidth, height), c => Search(c, typed, rows, select, hint, source, card, height, ai, lead));
+        var geometry = IslandGeometry.Panel(PanelSize.PaletteWidth, height);
+        return new(name, geometry, c => Search(c, typed, rows, select, hint, source, card, height, ai, lead, folderTip ? geometry : null));
     }
 
     // The search box as SearchView builds it: the box with the typed text or the placeholder, the footer, then the list
     // with a heading per group (or AI search's line above its rows), the selected row filled and outlined and kept in view,
-    // or the card in the list's place.
-    private static void Search(Canvas c, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, float height = (float)PanelSize.PaletteMaxHeight, bool ai = false, string? lead = null)
+    // with its show in folder button when it is a file, or the card in the list's place. With <paramref name="tipIn"/> the
+    // pointer is on that button: the host's state layer over it and its tooltip.
+    private static void Search(Canvas c, string typed, IReadOnlyList<SearchItem> rows, int select, string hint, string source, SearchCard? card = null, float height = (float)PanelSize.PaletteMaxHeight, bool ai = false, string? lead = null, IslandGeometry? tipIn = null)
     {
         var origin = new Vector2(-(float)PanelSize.PaletteWidth / 2, 0);
         var layout = new SearchLayout((float)PanelSize.PaletteWidth, mascot: true, height);
@@ -176,7 +182,23 @@ internal static partial class Program
 
             c.Text(name, list);
             c.Text(detail, list);
-            c.Text(kind, list);
+            bool folder = line.Row == select && SearchLayout.HasFolder(item);
+            c.Text(folder ? kind with { Text = "" } : kind, list);
+            if (folder)
+            {
+                var (button, glyph) = layout.Folder(line.Top);
+                c.RoundRect(Offset(button, list), SearchLayout.FolderCorner, SearchLayout.FolderFill);
+                c.Figures(SearchLayout.FolderGlyph, new Vector2(glyph.X, glyph.Y) + list, SearchLayout.FolderInk);
+                if (tipIn is { } g)
+                {
+                    c.RoundRect(Offset(button, list), SearchLayout.FolderCorner, StateLook.Hover);
+                    string tip = new Target("folder", button, SearchLayout.FolderCorner, TargetKind.Button, Tip: SearchLayout.FolderTip, Key: SearchLayout.FolderKey).TipWith(keys: true)!;
+                    var (tipCard, _, label) = StateLook.Tip(tip, false, Offset(button, list), new RectangleF((float)(-g.Width / 2), 0, (float)g.Width, (float)g.Depth));
+                    c.RoundRect(tipCard, StateLook.TipCorner, StateLook.TipFill);
+                    c.StrokeRect(tipCard, StateLook.TipCorner, StateLook.TipLine);
+                    c.Text(label, Vector2.Zero);
+                }
+            }
         }
     }
 }
