@@ -65,6 +65,15 @@ public class KeptPillTests
         Assert.True(RetractionRules.OpensPanels(IslandState.Compact, IslandActivity.Playing));
     }
 
+    [Fact]
+    public void NoTwoHoldsShareAFlagSoTheKeptPillNeverReadsAsTheUndoPill()
+    {
+        int[] flags = [.. Enum.GetValues<IslandActivity>().Where(f => f != IslandActivity.None).Select(f => (int)f)];
+        Assert.All(flags, f => Assert.Equal(1, System.Numerics.BitOperations.PopCount((uint)f)));
+        Assert.Equal(flags.Length, flags.Distinct().Count());
+        Assert.Equal(IslandActivity.None, IslandActivity.Playing & IslandActivity.Undo);
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
