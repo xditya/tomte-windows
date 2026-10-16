@@ -430,11 +430,15 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
-    /// <summary>Where the tomte rests in the Compact pill at the island's place: its box's top-left in screen pixels.</summary>
-    public System.Drawing.PointF MascotLanding()
+    /// <summary>
+    /// Where the tomte rests at the island's place, in the peek pill when it is <paramref name="alone"/> and in the
+    /// Compact pill otherwise: its box's top-left in screen pixels.
+    /// </summary>
+    public System.Drawing.PointF MascotLanding(bool alone)
     {
         Rescale(MonitorScale());
-        var shape = attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact;
+        var pill = alone ? IslandGeometry.Peek : IslandGeometry.Compact;
+        var shape = attached ? pill.Attached() : pill;
         return Arrival.Landing(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth, attached), attached);
     }
 

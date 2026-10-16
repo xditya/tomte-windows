@@ -5,7 +5,8 @@ namespace Tomte.Core;
 
 /// <summary>
 /// The tomte's flight at launch: it pops in at the middle of the island's monitor, larger than in the pill, rises to
-/// the top edge and lands in the Compact pill, which grows out of the edge as it comes. The motion is the island's
+/// the top edge and lands in the pill, which grows out of the edge as it comes: the peek pill, the tomte alone, or on a
+/// first start the Compact pill with the hint. The motion is the island's
 /// springs; these are when it sets off, when the pill starts, where it lands and whether it plays at all.
 /// </summary>
 public static class Arrival

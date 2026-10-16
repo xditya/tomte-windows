@@ -1383,7 +1383,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             try
             {
-                arrival = new ArrivalFlight(island, ArrivalPill, ArrivalEnded, log);
+                // A normal start lands in the peek pill, the tomte alone; a first start in the hint's pill.
+                arrival = new ArrivalFlight(island, ArrivalPill, ArrivalEnded, log, alone: settings.FirstRunHintShown);
                 return;
             }
             catch (ExternalException e)
@@ -1406,7 +1407,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         arrival = null;
         // Set before the morph, which reads it for the pill's content: the tomte alone.
         arrivalShowing = settings.FirstRunHintShown;
-        bool shown = machine.State == IslandState.Hidden && (settings.FirstRunHintShown ? Reveal(RevealTrigger.Event, IslandState.Compact) : FirstRunHint());
+        bool shown = machine.State == IslandState.Hidden && (settings.FirstRunHintShown ? Reveal(RevealTrigger.Event, IslandState.Compact, peek: true) : FirstRunHint());
         arrivalShowing &= shown;
         arrival = shown ? flight : null;
         if (!shown)
