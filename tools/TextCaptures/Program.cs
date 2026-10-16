@@ -252,6 +252,12 @@ internal static unsafe partial class Program
             new("compact-glance-date", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts()), ring: null)),
             // The push pill while the pointer rests on it, about to open: grown on its springs, the line where it was.
             new("compact-glance-swollen", IslandGeometry.Compact.Swollen(), c => CompactLine(c, Glance(new GlanceFacts { ShelfCount = 3 }), ring: null)),
+            UndoPill("compact-undo-answer", "AI answer closed", key: true),
+            UndoPill("compact-undo-search", "AI search closed", key: true),
+            UndoPill("compact-undo-result", "AI result closed", key: true),
+            UndoPill("compact-undo-transcript", "Transcript closed", key: true),
+            // Another app holds Win+Alt+Z: the button alone.
+            UndoPill("compact-undo-no-key", "AI answer closed", key: false),
             new("compact-peek", IslandGeometry.Peek, c =>
             {
                 c.Pill();
@@ -455,6 +461,30 @@ internal static unsafe partial class Program
         }
 
         c.Text(line, tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle, CompactLayout.Line(true, ring is not null), Vector2.Zero);
+    }
+
+    // The pill after an AI view closed, as UndoPill lays it out: its line, then Undo, white, with Win+Alt+Z beside the
+    // word unless another app holds the chord; the tomte is on.
+    private static Scene UndoPill(string name, string line, bool key)
+    {
+        var label = PaletteLayout.RunButton with { Align = TextAlign.Leading };
+        var keyStyle = TextStyle.Small with { Color = 0x8C000000 };
+        string chord = UndoClose.Chord.ToString();
+        float lw = TextSlot.Measure("Undo", label, 200), kw = key ? TextSlot.Measure(chord, keyStyle, 200) : 0;
+        var (width, slot, box) = CompactLayout.Undo(true, TextSlot.Measure(line, CompactLayout.LineStyle, 400), lw + (key ? CompactLayout.UndoKeyGap + kw : 0));
+        return new(name, IslandGeometry.Compact with { Width = width }, c =>
+        {
+            c.Pill();
+            c.Mascot();
+            c.Text(line, CompactLayout.LineStyle, slot, Vector2.Zero);
+            c.RoundRect(box, box.Height / 2, PaletteLayout.RunFill);
+            float x = box.X + CompactLayout.UndoPadX;
+            c.Text("Undo", label, new RectangleF(x, box.Y, lw + 1, box.Height), Vector2.Zero);
+            if (key)
+            {
+                c.Text(chord, keyStyle, new RectangleF(x + lw + CompactLayout.UndoKeyGap, box.Y, kw + 1, box.Height), Vector2.Zero);
+            }
+        });
     }
 
     private static IslandGeometry Panel((double W, double H) size) => IslandGeometry.Panel(size.W, size.H);
