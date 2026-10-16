@@ -130,6 +130,21 @@ public sealed class SearchPlacesTests
     }
 
     [Fact]
+    public void TheSearchPageIsOneOfTomtesPlaces()
+    {
+        var page = Places.Rows([]).Single(r => r.Target == "tomte:settings:Search");
+        Assert.Equal(("Search", "Tomte settings"), (page.Name, page.Detail));
+        Assert.True(Places.TomteSettingsAt(page.Target, out string? section));
+        Assert.Equal("Search", section);
+        Assert.Equal(page, Search("open everything settings")[0]);
+        Assert.Equal(page, Search("web search engine")[0]);
+        // A search engine's name is a web search, not Tomte's settings.
+        Assert.All(new[] { "bing", "google", "duckduckgo" }, engine => Assert.DoesNotContain(Search(engine), r => r.Target == "tomte:settings:Search"));
+        Assert.Contains("everything", Places.TomteWords("Search"), StringComparison.Ordinal);
+        Assert.Equal("", Places.TomteWords("Nowhere"));
+    }
+
+    [Fact]
     public void TheIslandsTabsAreFoundAndOpenTheirTab()
     {
         var shelf = Search("shelf").First(r => r.Detail == "Tomte island");

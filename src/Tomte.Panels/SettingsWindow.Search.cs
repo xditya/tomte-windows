@@ -1,10 +1,15 @@
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Tomte.Core;
 using Tomte.Core.Search;
 
 namespace Tomte.Panels;
 
-/// <summary>The Search part of the Hotkeys page: which file search is in use, getting Everything, and the web search engine.</summary>
+/// <summary>
+/// The Search page: the search box's shortcut (set on the Hotkeys page with the others), which file search is in use,
+/// getting Everything, and the web search engine.
+/// </summary>
 public sealed partial class SettingsWindow
 {
     // Under the file search: small local models rarely call AI search's tools.
@@ -13,15 +18,38 @@ public sealed partial class SettingsWindow
     private readonly TextBlock fileSearchNote = Note();
     private readonly Button getEverything = new() { Content = "Get Everything" };
 
-    // One line on where files come from, read when the window opens, and the button while Everything is not installed.
-    private Border FileSearchSection()
+    // The shortcut, with a link to its box on the Hotkeys page; one line on where files come from, read when the window
+    // opens, and the button while Everything is not installed; the web search engine.
+    private Border SearchSection()
     {
+        var shortcut = Note();
+        void ShowShortcut(TomteSettings s)
+        {
+            shortcut.Text = s.Hotkeys.Search.Length > 0 ? $"{s.Hotkeys.Search} opens the search box." : "No shortcut opens the search box.";
+            shortcut.Visibility = Visibility.Visible;
+        }
+
+        ShowShortcut(store.Current);
+        store.Changed += s => DispatcherQueue.TryEnqueue(() => ShowShortcut(s));
+        var change = new HyperlinkButton { Content = "Change in Hotkeys" };
+        change.Click += (_, _) =>
+        {
+            if (ReadRows().FirstOrDefault(r => r.Row is { Page: "Hotkeys" } && r.Row.Title == Hotkey.Name(HotkeyAction.Search)) is { } box)
+            {
+                _ = ShowAsync(box);
+            }
+        };
         getEverything.Click += async (_, _) => await GetEverythingAsync();
         _ = ShowFileSearchAsync();
-        var row = Row("File search", fileSearchNote, getEverything);
-        // The row names its control after the row; a screen reader should hear what the button does.
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(getEverything, "Get Everything");
-        return Card(row, Row("Web search", Note("What Open in browser in the search box searches with."), WebSearchEngines()), Note(AiSearchNote));
+        var card = Card(
+            Row("Search shortcut", shortcut, change),
+            Row("File search", fileSearchNote, getEverything),
+            Row("Web search", Note("What Open in browser in the search box searches with: Google, Bing or DuckDuckGo."), WebSearchEngines()),
+            Note(AiSearchNote));
+        // A row names its control after the row; a screen reader should hear what the link and the button do.
+        AutomationProperties.SetName(change, "Change the search shortcut in Hotkeys");
+        AutomationProperties.SetName(getEverything, "Get Everything");
+        return card;
     }
 
     // Google, Bing or DuckDuckGo, in the enum's order.

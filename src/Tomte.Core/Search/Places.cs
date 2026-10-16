@@ -23,15 +23,15 @@ public static class Places
         ("General", "General", "start with windows startup desktop peek track changes monitors island position"),
         ("Opening and closing", "Opening and closing", "edge push dwell reveal drag reveal retract delay open close"),
         ("Hotkeys", "Hotkeys", "shortcut keys keyboard shortcuts key bindings hotkey"),
+        ("Search", "Search", "file search everything windows index whole disk files web search engine"),
         ("Shelf and shortcuts", "Shelf and shortcuts", "shelf tiles drag out"),
-        ("Clipboard", "Clipboard", "clipboard history keep history"),
+        ("Clipboard", "Clipboard", "clipboard history keep history memory privacy"),
         ("Voice", "Voice", "rambler speech dictation spoken replies microphone"),
         ("AI", "AI", "provider api key model openai anthropic claude gemini ollama"),
         ("AI tools", "AI tools", "tools permissions always allowed desktop automation"),
         ("Per-app rules", "Per-app rules", "app rules fullscreen allow deny games"),
-        ("File search", "Search", "everything windows index whole disk files"),
         ("AI provider", "AI provider", "api key model provider"),
-        ("AI history", "AI history", "conversations answers keep history"),
+        ("AI history", "AI history", "conversations answers keep history memory privacy"),
         ("Scheduled jobs", "Scheduled jobs", "jobs schedule recurring"),
         ("MCP servers", "MCP servers", "mcp server"),
         ("Skills", "Skills", "agent skills"),
@@ -230,6 +230,9 @@ public static class Places
         int best = Best(place, query);
         return IsSettingsPage(place.Target) && WithoutSettings(query) is { } rest ? Math.Max(best, Best(place, rest)) : best;
     }
+
+    /// <summary>The words people type for one of Tomte's settings pages or sections, by its title or header; "" for none.</summary>
+    public static string TomteWords(string section) => TomtePages.FirstOrDefault(p => p.Section == section).Words ?? "";
 
     /// <summary>The word at the row's right end: Settings for a Windows page, Tomte for Tomte's own, Tool for a tool.</summary>
     public static string Label(string target) =>
