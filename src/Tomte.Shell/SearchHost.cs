@@ -37,7 +37,7 @@ internal sealed class SearchHost
     // Enter presses "Not now"; Install takes Tab to it, or a click.
     private static readonly SearchCard Confirm = new(
         "Get Everything for whole-disk search",
-        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in. Not now hides this row; Settings, Hotkeys keeps a Get Everything button.",
+        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in. Not now hides this row; Settings, Search keeps a Get Everything button.",
         [(NotNow, "Not now"), (Install, "Install")]);
 
     private static readonly SearchCard Installing = new(

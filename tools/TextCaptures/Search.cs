@@ -38,7 +38,7 @@ internal static partial class Program
 
     private static readonly SearchCard GetEverything = new(
         "Get Everything for whole-disk search",
-        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in. Not now hides this row; Settings, Hotkeys keeps a Get Everything button.",
+        "Tomte installs Everything (free, from voidtools) with winget. Windows asks for permission once. Everything then runs in the background, indexes every drive and starts when you sign in. Not now hides this row; Settings, Search keeps a Get Everything button.",
         [("notnow", "Not now"), ("install", "Install")]);
 
     private static List<Scene> SearchScenes() =>

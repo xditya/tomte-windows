@@ -110,10 +110,8 @@ public sealed partial class SettingsWindow : Window
                     Note("Allow: edge push and drag reveal work even when the app is fullscreen. Deny: only hotkeys open the island while the app is in front. Deny with hotkeys: the hotkeys go to the app as well."),
                     rulesList,
                     AddRuleRow())]),
-            ("Hotkeys", "\uE765", [
-                Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), Note("The Copilot key cannot open Tomte yet.")]),
-                Header("Search"),
-                FileSearchSection()]),
+            ("Hotkeys", "\uE765", [Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), Note("The Copilot key cannot open Tomte yet.")])]),
+            ("Search", "\uE721", [SearchSection()]),
             ("Shelf and shortcuts", "\uE7B8", [
                 Header("Shelf"),
                 Card(Row(
