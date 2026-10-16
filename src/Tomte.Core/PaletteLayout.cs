@@ -352,23 +352,35 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     /// <summary>
     /// The answer's blocks laid out whole, one under the other, each where it starts from the top of the answer, and the
-    /// height of them all. Empty blocks take no room.
+    /// height of them all. Blocks in <see cref="AnswerText"/> are the model's words, read as Markdown as the drop result
+    /// reads them; while the answer is <paramref name="streaming"/> the last block shows only what has settled
+    /// (<see cref="Markdown.Settled"/>). Tool steps, an error and the follow-up line stay plain. Empty blocks take no room.
     /// </summary>
-    public (IReadOnlyList<(TextRun Run, Vector2 At)> Runs, float Height) Answer(IReadOnlyList<(string Text, TextStyle Style)> blocks)
+    public (IReadOnlyList<TextAt> Runs, float Height) Answer(IReadOnlyList<(string Text, TextStyle Style)> blocks, bool streaming = false)
     {
         float y = 0;
-        var runs = new List<(TextRun, Vector2)>();
-        foreach (var (block, style) in blocks)
+        var runs = new List<TextAt>();
+        for (int i = 0; i < blocks.Count; i++)
         {
-            if (block.Length == 0)
+            var (block, style) = blocks[i];
+            float top = y + (runs.Count > 0 ? BlockGap : 0);
+            if (style == AnswerText)
             {
-                continue;
+                string shown = streaming && i == blocks.Count - 1 ? Markdown.Settled(block) : block;
+                var (laid, height) = DropResultLayout.Lay(Markdown.Parse(shown), style, AnswerWidth, cut: false, maxLines: int.MaxValue);
+                if (laid.Count > 0)
+                {
+                    // Lay starts its runs at the drop result's padding, not the palette's.
+                    runs.AddRange(laid.Select(r => r with { At = r.At + new Vector2(Pad - DropResultLayout.Pad, top) }));
+                    y = top + height;
+                }
             }
-
-            using var layout = TextLayout.Of(new TextRun(block, style, AnswerWidth, Lines: int.MaxValue));
-            y += runs.Count > 0 ? BlockGap : 0;
-            runs.Add((new TextRun(block, style, AnswerWidth, layout.LineCount), new Vector2(Pad, y)));
-            y += layout.Height;
+            else if (block.Length > 0)
+            {
+                using var layout = TextLayout.Of(new TextRun(block, style, AnswerWidth, Lines: int.MaxValue));
+                runs.Add(new(new TextRun(block, style, AnswerWidth, layout.LineCount), new Vector2(Pad, top)));
+                y = top + layout.Height;
+            }
         }
 
         return (runs, y);

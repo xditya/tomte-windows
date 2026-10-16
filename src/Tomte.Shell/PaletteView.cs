@@ -425,7 +425,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         // every streamed word lays the answer out again (and its run once more to draw it); cache the blocks
         // that did not change if long answers cost frames.
-        var (answer, measured) = layout.Answer(Blocks(session, followUp: typed));
+        var (answer, measured) = layout.Answer(Blocks(session, followUp: typed), streaming: session.Status == PaletteStatus.Sending);
         // The host caps the island at half the monitor's height; the answer band gives way first, so a tall card and its
         // footer are never cut off.
         float height = Math.Min(layout.Height(measured), (float)(0.5 * island.MonitorSize.Height));

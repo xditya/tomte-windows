@@ -313,6 +313,7 @@ internal static unsafe partial class Program
             new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), Streaming, sends: SelectionOn)), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m, sending: true, sends: SelectionOn)),
             new("palette-ai-off", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0)),
             new("palette-long-answer-scrolled", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight), c => Palette(c, "How do I fix a stuck Windows update?", Chips(false), "Sent to ollama · llama3.2:3b", Long, 2, 0.04m, scrolled: 0.5f)),
+            new("palette-markdown", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Where did my money go in March?", Chips(false), Marked)), c => Palette(c, "Where did my money go in March?", Chips(false), "Sent to ollama · llama3.2:3b", Marked, 1, 0.03m)),
             // A question opens during a send: Run dim while its read guard runs, then ready.
             new("palette-confirm-waiting", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Open the Tomte repository", Chips(false), Asked, Asking)), c => Palette(c, "Open the Tomte repository", Chips(false), PaletteLayout.Waiting, Asked, 0, 0.03m, confirm: Asking, sending: true, run: StateLook.DisabledOpacity)),
             new("palette-confirm", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Open the Tomte repository", Chips(false), Asked, Asking)), c => Palette(c, "Open the Tomte repository", Chips(false), PaletteLayout.Waiting, Asked, 0, 0.03m, confirm: Asking, sending: true)),
@@ -830,7 +831,18 @@ internal static unsafe partial class Program
             "5. Clear the update cache. Stop the Windows Update service, delete the contents of C:\\Windows\\SoftwareDistribution\\Download, then start the service again.",
             "6. Install the update by hand. The Microsoft Update Catalog has every cumulative update; search for its KB number and run the installer.",
             "7. If none of this works, check the update history for the error code and search for it; most codes point to one cause.",
+            // Read as a list, the items sit closer than paragraphs; these keep the answer long enough to scroll.
+            "8. Run the System File Checker from an administrator terminal: sfc /scannow repairs system files an update needs.",
+            "9. Then run DISM /Online /Cleanup-Image /RestoreHealth, which repairs the store that the System File Checker reads from.",
+            "10. As a last step, an in-place upgrade from the Windows installation media keeps your files and apps and replaces Windows itself.",
         ]), PaletteLayout.AnswerText),
+    ];
+
+    // The model's Markdown, read as the drop result reads it.
+    private static readonly (string, TextStyle)[] Marked =
+    [
+        ("Read budget.xlsx", PaletteLayout.StepText),
+        ("## March\n\nYou spent **$3,720** in *March*, 12% more than in February. The sheet `Spending` has every line.\n\n- Rent: **$2,000**\n- Food: $940\n  - Eating out: $330\n\n1. Cancel the *unused* streaming plan.\n2. Shop once a week.", PaletteLayout.AnswerText),
     ];
 
     private static readonly (string, TextStyle)[] Asked = [("I can open it in your browser.", PaletteLayout.AnswerText)];

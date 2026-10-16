@@ -51,7 +51,7 @@ public class HistoryRecordingTests : IDisposable
     {
         var history = History();
         _provider.Turns.Add(ScriptedProvider.Text(10, 5, "It is ", "a lasso."));
-        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "Blue."));
+        _provider.Turns.Add(ScriptedProvider.Text(10, 5, "**Blue.**"));
         // The circled region as circle-to-ask names it; text here, since the scripted provider reads no images.
         var lasso = new ContextChip(ContextKind.Region, "Region", "lasso",
             _ => Task.FromResult<IReadOnlyList<ContentPart>>([new TextPart("pixels")]), on: true);
@@ -75,7 +75,8 @@ public class HistoryRecordingTests : IDisposable
         Assert.Equal(("What is in the circle?", "It is a lasso.", null), (first.Prompt, first.Answer, first.Error));
         Assert.Equal(["lasso"], first.Chips);
         Assert.Empty(first.Steps);
-        Assert.Equal(("Blue.", 0.03m, "p", "m"), (kept.LastAnswer, kept.CostUsd, kept.Provider, kept.Model));
+        // What Copy answer copies: the model's text as written, Markdown and all.
+        Assert.Equal(("**Blue.**", 0.03m, "p", "m"), (kept.LastAnswer, kept.CostUsd, kept.Provider, kept.Model));
 
         // The follow-up went with the first turn's text, and the send log says so.
         var second = _provider.Requests[1];

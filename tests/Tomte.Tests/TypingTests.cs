@@ -222,7 +222,11 @@ public sealed class TypingTests : IDisposable
         var longer = new List<(string, TextStyle)> { (string.Join(' ', Enumerable.Repeat("A sentence that keeps the answer going.", 120)), PaletteLayout.AnswerText) };
         var (whole, tall) = layout.Answer(longer);
         Assert.Equal(480, layout.Height(tall));
-        Assert.Equal(whole[0].Run.Lines * 20, tall, 1);
+        using (var laid = TextLayout.Of(whole[0].Run))
+        {
+            Assert.Equal(laid.LineCount * 20, tall, 1);
+        }
+
         Assert.Equal(tall - layout.AnswerBand(480).Height, layout.MaxScroll(tall, 480), 1);
 
         // The prompt grows with its lines up to about four, and everything under it moves down with it.
@@ -232,6 +236,36 @@ public sealed class TypingTests : IDisposable
         Assert.Equal(90, new PaletteLayout(640, mascot: true, text: 200).Prompt.Height);
         // Without the tomte the box starts at the padding.
         Assert.Equal(14, new PaletteLayout(640, mascot: false).Prompt.X);
+    }
+
+    [Fact]
+    public void TheModelsWordsAreReadAsMarkdownAndTheRestStaysPlain()
+    {
+        var layout = new PaletteLayout(640, mascot: true);
+        List<(string, TextStyle)> answer =
+        [
+            ("Read **notes.txt**", PaletteLayout.StepText),
+            ("You spent **$3,720** in *March*:\n- rent `$2,000`\n- food", PaletteLayout.AnswerText),
+            ("The request **failed**", PaletteLayout.ErrorText),
+        ];
+        var (runs, measured) = layout.Answer(answer);
+        Assert.Equal(["Read **notes.txt**", "You spent $3,720 in March:", "•", "rent $2,000", "•", "food", "The request **failed**"], runs.Select(r => r.Run.Text));
+        Assert.Equal([(10, 6)], runs[1].Run.Bold);
+        Assert.Equal([(20, 5)], runs[1].Run.Italic);
+        Assert.Equal([(5, 6)], runs[3].Run.Code);
+        // From the palette's padding, the list's text hanging right of its bullet, the plain blocks 6 apart as before.
+        Assert.Equal([14, 14, 14, 14 + DropResultLayout.Indent], runs.Take(4).Select(r => r.At.X));
+        Assert.Equal(18 + PaletteLayout.BlockGap, runs[1].At.Y, 1);
+        Assert.Equal(runs[^1].At.Y + 20, measured, 1);
+
+        // While it streams, bold not closed yet waits instead of showing its asterisks; a finished answer shows a lone *.
+        Assert.Equal("You spent", Assert.Single(layout.Answer([("You spent **$3,", PaletteLayout.AnswerText)], streaming: true).Runs).Run.Text);
+        Assert.Equal("5 * 3", Assert.Single(layout.Answer([("5 * 3", PaletteLayout.AnswerText)]).Runs).Run.Text);
+        // Only the last block is still coming in: text before a tool step is finished as it is.
+        List<(string, TextStyle)> stepped = [("Let me **check", PaletteLayout.AnswerText), ("Read notes.txt", PaletteLayout.StepText)];
+        Assert.Equal("Let me **check", layout.Answer(stepped, streaming: true).Runs[0].Run.Text);
+        // Nothing settled yet takes no room.
+        Assert.Equal(0, layout.Answer([("**", PaletteLayout.AnswerText)], streaming: true).Height);
     }
 
     [Fact]
