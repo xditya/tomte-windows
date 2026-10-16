@@ -64,6 +64,12 @@ public sealed record TomteSettings
     /// </summary>
     public bool KeepAiHistory { get; init; } = true;
 
+    /// <summary>
+    /// Seconds a closed AI view (an answer, AI search, a drop zone result, a transcript) can be brought back with Undo: 0
+    /// is off, else 5 or 10. A request still running goes on that long. See <see cref="Triggers.UndoClose.Time"/>.
+    /// </summary>
+    public int UndoSeconds { get; init; } = 10;
+
     /// <summary>Read the reply to a voice command aloud with Windows speech. Off unless the user turns it on.</summary>
     public bool SpokenReplies { get; init; }
 

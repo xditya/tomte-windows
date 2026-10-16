@@ -22,6 +22,9 @@ public enum IslandActivity
     /// does not keep the island over a fullscreen app or the lock screen.
     /// </summary>
     Pressing = 128,
+
+    /// <summary>The pill after a closed AI view, with Undo: it holds the island for the undo time, wherever the pointer is, and a rest on it opens nothing.</summary>
+    Undo = 256,
 }
 
 /// <summary>What a pointer report does to the hover dwell: nothing, start it, or cancel it.</summary>
@@ -57,9 +60,9 @@ public static class RetractionRules
     /// </summary>
     public static IslandActivity DraggingOut(IslandActivity activity) => activity & ~IslandActivity.Pressing;
 
-    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler holds the pill, a drag is moving it or a press holds the mouse.</summary>
+    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler or the undo pill holds the pill, a drag is moving it or a press holds the mouse.</summary>
     public static bool OpensPanels(IslandState state, IslandActivity activity) =>
-        state == IslandState.Compact && (activity & (IslandActivity.Rambling | IslandActivity.DragInProgress | IslandActivity.Pressing)) == 0;
+        state == IslandState.Compact && (activity & (IslandActivity.Rambling | IslandActivity.Undo | IslandActivity.DragInProgress | IslandActivity.Pressing)) == 0;
 
     /// <summary>
     /// What one pointer report does to the hover dwell that opens Panels from Compact: coming onto the pill starts it,

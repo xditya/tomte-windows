@@ -42,6 +42,11 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
         // Esc closes the palette, as it does every state the user opened on purpose.
         InputThread.SetEscape(true);
         var view = running = new PaletteView(island, machine, text, focus, session, (float)Width, null, question) { OpenHistory = OpenHistory };
+        if (Triggers is not null)
+        {
+            Watch(session, question);
+        }
+
         void Rest() => RestWhileAsked(question!);
         if (question is not null)
             question.Changed += Rest;
@@ -81,7 +86,11 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
                 log($"{DateTime.Now:HH:mm:ss.fff} palette device event: {e.Line}{(e.Undo is null ? "" : " (undo available)")}");
             };
             await session.SendAsync();
-            island.Mascot.Set(session.Status == PaletteStatus.Done ? MascotState.Result : MascotState.Error);
+            if (machine.State == IslandState.Palette)
+            {
+                island.Mascot.Set(session.Status == PaletteStatus.Done ? MascotState.Result : MascotState.Error);
+            }
+
             await growth;
             log($"{DateTime.Now:HH:mm:ss.fff} palette {session.Status}{(session.Error is null ? "" : ": " + session.Error)} indicator=\"{session.ProviderIndicator}\" steps={session.ToolSteps} height={island.Current.Depth}");
         }
@@ -91,6 +100,44 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
                 question.Changed -= Rest;
         }
     }
+
+    // A voice command's palette closing: what it holds is kept for Undo (the rambler has ended its send, so the voice key
+    // is free at once). Undo shows the same session again, nothing to type in, as a voice reply shows.
+    private void Watch(PaletteSession session, ToolQuestion? question)
+    {
+        void Closed(IslandState from, IslandState to)
+        {
+            if (to == IslandState.Palette)
+                return;
+            machine.Changed -= Closed;
+            if (Triggers is { } triggers && session.Holds)
+                triggers.Closed(AnswerClosed, () => triggers.Reopen(PanelSize.PaletteMinHeight) && Reshow(session, question), session.Cancel);
+            else
+                session.Cancel();
+        }
+
+        machine.Changed += Closed;
+    }
+
+    private bool Reshow(PaletteSession session, ToolQuestion? question)
+    {
+        var view = running = new PaletteView(island, machine, text, focus, session, (float)Width, null, question) { OpenHistory = OpenHistory };
+        _targetHeight = PanelSize.PaletteMinHeight;
+        view.HeightChanged += () => Grow(view.Height);
+        Grow(view.Height);
+        Watch(session, question);
+        Face(session);
+        return true;
+    }
+
+    // The tomte as the view left it: thinking while the send runs, the answer's face once it is done.
+    private void Face(PaletteSession session) => island.Mascot.Set(session.Status switch
+    {
+        PaletteStatus.Sending => MascotState.Thinking,
+        PaletteStatus.Done => MascotState.Result,
+        PaletteStatus.Failed => MascotState.Error,
+        _ => MascotState.Compact,
+    });
 
     // The tomte rests while the palette waits for the user's answer, and thinks again once it is given.
     private void RestWhileAsked(ToolQuestion question)

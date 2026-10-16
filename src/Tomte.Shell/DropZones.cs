@@ -56,6 +56,10 @@ internal sealed class DropZones
         return true;
     }
 
+    /// <summary>The debug driver's drop: these shelf items on this zone, as a drop on it runs them.</summary>
+    internal Task DebugRun(DropZone zone, IReadOnlyList<ShelfItem> items) =>
+        new ZoneRun(island, triggers, shelf, text, store, results, log).RunAsync(zone, Task.FromResult(items), fromText: false);
+
     // Kept out of Take so the AI layer loads with the first drop on a zone, not before.
     [MethodImpl(MethodImplOptions.NoInlining)]
     private void Run(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText) =>
@@ -68,8 +72,10 @@ internal sealed class DropZones
 /// read and sent as a palette send of its own to the provider set up in settings (its key, cap and prices, the
 /// readers, the size question and the send log), what comes back goes on the shelf as files the panel shows, and the
 /// result is kept. The island stays out while the send runs, while a question waits for an answer, and then while the
-/// result shows, until the user dismisses it; Esc, or anything else that takes the island down, ends the send and
-/// answers a question with cancel. On the island's thread; the reading and the sending await on the pool.
+/// result shows, until the user dismisses it. Esc, or anything else that takes the island down, closes the panel: once
+/// something went to the provider (or a kept result shows) it can come back with Undo for a while, the send going on and
+/// a question waiting meanwhile; then, or at once with nothing sent, the send ends and a question is answered cancel.
+/// On the island's thread; the reading and the sending await on the pool.
 /// </summary>
 internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, SettingsStore store, KeptResults results, Action<string>? log)
 {
@@ -82,6 +88,18 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
     private string? skillName;
     private bool queued, finished;
 
+    // Closed and kept for Undo: the run goes on as if the panel were open, and draws nothing. What it showed last, and the
+    // tomte's face then, come back with it.
+    private bool parked;
+    private (DropResult Result, IReadOnlyList<ShelfItem> Items, bool Busy) last;
+    private MascotState face = MascotState.Thinking;
+
+    /// <summary>What the undo pill says after a drop zone's panel closed.</summary>
+    internal const string ResultClosed = "AI result closed";
+
+    // The panel is up, or closed and kept for Undo: either way the run goes on.
+    private bool Live => view.Open || parked;
+
     public async Task RunAsync(DropZone zone, Task<IReadOnlyList<ShelfItem>> accepted, bool fromText)
     {
         if (zone == DropZone.Ask)
@@ -90,16 +108,57 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             return;
         }
 
-        view = new DropResultView(island, triggers, shelf, text, log);
         string title = DropZoneLayout.Label(zone, store.Current.DropZoneSkill);
         PaletteSession? session = null;
-        view.Closed += () =>
+        Open();
+
+        void Open()
         {
+            view = new DropResultView(island, triggers, shelf, text, log);
+            view.Closed += Closed;
+            view.Chose += Chose;
+        }
+
+        void Closed()
+        {
+            // Once something went to the provider, or a kept result shows, Undo can bring the panel back for a while.
+            if (session is not null || offering is not null)
+            {
+                parked = true;
+                float height = view.Height, scroll = view.Scroll;
+                triggers.Closed(ResultClosed, () => Reopen(height, scroll), Free);
+            }
+            else
+            {
+                Free();
+            }
+        }
+
+        void Free()
+        {
+            parked = false;
             session?.Cancel();
             asking?.TrySetResult(SizeChoice.Cancel);
             offering?.TrySetResult(false);
-        };
-        view.Chose += i =>
+        }
+
+        // Undo: the panel in the pill's place, showing what the run has now, scrolled as it was.
+        bool Reopen(float height, float scroll)
+        {
+            if (!triggers.Reopen(height))
+            {
+                return false;
+            }
+
+            parked = false;
+            Open();
+            view.Scroll = scroll;
+            Show(last.Result, last.Busy, last.Items);
+            island.Mascot.Set(face);
+            return true;
+        }
+
+        void Chose(int i)
         {
             if (offering is not null)
             {
@@ -116,12 +175,13 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
                 // The finished result's Close row.
                 triggers.Hide();
             }
-        };
+        }
+
         Show(new DropResult(title, "Nothing sent", "Putting it on the shelf", false, "", [], []), busy: true);
         try
         {
             var items = await accepted;
-            if (!view.Open)
+            if (!Live)
             {
                 return;
             }
@@ -138,7 +198,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             // Running it again goes to the provider in settings now, which the choice names.
             var ready = Program.Configured(store, log);
             var kept = await results.Last(zone, skillName, item.Path);
-            if (!view.Open || (kept is not null && !await Offer(title, kept, ready?.Config.DefaultModel)))
+            if (!Live || (kept is not null && !await Offer(title, kept, ready?.Config.DefaultModel)))
             {
                 return;
             }
@@ -152,7 +212,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             var (provider, config, options) = configured;
             var model = await ProviderSetup.DescribeAsync(provider, config);
             // Esc while the model was looked up: nothing is sent into a panel that is gone.
-            if (!view.Open)
+            if (!Live)
             {
                 return;
             }
@@ -162,7 +222,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             {
                 string? picked = skillName;
                 skill = await Task.Run(() => SkillSet.Picked(SkillSet.FolderFor(store.FilePath), store.Current.EnabledSkills, picked));
-                if (!view.Open)
+                if (!Live)
                 {
                     return;
                 }
@@ -186,8 +246,9 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             var running = session = DropZoneRequest.Session(zone, title, item.Name, provider, config, options, NewSendLog(), tools, grants, skill, model);
             running.ChooseSize = (q, _) =>
             {
-                // A panel that is already gone answers cancel, since nothing would ever answer this question.
-                if (!view.Open)
+                // A panel that is already gone answers cancel, since nothing would ever answer this question; one kept for
+                // Undo asks when it comes back.
+                if (!Live)
                 {
                     return Task.FromResult(SizeChoice.Cancel);
                 }
@@ -201,10 +262,10 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
             running.Changed += () => Update(running, item.Name, title);
             // Before the file is read: an edit during the send makes it a new file, not one this answer is about.
             string? stamp = await Task.Run(() => KeptResults.Stamp(item.Path));
-            island.Mascot.Set(MascotState.Thinking);
+            island.Mascot.Set(face = MascotState.Thinking);
             decimal before = running.SpentTodayUsd;
             await running.SendAsync();
-            if (!view.Open)
+            if (!Live)
             {
                 return;
             }
@@ -215,7 +276,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         {
             // Nothing escapes into the dispatcher; the panel says it failed.
             log?.Invoke($"drop zone: failed: {e}");
-            if (view.Open)
+            if (Live)
             {
                 Finish(new DropResult(title, session?.ProviderIndicator ?? "Nothing sent", "Something went wrong. Nothing more was sent.", true, "", [], []), ok: false);
             }
@@ -257,7 +318,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         Finish(DropZoneRequest.Kept(title, kept, [.. files.Select(ResultTile.Of)], model), files, ok: true);
         bool again = await offering.Task;
         offering = null;
-        if (!view.Open)
+        if (!Live)
         {
             return false;
         }
@@ -327,7 +388,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         island.Queue.TryEnqueue(() =>
         {
             queued = false;
-            if (view.Open && session.Status is PaletteStatus.Sending or PaletteStatus.Idle)
+            if (Live && session.Status is PaletteStatus.Sending or PaletteStatus.Idle)
             {
                 // An open size question holds the island like the send does, until it is answered or Esc cancels it.
                 Show(DropZoneRequest.Panel(title, item, session, question), busy: true);
@@ -335,10 +396,15 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         });
     }
 
+    // Drawn only while the panel is up; a run kept for Undo keeps what it would show for when it comes back.
     private void Show(DropResult result, bool busy, IReadOnlyList<ShelfItem>? items = null)
     {
-        view.Show(result, items ?? []);
-        triggers.ZonePalette(view.Height, busy);
+        last = (result, items ?? [], busy);
+        if (view.Open)
+        {
+            view.Show(result, last.Items);
+            triggers.ZonePalette(view.Height, busy);
+        }
     }
 
     private void Finish(DropResult result, bool ok) => Finish(result, [], ok);
@@ -346,13 +412,17 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
     /// <summary>The last state of the panel, which holds the island until the user dismisses it with Close or Esc.</summary>
     private void Finish(DropResult result, IReadOnlyList<ShelfItem> items, bool ok)
     {
-        if (!view.Open)
+        if (!Live)
         {
             return;
         }
 
         finished = true;
         Show(result.Closable(), busy: false, items);
-        island.Mascot.Set(ok ? MascotState.Result : MascotState.Error);
+        face = ok ? MascotState.Result : MascotState.Error;
+        if (view.Open)
+        {
+            island.Mascot.Set(face);
+        }
     }
 }

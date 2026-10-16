@@ -256,6 +256,12 @@ public sealed partial class PaletteSession : IPaletteSession
 
     public PaletteStatus Status { get; private set; }
 
+    /// <summary>
+    /// The last send brought something back (words or a tool step), or a send is on its way: what a view closing would
+    /// lose, and what Undo after closing keeps. An earlier conversation alone does not count; the history has it.
+    /// </summary>
+    public bool Holds => Status == PaletteStatus.Sending || _answer.Count > 0;
+
     public string ProviderIndicator => _indicator;
 
     public string? Error { get; private set; }

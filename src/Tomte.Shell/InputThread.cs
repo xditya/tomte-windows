@@ -35,6 +35,7 @@ internal static unsafe class InputThread
     public const uint MsgHotkeysRegistered = PInvoke.WM_APP + 8; // Registrations holds a new snapshot
     public const uint MsgConfirmUnavailable = PInvoke.WM_APP + 9; // Win+Alt+Enter could not be registered; wParam = the error
     public const uint MsgPressOutside = PInvoke.WM_APP + 14;    // a mouse button went down outside the tracked island bounds
+    public const uint MsgUndoUnavailable = PInvoke.WM_APP + 18; // Win+Alt+Z could not be registered; wParam = the error
 
     public const int EscapeHotkeyId = 100;
 
@@ -46,6 +47,9 @@ internal static unsafe class InputThread
     // id on, in VoiceChoice order, and Enter alone on its own id, which a card that refused Insert does not take.
     public const int ChoiceHotkeyId = 102, ChoiceEnterHotkeyId = 105;
 
+    // Win+Alt+Z, only while the pill after a closed AI view offers Undo.
+    public const int UndoHotkeyId = 106;
+
     // Posted to the input window by the UI thread.
     private const uint MsgSetEscape = PInvoke.WM_APP + 10;      // wParam 1 registers Esc, 0 releases it
     private const uint MsgApplySettings = PInvoke.WM_APP + 11;  // re-read the store: thresholds, hooks, hotkeys
@@ -53,6 +57,7 @@ internal static unsafe class InputThread
     private const uint MsgSetConfirm = PInvoke.WM_APP + 13;     // wParam 1 registers Win+Alt+Enter, 2 the card's keys with Enter, 3 without it, 0 releases them
     private const uint MsgSample = PInvoke.WM_APP + 15;         // sample the pointer against the island bounds now
     private const uint MsgPause = PInvoke.WM_APP + 16;          // wParam 1 releases the action hotkeys, 0 registers them again
+    private const uint MsgSetUndo = PInvoke.WM_APP + 17;        // wParam 1 registers Win+Alt+Z, 0 releases it
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B, VkReturn = 0x0D, VkMenu = 0x12;
     private static readonly ushort[] ChoiceLetters = ['I', 'A', 'N'];
@@ -157,6 +162,9 @@ internal static unsafe class InputThread
     public static void SetEscape(bool on) => PInvoke.PostMessage(window, MsgSetEscape, (nuint)(on ? 1 : 0), 0);
 
     public static void SetConfirm(bool on) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(on ? 1 : 0), 0);
+
+    /// <summary>Win+Alt+Z while the undo pill shows. When another app holds it, the island hears <see cref="MsgUndoUnavailable"/>.</summary>
+    public static void SetUndo(bool on) => PInvoke.PostMessage(window, MsgSetUndo, (nuint)(on ? 1 : 0), 0);
 
     /// <summary>The card's keys while it waits: the Alt keys, and Enter unless <paramref name="enter"/> is false.</summary>
     public static void SetChoices(bool on, bool enter = true) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(!on ? 0 : enter ? 2 : 3), 0);
@@ -410,6 +418,16 @@ internal static unsafe class InputThread
                     }
 
                     return new LRESULT(0);
+                case MsgSetUndo when wParam.Value == 1:
+                    if (!PInvoke.RegisterHotKey(hwnd, UndoHotkeyId, HOT_KEY_MODIFIERS.MOD_WIN | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, (uint)UndoClose.Chord.Key))
+                    {
+                        PInvoke.PostMessage(island, MsgUndoUnavailable, (nuint)Marshal.GetLastPInvokeError(), 0);
+                    }
+
+                    return new LRESULT(0);
+                case MsgSetUndo:
+                    PInvoke.UnregisterHotKey(hwnd, UndoHotkeyId);
+                    return new LRESULT(0);
                 case MsgApplySettings:
                     Apply(store.Current);
                     return new LRESULT(0);
@@ -437,6 +455,7 @@ internal static unsafe class InputThread
                     Unregister();
                     PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
                     UnregisterConfirm(hwnd);
+                    PInvoke.UnregisterHotKey(hwnd, UndoHotkeyId);
                     if (!hook.IsNull)
                     {
                         PInvoke.UnhookWindowsHookEx(hook);

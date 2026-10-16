@@ -243,6 +243,8 @@ public sealed class SettingsTests : IDisposable
     [InlineData("Alt+F4", "Add Win")]
     [InlineData("Alt+I", "Add Win")]
     [InlineData("Win+Alt+Enter", "says yes to a voice command")]
+    [InlineData("Win+Alt+Z", "brings back a closed AI answer")]
+    [InlineData("Alt+Win+Z", "brings back a closed AI answer")]
     [InlineData("Alt+Win+N", "Scratchpad already uses Win+Alt+N.")]
     [InlineData("Win+Alt+Space", "Search already uses Win+Alt+Space.")]
     public void RebindingRejectsBadChords(string chord, string message)
@@ -258,6 +260,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("Win+Alt+I")]
     [InlineData("Win+Alt+K")]
     [InlineData("Win+Alt+Shift+Enter")]
+    [InlineData("Win+Alt+Shift+Z")]
     [InlineData("")]
     public void RebindingAcceptsGoodChordsAndBlank(string chord) =>
         Assert.Null(Hotkey.Validate(new HotkeySettings(), HotkeyAction.Summon, chord));

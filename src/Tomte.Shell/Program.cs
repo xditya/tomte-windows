@@ -40,6 +40,9 @@ internal static partial class Program
     // The search box's host, made with the panels.
     private static SearchHost? search;
 
+    // The AI drop zones, made with the shelf; the undo driver drops on them.
+    private static DropZones? zones;
+
     /// <summary>The AI history beside the settings file in use: the palette, voice, jobs and the History tab share it.</summary>
     internal static AiHistory? History { get; private set; }
 
@@ -94,6 +97,13 @@ internal static partial class Program
         if (Arg(args, "--debug-record") is not null && Arg(args, "--debug-settings") is null)
         {
             Console.Error.WriteLine("usage: --debug-record <folder> needs --debug-settings <file>, so a recorded run never uses the user's own settings");
+            return 2;
+        }
+
+        // The undo driver sends to the provider in settings and puts a file on the shelf: only with a run's own settings.
+        if (args.Contains("--debug-undo") && Arg(args, "--debug-settings") is null)
+        {
+            Console.Error.WriteLine("usage: --debug-undo palette|search|zone|card|voice|idle|events needs --debug-settings <file>, so it sends to the run's own provider and shelf");
             return 2;
         }
 
@@ -247,6 +257,11 @@ internal static partial class Program
         if (args.Contains("--debug-strip") && logLine is not null)
         {
             _ = DebugStrip(island, triggers, logLine);
+        }
+
+        if (Arg(args, "--debug-undo") is { } undoing && logLine is not null)
+        {
+            _ = DebugUndo(island, triggers, store, undoing, logLine);
         }
 
         // After the lasso the palette opens with the region on, for the user to type the question; the driver asks its own.
@@ -510,7 +525,7 @@ internal static partial class Program
         // Virtual files are written into the shelf folder as the drop reads them; the drop then goes to the shelf.
         triggers.Drops.Receive = shelf.Receive;
         triggers.Dropped += drop => shelf.Accept(drop);
-        _ = new DropZones(island, triggers, shelf, text, store, db, log);
+        zones = new DropZones(island, triggers, shelf, text, store, db, log);
         return new ShelfPanel(island, triggers, shelf, text, log);
     }
 
@@ -866,6 +881,7 @@ internal static partial class Program
         var session = new Rambler(island, triggers.Machine, speech, speechSend, Voice, () => store.Current.VoiceEnter, AskOff, scratchpad, sendLog, options, text!, log.WriteLine)
         {
             Insert = args.Contains("--dry") ? NotTyped : DesktopEffects.TypeInto,
+            Triggers = triggers,
         };
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
