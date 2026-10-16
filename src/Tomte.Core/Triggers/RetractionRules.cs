@@ -109,6 +109,12 @@ public static class RetractionRules
         && Suppression.Allows(RevealTrigger.Peek, desktop, rules);
 
     /// <summary>
+    /// How long ago playback stopped, for <see cref="KeepsPill"/>: null while something plays, and as good as forever once
+    /// the app that played is gone (it quit, or another app's paused session took its place), so the pill goes at once.
+    /// </summary>
+    public static TimeSpan? StoppedFor(bool playing, bool sameApp, TimeSpan since) => playing ? null : sameApp ? since : TimeSpan.MaxValue;
+
+    /// <summary>
     /// The kept pill whose time after playback has run out stays while the pointer is on it or a drag moves it, as an
     /// event pill does, but only when nothing else refuses it: a deny rule coming to the front, the pause or the setting
     /// turned off hide it at once.

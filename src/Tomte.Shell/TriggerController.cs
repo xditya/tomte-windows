@@ -49,9 +49,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private ArrivalFlight? arrival;
     private Task saving = Task.CompletedTask;
 
-    // Something plays, as last heard while the pill kept while music plays is on, and when it last stopped (TickCount64).
-    private bool mediaPlaying;
+    // Something plays, as last heard while the pill kept while music plays is on, and when it last stopped (TickCount64);
+    // the app that played last, and whether it has gone since.
+    private bool mediaPlaying, playerGone;
     private long stoppedAt;
+    private string? playedBy;
 
     public TriggerController(IslandWindow island, SettingsStore store, PauseState pause, IslandTimer timer, Action<string>? log)
     {
@@ -296,14 +298,25 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// Whether something plays, raised with every media change. With "Keep showing while music plays" on, the pill comes
     /// when playback starts and goes <see cref="RetractionRules.KeptAfterPlayback"/> after it stops.
     /// </summary>
-    public void MediaChanged(bool playing)
+    public void MediaChanged(Tomte.Core.Media.NowPlaying now)
     {
         // Heard only while the setting is on, so turning it on never acts on what played when it was last read.
-        playing &= settings.KeepWhilePlaying;
-        if (playing != mediaPlaying)
+        bool playing = now.IsPlaying && settings.KeepWhilePlaying;
+        if (playing)
         {
-            mediaPlaying = playing;
-            stoppedAt = Environment.TickCount64;
+            playedBy = now.SessionId;
+        }
+
+        // The app that played quit, or another app's paused session took its place: the pill has nothing to wait for.
+        bool gone = !playing && now.SessionId != playedBy;
+        if (playing != mediaPlaying || gone != playerGone)
+        {
+            if (mediaPlaying && !playing)
+            {
+                stoppedAt = Environment.TickCount64;
+            }
+
+            (mediaPlaying, playerGone) = (playing, gone);
             KeepWhilePlaying();
         }
     }
@@ -1159,10 +1172,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private void KeepWhilePlaying()
     {
         bool kept = activity.HasFlag(IslandActivity.Playing);
-        TimeSpan? stoppedFor = mediaPlaying ? null : TimeSpan.FromMilliseconds(Environment.TickCount64 - stoppedAt);
+        TimeSpan? stoppedFor = RetractionRules.StoppedFor(mediaPlaying, !playerGone, TimeSpan.FromMilliseconds(Environment.TickCount64 - stoppedAt));
         if (!RetractionRules.KeepsPill(settings.KeepWhilePlaying, kept, stoppedFor, Paused, watch.State, settings.AppRules))
         {
-            if (kept && stoppedFor is not null && RetractionRules.HoldsKeptPill(settings.KeepWhilePlaying, Paused, watch.State, settings.AppRules, pointerInside, activity))
+            if (kept && !playerGone && RetractionRules.HoldsKeptPill(settings.KeepWhilePlaying, Paused, watch.State, settings.AppRules, pointerInside, activity))
             {
                 PInvoke.SetTimer(island.Hwnd, KeepTimer, EventHoldMs, null);
             }

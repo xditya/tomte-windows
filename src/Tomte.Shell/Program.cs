@@ -493,7 +493,7 @@ internal static partial class Program
                 triggers.Raise(new IslandEvent(playing.Title, DateTimeOffset.Now) { Source = IslandEventSource.TrackChange });
             }
         };
-        media.Changed += () => triggers.MediaChanged(media.Current.IsPlaying);
+        media.Changed += () => triggers.MediaChanged(media.Current);
         Apply(store.Current);
         // Changed arrives on a pool thread.
         store.Changed += settings => island.Queue.TryEnqueue(() => Apply(settings));

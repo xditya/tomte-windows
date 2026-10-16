@@ -146,4 +146,14 @@ public class KeptPillTests
         Assert.False(RetractionRules.HoldsKeptPill(on: false, paused: false, Clear, [], pointerInside: true, IslandActivity.Playing));
         Assert.False(RetractionRules.HoldsKeptPill(on: true, paused: true, Clear, [], pointerInside: true, IslandActivity.Playing));
     }
+
+    [Fact]
+    public void WhenTheAppThatPlayedQuitsThePillGoesAtOnce()
+    {
+        Assert.Null(RetractionRules.StoppedFor(playing: true, sameApp: true, Second));
+        Assert.Equal(Second, RetractionRules.StoppedFor(playing: false, sameApp: true, Second));
+        Assert.True(Keeps(kept: true, stoppedFor: RetractionRules.StoppedFor(playing: false, sameApp: true, Second)));
+        // Gone, or another app's paused session in its place: not even the five seconds.
+        Assert.False(Keeps(kept: true, stoppedFor: RetractionRules.StoppedFor(playing: false, sameApp: false, TimeSpan.Zero)));
+    }
 }
