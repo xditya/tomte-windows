@@ -17,14 +17,18 @@ namespace Tomte.Shell;
 /// The search box on the island, in the Palette state and the AI box's look: a one-line text box after the tomte, the
 /// results under it by group with a heading each, and a footer with the keys and where files come from. The box keeps
 /// every key: Up and Down move the selection through all rows and wrap, Tab and Shift+Tab jump to the next or previous
-/// group, Enter opens, Ctrl+Enter shows the row's file in its folder, Page Up and Page Down move a page, Esc clears the
-/// box, then goes back or closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
-/// the pointer's hover is the interaction host's, and a click opens a row. A card (getting Everything) can take the
-/// list's place: Tab moves between its buttons, Enter presses the focused one, which starts on the safe one. Icons come
-/// from the shell, read off this thread and kept for the session. Island thread only.
+/// section and wrap, Enter opens, Ctrl+Shift+Enter shows the row's file in its folder, Ctrl+Enter searches with AI, Page
+/// Up and Page Down move a page, Esc clears the box, then goes back or closes. Left, Right, Home and End stay the box's.
+/// The selected row always shows, filled and outlined; the pointer's hover is the interaction host's, and a click opens a
+/// row. A file or folder row, selected or under the pointer, shows a show in folder button at its right end. A card
+/// (getting Everything) can take the list's place: Tab moves between its buttons, Enter presses the focused one, which
+/// starts on the safe one. Icons come from the shell, read off this thread and kept for the session. Island thread only.
 /// </summary>
 internal sealed class SearchView : IDisposable, IInteractive
 {
+    /// <summary>A show in folder button's target id is this and its row's index.</summary>
+    internal const string FolderId = "folder:";
+
     private const string RowId = "row:", CardId = "card:";
     private const int MaxImages = 512;
     private const float WheelStep = 3 * SearchLayout.RowHeight;
@@ -47,6 +51,9 @@ internal sealed class SearchView : IDisposable, IInteractive
     private readonly TextVisual placeholder, footLeft, footRight, empty, cardTitle, cardBody;
     private readonly List<TextVisual> headings = [];
     private readonly List<RowParts> parts = [];
+
+    // The show in folder buttons: on the selected row and on the one under the pointer, when they are files or folders.
+    private readonly List<ShapeVisual> folders = [];
     private readonly List<(CompositionRoundedRectangleGeometry Pill, CompositionColorBrush Fill, TextVisual Label)> buttons = [];
     private readonly Dictionary<string, CompositionSurfaceBrush?> brushes = [];
     private IReadOnlyList<SearchItem> rows = [];
@@ -67,7 +74,7 @@ internal sealed class SearchView : IDisposable, IInteractive
 
     // The user moved the selection for this text (a key or a page); only then do later results keep it.
     private bool moved;
-    private int select;
+    private int select, hovered = -1;
     private float scroll, content;
     private bool fadeInPending = true, disposed, loadingIcons, iconsAgain;
 
@@ -149,8 +156,11 @@ internal sealed class SearchView : IDisposable, IInteractive
     /// <summary>A row was clicked: it opens.</summary>
     public event Action<SearchItem>? Clicked;
 
-    /// <summary>Enter (false) or Ctrl+Enter (true) in the box: the host opens the selected row, or shows it in its folder.</summary>
-    public event Action<bool>? Entered;
+    /// <summary>A row's show in folder button was clicked: its file or folder shows in File Explorer.</summary>
+    public event Action<SearchItem>? FolderClicked;
+
+    /// <summary>Enter in the box, with what its modifiers ask for: open the selected row, show it in its folder, or search with AI.</summary>
+    public event Action<SearchEnter>? Entered;
 
     /// <summary>A card's button, by its id: a click, or Enter on the focused one. Esc says null.</summary>
     public event Action<string?>? CardAnswered;
@@ -277,11 +287,22 @@ internal sealed class SearchView : IDisposable, IInteractive
         {
             CardAnswered?.Invoke(id[CardId.Length..]);
         }
-        else if (int.TryParse(id.AsSpan(RowId.Length), out int i) && i < rows.Count)
+        else if (RowOf(id) is int i)
         {
             select = i;
             Draw();
-            Clicked?.Invoke(rows[i]);
+            (id.StartsWith(FolderId, StringComparison.Ordinal) ? FolderClicked : Clicked)?.Invoke(rows[i]);
+        }
+    }
+
+    /// <summary>The pointer is on a row or its button, or on neither: a file row under it shows its folder button.</summary>
+    public void Hovered(string? id)
+    {
+        int now = id is null ? -1 : RowOf(id) ?? -1;
+        if (now != hovered && !disposed)
+        {
+            hovered = now;
+            Draw();
         }
     }
 
@@ -332,12 +353,43 @@ internal sealed class SearchView : IDisposable, IInteractive
             part.Icon.Dispose();
         }
 
+        foreach (var button in folders)
+        {
+            button.Dispose();
+        }
+
         surfaces?.Dispose();
         island.Dips.Children.Remove(root);
         root.Dispose();
     }
 
     private static Color Argb(uint c) => Color.FromArgb((byte)(c >> 24), (byte)(c >> 16), (byte)(c >> 8), (byte)c);
+
+    // The row a row's or its button's target id names, or null.
+    private int? RowOf(string id)
+    {
+        string prefix = id.StartsWith(FolderId, StringComparison.Ordinal) ? FolderId : RowId;
+        return id.StartsWith(prefix, StringComparison.Ordinal) && int.TryParse(id.AsSpan(prefix.Length), out int i) && i >= 0 && i < rows.Count ? i : null;
+    }
+
+    // A show in folder button: its card and folder, in a visual of its own that Draw moves to its row.
+    private ShapeVisual Folder(int i)
+    {
+        while (folders.Count <= i)
+        {
+            var c = island.Compositor;
+            var button = Shapes(scrolled, new Vector2(SearchLayout.FolderSize));
+            Rounded(button, new RectangleF(0, 0, SearchLayout.FolderSize, SearchLayout.FolderSize), SearchLayout.FolderCorner, c.CreateColorBrush(Argb(SearchLayout.FolderFill)));
+            var glyph = c.CreateContainerShape();
+            float inset = (SearchLayout.FolderSize - SearchLayout.FolderGlyphSize) / 2;
+            glyph.Offset = new Vector2(inset);
+            PaletteView.Draw(glyph, SearchLayout.FolderGlyph, c.CreateColorBrush(Argb(SearchLayout.FolderInk)));
+            button.Shapes.Add(glyph);
+            folders.Add(button);
+        }
+
+        return folders[i];
+    }
 
     private ShapeVisual Shapes(ContainerVisual host, Vector2 size)
     {
@@ -390,7 +442,7 @@ internal sealed class SearchView : IDisposable, IInteractive
 
         var area = layout.Band;
         empty.Show(new TextRun(rows.Count == 0 ? hint : "", TextStyle.Secondary, area.Width - (2 * SearchLayout.RowPadX), 3), new Vector2(area.X + SearchLayout.RowPadX, area.Y + 8));
-        int heading = 0, row = 0;
+        int heading = 0, row = 0, folder = 0;
         foreach (var line in lines)
         {
             if (line.Heading is { } label)
@@ -409,12 +461,26 @@ internal sealed class SearchView : IDisposable, IInteractive
             p.Icon.IsVisible = true;
             p.Name.Show(name);
             p.Detail.Show(detail);
-            p.Kind.Show(kind);
+            // A file row, selected or under the pointer, shows its folder button in the kind's place.
+            bool button = SearchLayout.HasFolder(item) && (line.Row == select || line.Row == hovered);
+            p.Kind.Show(button ? kind with { Text = "" } : kind);
+            if (button)
+            {
+                var at = layout.Folder(line.Top).Card;
+                var shown = Folder(folder++);
+                shown.Offset = new Vector3(at.X, at.Y, 0);
+                shown.IsVisible = true;
+            }
         }
 
         for (int i = heading; i < headings.Count; i++)
         {
             headings[i].Show("", SearchLayout.Heading, RectangleF.Empty);
+        }
+
+        for (int i = folder; i < folders.Count; i++)
+        {
+            folders[i].IsVisible = false;
         }
 
         for (int i = row; i < parts.Count; i++)
@@ -486,6 +552,15 @@ internal sealed class SearchView : IDisposable, IInteractive
                 {
                     list.Add(new Target(RowId + line.Row, at, SearchLayout.RowCorner, TargetKind.Row));
                 }
+
+                // A file row's folder button, after its row so it is on top. Always there, so the pointer reaching it
+                // shows it on a row that is not selected; Ctrl+Shift+Enter is the keyboard's way, not a Tab stop of its own.
+                var button = layout.Folder(line.Top).Card;
+                button = RectangleF.Intersect(new RectangleF(area.X + button.X, area.Y + button.Y - scroll, button.Width, button.Height), area);
+                if (button.Height > 0 && SearchLayout.HasFolder(rows[line.Row]))
+                {
+                    list.Add(new Target(FolderId + line.Row, button, SearchLayout.FolderCorner, TargetKind.Button, Tip: SearchLayout.FolderTip, Key: SearchLayout.FolderKey));
+                }
             }
         }
 
@@ -543,11 +618,12 @@ internal sealed class SearchView : IDisposable, IInteractive
         return parts[i];
     }
 
+    // The folder button goes with the selection, so the rows are drawn again, not only the highlight moved.
     private void Select(int row)
     {
         select = row;
         moved = true;
-        Scrolled();
+        Draw();
     }
 
     // Keys the box gives the list: Up, Down, Tab, Enter; their characters go nowhere, so the box gets no tab or line break.
@@ -574,7 +650,7 @@ internal sealed class SearchView : IDisposable, IInteractive
                 CardAnswered?.Invoke(card.Buttons.Count > 0 ? card.Buttons[Math.Clamp(cardFocus, 0, card.Buttons.Count - 1)].Id : null);
                 return true;
             case NavKeys.Return:
-                Entered?.Invoke(ctrl);
+                Entered?.Invoke(SearchLayout.Enter(ctrl, shift));
                 return true;
             case NavKeys.Tab when card is not null:
                 if (card.Buttons.Count > 0)
@@ -587,7 +663,7 @@ internal sealed class SearchView : IDisposable, IInteractive
             case NavKeys.Tab:
                 if (rows.Count > 0)
                 {
-                    Select(NextGroup(shift ? -1 : 1));
+                    Select(SearchLayout.NextSection(rows, select, shift ? -1 : 1));
                 }
 
                 return true;
@@ -601,18 +677,6 @@ internal sealed class SearchView : IDisposable, IInteractive
             default:
                 return false;
         }
-    }
-
-    // The first row of the next group, or with -1 of the previous one, wrapping at both ends. From inside a group, -1 goes
-    // to that group's first row first.
-    private int NextGroup(int direction)
-    {
-        var firsts = Enumerable.Range(0, rows.Count).Where(i => i == 0 || rows[i].Group != rows[i - 1].Group).ToList();
-        int current = firsts.LastOrDefault(i => i <= select);
-        int at = firsts.IndexOf(current);
-        return direction > 0 ? firsts[(at + 1) % firsts.Count]
-            : select != current ? current
-            : firsts[(at - 1 + firsts.Count) % firsts.Count];
     }
 
     // Esc closes a card first, then leaves AI search for the results it came from, then clears the box, then goes back to

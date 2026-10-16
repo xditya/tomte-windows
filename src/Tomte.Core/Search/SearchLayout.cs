@@ -6,6 +6,14 @@ namespace Tomte.Core.Search;
 /// <summary>A line of the result list: a group's heading, or a row with its index in the rows.</summary>
 public readonly record struct SearchLine(float Top, float Height, string? Heading, int Row);
 
+/// <summary>What Enter does in the search box: open the row, show its file in its folder, or search with AI.</summary>
+public enum SearchEnter
+{
+    Open,
+    ShowInFolder,
+    SearchWithAi,
+}
+
 /// <summary>
 /// A card over the list that asks or tells something (getting Everything), with its buttons left to right.
 /// <paramref name="Focus"/> is the button Enter presses until Tab moves on: the safe one, never one that installs.
@@ -33,14 +41,36 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     /// <summary>The selected row: a lighter fill and the accent's outline, which shows whether the pointer is there or not.</summary>
     public const uint SelectedFill = 0x24FFFFFF, SelectedLine = 0x996FA8FF;
 
-    public const string Placeholder = "Search apps, files and folders";
-    public const string Keys = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc clears";
-    public const string KeysEmpty = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc closes";
-    public const string KeysBack = "Enter opens · Ctrl+Enter shows in folder · Tab next group · Esc goes back";
-    public const string NothingYet = "Type to search your apps, files and folders. What you open from here is listed first next time.";
+    public const string Placeholder = "Search apps, settings, files and folders";
+    // The footers fit a box 480 DIPs wide (60% of an 800 DIP screen) beside where files come from; the longer ones leave
+    // Tab out.
+    public const string Keys = "Enter opens · Ctrl+Shift+Enter in folder · Tab next section · Esc clears";
+    public const string KeysEmpty = "Enter opens · Ctrl+Shift+Enter in folder · Tab next section · Esc closes";
+    public const string KeysBack = "Enter opens · Ctrl+Shift+Enter in folder · Esc goes back";
+    public const string NothingYet = "Type to search your apps, settings, files and folders. What you open from here is listed first next time.";
     public const string NoResults = "Nothing found.";
     public const string AiRow = "Search with AI";
-    public const string AiKeys = "Enter opens · Ctrl+Enter shows in folder · Esc back to all results";
+    public const string AiKeys = "Enter opens · Ctrl+Shift+Enter in folder · Esc back";
+
+    /// <summary>The narrowest the search box gets: 60% of an 800 DIP wide screen.</summary>
+    public const float NarrowestWidth = 480;
+
+    /// <summary>
+    /// Tab (+1): the first row of the next section, from the last back to the first. Shift+Tab (-1): from inside a
+    /// section its first row, from a first row the previous section's, from the first back to the last.
+    /// </summary>
+    public static int NextSection(IReadOnlyList<SearchItem> rows, int select, int direction)
+    {
+        var firsts = Enumerable.Range(0, rows.Count).Where(i => i == 0 || rows[i].Group != rows[i - 1].Group).ToList();
+        int current = firsts.LastOrDefault(i => i <= select);
+        int at = firsts.IndexOf(current);
+        return direction > 0 ? firsts[(at + 1) % firsts.Count]
+            : select != current ? current
+            : firsts[(at - 1 + firsts.Count) % firsts.Count];
+    }
+
+    /// <summary>Enter opens; Ctrl+Shift+Enter shows the row in its folder; Ctrl+Enter searches with AI from any row.</summary>
+    public static SearchEnter Enter(bool ctrl, bool shift) => !ctrl ? SearchEnter.Open : shift ? SearchEnter.ShowInFolder : SearchEnter.SearchWithAi;
 
     private readonly PaletteLayout prompt = new(width, mascot);
 
@@ -129,20 +159,24 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public static string? HeadingFor(int group) => group switch
     {
         0 => "Apps",
-        1 => "Shortcuts and shelf",
-        2 => "Files and folders",
+        1 => "Settings and tools",
+        2 => "Shortcuts and shelf",
+        3 => "Files and folders",
         _ => null,
     };
 
     /// <summary>The word at a row's right end: what it is.</summary>
-    public static string KindLabel(SearchKind kind) => kind switch
+    public static string KindLabel(SearchItem item) => item.Kind switch
     {
+        SearchKind.Place => Places.Label(item.Target),
         SearchKind.App => "App",
         SearchKind.Shortcut => "Shortcut",
         SearchKind.Shelf => "On the shelf",
         SearchKind.Folder => "Folder",
         SearchKind.File => "File",
-        SearchKind.Ask or SearchKind.AiSearch => "AI",
+        SearchKind.Web => "Web",
+        SearchKind.Ask => "AI",
+        SearchKind.AiSearch => "Ctrl+Enter",
         _ => "",
     };
 
@@ -161,7 +195,35 @@ public sealed class SearchLayout(float width, bool mascot, float height)
         return (row, icon,
             new(item.Name, Name, new RectangleF(x, top, nameWidth, RowHeight)),
             new(item.Detail, Detail, new RectangleF(detailX, top, Math.Max(0, kindX - DetailGap - detailX), RowHeight)),
-            new(KindLabel(item.Kind), Kind, new RectangleF(kindX, top, KindWidth, RowHeight)));
+            new(KindLabel(item), Kind, new RectangleF(kindX, top, KindWidth, RowHeight)));
+    }
+
+    /// <summary>The show in folder button: a card this big, 4 DIPs in from the row's right end and centred down it, in the kind's place.</summary>
+    public const float FolderSize = 28, FolderGlyphSize = 14, FolderInset = 4, FolderCorner = 6;
+
+    /// <summary>The button's card is the tab strip's faint white; its folder is drawn in the name's white.</summary>
+    public const uint FolderFill = 0x1CFFFFFF, FolderInk = TextStyle.WhiteColor;
+
+    public const string FolderTip = "Show in folder", FolderKey = "Ctrl+Shift+Enter";
+
+    /// <summary>The folder in its 14 DIP box: the outline of a folder with its tab at the top left, and the line under the tab.</summary>
+    public static readonly GlyphFigure[] FolderGlyph =
+    [
+        new(TabStrip.Polygon(1.75f, 2.75f, 5.5f, 2.75f, 7, 4.25f, 12.25f, 4.25f, 12.25f, 11.75f, 1.75f, 11.75f), Stroked: true),
+        new(TabStrip.Polygon(1.75f, 5.75f, 12.25f, 5.75f, 12.25f, 7.25f, 1.75f, 7.25f)),
+    ];
+
+    /// <summary>
+    /// Whether a row gets the show in folder button: one that is a file or a folder (a file, a folder, a shelf item, a
+    /// tile for a file or folder, AI search's picks). Apps, places and the AI rows have nothing to show in a folder.
+    /// </summary>
+    public static bool HasFolder(SearchItem item) => item.Location is not null;
+
+    /// <summary>The show in folder button's card and its folder's box, in band space, for a row whose top is <paramref name="top"/>.</summary>
+    public (RectangleF Card, RectangleF Glyph) Folder(float top)
+    {
+        float x = Band.Width - FolderInset - FolderSize, y = top + ((RowHeight - FolderSize) / 2), inset = (FolderSize - FolderGlyphSize) / 2;
+        return (new(x, y, FolderSize, FolderSize), new(x + inset, y + inset, FolderGlyphSize, FolderGlyphSize));
     }
 
     /// <summary>The scroll that shows the line from <paramref name="top"/> to <paramref name="bottom"/> whole, moving as little as it can.</summary>

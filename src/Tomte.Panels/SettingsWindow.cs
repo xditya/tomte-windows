@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
@@ -37,7 +39,12 @@ public sealed partial class SettingsWindow : Window
     public const string ShortcutsHeader = "Shortcuts";
 
     private static string? settingsFile, startSection;
+
+    // The process's one settings window, for the message procedure, which Windows calls with no object.
+    private static SettingsWindow? shown;
+    private static Microsoft.UI.Dispatching.DispatcherQueue? shownQueue;
     private readonly SettingsStore store = new(settingsFile);
+    private readonly NavigationView nav;
     private readonly StackPanel rulesList = new() { Spacing = 4 };
     private readonly StackPanel grantsList = new() { Spacing = 4 };
     private readonly ToggleSwitch startup = new() { OnContent = "On", OffContent = "Off" };
@@ -149,7 +156,7 @@ public sealed partial class SettingsWindow : Window
                 SkillsSection()]),
         ];
 
-        var nav = new NavigationView
+        nav = new NavigationView
         {
             PaneDisplayMode = NavigationViewPaneDisplayMode.Left,
             OpenPaneLength = 240,
@@ -176,8 +183,6 @@ public sealed partial class SettingsWindow : Window
                 DispatcherQueue.TryEnqueue(() => page.Focus(FocusState.Keyboard));
             }
         };
-        NavigationViewItem? open = null;
-        TextBlock? section = null;
         foreach (var (name, glyph, parts) in pages)
         {
             var page = new StackPanel { Spacing = 8, MaxWidth = 760, Padding = new Thickness(24, 0, 24, 32) };
@@ -187,33 +192,24 @@ public sealed partial class SettingsWindow : Window
                 page.Children.Add(part);
             }
 
-            var item = new NavigationViewItem { Content = name, Icon = new FontIcon { Glyph = glyph }, Tag = new ScrollViewer { Content = page } };
-            nav.MenuItems.Add(item);
-            if (section is null && page.Children.OfType<TextBlock>().FirstOrDefault(h => h.Text == startSection) is { } found)
-            {
-                (open, section) = (item, found);
-            }
+            nav.MenuItems.Add(new NavigationViewItem { Content = name, Icon = new FontIcon { Glyph = glyph }, Tag = new ScrollViewer { Content = page } });
         }
 
         nav.SelectionChanged += (_, e) => nav.Content = ((NavigationViewItem)e.SelectedItem).Tag;
-        open ??= (NavigationViewItem)nav.MenuItems[0];
-        nav.SelectedItem = open;
-        nav.Content = open.Tag;
-        // The open page's item has focus from the start, so the arrow keys move through the pages at once.
-        nav.Loaded += (_, _) => open.Focus(FocusState.Programmatic);
-        Content = nav;
-        if (section is not null)
+        nav.SelectedItem = nav.MenuItems[0];
+        nav.Content = ((NavigationViewItem)nav.MenuItems[0]).Tag;
+        if (startSection is not null)
         {
-            // Once laid out, the section's header goes to the top of its page; only the first time the page shows.
-            var scroller = (ScrollViewer)open.Tag;
-            void Bring(object sender, RoutedEventArgs e)
-            {
-                scroller.Loaded -= Bring;
-                section.StartBringIntoView(new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = 28, AnimationDesired = false });
-            }
-
-            scroller.Loaded += Bring;
+            GoTo(startSection);
         }
+
+        // The open page's item has focus from the start, so the arrow keys move through the pages at once.
+        nav.Loaded += (_, _) => ((NavigationViewItem)nav.SelectedItem).Focus(FocusState.Programmatic);
+        Content = nav;
+        // The shell asks this window, once open, for another page: a search row for one of Tomte's settings pages.
+        shown = this;
+        shownQueue = DispatcherQueue;
+        Subclass(WinRT.Interop.WindowNative.GetWindowHandle(this));
 
         RenderRules();
         RenderGrants();
@@ -241,6 +237,57 @@ public sealed partial class SettingsWindow : Window
             SynchronizationContext.SetSynchronizationContext(new Microsoft.UI.Dispatching.DispatcherQueueSynchronizationContext(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread()));
             _ = new SettingsApp();
         });
+    }
+
+    // The page whose title or one of whose headers is this text opens, and once laid out that header goes to the top of
+    // the page. Text that no page has changes nothing.
+    private void GoTo(string section)
+    {
+        foreach (var item in nav.MenuItems.OfType<NavigationViewItem>())
+        {
+            var scroller = (ScrollViewer)item.Tag;
+            if (((StackPanel)scroller.Content).Children.OfType<TextBlock>().FirstOrDefault(h => h.Text == section) is not { } header)
+            {
+                continue;
+            }
+
+            // Before the window is laid out the list may not raise its change yet, so the page is set here too.
+            nav.SelectedItem = item;
+            nav.Content = scroller;
+            var options = new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = 28, AnimationDesired = false };
+            if (scroller.IsLoaded)
+            {
+                header.StartBringIntoView(options);
+                return;
+            }
+
+            void Bring(object sender, RoutedEventArgs e)
+            {
+                scroller.Loaded -= Bring;
+                header.StartBringIntoView(options);
+            }
+
+            scroller.Loaded += Bring;
+            return;
+        }
+    }
+
+    // A static procedure, so there is no delegate for the collector to take while Windows still calls it.
+    private static unsafe void Subclass(nint window) => PInvoke.SetWindowSubclass(new HWND(window), &OnMessage, 1, 0);
+
+    // The window's messages before WinUI's: the shell's request for a page, read and checked by SettingsSection, is
+    // handled on the next turn; everything else goes on.
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
+    private static LRESULT OnMessage(HWND hwnd, uint message, WPARAM wParam, LPARAM lParam, nuint id, nuint data)
+    {
+        // An exception here would end the process, so nothing is read off the window object.
+        if (message == PInvoke.WM_COPYDATA && shownQueue is { } queue && SettingsSection.TryRead(lParam, out string section))
+        {
+            queue.TryEnqueue(() => shown?.GoTo(section));
+            return new LRESULT(1);
+        }
+
+        return PInvoke.DefSubclassProc(hwnd, message, wParam, lParam);
     }
 
     private void Save(Func<TomteSettings, TomteSettings> change) => store.Save(change(store.Current));

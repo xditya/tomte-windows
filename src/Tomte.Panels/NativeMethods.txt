@@ -1,1 +1,4 @@
 GetDpiForWindow
+SetWindowSubclass
+DefSubclassProc
+WM_COPYDATA

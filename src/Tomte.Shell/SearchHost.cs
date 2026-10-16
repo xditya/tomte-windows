@@ -15,8 +15,8 @@ using Windows.Win32;
 namespace Tomte.Shell;
 
 /// <summary>
-/// Runs the search box: what it searches and what opening a row does. Apps, tiles and shelf items are ranked on the
-/// island's thread at each keystroke, so they show at once; files come from Everything when it runs, else the Windows
+/// Runs the search box: what it searches and what opening a row does. Apps, places, tiles and shelf items are ranked on
+/// the island's thread at each keystroke, so they show at once; files come from Everything when it runs, else the Windows
 /// index, off the island's thread after a short pause in typing, and a newer keystroke cancels an older search. Nothing
 /// loads before the first search: the app list, the tiles, the shelf and what was opened before are read each time the
 /// box opens (the last ones show meanwhile). Opening a row hides the island and lets what opens come to the front.
@@ -55,7 +55,7 @@ internal sealed class SearchHost
     private readonly Action<string>? log;
 
     // Kept for the session: the next search shows them at once while they are read again.
-    private IReadOnlyList<SearchItem> apps = [], tiles = [], shelf = [], opened = [];
+    private IReadOnlyList<SearchItem> apps = [], places = [], tiles = [], shelf = [], opened = [];
     private IReadOnlyDictionary<string, Launches> launches = new Dictionary<string, Launches>();
     private FileSource source = FileSource.Index;
     private bool startedEverything, offerDismissed;
@@ -111,6 +111,12 @@ internal sealed class SearchHost
     /// <summary>Esc in a search opened from a tab: the island goes back to that tab.</summary>
     public Action? Back { get; set; }
 
+    /// <summary>A row for one of the island's tabs: the island shows that tab in the search's place.</summary>
+    public Action<PanelId>? Tab { get; set; }
+
+    /// <summary>A row for Tomte's settings: the settings window opens at this page or section, null for its first page.</summary>
+    public Action<string?>? Settings { get; set; }
+
     /// <summary>
     /// The Search with AI row: a send of the typed sentence to the AI box's provider, with its cap, send log and history,
     /// that picks files through the local file search. Null when no provider can be used. Made only when the row is chosen.
@@ -136,6 +142,7 @@ internal sealed class SearchHost
         var shown = view = new SearchView(island, triggers.Machine, text, focus, (float)width, (float)height);
         shown.Typed += _ => Typed();
         shown.Clicked += item => Chosen(item, folder: false);
+        shown.FolderClicked += item => Chosen(item, folder: true);
         shown.Entered += Entered;
         shown.CardAnswered += Answered;
         shown.Back += LeaveAi;
@@ -212,10 +219,23 @@ internal sealed class SearchHost
         }
     }
 
-    // Enter in the box. Before Start's app list has been read for the first time the best app is not known yet, so Enter
-    // waits for it, then the list is ranked again and the top row opens; with the list known, the selected row opens.
-    private void Entered(bool folder)
+    // Enter in the box. Ctrl+Enter searches with AI for the typed text whatever row is selected (not again over its own
+    // results: each search is a send). Before Start's app list has been read for the first time the best app is not known
+    // yet, so Enter waits for it, then the list is ranked again and the top row opens; with the list known, the selected
+    // row opens, or Ctrl+Shift+Enter shows it in its folder.
+    private void Entered(SearchEnter how)
     {
+        if (how == SearchEnter.SearchWithAi)
+        {
+            if (!aiShowing && view?.Text.Trim() is { Length: > 0 } words)
+            {
+                AiRun = RunAiAsync(words);
+            }
+
+            return;
+        }
+
+        bool folder = how == SearchEnter.ShowInFolder;
         if (appsPending && !aiShowing)
         {
             held = folder;
@@ -225,6 +245,12 @@ internal sealed class SearchHost
 
         if (view?.Selected is { } item)
         {
+            if (Places.Tab(item.Target) is not null)
+            {
+                // A key took the island to the tab, so focus shows there, as after Esc back.
+                island.Interaction.ShowFocus();
+            }
+
             Chosen(item, folder);
         }
     }
@@ -266,14 +292,19 @@ internal sealed class SearchHost
             Load(history.Load, seen => (opened, launches) = seen, "history"),
             Load(EverythingNow, now => source = now, "file source"),
             Shelf());
-        log?.Invoke($"search: loaded {apps.Count} apps, {tiles.Count} tiles, {shelf.Count} shelf items, {opened.Count} opened before, files from {source}, in {watch.ElapsedMilliseconds} ms");
+        log?.Invoke($"search: loaded {apps.Count} apps, {places.Count} places, {tiles.Count} tiles, {shelf.Count} shelf items, {opened.Count} opened before, files from {source}, in {watch.ElapsedMilliseconds} ms");
 
         // Start's apps. Once read (or failed), an Enter that waited for them opens the top row of the list ranked with them.
         async Task Apps()
         {
             try
             {
-                await Load(() => AppList.Load().Select(a => new SearchItem(SearchKind.App, a.Name, a.Target, "", a.Target)).ToList(), list => apps = list, "apps");
+                // The places come with them: a tool Start already lists is not listed twice.
+                await Load(() =>
+                {
+                    var list = AppList.Load().Select(a => new SearchItem(SearchKind.App, a.Name, a.Target, "", a.Target)).ToList();
+                    return (list, Places.Rows(list));
+                }, read => (apps, places) = read, "apps");
             }
             finally
             {
@@ -355,7 +386,7 @@ internal sealed class SearchHost
         Refresh();
         fileSearch?.Cancel();
         fileSearch = null;
-        var words = FileQuery.Words(view?.Text ?? "");
+        var words = FileQuery.Words(SearchRank.Query(view?.Text ?? ""));
         if (words.Count > 0)
         {
             fileSearch = new CancellationTokenSource();
@@ -378,8 +409,8 @@ internal sealed class SearchHost
             return;
         }
 
-        string typed = shown.Text;
-        var words = FileQuery.Words(typed);
+        string typed = shown.Text, query = SearchRank.Query(typed);
+        var words = FileQuery.Words(query);
         if (words.Count == 0)
         {
             shown.Show(SearchRank.Recent(Known(), launches), Source(), SearchLayout.NothingYet);
@@ -388,22 +419,23 @@ internal sealed class SearchHost
 
         // Files found for earlier text stay while they still hold every word, so the list does not flicker as one types on.
         var still = files.Where(f => words.All(w => f.Name.Contains(w, StringComparison.CurrentCultureIgnoreCase)));
-        var candidates = apps.Concat(tiles).Concat(shelf).Concat(still);
+        var candidates = apps.Concat(places).Concat(tiles).Concat(shelf).Concat(still);
         if (EverythingSetup.Offers(source, offerDismissed || store.Current.EverythingOfferDismissed) && installing is null)
         {
             candidates = candidates.Append(new SearchItem(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"));
         }
 
+        candidates = candidates.Append(WebSearch.Row(typed, store.Current.WebSearch));
         if (store.Current.Provider is { } provider)
         {
             candidates = candidates
-                .Append(new SearchItem(SearchKind.AiSearch, SearchLayout.AiRow, typed.Trim(), $"Sends file names to {ProviderSetup.NameOf(provider.Id)}, never what is in them"))
-                .Append(new SearchItem(SearchKind.Ask, "Ask Tomte", typed.Trim(), $"\"{typed.Trim()}\""));
+                .Append(new SearchItem(SearchKind.Ask, "Ask Tomte", typed.Trim(), $"\"{typed.Trim()}\""))
+                .Append(new SearchItem(SearchKind.AiSearch, SearchLayout.AiRow, typed.Trim(), $"Sends file names to {ProviderSetup.NameOf(provider.Id)}, never what is in them"));
         }
 
         long ranking = Stopwatch.GetTimestamp();
-        var ranked = SearchRank.AiFirst(SearchRank.Order(candidates, typed, launches), typed);
-        log?.Invoke($"search: ranked {apps.Count + tiles.Count + shelf.Count + files.Count} candidates in {Stopwatch.GetElapsedTime(ranking).TotalMilliseconds:F2} ms");
+        var ranked = SearchRank.AiFirst(SearchRank.Order(candidates, query, launches), query);
+        log?.Invoke($"search: ranked {apps.Count + places.Count + tiles.Count + shelf.Count + files.Count} candidates in {Stopwatch.GetElapsedTime(ranking).TotalMilliseconds:F2} ms");
         shown.Show(ranked, Source(), SearchLayout.NoResults);
     }
 
@@ -411,7 +443,7 @@ internal sealed class SearchHost
     // item still on the shelf; files as they were stored.
     private IEnumerable<SearchItem> Known()
     {
-        var now = apps.Concat(tiles).Concat(shelf).DistinctBy(i => i.Key).ToDictionary(i => i.Key, StringComparer.Ordinal);
+        var now = apps.Concat(places).Concat(tiles).Concat(shelf).DistinctBy(i => i.Key).ToDictionary(i => i.Key, StringComparer.Ordinal);
         foreach (var seen in opened)
         {
             if (now.TryGetValue(seen.Key, out var current))
@@ -428,7 +460,7 @@ internal sealed class SearchHost
     private string Source() => filesFrom.Length > 0 ? filesFrom : source switch
     {
         FileSource.Everything => "Files: Everything",
-        FileSource.EverythingStopped => "Files: starting Everything",
+        FileSource.EverythingStopped => "Starting Everything",
         _ => "Files: Windows index",
     };
 
@@ -463,7 +495,7 @@ internal sealed class SearchHost
 
         log?.Invoke($"search: {found.Hits?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "no"} files from {(found.Everything ? "Everything" : "the Windows index")} in {watch.ElapsedMilliseconds} ms");
         files = found.Hits?.Select(h => h.Item()).ToList() ?? [];
-        filesFrom = found.Everything ? "Files: Everything" : found.Hits is null ? "Files: Windows Search is off" : "Files: Windows index";
+        filesFrom = found.Everything ? "Files: Everything" : found.Hits is null ? "Files: index is off" : "Files: Windows index";
         if (found.Everything)
         {
             source = FileSource.Everything;
@@ -576,11 +608,21 @@ internal sealed class SearchHost
             case SearchKind.GetEverything:
                 view?.ShowCard(Confirm);
                 return;
+            case SearchKind.Place when Places.Tab(item.Target) is { } tab:
+                // Inside the island, so the debug driver's runs do it too; they count nothing.
+                log?.Invoke($"search: opening the {tab} tab");
+                Tab?.Invoke(tab);
+                if (!Dry)
+                {
+                    _ = CountAsync(item);
+                }
+
+                return;
         }
 
         if (Dry)
         {
-            log?.Invoke($"search: would open {item.Kind} \"{item.Name}\"{(folder ? " in its folder" : "")}");
+            log?.Invoke($"search: would open {item.Kind} \"{item.Name}\"{(folder ? " in its folder" : "")}{(item.Kind is SearchKind.Place or SearchKind.Web ? $" at {item.Target}" : "")}");
             triggers.Hide();
             return;
         }
@@ -604,6 +646,15 @@ internal sealed class SearchHost
             return;
         }
 
+        // A web row holds the typed words, which are never stored.
+        if (item.Kind != SearchKind.Web)
+        {
+            await CountAsync(item);
+        }
+    }
+
+    private async Task CountAsync(SearchItem item)
+    {
         try
         {
             await Task.Run(() => history.Record(item, DateTimeOffset.UtcNow));
@@ -634,6 +685,16 @@ internal sealed class SearchHost
                 case SearchKind.Shortcut:
                     var tile = shortcuts.Launch(long.Parse(item.Target, System.Globalization.CultureInfo.InvariantCulture));
                     return tile.Outcome == ShortcutOutcome.Opened ? null : tile.Message;
+                case SearchKind.Place when Places.TomteSettingsAt(item.Target, out string? section):
+                    // The settings window is started from the island's thread, as the tray starts it.
+                    island.Queue.TryEnqueue(() => Settings?.Invoke(section));
+                    return null;
+                case SearchKind.Place:
+                    var opened = Places.Open(item.Target);
+                    return opened.Ok ? null : opened.Message;
+                case SearchKind.Web:
+                    var web = WebSearch.Open(item.Target);
+                    return web.Ok ? null : web.Message;
                 default:
                     using (Process.Start(new ProcessStartInfo(item.Target) { UseShellExecute = true }))
                     {

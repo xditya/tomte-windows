@@ -251,7 +251,7 @@ internal static partial class Program
 
         if (Arg(args, "--debug-search") is { } searched && logLine is not null)
         {
-            _ = DebugSearch(triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
+            _ = DebugSearch(island, triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
         }
 
         if (args.Contains("--debug-strip") && logLine is not null)
@@ -367,16 +367,23 @@ internal static partial class Program
 
     // The settings window runs in its own process and exits when closed, so none of its memory stays in the shell.
     // Called on the island's thread after the user's own click (the tray menu, a tile), which is when Windows lets
-    // Tomte hand the foreground on. A new window opens at <paramref name="section"/>'s header; one already open stays
-    // where it is.
+    // Tomte hand the foreground on. A new window opens at <paramref name="section"/>'s header; one already open goes
+    // there too, or stays where it is when no section is asked for.
     private static async void OpenSettings(string? section = null)
     {
         if (settingsProcess is { HasExited: false })
         {
+            settingsProcess.Refresh();
+            nint window = settingsProcess.MainWindowHandle;
+            if (section is not null)
+            {
+                // Off this thread: a window that hangs keeps the send waiting up to half a second.
+                _ = Task.Run(() => SettingsSection.Send(window, section));
+            }
+
             // The never-activated island may set the foreground only while that click is the last input; when
             // Windows refuses, the open settings window flashes in the taskbar instead of coming to the front.
-            settingsProcess.Refresh();
-            PInvoke.SetForegroundWindow(new HWND(settingsProcess.MainWindowHandle));
+            PInvoke.SetForegroundWindow(new HWND(window));
             return;
         }
 
@@ -441,6 +448,12 @@ internal static partial class Program
         {
             Ask = words => AskFromSearch(island, triggers, store, log, words),
             Back = () => island.Queue.TryEnqueue(() => GoBack(island, triggers)),
+            Tab = id => island.Queue.TryEnqueue(() =>
+            {
+                triggers.OpenPanel(id);
+                KeysToPanels(island);
+            }),
+            Settings = section => OpenSettings(section),
             AiSearch = words => AiSearchSession(store, words, log),
         };
         triggers.SearchOpened = search.Open;

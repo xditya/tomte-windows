@@ -1,4 +1,5 @@
 using Tomte.Core;
+using Tomte.Core.Interaction;
 using Tomte.Core.Search;
 using Xunit;
 
@@ -239,6 +240,42 @@ public sealed class SearchLayoutTests
         Assert.True(icon.Right < name.Slot.Left && name.Slot.Right <= detail.Slot.Left && detail.Slot.Right < kind.Slot.Left);
         Assert.True(kind.Slot.Right <= row.Right);
         Assert.Equal("File", kind.Text);
+    }
+
+    [Fact]
+    public void FilesAndFoldersGetTheFolderButtonAndNothingElseDoes()
+    {
+        SearchItem[] with =
+        [
+            new FileHit(@"D:\Work\notes.txt", false).Item(),
+            new FileHit(@"D:\Work", true).Item(),
+            new(SearchKind.Shelf, "draft.docx", @"C:\Shelf\draft.docx", @"C:\Shelf", @"C:\Shelf\draft.docx", @"C:\Shelf\draft.docx"),
+            new(SearchKind.Shortcut, "Projects", "4", @"D:\Projects", null, @"D:\Projects"),
+        ];
+        SearchItem[] without =
+        [
+            new(SearchKind.App, "Paint", @"shell:AppsFolder\Paint"),
+            new(SearchKind.Shortcut, "Mail", "5", "https://mail.example.com"),
+            new(SearchKind.Place, "Display", "ms-settings:display", "System"),
+            new(SearchKind.Place, "Hotkeys", "tomte:settings:Hotkeys", "Tomte settings"),
+            new(SearchKind.Ask, "Ask Tomte", "x"),
+            new(SearchKind.AiSearch, SearchLayout.AiRow, "x"),
+            new(SearchKind.GetEverything, "Search every drive", ""),
+        ];
+        Assert.All(with, item => Assert.True(SearchLayout.HasFolder(item), item.Name));
+        Assert.All(without, item => Assert.False(SearchLayout.HasFolder(item), item.Name));
+    }
+
+    [Fact]
+    public void TheFolderButtonSitsInTheKindsPlaceInsideItsRow()
+    {
+        var item = new SearchItem(SearchKind.File, new string('x', 200), @"C:\x", new string('y', 300), Location: @"C:\x");
+        var (row, _, _, detail, kind) = Layout.Row(36, item);
+        var (card, glyph) = Layout.Folder(36);
+        Assert.True(card.Left >= kind.Slot.Left && card.Right <= row.Right && card.Left > detail.Slot.Right);
+        Assert.Equal((row.Top + row.Bottom) / 2, (card.Top + card.Bottom) / 2);
+        Assert.True(card.Contains(glyph) && card.Height >= StateLook.MinTarget);
+        Assert.Equal("Show in folder (Ctrl+Shift+Enter)", new Target("folder:0", card, SearchLayout.FolderCorner, TargetKind.Button, Tip: SearchLayout.FolderTip, Key: SearchLayout.FolderKey).TipWith(keys: true));
     }
 
     [Fact]
@@ -524,16 +561,18 @@ public sealed class AiSearchRowTests
     private static readonly SearchItem Ask = new(SearchKind.Ask, "Ask Tomte", "x");
 
     [Fact]
-    public void ASentenceWithNoGoodLocalMatchPutsAiSearchFirst()
+    public void ASentenceWithNoGoodLocalMatchPutsTheAiRowsFirstWithAskOnTop()
     {
         string typed = "the invoices I got last month";
         var app = new SearchItem(SearchKind.App, "Invoice Ninja", "a");
-        var ranked = SearchRank.Order([app, Ai, Ask], typed, new Dictionary<string, Launches>());
+        var file = new FileHit(@"D:\Bills\invoices.pdf", false).Item();
+        var ranked = SearchRank.Order([Ai, app, Ask], typed, new Dictionary<string, Launches>());
 
-        Assert.Equal([Ai, Ask], ranked);
-        Assert.Equal([Ai, Ask], SearchRank.AiFirst(ranked, typed));
-        // The AI row is a group of its own after files and before Ask, so Tab reaches it.
-        Assert.Equal((3, 4), (Ai.Group, Ask.Group));
+        Assert.Equal([Ask, Ai], ranked);
+        Assert.Equal([Ask, Ai], SearchRank.AiFirst(ranked, typed));
+        // The AI rows are one section, the last, Ask Tomte first.
+        Assert.Equal((5, 5), (Ask.Group, Ai.Group));
+        Assert.Equal([file, Ask, Ai], SearchRank.Order([Ai, Ask, file], "invoices", new Dictionary<string, Launches>()));
     }
 
     [Fact]
@@ -545,7 +584,7 @@ public sealed class AiSearchRowTests
 
         // A name that matches only loosely (one typo, the other words nowhere) is no good match.
         var chrome = new SearchItem(SearchKind.App, "Chrome", "c");
-        Assert.Equal([Ai, chrome, Ask], SearchRank.AiFirst([chrome, Ai, Ask], "crhome web browser"));
+        Assert.Equal([Ask, Ai, chrome], SearchRank.AiFirst([chrome, Ask, Ai], "crhome web browser"));
         // Two words read as a name.
         Assert.Equal(Ask, SearchRank.AiFirst([app, Ask, Ai], "tax return")[1]);
         Assert.Equal(app, SearchRank.AiFirst(SearchRank.Order([app, Ai, Ask], "visual studio code", none), "visual studio code")[0]);
@@ -563,6 +602,32 @@ public sealed class AiSearchRowTests
         Assert.Equal([-1, 0, 1], lines.Select(l => l.Row));
         Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight), lines[^1].Top + lines[^1].Height);
         Assert.Empty(SearchLayout.Lines([], "AI · nothing"));
-        Assert.Equal("AI", SearchLayout.KindLabel(SearchKind.AiSearch));
+        Assert.Equal(("AI", "Ctrl+Enter"), (SearchLayout.KindLabel(Ask), SearchLayout.KindLabel(Ai)));
+    }
+
+    [Theory]
+    [InlineData(false, false, SearchEnter.Open)]
+    [InlineData(false, true, SearchEnter.Open)]
+    [InlineData(true, false, SearchEnter.SearchWithAi)]
+    [InlineData(true, true, SearchEnter.ShowInFolder)]
+    public void CtrlEnterSearchesWithAiAndCtrlShiftEnterShowsTheFolder(bool ctrl, bool shift, SearchEnter does) =>
+        Assert.Equal(does, SearchLayout.Enter(ctrl, shift));
+
+    [Fact]
+    public void TheFooterFitsTheNarrowestBox()
+    {
+        // Every file source the list shows beside the list's footers, and AI search's beside a provider line that fills
+        // its 40% (a long model name).
+        string[] sources = ["Files: Everything", "Files: Windows index", "Files: index is off", "Starting Everything"];
+        var pairs = new[] { SearchLayout.Keys, SearchLayout.KeysEmpty, SearchLayout.KeysBack }.SelectMany(keys => sources.Select(source => (keys, source)))
+            .Append((SearchLayout.AiKeys, "Sent to Anthropic · claude-haiku-5-5"))
+            .Append((SearchLayout.AiKeys, "Sent to OpenRouter · " + new string('m', 200)));
+        foreach (var (keys, source) in pairs)
+        {
+            var (left, right) = new SearchLayout(SearchLayout.NarrowestWidth, mascot: true, 300).Footer(keys, source);
+            Assert.Contains("Ctrl+Shift+Enter in folder", keys, StringComparison.Ordinal);
+            Assert.True(Tomte.Core.Text.TextSlot.Measure(keys, SearchLayout.Foot, 1000) <= left.Slot.Width, $"{keys} beside {source}");
+            Assert.True(left.Slot.Right <= right.Slot.Left);
+        }
     }
 }

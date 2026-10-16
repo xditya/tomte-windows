@@ -196,14 +196,16 @@ internal static partial class Program
     /// <summary>
     /// --debug-search "words" with --debug-log=path: opens the search box as its hotkey does, types the words a letter at a
     /// time as a person would, logs the rows after each letter and once the file search has answered, presses the keys in
-    /// --debug-keys (Down, Up, Tab, ShiftTab, Enter, CtrlEnter, Esc; comma separated; WaitAi waits for an AI search to end and
-    /// logs what it shows) and logs the selection after each, then hides the island. Opens nothing: a row Enter would open
-    /// is logged instead; Enter on Search with AI does run the AI search. --debug-race types the words and
+    /// --debug-keys (Down, Up, Tab, ShiftTab, Enter, CtrlEnter, CtrlShiftEnter, Esc; comma separated; WaitAi waits for an AI
+    /// search to end and logs what it shows; ClickFolder clicks the selected row's show in folder button) and logs the
+    /// selection after each, then hides the island. Opens nothing: a row
+    /// Enter would open is logged instead; Search with AI (its row, or Ctrl+Enter) does run, and a row for one of the
+    /// island's tabs does show it. --debug-race types the words and
     /// presses Enter at once, before Start's app list has been read, to show Enter waiting for it. --debug-everything name
     /// searches a named Everything instance instead of the usual one, and --debug-quit ends Tomte half a second after the
     /// island hid.
     /// </summary>
-    private static async Task DebugSearch(TriggerController triggers, string words, string? keys, bool race, bool quit, Action<string> log)
+    private static async Task DebugSearch(IslandWindow island, TriggerController triggers, string words, string? keys, bool race, bool quit, Action<string> log)
     {
         // After the launch flight, which any open would cut short.
         await Task.Delay(1500);
@@ -251,10 +253,18 @@ internal static partial class Program
                 continue;
             }
 
+            if (key == "ClickFolder")
+            {
+                ClickFolder();
+                await Task.Delay(300);
+                log($"debug search: ClickFolder done, island {triggers.Machine.State}");
+                continue;
+            }
+
             bool took = key switch
             {
                 "Esc" => view.OnEscape(),
-                "Enter" or "CtrlEnter" => view.Press(0x0D, ctrl: key == "CtrlEnter", shift: false),
+                "Enter" or "CtrlEnter" or "CtrlShiftEnter" => view.Press(0x0D, ctrl: key != "Enter", shift: key == "CtrlShiftEnter"),
                 _ => view.Press(key switch { "Down" => 0x28, "Up" => 0x26, "Tab" or "ShiftTab" => 0x09, _ => 0 }, ctrl: false, shift: key == "ShiftTab"),
             };
             await Task.Delay(50);
@@ -277,5 +287,24 @@ internal static partial class Program
 
         void Rows(string when) => log($"debug search: {when}: {view.Rows.Count} rows, selected \"{view.Selected?.Name}\": "
             + string.Join(" | ", view.Rows.Select(r => $"{r.Kind} {r.Name}{(r.Detail.Length > 0 ? " (" + r.Detail + ")" : "")}")));
+
+        // A click on the selected row's show in folder button: the island window's own button messages, posted at the
+        // button's centre, so the click goes through the real hit test.
+        void ClickFolder()
+        {
+            string id = SearchView.FolderId + view.Rows.ToList().IndexOf(view.Selected!);
+            if (view.Targets.FirstOrDefault(t => t.Id == id) is not { Id: not null } button)
+            {
+                log("debug search: the selected row has no folder button");
+                return;
+            }
+
+            var at = island.IslandToScreen(new Vector2(button.Bounds.X + (button.Bounds.Width / 2) - ((float)island.Current.Width / 2), button.Bounds.Y + (button.Bounds.Height / 2)));
+            Windows.Win32.PInvoke.ScreenToClient(island.Hwnd, ref at);
+            nint point = (at.Y << 16) | (at.X & 0xFFFF);
+            log($"debug search: clicking {button.Id} at {at.X},{at.Y} in the island window, tip \"{button.TipWith(keys: true)}\"");
+            Windows.Win32.PInvoke.PostMessage(island.Hwnd, Windows.Win32.PInvoke.WM_LBUTTONDOWN, 1, point);
+            Windows.Win32.PInvoke.PostMessage(island.Hwnd, Windows.Win32.PInvoke.WM_LBUTTONUP, 0, point);
+        }
     }
 }
