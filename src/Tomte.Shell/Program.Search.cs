@@ -57,28 +57,36 @@ internal static partial class Program
     /// <summary>
     /// --debug-strip with --debug-log=path and --debug-settings file: the tab strip's search button, with no input to the
     /// desktop. Opens the island as the tray's Open island does, pinned, and clicks the button by posting the island window
-    /// its own button messages at the button's centre; then Tab to the button and Enter, then Space; each search gets an Esc
-    /// as the box would pass it on. Then Tab from the Scratchpad tab's label into the note, Space and Enter posted to the
-    /// window there, and the search as the tray's Search opens it, with an Esc. Logs the island's state, the target with
-    /// focus and the island's bounds after each step, then quits.
+    /// its own button messages at the button's centre, with Esc posted the moment the search opens, during its morph; then
+    /// a click with Esc after the search settles, then Tab to the button and Enter, then Space, each with Esc. Keys are
+    /// posted to the island window as the keyboard sends them. Then Tab from the Scratchpad tab's label into the note with
+    /// Space and Enter, a hide with the working set five seconds later, and the search as the tray's Search opens it. Logs
+    /// the island's state, the target with focus and the island's bounds after each step, then quits.
     /// </summary>
     private static async Task DebugStrip(IslandWindow island, TriggerController triggers, Action<string> log)
     {
+        const uint Escape = 0x1B, Space = 0x20, Enter = 0x0D;
         // After the launch flight, which any open would cut short.
         await Task.Delay(2500);
         triggers.Toggle();
-        // Pinned, so the island stays with nobody's pointer on it; the hide at the end unpins it.
+        // Pinned, so the island stays with nobody's pointer on it; the hide near the end unpins it.
         triggers.TogglePin();
         await Step("Open island");
 
-        var card = TabStrip.SearchButton((float)island.Current.Width).Card;
-        var at = island.IslandToScreen(new Vector2(card.X + (card.Width / 2) - ((float)island.Current.Width / 2), card.Y + (card.Height / 2)));
-        Windows.Win32.PInvoke.ScreenToClient(island.Hwnd, ref at);
-        nint point = (at.Y << 16) | (at.X & 0xFFFF);
-        Windows.Win32.PInvoke.PostMessage(island.Hwnd, Windows.Win32.PInvoke.WM_LBUTTONDOWN, 1, point);
-        Windows.Win32.PInvoke.PostMessage(island.Hwnd, Windows.Win32.PInvoke.WM_LBUTTONUP, 0, point);
-        await Step($"click at {at.X},{at.Y} in the window");
-        await Escape();
+        Click();
+        var wait = Stopwatch.StartNew();
+        while (!triggers.Searching && wait.ElapsedMilliseconds < 2000)
+        {
+            await Task.Delay(1);
+        }
+
+        Press(Escape);
+        await Step($"Esc posted as the search opened, {wait.ElapsedMilliseconds} ms after the click");
+
+        Click();
+        await Step("click");
+        Press(Escape);
+        await Step("Esc");
 
         foreach (var key in new[] { NavKey.Activate, NavKey.Space })
         {
@@ -87,28 +95,49 @@ internal static partial class Program
             await Step("on the button");
             island.Interaction.Key(key, false);
             await Step(key == NavKey.Activate ? "Enter" : "Space");
-            await Escape();
+            Press(Escape);
+            await Step("Esc");
         }
 
         island.Interaction.Key(NavKey.Tab4, false);
         await Step("Ctrl+4");
         Walk("ask");
-        // On into the note, which takes the keys: Space and Enter, posted to the island window as the keyboard sends them,
-        // are the note's and open nothing.
+        // On into the note, which takes the keys: Space and Enter are the note's and open nothing.
         island.Interaction.Key(NavKey.Next, false);
         await Step("Tab into the note");
-        foreach (uint key in new uint[] { 0x20, 0x0D })
+        Press(Space);
+        Press(Enter);
+        await Step("Space and Enter");
+        log($"debug strip: the note reads \"{Scratchpad.Text.Replace("\r", "\\r").Replace("\n", "\\n")}\"");
+
+        // The island retracts after searches left with Esc: what they used is handed back once it has been hidden a moment.
+        triggers.Hide();
+        log($"debug strip: hidden, working set {Environment.WorkingSet / 1048576.0:F1} MB");
+        await Task.Delay(5000);
+        log($"debug strip: hidden 5 s, working set {Environment.WorkingSet / 1048576.0:F1} MB");
+
+        // The hide handed the foreground back, so this search has no keys (the tray's menu would have given them); its
+        // line shows whether Esc would go back or close.
+        triggers.OpenSearch(ignorePause: true);
+        await Step("the tray's Search");
+        triggers.Hide();
+        Windows.Win32.PInvoke.PostQuitMessage(0);
+
+        void Click()
+        {
+            var card = TabStrip.SearchButton((float)island.Current.Width).Card;
+            var at = island.IslandToScreen(new Vector2(card.X + (card.Width / 2) - ((float)island.Current.Width / 2), card.Y + (card.Height / 2)));
+            Windows.Win32.PInvoke.ScreenToClient(island.Hwnd, ref at);
+            nint point = (at.Y << 16) | (at.X & 0xFFFF);
+            Windows.Win32.PInvoke.PostMessage(island.Hwnd, Windows.Win32.PInvoke.WM_LBUTTONDOWN, 1, point);
+            Windows.Win32.PInvoke.PostMessage(island.Hwnd, Windows.Win32.PInvoke.WM_LBUTTONUP, 0, point);
+        }
+
+        void Press(uint key)
         {
             Windows.Win32.PInvoke.PostMessage(island.Hwnd, Windows.Win32.PInvoke.WM_KEYDOWN, key, 1);
             Windows.Win32.PInvoke.PostMessage(island.Hwnd, Windows.Win32.PInvoke.WM_KEYUP, key, unchecked((nint)0xC0000001));
         }
-
-        await Step("Space and Enter");
-        log($"debug strip: the note reads \"{Scratchpad.Text.Replace("\r", "\\r").Replace("\n", "\\n")}\"");
-        triggers.OpenSearch(ignorePause: true);
-        await Step("the tray's Search");
-        await Escape();
-        Windows.Win32.PInvoke.PostQuitMessage(0);
 
         // The island settles and a tooltip shows before the line; the wait after it leaves time to capture the screen.
         async Task Step(string what)
@@ -130,17 +159,6 @@ internal static partial class Program
             }
 
             log($"debug strip: Tab to {to}: {string.Join(", ", seen)}");
-        }
-
-        // As the search box passes Esc on: the box first, then the views, else the island hides.
-        async Task Escape()
-        {
-            if (search?.View is { } view && !view.OnEscape() && !island.Interaction.Key(NavKey.Escape, false))
-            {
-                triggers.Hide();
-            }
-
-            await Step("Esc");
         }
     }
 
