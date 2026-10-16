@@ -655,6 +655,23 @@ public sealed class DropZoneTests : IDisposable
     }
 
     [Fact]
+    public async Task AStreamingResultShowsBoldOnlyOnceItIsClosed()
+    {
+        var item = await Dropped(UserFile("report.txt", Report));
+        var provider = new ScriptedProvider();
+        provider.Turns.Add(ScriptedProvider.Text(10, 5, "- **Reven", "ue** went up"));
+        var session = Zone(DropZone.Summarize, item, provider);
+        var bodies = new List<string>();
+        session.Changed += () => bodies.Add(DropZoneRequest.Panel("Summarize", item.Name, session, null).Body);
+
+        await session.SendAsync();
+
+        Assert.Contains("- ", bodies);
+        Assert.DoesNotContain("- **Reven", bodies);
+        Assert.Equal("- **Revenue** went up", bodies[^1]);
+    }
+
+    [Fact]
     public async Task TheSpendCapStopsAZoneBeforeAnythingIsSent()
     {
         var item = await Dropped(UserFile("report.txt", Report));

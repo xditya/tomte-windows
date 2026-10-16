@@ -273,6 +273,12 @@ public class TextTests
         using var total = new TextBlock();
         total.Set(new TextRun("03:15", new TextStyle(11, Align: TextAlign.Trailing, Tabular: true), 40), 1.25);
         Assert.Equal(50 + 2 * TextBlock.Pad, total.Pixels.Width);
+
+        // The text font has no italic: its slant leans past the line, and the surface takes it in.
+        using var italic = new TextBlock();
+        italic.Set(new TextRun("Food", Title, 272, 9) { Italic = [(0, 4)] }, 1);
+        Assert.True(italic.Layout!.Ink > italic.Size.Width + 1);
+        Assert.Equal((int)Math.Ceiling(italic.Layout.Ink) + 2 * TextBlock.Pad, italic.Pixels.Width);
     }
 
     [Fact]

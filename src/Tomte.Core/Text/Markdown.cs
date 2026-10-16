@@ -63,31 +63,36 @@ public sealed record MarkdownBlock(MarkdownKind Kind, int Depth, string Marker, 
     public string Text => string.Concat(Spans.Select(s => s.Text));
 
     /// <summary>The bold parts of <see cref="Text"/> as start and length.</summary>
-    public IReadOnlyList<(int Start, int Length)> Bold
-    {
-        get
-        {
-            var bold = new List<(int, int)>();
-            int at = 0;
-            foreach (var span in Spans)
-            {
-                if (span.Bold)
-                {
-                    bold.Add((at, span.Text.Length));
-                }
+    public IReadOnlyList<(int Start, int Length)> Bold => Parts(MarkdownLook.Bold);
 
-                at += span.Text.Length;
+    /// <summary>The italic parts of <see cref="Text"/>.</summary>
+    public IReadOnlyList<(int Start, int Length)> Italic => Parts(MarkdownLook.Italic);
+
+    /// <summary>The parts of <see cref="Text"/> written as code.</summary>
+    public IReadOnlyList<(int Start, int Length)> Code => Parts(MarkdownLook.Code);
+
+    private List<(int, int)> Parts(MarkdownLook look)
+    {
+        var parts = new List<(int, int)>();
+        int at = 0;
+        foreach (var span in Spans)
+        {
+            if ((span.Look & look) != 0)
+            {
+                parts.Add((at, span.Text.Length));
             }
 
-            return bold;
+            at += span.Text.Length;
         }
+
+        return parts;
     }
 }
 
 /// <summary>
 /// The small part of Markdown that model answers use: paragraphs, line breaks kept as they are, headings, bullets
-/// and numbered lists with their nesting, **bold**, fenced code kept as it is, and rules dropped. Anything else
-/// stays as written. Unclosed bold stays as written too, so a streaming answer reads right at every step.
+/// and numbered lists with their nesting, **bold**, *italic*, `code`, fenced code kept as it is, and rules dropped.
+/// Anything else stays as written, and so does a marker that is not closed on its line.
 /// </summary>
 public static class Markdown
 {
@@ -100,6 +105,85 @@ public static class Markdown
     /// <paramref name="fenced"/>; the spans keep their place in the whole text.
     /// </summary>
     public static IReadOnlyList<MarkdownBlock> Note(string text, int from, int to, bool fenced) => Parse(text, from, to, fenced, note: true);
+
+    /// <summary>
+    /// What of an answer still coming in can show now, so that no marker shows as text and then turns into a look: a
+    /// run of * or ` at the very end may be half of one; a last line that is so far only a list item's marker, a
+    /// number, or a run of - or _ waits for what makes it an item, a rule or words; and the last line stops before a
+    /// ` or a * against the text after it that shows as text, since either may still open or close a look. A cut can
+    /// leave a marker before it open again, so cutting repeats until nothing changes; bold around a * that is not a
+    /// marker, as in **5*3**, waits for its line to end. A * before white space opens nothing and shows. Inside a code
+    /// block only the run at the end waits.
+    /// </summary>
+    public static string Settled(string text)
+    {
+        string cut = Cut(text);
+        while (cut.Length < text.Length)
+        {
+            text = cut;
+            cut = Cut(text);
+        }
+
+        return text;
+    }
+
+    private static string Cut(string text)
+    {
+        int end = text.Length;
+        while (end > 0 && text[end - 1] is '*' or '`')
+        {
+            end--;
+        }
+
+        if (Parse(text[..end]) is not [.., var last] || last.Kind == MarkdownKind.Code)
+        {
+            return text[..end];
+        }
+
+        // A last line that may still turn into a list item or a rule waits for what comes next.
+        int line = text.LastIndexOf('\n', Math.Max(0, end - 1)) + 1;
+        var tail = text.AsSpan(line, end - line).TrimStart();
+        if (tail.Length > 0 && (!tail.ContainsAnyExceptInRange('0', '9') || !tail.ContainsAnyExcept('-') || !tail.ContainsAnyExcept('_')
+            || (Item($"{tail} ", note: false) is (_, int width) && width == tail.Length + 1)))
+        {
+            return text[..line];
+        }
+
+        // Nothing inside code is a marker. Elsewhere a * run may be partly read as a marker already, as ** falls back
+        // to * while its closer has not come, so the cut goes back to where the run starts.
+        foreach (var span in last.Spans.Where(s => s.Source >= line && (s.Look & MarkdownLook.Code) == 0))
+        {
+            for (int i = span.Source; i < span.Source + span.Text.Length; i++)
+            {
+                char c = text[i];
+                if (c is not ('*' or '`'))
+                {
+                    continue;
+                }
+
+                // A run here ends before the end, which is neither.
+                int after = i;
+                while (text[after] == c)
+                {
+                    after++;
+                }
+
+                if (c == '`' || !char.IsWhiteSpace(text[after]))
+                {
+                    while (i > line && text[i - 1] == c)
+                    {
+                        i--;
+                    }
+
+                    return text[..i];
+                }
+
+                i = after - 1;
+            }
+        }
+
+        return text[..end];
+    }
 
     private static IReadOnlyList<MarkdownBlock> Parse(string text, int from, int to, bool fenced, bool note)
     {
@@ -166,7 +250,7 @@ public static class Markdown
 
         // A heading is bold in an answer; the note gives a heading's line a look of its own instead.
         IEnumerable<(int Start, int Length, MarkdownLook Look)> Parts(int first, int last, bool heading) =>
-            note ? NoteInline(text, first, last) : Inline(text, first, last, heading ? MarkdownLook.Bold : MarkdownLook.Plain);
+            Inline(text, first, last, heading && !note ? MarkdownLook.Bold : MarkdownLook.Plain, note);
 
         // A line of the open block, or the first line of a new one; a line after the first comes after a line break.
         void Add(MarkdownKind kind, int depth, string marker, int source, IEnumerable<(int Start, int Length, MarkdownLook Look)> parts)
@@ -292,58 +376,14 @@ public static class Markdown
     }
 
     /// <summary>
-    /// The source from <paramref name="from"/> to <paramref name="to"/> as plain and bold parts, without the white
-    /// space at either end. Bold is ** before a character that is not a space and ** after one; a ** that is not
-    /// closed on the line stays as text.
+    /// The inline Markdown from <paramref name="from"/> to <paramref name="to"/>, without the white space at either end,
+    /// as parts of one look each, on top of <paramref name="look"/>; the markers fall between the parts. Emphasis is
+    /// closed by the same run of its marker (*, **, *** or __, ~~) against its text on both sides, and _ never inside a
+    /// word, so snake_case stays as written. Code is closed by the same run of backticks and nothing inside it is read.
+    /// An answer reads only * and backticks; the <paramref name="note"/> also reads _, ~~, links and bare addresses.
+    /// What is not closed on the line stays as text.
     /// </summary>
-    private static IEnumerable<(int Start, int Length, MarkdownLook Look)> Inline(string text, int from, int to, MarkdownLook look)
-    {
-        while (from < to && char.IsWhiteSpace(text[from]))
-        {
-            from++;
-        }
-
-        while (to > from && char.IsWhiteSpace(text[to - 1]))
-        {
-            to--;
-        }
-
-        int plain = from;
-        for (int i = from; i + 1 < to; i++)
-        {
-            if (text[i] != '*' || text[i + 1] != '*' || i + 2 >= to || char.IsWhiteSpace(text[i + 2]))
-            {
-                continue;
-            }
-
-            int close = text.IndexOf("**", i + 2, to - i - 2, StringComparison.Ordinal);
-            while (close >= 0 && char.IsWhiteSpace(text[close - 1]))
-            {
-                close = close + 2 < to ? text.IndexOf("**", close + 1, to - close - 1, StringComparison.Ordinal) : -1;
-            }
-
-            if (close < 0)
-            {
-                break;
-            }
-
-            yield return (plain, i - plain, look);
-            yield return (i + 2, close - i - 2, MarkdownLook.Bold);
-            plain = close + 2;
-            i = close + 1;
-        }
-
-        yield return (plain, to - plain, look);
-    }
-
-    /// <summary>
-    /// The note's inline Markdown from <paramref name="from"/> to <paramref name="to"/>, without the white space at
-    /// either end, as parts of one look each; the markers fall between the parts. Emphasis is closed by the same run
-    /// of its marker (*, **, *** or __, ~~) against its text on both sides, and _ never inside a word, so snake_case
-    /// stays as written. Code is closed by the same run of backticks and nothing inside it is read. What is not closed
-    /// on the line stays as text.
-    /// </summary>
-    private static List<(int Start, int Length, MarkdownLook Look)> NoteInline(string text, int from, int to)
+    private static List<(int Start, int Length, MarkdownLook Look)> Inline(string text, int from, int to, MarkdownLook look, bool note)
     {
         while (from < to && char.IsWhiteSpace(text[from]))
         {
@@ -356,11 +396,11 @@ public static class Markdown
         }
 
         var parts = new List<(int, int, MarkdownLook)>();
-        Inner(text, from, to, MarkdownLook.Plain, parts);
+        Inner(text, from, to, look, note, parts);
         return parts;
     }
 
-    private static void Inner(string text, int from, int to, MarkdownLook look, List<(int Start, int Length, MarkdownLook Look)> parts)
+    private static void Inner(string text, int from, int to, MarkdownLook look, bool note, List<(int Start, int Length, MarkdownLook Look)> parts)
     {
         int plain = from;
         for (int i = from; i < to;)
@@ -370,8 +410,10 @@ public static class Markdown
             var found = c switch
             {
                 '`' => CodeSpan(text, i, run, to),
+                '*' => Emphasis(text, i, run, to),
+                _ when !note => null,
                 '[' => LinkSpan(text, i, to),
-                '*' or '_' or '~' => Emphasis(text, i, run, to),
+                '_' or '~' => Emphasis(text, i, run, to),
                 'h' => Address(text, i, to),
                 _ => null,
             };
@@ -384,7 +426,7 @@ public static class Markdown
             parts.Add((plain, i - plain, look));
             if (nested)
             {
-                Inner(text, start, end, look | add, parts);
+                Inner(text, start, end, look | add, note, parts);
             }
             else
             {

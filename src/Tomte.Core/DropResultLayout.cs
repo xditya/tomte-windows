@@ -39,8 +39,8 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 /// under it, then the answer, the choices as full-width buttons with their words centred, the last of them (the
 /// default) filled, and the result files as tiles. The panel is the palette's width and grows with what it shows, up to
 /// the palette's height or the monitor's cap, whichever is less.
-/// The answer is read as Markdown (<see cref="Markdown"/>): paragraphs, bold, headings as bold lines, list items with
-/// their marker hanging left of the text, code as it is. It wraps to the panel and scrolls in its band when it is longer.
+/// The answer is read as Markdown (<see cref="Markdown"/>): paragraphs, bold, italic, headings as bold lines, list items
+/// with their marker hanging left of the text, code as it is. It wraps to the panel and scrolls in its band when it is longer.
 /// </summary>
 public sealed class DropResultLayout
 {
@@ -58,7 +58,7 @@ public sealed class DropResultLayout
 
     public static readonly TextStyle IndicatorStyle = TextStyle.Secondary with { Align = TextAlign.Trailing };
     public static readonly TextStyle BodyStyle = TextStyle.Primary with { LineHeight = 19 };
-    public static readonly TextStyle CodeStyle = new(12, Color: 0xFFD6D6DE, Family: "Consolas", LineHeight: 17);
+    public static readonly TextStyle CodeStyle = new(12, Color: 0xFFD6D6DE, Family: TextStyle.Mono, LineHeight: 17);
     public static readonly TextStyle TileName = new(12.5f, 600);
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
@@ -165,12 +165,15 @@ public sealed class DropResultLayout
     /// Markdown blocks one under the other inside <paramref name="width"/>, from x = <see cref="Pad"/>: a list item's
     /// marker at its level's indent and its text hanging right of it, so wrapped lines start under the text, not under
     /// the marker. Items of one list sit closer together than other blocks. At most <paramref name="maxLines"/> lines; an
-    /// answer that goes on, or that was <paramref name="cut"/> before, ends with <paramref name="rest"/>.
+    /// answer that goes on, or that was <paramref name="cut"/> before, ends with <paramref name="rest"/>. Each run is
+    /// measured by <paramref name="measure"/>, <see cref="Measure"/> unless the caller keeps what it measured before.
     /// </summary>
-    internal static (IReadOnlyList<TextAt> Runs, float Height) Lay(IReadOnlyList<MarkdownBlock> blocks, TextStyle style, float width, bool cut, int maxLines = MaxLines, string rest = Rest)
+    internal static (IReadOnlyList<TextAt> Runs, float Height) Lay(IReadOnlyList<MarkdownBlock> blocks, TextStyle style, float width, bool cut, int maxLines = MaxLines, string rest = Rest,
+        Func<TextRun, (float Width, float Height, int Lines, bool Trimmed)>? measure = null)
     {
+        measure ??= Measure;
         var runs = new List<TextAt>();
-        float y = 0, numbers = TextSlot.Measure("00.", style, width) + 6;
+        float y = 0, numbers = measure(new TextRun("00.", style, width)).Width + 6;
         int lines = 0;
         MarkdownBlock? last = null;
         foreach (var block in blocks)
@@ -193,16 +196,17 @@ public sealed class DropResultLayout
             if (item)
             {
                 string marker = block.Kind == MarkdownKind.Bullet ? "•" : block.Marker;
-                float hang = block.Kind == MarkdownKind.Bullet ? Indent : Math.Max(numbers, MathF.Ceiling(TextSlot.Measure(marker, look, width)) + 6);
+                // Two digits and their dot fit the column the numbers share.
+                float hang = block.Kind == MarkdownKind.Bullet ? Indent : marker.Length <= 3 ? numbers : Math.Max(numbers, MathF.Ceiling(measure(new TextRun(marker, look, width)).Width) + 6);
                 runs.Add(new TextAt(new TextRun(marker, look, hang), new Vector2(x, y)));
                 x += hang;
             }
 
-            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), maxLines - lines) { Bold = block.Bold };
-            using var laid = TextLayout.Of(run);
+            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), maxLines - lines) { Bold = block.Bold, Italic = block.Italic, Code = block.Code };
+            var laid = measure(run);
             runs.Add(new TextAt(run, new Vector2(x, y)));
             y += laid.Height;
-            lines += laid.LineCount;
+            lines += laid.Lines;
             cut |= laid.Trimmed;
             last = block;
         }
@@ -211,12 +215,18 @@ public sealed class DropResultLayout
         {
             y += BlockGap;
             var line = new TextRun(rest, RestStyle, width);
-            using var laid = TextLayout.Of(line);
             runs.Add(new TextAt(line, new Vector2(Pad, y)));
-            y += laid.Height;
+            y += measure(line).Height;
         }
 
         return (runs, y);
+    }
+
+    /// <summary>A run laid out: its widest line, its height, its lines and whether it was cut.</summary>
+    internal static (float Width, float Height, int Lines, bool Trimmed) Measure(TextRun run)
+    {
+        using var laid = TextLayout.Of(run);
+        return (laid.Width, laid.Height, laid.LineCount, laid.Trimmed);
     }
 
     /// <summary>

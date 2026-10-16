@@ -80,6 +80,60 @@ public class MarkdownTests
     }
 
     [Fact]
+    public void AnAnswerReadsItalicAndCodeButNotTheNotesOtherMarkers()
+    {
+        var block = Assert.Single(Markdown.Parse("a *b* `c **d**` ***e***"));
+        Assert.Equal("a b c **d** e", block.Text);
+        Assert.Equal([(2, 1), (12, 1)], block.Italic);
+        Assert.Equal([(4, 7)], block.Code);
+        Assert.Equal([(12, 1)], block.Bold);
+
+        // Left as written: a * before a space, a * never closed, and what only the note reads.
+        foreach (string text in new[] { "5 * 3", "2*", "_x_ snake_case ~~y~~ [a](b)" })
+        {
+            var plain = Assert.Single(Markdown.Parse(text));
+            Assert.Equal(text, plain.Text);
+            Assert.All(plain.Spans, s => Assert.Equal(MarkdownLook.Plain, s.Look));
+        }
+    }
+
+    [Theory]
+    // A marker not closed yet waits with what comes after it on its line.
+    [InlineData("The total is **$3,", "The total is ")]
+    [InlineData("Run `npm i", "Run ")]
+    [InlineData("- **Cost", "- ")]
+    [InlineData("# **Ti", "# ")]
+    // A run at the very end may be half of a marker, an opener or a closer.
+    [InlineData("The total is **", "The total is ")]
+    [InlineData("**bold*", "")]
+    [InlineData("5 *", "5 ")]
+    // A list item's marker before its text would show as a dash or a number for a moment.
+    [InlineData("Costs:\n-", "Costs:\n")]
+    [InlineData("Steps:\n  12.", "Steps:\n")]
+    [InlineData("Costs:\n- r", "Costs:\n- r")]
+    // A number or a run of - or _ alone on the last line may still become an item or a rule.
+    [InlineData("Steps:\n1", "Steps:\n")]
+    [InlineData("1. one\n2", "1. one\n")]
+    [InlineData("--", "")]
+    [InlineData("a\n__", "a\n")]
+    // ** falls back to * while its closer has not come: the * left as text waits, with the run it starts.
+    [InlineData("**Do *not* delete this file.**", "")]
+    [InlineData("**a*b", "")]
+    [InlineData("# **a*b** c", "# ")]
+    // So bold around a * that is not a marker waits for its line to end.
+    [InlineData("**5*3** and", "")]
+    [InlineData("**5*3** and\nmore", "**5*3** and\nmore")]
+    // Closed, or never a marker: shown as it is.
+    [InlineData("The total is **$3,720** for", "The total is **$3,720** for")]
+    [InlineData("5 * 3", "5 * 3")]
+    // An earlier line is done: what it left open stays as text.
+    [InlineData("a **b\nc", "a **b\nc")]
+    // Code shows as it comes; only a fence coming in at the end waits.
+    [InlineData("```\nx = 2*y", "```\nx = 2*y")]
+    [InlineData("```\nx\n``", "```\nx\n")]
+    public void AStreamingAnswerShowsAMarkerOnlyOnceItIsClosed(string text, string shown) => Assert.Equal(shown, Markdown.Settled(text));
+
+    [Fact]
     public void CodeIsKeptAsItIsAndRulesGo()
     {
         Assert.Equal(

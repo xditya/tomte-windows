@@ -5,6 +5,7 @@ using Tomte.AI.Files;
 using Tomte.AI.Mcp;
 using Tomte.AI.Skills;
 using Tomte.Core;
+using Tomte.Core.Text;
 
 namespace Tomte.AI.Palette;
 
@@ -76,7 +77,7 @@ public static partial class DropZoneRequest
     /// <summary>
     /// What the zone's panel shows now: the zone and the file, where the send went, then the open size question with
     /// its choices, or a line of progress, of what went wrong, or of what came of it (<paramref name="outcome"/>), with
-    /// the answer (or <paramref name="body"/> in its place) and the result files.
+    /// the answer (or <paramref name="body"/> in its place; while it streams, only what has settled) and the result files.
     /// </summary>
     public static DropResult Panel(string title, string item, IPaletteSession session, SizeQuestion? asking, string? outcome = null, string? body = null, IReadOnlyList<ResultTile>? tiles = null)
     {
@@ -90,7 +91,8 @@ public static partial class DropZoneRequest
             PaletteStatus.Done => outcome,
             _ => session.Estimate?.Line ?? $"Reading {PreparedFile.Clean(item)}",
         };
-        return new(head, session.ProviderIndicator, line, session.Status == PaletteStatus.Failed, body ?? session.AnswerText, tiles ?? [], []);
+        string answer = session.Status == PaletteStatus.Sending ? Markdown.Settled(session.AnswerText) : session.AnswerText;
+        return new(head, session.ProviderIndicator, line, session.Status == PaletteStatus.Failed, body ?? answer, tiles ?? [], []);
     }
 
     /// <summary>
