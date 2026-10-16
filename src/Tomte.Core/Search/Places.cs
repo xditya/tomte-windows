@@ -78,7 +78,7 @@ public static class Places
         ("Optional features", "System", "optionalfeatures", "add a feature windows features"),
         ("For developers", "System", "developers", "developer mode sudo dev drive powershell execution policy"),
 
-        ("Bluetooth & devices", "", "bluetooth", "bluetooth pair add a device headphones earbuds speaker controller connect wireless"),
+        ("Bluetooth & devices", "", "bluetooth", "bluetooth bt pair add a device headphones earbuds speaker controller connect wireless"),
         ("Printers & scanners", "Bluetooth & devices", "printers", "printer scanner print add printer print queue"),
         ("Mouse", "Bluetooth & devices", "mousetouchpad", "pointer speed scroll wheel primary button cursor speed left handed"),
         ("Touchpad", "Bluetooth & devices", "devices-touchpad", "trackpad gestures tap to click scrolling three finger"),

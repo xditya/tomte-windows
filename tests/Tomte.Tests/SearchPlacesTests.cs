@@ -85,6 +85,30 @@ public sealed class SearchPlacesTests
         Assert.Equal([SearchKind.App, SearchKind.Place], rows.Take(2).Select(r => r.Kind));
     }
 
+    [Theory]
+    [InlineData("wifi", "Wi-Fi")] // the Firewall app matches only by its initials
+    [InlineData("wi-fi", "Wi-Fi")]
+    [InlineData("Wi Fi", "Wi-Fi")]
+    [InlineData("wi", "WinDbg")] // an app that starts with the text stays first
+    [InlineData("vpn", "HMA VPN")] // an app with the text as a whole word stays first
+    [InlineData("bt", "Bluetooth & devices")]
+    [InlineData("tom", "Tomte settings")] // Power Automate holds "tom" only inside a word
+    [InlineData("uninstall", "Installed apps")] // another program's uninstaller never comes first
+    [InlineData("taskbar", "Taskbar")] // SmartTaskbar is no whole word "taskbar"
+    public void APlaceWithTheTextWholeGoesAboveAppsThatOnlyHoldIt(string typed, string first)
+    {
+        SearchItem[] apps =
+        [
+            App("Windows Defender Firewall with Advanced Security"), App("WinDbg"), App("HMA VPN"), App("qBittorrent"),
+            App("Power Automate"), App("Uninstall"), App("Uninstall Node.js"), App("SmartTaskbar"),
+        ];
+        var rows = SearchRank.Order(apps.Concat(Places.Rows(apps)), SearchRank.Query(typed), None);
+        Assert.Equal(first, rows[0].Name);
+        Assert.True(SearchMatch.WholeWords("Wi-Fi", typed) || typed is not ("wifi" or "wi-fi" or "Wi Fi"));
+        Assert.False(SearchMatch.WholeWords("SmartTaskbar", "taskbar"));
+        Assert.False(SearchMatch.WholeWords("QuickTime Player", "time"));
+    }
+
     [Fact]
     public void TomteSettingsAndHotkeysFindTomtesOwnPages()
     {

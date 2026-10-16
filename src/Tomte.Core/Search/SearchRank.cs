@@ -158,6 +158,31 @@ public static class SearchMatch
         return words;
     }
 
+    /// <summary>
+    /// True when the typed text is one or more whole words of the text side by side, case, spaces and hyphens ignored:
+    /// "wifi" and "wi fi" in "Wi-Fi". Words split at anything not a letter or digit only, not where a capital starts, so
+    /// "taskbar" is not a whole word of SmartTaskbar.
+    /// </summary>
+    public static bool WholeWords(string text, string query)
+    {
+        string q = Collapse(query).Replace(" ", "", StringComparison.Ordinal);
+        var words = Collapse(text).Split(' ');
+        for (int i = 0; i < words.Length && q.Length > 0; i++)
+        {
+            string run = "";
+            for (int j = i; j < words.Length && run.Length < q.Length; j++)
+            {
+                run += words[j];
+                if (run == q)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     // Lower case, with every run of characters that are not letters or digits turned into one space.
     private static string Collapse(string text)
     {
@@ -331,7 +356,7 @@ public static class SearchMatch
 
 /// <summary>
 /// The rows a search shows, in order: apps first whenever any app matches, then places, then tiles and shelf items, then
-/// files and folders, then Ask, each group capped. A place that matches every typed word goes above apps that do not.
+/// files and folders, then Ask, each group capped. A place that matches clearly better than every app goes above them.
 /// Inside a group the better match comes first; a row opened from search before gains a little, enough to lead its tier,
 /// never enough to pass a better tier. Pure, so it runs on every keystroke.
 /// </summary>
@@ -362,10 +387,30 @@ public static partial class SearchRank
             .Where(scored => scored.Score != 0)
             .ToList();
 
-        // The substring tier and better match every typed word; letters in order and a typo match only loosely. So
-        // "display settings" lists the Display page above the apps when none has both words.
-        bool placesFirst = Best(scored, SearchKind.Place) >= SearchMatch.Substring && Best(scored, SearchKind.App) < SearchMatch.Substring;
-        return Grouped(scored.Select(s => (s.Item, Rank: s.Score >= 0 ? s.Score + Boost(launches, s.Item) : s.Item.Kind == SearchKind.Ask ? int.MinValue + 1 : int.MinValue)), placesFirst);
+        return Grouped(scored.Select(s => (s.Item, Rank: s.Score >= 0 ? s.Score + Boost(launches, s.Item) : s.Item.Kind == SearchKind.Ask ? int.MinValue + 1 : int.MinValue)), PlacesFirst(scored, query));
+    }
+
+    /// <summary>
+    /// Whether the places go above the apps: a place has every typed word and no app has them all ("display settings" is
+    /// Display, not the Settings app), or a place has the text as whole words or starts a word with it and no app starts
+    /// with it or has it whole ("wifi" is Wi-Fi, not the Firewall app's initials; "tom" is Tomte, not Power Automate).
+    /// Start's "Uninstall ..." entries never keep a matching place below them: Enter must not start another program's
+    /// uninstaller when Installed apps was meant.
+    /// </summary>
+    private static bool PlacesFirst(List<(SearchItem Item, int Score)> scored, string query)
+    {
+        var places = scored.Where(s => s.Item.Kind == SearchKind.Place).ToList();
+        var apps = scored.Where(s => s.Item.Kind == SearchKind.App && !s.Item.Name.StartsWith("Uninstall", StringComparison.OrdinalIgnoreCase)).ToList();
+        if (places.Count == 0)
+        {
+            return false;
+        }
+
+        // The substring tier and better match every typed word; letters in order and a typo match only loosely.
+        bool every = places.Max(s => s.Score) >= SearchMatch.Substring && apps.All(s => s.Score < SearchMatch.Substring);
+        bool whole = places.Any(s => s.Score >= SearchMatch.WordStarts || SearchMatch.WholeWords(s.Item.Name, query) || SearchMatch.WholeWords(s.Item.Words, query))
+            && !apps.Any(s => s.Score >= SearchMatch.Prefix || SearchMatch.WholeWords(s.Item.Name, query));
+        return every || whole;
     }
 
     /// <summary>How well a row's name, or a place's name and words, match the query; 0 is no match.</summary>
@@ -407,9 +452,6 @@ public static partial class SearchRank
     // A command word before what is looked for: "open display settings" looks for "display settings".
     [GeneratedRegex(@"^\s*(?:open|go\s+to|show)\s+(?=\S)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Verb();
-
-    private static int Best(IEnumerable<(SearchItem Item, int Score)> scored, SearchKind kind) =>
-        scored.Where(s => s.Item.Kind == kind).Select(s => s.Score).DefaultIfEmpty().Max();
 
     private static IReadOnlyList<SearchItem> Grouped(IEnumerable<(SearchItem Item, int Rank)> ranked, bool placesFirst = false) =>
         [.. ranked
