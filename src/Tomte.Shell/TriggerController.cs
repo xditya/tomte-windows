@@ -1649,8 +1649,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     internal void Closed(string line, Func<bool> restore, Action free)
     {
+        // A close nobody made keeps nothing, and leaves a view kept before as it is.
+        if (ownRetract)
+        {
+            free();
+            return;
+        }
+
         PInvoke.KillTimer(island.Hwnd, UndoTimer);
-        var time = ownRetract ? null : UndoClose.Time(settings.UndoSeconds);
+        var time = UndoClose.Time(settings.UndoSeconds);
         if (undo.Keep(line, restore, free, DateTimeOffset.Now, time))
         {
             PInvoke.SetTimer(island.Hwnd, UndoTimer, (uint)time!.Value.TotalMilliseconds, null);
