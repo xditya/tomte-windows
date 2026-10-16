@@ -66,6 +66,10 @@ internal sealed class SearchHost
     private bool? held;
     private DispatcherQueueTimer? trim;
 
+    // A search opened since the last trim: the next time the island hides, whatever it went to from the search (the tab
+    // it came from, the AI box), its pages are handed back.
+    private bool searched;
+
     // This search's own.
     private SearchView? view;
     private IReadOnlyList<SearchItem> files = [];
@@ -87,6 +91,13 @@ internal sealed class SearchHost
             if (triggers.Searching)
             {
                 triggers.FocusLost();
+            }
+        };
+        triggers.Machine.Changed += (_, to) =>
+        {
+            if (to == IslandState.Hidden && searched)
+            {
+                TrimLater();
             }
         };
     }
@@ -138,6 +149,7 @@ internal sealed class SearchHost
         filesFrom = "";
         held = null;
         trim?.Stop();
+        searched = true;
         shown.TakeKeys();
         Refresh();
         _ = LoadAsync(shown);
@@ -153,11 +165,6 @@ internal sealed class SearchHost
                 if (view == shown)
                 {
                     view = null;
-                }
-
-                if (to == IslandState.Hidden)
-                {
-                    TrimLater();
                 }
             }
         }
@@ -196,6 +203,7 @@ internal sealed class SearchHost
                     return;
                 }
 
+                searched = false;
                 long before = Environment.WorkingSet;
                 bool trimmed = PInvoke.SetProcessWorkingSetSize(PInvoke.GetCurrentProcess(), nuint.MaxValue, nuint.MaxValue);
                 log?.Invoke($"search: working set trimmed ({trimmed}) from {before / 1048576.0:F1} MB to {Environment.WorkingSet / 1048576.0:F1} MB");
