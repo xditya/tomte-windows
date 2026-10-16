@@ -115,6 +115,14 @@ public static class RetractionRules
     public static TimeSpan? StoppedFor(bool playing, bool sameApp, TimeSpan since) => playing ? null : sameApp ? since : TimeSpan.MaxValue;
 
     /// <summary>
+    /// Where the pill kept while music plays may come: a hidden island, or the peek pill or the landed launch pill, which
+    /// give way to it. Not while a closed AI view can still be undone: its undo pill comes first, and the kept pill when the
+    /// undo time is up.
+    /// </summary>
+    public static bool KeptPillComes(IslandState state, IslandActivity activity, CompactReason reason, bool undoLive) =>
+        !undoLive && (state == IslandState.Hidden || activity.HasFlag(IslandActivity.Peek) || reason == CompactReason.Arrival);
+
+    /// <summary>
     /// The kept pill whose time after playback has run out stays while the pointer is on it or a drag moves it, as an
     /// event pill does, but only when nothing else refuses it: a deny rule coming to the front, the pause or the setting
     /// turned off hide it at once.

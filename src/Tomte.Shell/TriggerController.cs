@@ -841,6 +841,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     Hide();
                 }
+                else
+                {
+                    // The undo ran out without its pill (something else had the island): the kept pill no longer waits.
+                    KeepWhilePlaying();
+                }
 
                 break;
             case TimerDoneTimer:
@@ -1169,7 +1174,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// The pill kept while music plays, by <see cref="RetractionRules.KeepsPill"/>: it comes where the island is free
-    /// (hidden, the peek pill or the launch arrival's pill, which give way to it as to an edge push), and once playback
+    /// (<see cref="RetractionRules.KeptPillComes"/>: after an undo pill, never before it), and once playback
     /// stops it waits out the rest of <see cref="RetractionRules.KeptAfterPlayback"/> and goes, later while the pointer
     /// is on it. Called wherever the answer can change.
     /// </summary>
@@ -1194,7 +1199,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             // What is left of the wait; a one-shot that fires early comes back here for the rest.
             PInvoke.SetTimer(island.Hwnd, KeepTimer, (uint)Math.Ceiling((RetractionRules.KeptAfterPlayback - stopped).TotalMilliseconds), null);
         }
-        else if (!kept && arrival is null && (machine.State == IslandState.Hidden || activity.HasFlag(IslandActivity.Peek) || Compact == CompactReason.Arrival))
+        else if (!kept && arrival is null && RetractionRules.KeptPillComes(machine.State, activity, Compact, undo.Live(DateTimeOffset.Now)))
         {
             arrivalShowing = false;
             if (Reveal(RevealTrigger.Peek, IslandState.Compact))

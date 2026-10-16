@@ -65,6 +65,26 @@ public class KeptPillTests
         Assert.True(RetractionRules.OpensPanels(IslandState.Compact, IslandActivity.Playing));
     }
 
+    [Theory]
+    [InlineData(IslandState.Hidden, IslandActivity.None, CompactReason.None, false, true)]
+    [InlineData(IslandState.Compact, IslandActivity.Peek, CompactReason.Peek, false, true)]
+    [InlineData(IslandState.Compact, IslandActivity.None, CompactReason.Arrival, false, true)]
+    [InlineData(IslandState.Hidden, IslandActivity.None, CompactReason.None, true, false)] // the undo pill comes first
+    [InlineData(IslandState.Compact, IslandActivity.Undo, CompactReason.Undo, true, false)]
+    [InlineData(IslandState.Compact, IslandActivity.Peek, CompactReason.Peek, true, false)]
+    [InlineData(IslandState.Compact, IslandActivity.None, CompactReason.Event, false, false)]
+    [InlineData(IslandState.Panels, IslandActivity.None, CompactReason.None, false, false)]
+    public void ThePillWaitsForTheUndoPillAndComesWhenItsTimeIsUp(IslandState state, IslandActivity activity, CompactReason reason, bool undoLive, bool comes) =>
+        Assert.Equal(comes, RetractionRules.KeptPillComes(state, activity, reason, undoLive));
+
+    [Fact]
+    public void EventsGiveWayPastTheKeptPillAndTheUndoPillAlike()
+    {
+        Assert.False(TriggerQueue.IslandBusy(IslandState.Compact, IslandActivity.Playing));
+        Assert.False(TriggerQueue.IslandBusy(IslandState.Compact, IslandActivity.Undo));
+        Assert.True(TriggerQueue.IslandBusy(IslandState.Compact, IslandActivity.None));
+    }
+
     [Fact]
     public void NoTwoHoldsShareAFlagSoTheKeptPillNeverReadsAsTheUndoPill()
     {
