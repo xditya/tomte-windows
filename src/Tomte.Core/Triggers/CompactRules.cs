@@ -180,4 +180,10 @@ public static class CompactRules
     /// </summary>
     public static IslandEventSource Owner(IReadOnlyList<IslandEvent> shown) =>
         shown is [var only] ? only.Source : IslandEventSource.Other;
+
+    /// <summary>
+    /// The tab a click on the pill opens Panels on: Media when the now-playing row shows on it, else the tab last open
+    /// (null). A hover, a scroll and the hotkeys always open the tab last open.
+    /// </summary>
+    public static PanelId? ClickOpens(bool nowPlayingShows) => nowPlayingShows ? PanelId.Media : null;
 }

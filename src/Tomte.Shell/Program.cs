@@ -475,7 +475,9 @@ internal static partial class Program
         panels.Register(new HistoryPanel(island, History!, text, item => island.Queue.TryEnqueue(() => ContinueInPalette(triggers, item)), answer => CopyAnswer(answer, log), log));
         triggers.Panels = panels;
         // The row and the line live on the state changes and ContentReady they listen to.
-        _ = new CompactLine(island, triggers, text, new NowPlayingRow(island, triggers, media, text, log), log);
+        var row = new NowPlayingRow(island, triggers, media, text, log);
+        triggers.NowPlayingShows = () => row.Showing;
+        _ = new CompactLine(island, triggers, text, row, log);
 
         bool announcing = false, keeping = false;
         media.TrackChanged += playing =>

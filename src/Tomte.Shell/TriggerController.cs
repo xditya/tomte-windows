@@ -289,6 +289,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public event Action? CompactChanged;
 
+    /// <summary>Whether the now-playing row is on the Compact pill now; a click on the pill then opens the Media tab.</summary>
+    public Func<bool>? NowPlayingShows { get; set; }
+
     /// <summary>
     /// Whether something plays, raised with every media change. With "Keep showing while music plays" on, the pill comes
     /// when playback starts and goes <see cref="RetractionRules.KeptAfterPlayback"/> after it stops.
@@ -598,7 +601,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    private void OpenPanelsNextTurn()
+    /// <summary>Panels on the next turn, on <paramref name="tab"/> or else the tab last open.</summary>
+    private void OpenPanelsNextTurn(PanelId? tab = null)
     {
         if (RetractionRules.OpensPanels(machine.State, activity))
         {
@@ -606,6 +610,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
             {
                 if (RetractionRules.OpensPanels(machine.State, activity))
                 {
+                    if (tab is { } id)
+                    {
+                        Panels?.Select(id);
+                    }
+
                     Go(IslandState.Panels);
                 }
             });
@@ -648,9 +657,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>
     /// The Compact pill and the peek badge for the interaction host, in island space: a click on the pill opens Panels,
-    /// one on the tomte asks Tomte, a drag on either moves the island, and the tomte lifts while the pointer is on it.
-    /// An event pill has no action of its own, so it is the pill. None on the rambler's pill, where a click does nothing,
-    /// nor on the undo pill, whose one target is its Undo button.
+    /// on the Media tab when it shows what plays, one on the tomte asks Tomte, a drag on either moves the island, and the
+    /// tomte lifts while the pointer is on it. An event pill has no action of its own, so it is the pill. None on the
+    /// rambler's pill, where a click does nothing, nor on the undo pill, whose one target is its Undo button.
     /// </summary>
     private sealed class CompactTargets(TriggerController owner) : IInteractive
     {
@@ -690,7 +699,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             }
             else
             {
-                owner.OpenPanelsNextTurn();
+                owner.OpenPanelsNextTurn(CompactRules.ClickOpens(owner.NowPlayingShows?.Invoke() == true));
             }
         }
 

@@ -107,4 +107,11 @@ public class KeptPillTests
         tomte.Still = false;
         Assert.InRange(tomte.WakeIn ?? -1, 3, 7);
     }
+
+    [Fact]
+    public void AClickOnTheNowPlayingRowOpensMediaAndAnyOtherClickTheTabLastOpen()
+    {
+        Assert.Equal(PanelId.Media, CompactRules.ClickOpens(nowPlayingShows: true));
+        Assert.Null(CompactRules.ClickOpens(nowPlayingShows: false));
+    }
 }
