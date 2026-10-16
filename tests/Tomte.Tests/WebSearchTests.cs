@@ -36,6 +36,13 @@ public sealed class WebSearchTests : IDisposable
     [InlineData("1.2.3", null)]
     [InlineData("999.1.1.1", null)]
     [InlineData("user@example.com", null)]
+    [InlineData("https://www.youtube.com/@mkbhd", "https://www.youtube.com/@mkbhd")]
+    [InlineData("https://medium.com/@user/post", "https://medium.com/@user/post")]
+    [InlineData("mastodon.social/@user", "https://mastodon.social/@user")]
+    [InlineData("youtube.com/@mkbhd", "https://youtube.com/@mkbhd")]
+    [InlineData("https://user:pw@example.com", null)] // no user name or password before the host
+    [InlineData("https://user@example.com/a", null)]
+    [InlineData("script.pl", null)] // Perl, not Poland
     [InlineData("javascript:alert(1)", null)]
     [InlineData("ftp://example.com", null)]
     [InlineData("ms-settings:display", null)]

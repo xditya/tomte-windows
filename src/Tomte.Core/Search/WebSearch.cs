@@ -23,8 +23,8 @@ public static class WebSearch
     private static readonly HashSet<string> Endings = new(StringComparer.OrdinalIgnoreCase)
     {
         "com", "org", "net", "edu", "gov", "mil", "int", "io", "dev", "app", "co", "me", "info", "biz", "xyz", "tech", "site",
-        "online", "store", "shop", "blog", "page", "cloud", "ai", "tv", "gg", "news", "wiki", "eu", "uk", "us", "ca", "au",
-        "nz", "ie", "de", "fr", "nl", "be", "at", "ch", "it", "es", "pt", "se", "no", "dk", "fi", "is", "pl", "cz", "gr", "ru",
+        "online", "store", "shop", "blog", "page", "cloud", "social", "ai", "tv", "gg", "news", "wiki", "eu", "uk", "us", "ca",
+        "au", "nz", "ie", "de", "fr", "nl", "be", "at", "ch", "it", "es", "pt", "se", "no", "dk", "fi", "is", "cz", "gr", "ru",
         "ua", "tr", "in", "jp", "cn", "kr", "tw", "hk", "sg", "my", "id", "th", "vn", "ph", "pk", "br", "mx", "ar", "cl",
         "za", "ng", "ke", "eg", "il", "ae", "sa",
     };
@@ -48,19 +48,21 @@ public static class WebSearch
     /// The web address the text is, or null when it is words to search for. An address has no spaces and is either a
     /// full http:// or https:// address, or a name made of dotted parts that ends in a common web ending (example.com,
     /// docs.example.co.uk/path), localhost or an IPv4 address, each with an optional port and path; those open over https,
-    /// localhost and IP addresses over http. Nothing else is opened: no other scheme, no "c#", no "file.txt".
+    /// localhost and IP addresses over http. An "@" may be in the path (youtube.com/@name), never before the host: no
+    /// user name or password, and "user@example.com" is searched for. Nothing else is opened: no other scheme, no "c#",
+    /// no "file.txt".
     /// </summary>
     public static Uri? Address(string text)
     {
         string t = text.Trim();
-        if (t.Length == 0 || t.Any(char.IsWhiteSpace) || t.Contains('@', StringComparison.Ordinal))
+        if (t.Length == 0 || t.Any(char.IsWhiteSpace))
         {
             return null;
         }
 
         if (t.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || t.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
-            return Uri.TryCreate(t, UriKind.Absolute, out var full) && full.Scheme is "http" or "https" && full.Host.Length > 0 ? full : null;
+            return Uri.TryCreate(t, UriKind.Absolute, out var full) && full.Scheme is "http" or "https" && full.Host.Length > 0 && full.UserInfo.Length == 0 ? full : null;
         }
 
         int end = t.IndexOfAny(['/', '?', '#']);
