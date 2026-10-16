@@ -97,6 +97,13 @@ internal static partial class Program
             return 2;
         }
 
+        // The strip driver types into the note: only into a run's own data folder, never the user's.
+        if (args.Contains("--debug-strip") && Arg(args, "--debug-settings") is null)
+        {
+            Console.Error.WriteLine("usage: --debug-strip needs --debug-settings <file>, so the note it types into is the run's own");
+            return 2;
+        }
+
         string? logArg = args.FirstOrDefault(a => a.StartsWith("--debug-log", StringComparison.Ordinal));
         bool debug = debugMascot || rambler || palettePrompt is not null || captureQuestion is not null || debugTimer is not null || logArg is not null || args.Contains("--debug-job");
 
@@ -235,6 +242,11 @@ internal static partial class Program
         if (Arg(args, "--debug-search") is { } searched && logLine is not null)
         {
             _ = DebugSearch(triggers, searched, Arg(args, "--debug-keys"), args.Contains("--debug-race"), args.Contains("--debug-quit"), logLine);
+        }
+
+        if (args.Contains("--debug-strip") && logLine is not null)
+        {
+            _ = DebugStrip(island, triggers, logLine);
         }
 
         // After the lasso the palette opens with the region on, for the user to type the question; the driver asks its own.
