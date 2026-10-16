@@ -25,6 +25,7 @@ internal sealed class TimerRing
     private readonly ShapeVisual visual;
     private readonly CompositionEllipseGeometry arc;
     private readonly ScalarKeyFrameAnimation fill;
+    private ContainerVisual? frame;
 
     public TimerRing(Compositor compositor)
     {
@@ -37,29 +38,27 @@ internal sealed class TimerRing
         visual.Shapes.Add(track);
         visual.Shapes.Add(arcShape);
         visual.IsVisible = false;
-        // The parent is as wide as the current outline, so half its width follows the pill's centre through every
-        // frame of a morph and the ring stays where the open pill puts it, like the mascot's anchor.
-        visual.RelativeOffsetAdjustment = new Vector3(0.5f, 0, 0);
 
         // One fill for the ring's life; each show only gives it the time left.
         fill = compositor.CreateScalarKeyFrameAnimation();
         fill.InsertKeyFrame(1, 1, compositor.CreateStepEasingFunction(FillSteps));
     }
 
-    /// <summary>Goes into the island's content visual, which is the outline's bounds plus a 1 px margin each side.</summary>
-    public Visual Visual => visual;
-
     /// <summary>
-    /// Show the ring for a run: full when it has ended, otherwise filling until its end time. It sits right of
-    /// the mascot, or at the pill's left padding when the mascot is off, so it never stands beside a gap.
+    /// Show the ring for a run, in DIPs in <paramref name="into"/> (the island's trailing frame, or its centre one) with
+    /// its left edge at <paramref name="x"/>: full when the run has ended, otherwise filling until its end time. It
+    /// goes a gap before the words it belongs to.
     /// </summary>
-    public void Show(TimerRun run, DateTimeOffset now, double scale, bool mascotOn)
+    public void Show(TimerRun run, DateTimeOffset now, ContainerVisual into, float x)
     {
-        float s = (float)scale;
-        // From the pill's centre; the parent's half width is one margin pixel right of it.
-        float fromCenter = (float)(-IslandGeometry.Compact.Width / 2) + CompactLayout.RingLeft(mascotOn);
-        visual.Scale = new Vector3(s, s, 1);
-        visual.Offset = new Vector3(fromCenter * s - 1, Top * s, 0);
+        if (frame != into)
+        {
+            frame?.Children.Remove(visual);
+            into.Children.InsertAtTop(visual);
+            frame = into;
+        }
+
+        Place(x);
 
         // Stop first, so a fill left from the last show cannot override the value set here.
         arc.StopAnimation("TrimEnd");
@@ -76,6 +75,9 @@ internal sealed class TimerRing
         visual.IsVisible = true;
     }
 
+    /// <summary>Move the ring along its row, as the words after it change width (1:00:00 to 59:59).</summary>
+    public void Place(float x) => visual.Offset = new Vector3(x, Top, 0);
+
     public void Hide()
     {
         if (!visual.IsVisible)
@@ -85,6 +87,9 @@ internal sealed class TimerRing
 
         visual.IsVisible = false;
         arc.StopAnimation("TrimEnd");
+        // Out of its frame, so a close with nothing showing does not wait for a fade; Show puts it back.
+        frame?.Children.Remove(visual);
+        frame = null;
     }
 
     private static CompositionSpriteShape Circle(Compositor compositor, Color color, out CompositionEllipseGeometry geometry)

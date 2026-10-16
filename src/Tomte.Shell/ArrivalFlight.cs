@@ -54,7 +54,8 @@ internal sealed unsafe class ArrivalFlight
     /// compositor clock to fly by. Not raised for <see cref="End"/> or a pill that did not open.
     /// </param>
     /// <param name="log">Gets the landing's time, frame count and longest frame, for frame-rate checks.</param>
-    public ArrivalFlight(IslandWindow island, Func<bool> openPill, Action ended, Action<string>? log)
+    /// <param name="alone">The pill <paramref name="openPill"/> opens is the peek pill, the tomte alone, rather than Compact.</param>
+    public ArrivalFlight(IslandWindow island, Func<bool> openPill, Action ended, Action<string>? log, bool alone)
     {
         this.island = island;
         this.openPill = openPill;
@@ -63,7 +64,7 @@ internal sealed unsafe class ArrivalFlight
         step = Step;
 
         // In the island monitor's pixels: the middle of its work area, and where the island draws its tomte.
-        var land = island.MascotLanding();
+        var land = island.MascotLanding(alone);
         double scale = island.Scale;
         tomte = (float)(MascotArt.SizeDips * scale);
         var info = new MONITORINFO { cbSize = (uint)sizeof(MONITORINFO) };

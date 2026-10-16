@@ -40,6 +40,27 @@ public class ArrivalTests
         Assert.Equal(CompactContent.None, CompactRules.Content(CompactReason.Arrival, IslandEventSource.Other, timerRuns: true, playing: true));
     }
 
+    // A normal start lands in the peek pill, which holds the tomte alone: centred across it, its art's middle row on the
+    // pill's middle, a pixel either way.
+    [Theory]
+    [InlineData(1.0, 1920)]
+    [InlineData(1.25, 1920)]
+    [InlineData(1.5, 2560)]
+    public void LandsCentredInThePeekPill(double scale, int screenWidth)
+    {
+        int center = screenWidth / 2;
+        var pill = IslandGeometry.Peek;
+        var at = Arrival.Landing(pill, scale, center, attached: false);
+
+        Assert.InRange(at.X + (MascotArt.SizeDips * scale / 2), center - 1, center + 1);
+        double pillLeft = center - (pill.Width * scale / 2);
+        Assert.InRange(at.X - pillLeft, (MascotArt.InsetX * scale) - 1, (MascotArt.InsetX * scale) + 1);
+        double middle = at.Y + (MascotArt.MiddleY / MascotArt.ViewBox * MascotArt.SizeDips * scale);
+        double pillMiddle = IslandOutline.GapPixels(scale) + (pill.Depth * scale / 2);
+        Assert.InRange(middle, pillMiddle - 1, pillMiddle + 1);
+    }
+
+    // A first start lands in the Compact pill that says the hint, at its left edge.
     [Theory]
     [InlineData(1.0, 1920)]
     [InlineData(1.25, 1920)]

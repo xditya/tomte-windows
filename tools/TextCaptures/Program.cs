@@ -55,6 +55,11 @@ internal static unsafe partial class Program
             return CompositionCaptures(into);
         }
 
+        if (args is ["--close", var closeInto])
+        {
+            return CloseCaptures(closeInto);
+        }
+
         string dir = args.Length > 0 ? args[0] : "captures";
         Directory.CreateDirectory(dir);
         var report = new List<string> { $"machine {Environment.MachineName}, {Environment.OSVersion}" };
@@ -263,6 +268,18 @@ internal static unsafe partial class Program
                 c.Pill();
                 c.Mascot();
             }),
+            new("compact-rambler", IslandGeometry.Compact with { Width = 262 }, c => RamblerPill(c, mascot: true)),
+            new("compact-kept-playing", IslandGeometry.Compact, c => NowPlayingRow(c, "Nightfall", bars: false)),
+            new("compact-off-kept-playing", IslandGeometry.Compact, c => NowPlayingRow(c, "Nightfall", mascot: false, bars: false)),
+            // The same pills with the tomte turned off in settings.
+            new("compact-off-glance-date", IslandGeometry.Compact, c => CompactLine(c, Glance(new GlanceFacts(), mascot: false), ring: null, mascot: false)),
+            new("compact-off-timer-running", IslandGeometry.Compact, c => CompactLine(c, CompactRules.Countdown(TimeSpan.FromSeconds(1499.4)), ring: 0.0004f, tabular: true, mascot: false)),
+            new("compact-off-timer-done", IslandGeometry.Compact, c => CompactLine(c, CompactRules.TimerDone(TimeSpan.FromMinutes(25)), ring: 1, mascot: false)),
+            new("compact-off-device-event", IslandGeometry.Compact, c => CompactLine(c, "Volume 40%.", ring: null, mascot: false)),
+            new("compact-off-first-run-hint", IslandGeometry.Compact, c => CompactLine(c, CompactRules.Hint, ring: null, mascot: false)),
+            new("compact-off-now-playing", IslandGeometry.Compact, c => NowPlayingRow(c, "Nightfall", mascot: false)),
+            UndoPill("compact-off-undo-answer", "AI answer closed", key: true, mascot: false),
+            new("compact-off-rambler", IslandGeometry.Compact with { Width = 262 }, c => RamblerPill(c, mascot: false)),
             new("strip-ask-widest", IslandGeometry.Panel(PanelSize.Shelf.W, 64), c => Strip(c, PanelId.Shelf, PanelSize.Shelf)),
             // Every panel is one width; a narrower strip is a panel cut to 60% of an 800 x 600 screen.
             new("strip-ask-narrowest", IslandGeometry.Panel(480, 64), c => Strip(c, PanelId.Media, (480, PanelSize.Media.H))),
@@ -427,14 +444,28 @@ internal static unsafe partial class Program
         }
     }
 
-    // The Compact now-playing row: art, the title in its slot, four bars caught mid-breath.
-    private static void NowPlayingRow(Canvas c, string title)
+    // The Compact now-playing row: art, the title in its slot, four bars caught mid-breath. The peek pill and the pill
+    // kept while music plays have no bars.
+    private static void NowPlayingRow(Canvas c, string title, bool mascot = true, bool bars = true)
     {
         c.Pill();
-        c.Mascot();
-        c.Gradient(CompactLayout.Art, CompactLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
-        c.Text(title, CompactLayout.TitleStyle, CompactLayout.Title, Vector2.Zero);
-        for (int i = 0; i < CompactLayout.BarReach.Length; i++)
+        if (mascot)
+        {
+            c.Mascot();
+        }
+
+        var art = CompactLayout.Art(mascot);
+        var slot = CompactLayout.Title(mascot);
+        if (!bars)
+        {
+            // The art and its title as one group, as the row lays them out on a pill with no bars.
+            var (lead, x, width) = CompactLayout.Group(mascot, art.Width, TextSlot.Measure(title, CompactLayout.TitleStyle, 4096));
+            (art.X, slot.X, slot.Width) = (lead, x, width);
+        }
+
+        c.Gradient(art, CompactLayout.ArtCorner, 0xFF6A4A86, 0xFFC07A8E);
+        c.Text(title, CompactLayout.TitleStyle, slot, Vector2.Zero);
+        for (int i = 0; bars && i < CompactLayout.BarReach.Length; i++)
         {
             float h = Waveform.MinHeight + Waveform.Swing * CompactLayout.BarReach[i] * 0.7f;
             var bar = new RectangleF(CompactLayout.BarsLeft + i * (Waveform.BarWidth + Waveform.Gap), CompactLayout.BarsTop + (CompactLayout.BarsHeight - h) / 2, Waveform.BarWidth, h);
@@ -445,37 +476,69 @@ internal static unsafe partial class Program
     // 18:41 on the day the captures were made, in this PC's culture, as the push pill lays it out.
     private static readonly DateTimeOffset GlanceNow = new(DateTime.Today.AddHours(18).AddMinutes(41));
 
-    private static string Glance(GlanceFacts facts) =>
-        CompactRules.Glance(GlanceNow, facts, CompactLayout.Line(true, ring: false).Width, line => TextSlot.Measure(line, CompactLayout.LineStyle, 4096));
+    private static string Glance(GlanceFacts facts, bool mascot = true) =>
+        CompactRules.Glance(GlanceNow, facts, CompactLayout.Line(mascot).Width, line => TextSlot.Measure(line, CompactLayout.LineStyle, 4096));
 
-    // The Compact line in its slot, after the ring when the ring shows; the tomte is on.
-    private static void CompactLine(Canvas c, string line, float? ring, bool tabular = false)
+    // The Compact line in its slot, or with the ring as one group when the ring shows.
+    private static void CompactLine(Canvas c, string line, float? ring, bool tabular = false, bool mascot = true)
     {
         var pill = IslandGeometry.Compact;
+        var style = tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle;
         c.Pill();
-        c.Mascot();
-        if (ring is { } fill)
+        if (mascot)
         {
-            float left = (float)(-pill.Width / 2) + CompactLayout.RingLeft(true);
-            c.Ring(new Vector2(left + CompactLayout.RingSize / 2, (float)pill.Depth / 2), (CompactLayout.RingSize - CompactLayout.RingStroke) / 2, CompactLayout.RingStroke, fill);
+            c.Mascot();
         }
 
-        c.Text(line, tabular ? CompactLayout.ClockStyle : CompactLayout.LineStyle, CompactLayout.Line(true, ring is not null), Vector2.Zero);
+        if (ring is { } fill)
+        {
+            var (left, x, width) = CompactLayout.Group(mascot, CompactLayout.RingSize, TextSlot.Measure(line, style, 4096));
+            c.Ring(new Vector2(left + CompactLayout.RingSize / 2, (float)pill.Depth / 2), (CompactLayout.RingSize - CompactLayout.RingStroke) / 2, CompactLayout.RingStroke, fill);
+            c.Text(line, style, new RectangleF(x, 0, width, (float)pill.Depth), Vector2.Zero);
+            return;
+        }
+
+        c.Text(line, CompactLayout.Ending(style, led: mascot), CompactLayout.Line(mascot), Vector2.Zero);
+    }
+
+    // The voice key's pill while it records, as the rambler draws it: the microphone and seven bars mid-word, centred
+    // in the room right of the tomte, or in the pill with the tomte off.
+    private static void RamblerPill(Canvas c, bool mascot)
+    {
+        c.Pill();
+        if (mascot)
+        {
+            c.Mascot();
+        }
+
+        const float group = 6 + 8 + (Waveform.Bars * Waveform.BarWidth) + ((Waveform.Bars - 1) * Waveform.Gap), height = Waveform.MinHeight + Waveform.Swing;
+        float shift = mascot ? (MascotArt.InsetX + MascotArt.SizeDips) / 2 : 0, x = shift - (group / 2), y = (float)(IslandGeometry.Compact.Depth - height) / 2;
+        c.RoundRect(new RectangleF(x, y + ((height - 11) / 2), 6, 11), 3, 0xFFFF6B6B);
+        float[] reach = [.35f, .62f, .85f, 1f, .85f, .62f, .35f];
+        for (int i = 0; i < Waveform.Bars; i++)
+        {
+            float h = Waveform.MinHeight + (Waveform.Swing * reach[i] * 0.7f);
+            c.RoundRect(new RectangleF(x + 14 + (i * (Waveform.BarWidth + Waveform.Gap)), y + ((height - h) / 2), Waveform.BarWidth, h), Waveform.BarWidth / 2, 0xFFFFFFFF);
+        }
     }
 
     // The pill after an AI view closed, as UndoPill lays it out: its line, then Undo, white, with Win+Alt+Z beside the
-    // word unless another app holds the chord; the tomte is on.
-    private static Scene UndoPill(string name, string line, bool key)
+    // word unless another app holds the chord.
+    private static Scene UndoPill(string name, string line, bool key, bool mascot = true)
     {
         var label = PaletteLayout.RunButton with { Align = TextAlign.Leading };
         var keyStyle = TextStyle.Small with { Color = 0x8C000000 };
         string chord = UndoClose.Chord.ToString();
         float lw = TextSlot.Measure("Undo", label, 200), kw = key ? TextSlot.Measure(chord, keyStyle, 200) : 0;
-        var (width, slot, box) = CompactLayout.Undo(true, TextSlot.Measure(line, CompactLayout.LineStyle, 400), lw + (key ? CompactLayout.UndoKeyGap + kw : 0));
+        var (width, slot, box) = CompactLayout.Undo(mascot, TextSlot.Measure(line, CompactLayout.LineStyle, 400), lw + (key ? CompactLayout.UndoKeyGap + kw : 0));
         return new(name, IslandGeometry.Compact with { Width = width }, c =>
         {
             c.Pill();
-            c.Mascot();
+            if (mascot)
+            {
+                c.Mascot();
+            }
+
             c.Text(line, CompactLayout.LineStyle, slot, Vector2.Zero);
             c.RoundRect(box, box.Height / 2, PaletteLayout.RunFill);
             float x = box.X + CompactLayout.UndoPadX;
@@ -1142,12 +1205,16 @@ internal static unsafe partial class Program
             path->Release();
         }
 
-        /// <summary>The tomte at rest, in its box at the pill's left edge.</summary>
+        /// <summary>The tomte in its box at the pill's left edge, at the size and opacity the shape's depth gives it.</summary>
         public void Mascot(bool pinned = false)
         {
             var box = MascotArt.Box(g);
             var at = new Vector2(box.X, box.Y);
-            float k = MascotArt.SizeDips / MascotArt.ViewBox;
+            float k = box.Width / MascotArt.ViewBox, ride = (float)MascotArt.Ride(g);
+            if (ride < 1)
+            {
+                Layer(ride);
+            }
             uint cap = 0xFF000000 | MascotArt.CapRed, shade = 0xFF000000 | MascotArt.Shade(MascotArt.CapRed);
             Fill(MascotArt.Beard, at, k, 0xFF000000 | MascotArt.BeardColor);
             Fill(MascotArt.BeardShade, at, k, 0xFF000000 | MascotArt.BeardShadeColor);
@@ -1162,6 +1229,11 @@ internal static unsafe partial class Program
                 Circle(at + MascotArt.PinRing.Center * k, MascotArt.PinRing.Radius * k, 0xFF000000);
                 Circle(at + MascotArt.PinDisc.Center * k, MascotArt.PinDisc.Radius * k, StateLook.Accent);
                 Figures(MascotArt.Pin, at, k, 0xFF000000);
+            }
+
+            if (ride < 1)
+            {
+                EndLayer();
             }
         }
 

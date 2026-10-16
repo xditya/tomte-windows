@@ -7,7 +7,7 @@ public enum MascotState
 {
     Hidden,
 
-    /// <summary>Resting at the left edge of Compact, Panels or the palette; drops in from above when the island opens.</summary>
+    /// <summary>Resting at the left edge of Compact, Panels or the palette; comes out with the shape when the island opens.</summary>
     Compact,
 
     /// <summary>Tilts after the pointer while something is dragged over the island.</summary>
@@ -48,6 +48,9 @@ public static class MascotArt
 
     /// <summary>The art's middle row, between the cap tip (1) and the bottom of the beard (61).</summary>
     public const float MiddleY = 31;
+
+    /// <summary>Where the art starts across the viewBox: the brim's leftmost point.</summary>
+    public const float ArtLeft = 8.1f;
 
     /// <summary>Whole character and body: bottom centre. Cap: brim centre. Tip: where it leaves the cone.</summary>
     public static readonly Vector2 RootPivot = new(32, 61);
@@ -95,23 +98,22 @@ public static class MascotArt
     /// <summary>
     /// The tomte's box in island space (x from the shape's centre line, y from its top) for the shape it sits in: at the
     /// left edge, with the art centred down the top row, which is the shape's depth up to the tab strip's height. The
-    /// peek pill is the box with its inset on both sides, so there the tomte is centred both ways.
+    /// peek pill is the box with its inset on both sides, so there the tomte is centred both ways. In a shape shallower
+    /// than a pill, part way through an open or a close, the box is scaled by <see cref="Ride"/> about the shape's
+    /// top-left corner, so the tomte stays in the same place in the pill's top row as it grows or shrinks.
     /// </summary>
     public static System.Drawing.RectangleF Box(in IslandGeometry shape)
     {
-        float row = (float)Math.Min(shape.Depth, PanelSpace.TabStripHeight);
-        return new(-(float)shape.Width / 2 + InsetX, row / 2 - MiddleY * SizeDips / ViewBox, SizeDips, SizeDips);
+        float row = (float)Math.Min(shape.Depth, PanelSpace.TabStripHeight), k = (float)Ride(shape);
+        return new(-(float)shape.Width / 2 + InsetX * k, row / 2 - MiddleY * SizeDips / ViewBox * k, SizeDips * k, SizeDips * k);
     }
 
     /// <summary>
-    /// The shape the tomte keeps to through a morph, or null for the live outline. Revealing a pill (Compact, the peek
-    /// badge, the rambler's wider pill: Compact's depth), it drops in where the pill will be and the pill opens around
-    /// it; retracting, it stays at the open shape's edge as it goes. Revealing anything deeper (the palette, the drop
-    /// surface) it rides the outline's left edge, as it does when a reveal turns into Panels, so it is never drawn
-    /// beside a shape still growing toward it.
+    /// The tomte's size and opacity in a shape, 0 to 1: whole in any shape at least as deep as the Compact pill, and
+    /// below that in step with the depth. It is a function of the live shape alone, so the tomte opens and closes with
+    /// the pill on the pill's own springs, turns round with it, and is gone when the pill is.
     /// </summary>
-    public static IslandGeometry? Anchor(in IslandGeometry from, in IslandGeometry to) =>
-        from.Depth <= 0.5 ? (to.Depth <= IslandGeometry.Compact.Depth ? to : null) : to.Depth <= 0.5 ? from : null;
+    public static double Ride(in IslandGeometry shape) => Math.Clamp(shape.Depth / IslandGeometry.Compact.Depth, 0, 1);
 
     /// <summary>The brim colour: the cap colour at 76% brightness, so a user-chosen cap keeps its shading.</summary>
     public static uint Shade(uint rgb)
@@ -130,9 +132,6 @@ public static class MascotArt
 /// <summary>The state table and the timeline values of the seven states.</summary>
 public static class MascotStates
 {
-    /// <summary>The reveal's start pose: the bottom of the beard (61) above the island's top edge from the tab strip's inset.</summary>
-    public const double PeekFromY = -82;
-    public const double IslandLeadSeconds = 0.07;
     public const double PeekToRestSeconds = 0.7;
     public const double SwayAngle = 3;
     public const double SwayStepSeconds = 0.55;
@@ -157,8 +156,8 @@ public static class MascotStates
 
     public static readonly IReadOnlyDictionary<MascotState, MascotReaction> Table = new Dictionary<MascotState, MascotReaction>
     {
-        // Retracting lifts it back above the screen, the reveal run backwards.
-        [MascotState.Hidden] = new(SpringPreset.Snappy, new(RootY: PeekFromY), new(RootY: PeekFromY)),
+        // Not used for the pose: a close holds the pose it has, and parking puts it back to rest.
+        [MascotState.Hidden] = new(SpringPreset.Snappy, default, default),
         [MascotState.Compact] = new(SpringPreset.Gentle, default, default),
         [MascotState.ShelfDrop] = new(SpringPreset.Snappy, default, default),
         [MascotState.Rambler] = new(SpringPreset.Snappy, default, default),
@@ -208,7 +207,7 @@ public sealed class Mascot
     private double driveTip;
     private double driveScaleX;
     private double driveScaleY;
-    private double islandLead;
+    private bool parked = true;
 
     /// <param name="clock">Seconds, the same clock the island's tick uses.</param>
     /// <param name="reduceMotion">True when Windows animation effects are off; read at each state change.</param>
@@ -217,7 +216,6 @@ public sealed class Mascot
         this.clock = clock;
         this.reduceMotion = reduceMotion;
         springs = [rootRotate, rootX, rootY, scaleX, scaleY, capRotate, tipRotate, lift];
-        rootY.Jump(MascotStates.PeekFromY);
     }
 
     private enum Beat
@@ -282,8 +280,8 @@ public sealed class Mascot
         }
     }
 
-    /// <summary>Drawn while on and not hidden, and while the retract lift is still moving.</summary>
-    public bool Visible => enabled && (State != MascotState.Hidden || !AtRest);
+    /// <summary>Drawn while on, from a state other than Hidden until the island parks it once the pill has closed.</summary>
+    public bool Visible => enabled && !parked;
 
     /// <summary>Microphone level 0..1 for the rambler state, at whatever rate the meter reports. Set it on the island's thread: it wakes the tick's timer.</summary>
     public double Level
@@ -332,29 +330,37 @@ public sealed class Mascot
     public void Set(MascotState state)
     {
         bool peek = state == MascotState.Compact && !Visible;
-        // A reaction set during the reveal keeps the drop-in snappy; only the peek schedules Rest.
-        bool peekMoving = State == MascotState.Compact && next == Beat.Rest;
+        parked &= state == MascotState.Hidden;
         Fold();
         reduce = reduceMotion();
         State = state;
         enteredAt = clock();
         next = Beat.None;
-        var reaction = MascotStates.Table[state];
-        var pose = reduce ? reaction.ReducedPose : reaction.Pose;
-        var preset = peek ? SpringPreset.Snappy : reaction.Preset;
-        To(rootRotate, pose.RootRotate, preset);
-        To(rootX, pose.RootX, preset);
-        To(rootY, pose.RootY, peekMoving ? SpringPreset.Snappy : preset);
-        To(scaleX, 0, preset);
-        To(scaleY, 0, preset);
-        To(capRotate, pose.CapRotate, preset);
-        To(tipRotate, pose.TipRotate, preset);
+        if (state == MascotState.Hidden)
+        {
+            // A close has no move of its own: the pose holds as it is, a drive folded in, while the pill takes it away.
+            foreach (var spring in springs)
+            {
+                spring.Jump(spring.Value);
+            }
+        }
+        else
+        {
+            var reaction = MascotStates.Table[state];
+            var pose = reduce ? reaction.ReducedPose : reaction.Pose;
+            var preset = peek ? SpringPreset.Snappy : reaction.Preset;
+            To(rootRotate, pose.RootRotate, preset);
+            To(rootX, pose.RootX, preset);
+            To(rootY, pose.RootY, preset);
+            To(scaleX, 0, preset);
+            To(scaleY, 0, preset);
+            To(capRotate, pose.CapRotate, preset);
+            To(tipRotate, pose.TipRotate, preset);
+        }
+
         if (peek && !reduce)
         {
-            // The tomte drops in from above the edge; the shape starts 70 ms later.
-            rootY.Jump(MascotStates.PeekFromY);
-            rootY.Target = 0;
-            islandLead = enabled ? MascotStates.IslandLeadSeconds : 0;
+            // It comes out with the opening pill; the sway waits until that is over.
             At(MascotStates.PeekToRestSeconds, Beat.Rest);
         }
         else if (state == MascotState.Compact)
@@ -397,23 +403,17 @@ public sealed class Mascot
         }
     }
 
-    /// <summary>The island just hid: drop every animation so nothing wakes the tick while hidden.</summary>
+    /// <summary>The island just hid: drop every animation so nothing wakes the tick while hidden, and draw nothing.</summary>
     public void Park()
     {
         Set(MascotState.Hidden);
-        lift.Target = 0;
+        // Every neutral value is 0: the next open starts from the resting pose.
         foreach (var spring in springs)
         {
-            spring.Jump(spring.Target);
+            spring.Jump(0);
         }
-    }
 
-    /// <summary>The island's first IslandLeadSeconds of a reveal wait for the peek; read once per reveal.</summary>
-    public double TakeIslandLead()
-    {
-        double lead = islandLead;
-        islandLead = 0;
-        return lead;
+        parked = true;
     }
 
     /// <summary>Advance one frame. Returns true while the tomte needs the next frame too.</summary>

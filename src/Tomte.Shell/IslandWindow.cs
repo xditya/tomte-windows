@@ -87,7 +87,6 @@ internal sealed unsafe class IslandWindow : IDisposable
     private double morphStartMs;
     private bool islandMoving;
     private double leadMs, heldLead;
-    private IslandGeometry? anchor;
     private float mascotX;
     private double fromWidth, fromDepth;
     private bool contentPending;
@@ -197,6 +196,18 @@ internal sealed unsafe class IslandWindow : IDisposable
         Live = compositor.CreatePropertySet();
         Live.InsertScalar("RampW", 0);
 
+        // The body's trailing end in every frame, and the middle of the live top row against the pill's, each a whole
+        // number of pixels from Dips' origin, so text placed in it lands on the pixel grid as it does there. At rest on
+        // the pill, both are exactly where Dips puts the pill's own right edge and middle.
+        Trailing = compositor.CreateContainerVisual();
+        var end = compositor.CreateExpressionAnimation(FormattableString.Invariant(
+            $"Vector3(Ceil((content.Size.X - {2 * Margin}) / 2 - live.RampW * dips.Scale.X) / dips.Scale.X, Floor((Min(content.Size.Y - {2 * Margin}, {PanelSpace.TabStripHeight} * dips.Scale.X) - Ceil({IslandGeometry.Compact.Depth} * dips.Scale.X)) / 2) / dips.Scale.X, 0)"));
+        end.SetReferenceParameter("content", Content);
+        end.SetReferenceParameter("dips", Dips);
+        end.SetReferenceParameter("live", Live);
+        Trailing.StartAnimation("Offset", end);
+        Dips.Children.InsertAtTop(Trailing);
+
         live = compositor.CreateContainerVisual();
         live.Children.InsertAtBottom(pill.Visual);
         live.Children.InsertAtTop(Content);
@@ -205,7 +216,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         ghost.Visual.Opacity = 0;
         ShadowLook();
 
-        // The mascot sits above the content and outside the clip, so it can be seen before the shape has any depth.
+        // The mascot sits above the content and outside its clip; it keeps inside the shape by being sized from its depth.
         Mascot = new Mascot(() => clock.Elapsed.TotalSeconds, () => ReduceMotion) { Changed = Wake };
         mascotVisual = new MascotVisual(compositor);
         live.Children.InsertAtTop(mascotVisual.Visual);
@@ -244,6 +255,14 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     /// <summary>Clipped by the outline and morphing with it, in physical pixels.</summary>
     public ContainerVisual Content { get; }
+
+    /// <summary>
+    /// Inside <see cref="Dips"/>, in DIPs measured from the body's trailing end: x = 0 at the live outline's right edge
+    /// through every frame of a morph, and y kept as far from the middle of the live top row as it is from the resting
+    /// pill's. What ends the Compact pill sits here, so it opens, closes and swells with that end and is never cut by a
+    /// pill still growing toward where it rests.
+    /// </summary>
+    public ContainerVisual Trailing { get; }
 
     /// <summary>
     /// Inside <see cref="Content"/>, in island space: DIPs, x = 0 on the island's centre line, y = 0 at the
@@ -305,7 +324,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     public Mascot Mascot { get; }
 
     /// <summary>Whether an island point is on the tomte's box at the shape's left edge, while the tomte is on.</summary>
-    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(anchor ?? Current).Contains(at.X, at.Y);
+    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(Current).Contains(at.X, at.Y);
 
     /// <summary>The island is pinned (Ctrl+P): a small mark at the tomte's lower right says so.</summary>
     public bool Pinned
@@ -411,11 +430,15 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
-    /// <summary>Where the tomte rests in the Compact pill at the island's place: its box's top-left in screen pixels.</summary>
-    public System.Drawing.PointF MascotLanding()
+    /// <summary>
+    /// Where the tomte rests at the island's place, in the peek pill when it is <paramref name="alone"/> and in the
+    /// Compact pill otherwise: its box's top-left in screen pixels.
+    /// </summary>
+    public System.Drawing.PointF MascotLanding(bool alone)
     {
         Rescale(MonitorScale());
-        var shape = attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact;
+        var pill = alone ? IslandGeometry.Peek : IslandGeometry.Compact;
+        var shape = attached ? pill.Attached() : pill;
         return Arrival.Landing(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth, attached), attached);
     }
 
@@ -492,9 +515,10 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         targetGeometry = to;
         swell = swellAimed = false;
-        double lead = Math.Max(Mascot.TakeIslandLead(), heldLead);
+        double lead = heldLead;
         heldLead = 0;
-        if (to.Depth <= 0.5 && Dips.Children.Count > 0)
+        // Trailing is always one of Dips' children, so only what is in it, or a second child, has anything to fade.
+        if (to.Depth <= 0.5 && (Dips.Children.Count > 1 || Trailing.Children.Count > 0))
         {
             // Whatever shows inside fades out first; the shape follows.
             lead = Math.Max(lead, ContentFadeOutSeconds);
@@ -502,9 +526,6 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         (fromWidth, fromDepth) = (from.Width, from.Depth);
         contentPending = to.Depth > 0.5;
-        // a retarget mid-reveal drops the anchor and the mascot jumps to the live edge in one frame; give the
-        // mascot its own x spring if that shows.
-        anchor = MascotArt.Anchor(from, to);
         TargetBounds = PointerTarget();
         crossfadeGeneration++; // a crossfade still in flight must not settle this morph
         foreach (var spring in springs)
@@ -769,7 +790,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         bool finished = false;
         if (islandMoving)
         {
-            // The tomte drops in from above the edge; the shape starts 70 ms later.
+            // A close waits for the content to fade out, and the launch arrival can hold a pill; the shape starts after.
             double islandDt = now - morphStartMs < leadMs ? 0 : dt;
             bool done = true;
             foreach (var spring in springs)
@@ -886,7 +907,6 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         var g = Current;
-        anchor = null;
         if (g.Depth <= 0.5)
         {
             // Hidden costs nothing: no beat may wake the tick, and the next show starts from a clean tomte at its place.
@@ -974,13 +994,13 @@ internal sealed unsafe class IslandWindow : IDisposable
         PlaceMascot(g);
     }
 
-    /// <summary>Put the tomte at the left edge of the shape, or of the anchor shape during a reveal or retract.</summary>
+    /// <summary>Put the tomte at the left edge of the live shape, at the size and opacity the shape's depth gives it.</summary>
     private void PlaceMascot(in IslandGeometry g)
     {
-        var box = MascotArt.Box(anchor ?? g);
+        var box = MascotArt.Box(g);
         float s = (float)scale;
         mascotX = (float)(g.OuterWidth / 2 + box.X) * s;
-        mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s);
+        mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s, (float)MascotArt.Ride(g));
     }
 
     private void ClearRegion()

@@ -3,6 +3,7 @@ using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
+using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Windows.UI.Composition;
 using Color = Windows.UI.Color;
@@ -20,8 +21,6 @@ internal sealed class NowPlayingRow
 {
     // Island space, x from the centre line; where things sit is CompactLayout's.
     private const float BarsLeft = CompactLayout.BarsLeft, BarsTop = CompactLayout.BarsTop, BarsHeight = CompactLayout.BarsHeight;
-    private static readonly RectangleF Art = CompactLayout.Art;
-    private static readonly RectangleF Title = CompactLayout.Title;
 
     // The four bars: how far each one reaches and how long one of its breaths takes.
     private static readonly float[] Reach = CompactLayout.BarReach;
@@ -122,9 +121,10 @@ internal sealed class NowPlayingRow
             Release();
             // The peek pill and the pill kept while music plays are ambient and can stay up for hours, so nothing
             // moves in them: no bars.
-            view = new View(island.Compositor, text, bars: reason is not (CompactReason.Peek or CompactReason.Playing));
+            bool mascot = island.Mascot.Enabled, bars = reason is not (CompactReason.Peek or CompactReason.Playing);
+            // Without bars the art and its title end the pill as one group, so they go with its trailing end.
+            view = new View(island.Compositor, text, mascot && !bars ? island.Trailing : island.Dips, mascot, bars);
             view.Root.Opacity = 0;
-            island.Dips.Children.InsertAtTop(view.Root);
             view.Root.StartAnimation("Opacity", fadeIn);
             ShowingChanged?.Invoke();
         }
@@ -139,27 +139,32 @@ internal sealed class NowPlayingRow
         if (leaving is { } gone)
         {
             leaving = null;
-            island.Dips.Children.Remove(gone.Root);
             gone.Dispose();
         }
     }
 
     private sealed class View : IDisposable
     {
+        private readonly ContainerVisual frame;
         private readonly ShapeVisual shapes;
         private readonly TextVisual title;
+        private readonly bool mascot, bars;
+        private RectangleF titleSlot;
 
-        public View(Compositor compositor, TextRenderer text, bool bars)
+        public View(Compositor compositor, TextRenderer text, ContainerVisual frame, bool mascot, bool bars)
         {
             Root = compositor.CreateContainerVisual();
-            Art = new ArtVisual(compositor, NowPlayingRow.Art, CompactLayout.ArtCorner);
+            (this.frame, this.mascot, this.bars) = (frame, mascot, bars);
+            frame.Children.InsertAtTop(Root);
+            Art = new ArtVisual(compositor, CompactLayout.Art(mascot), CompactLayout.ArtCorner);
             Root.Children.InsertAtTop(Art.Visual);
             title = text.Create(Root);
+            titleSlot = CompactLayout.Title(mascot);
 
-            // One shape visual from the title slot's left edge to the pill's right padding.
+            // One shape visual from the title slot's left edge to the end of the bars.
             shapes = compositor.CreateShapeVisual();
-            shapes.Offset = new Vector3(Title.X, 0, 0);
-            shapes.Size = new Vector2(BarsLeft + Reach.Length * (Waveform.BarWidth + Waveform.Gap) - Title.X, (float)IslandGeometry.Compact.Depth);
+            shapes.Offset = new Vector3(titleSlot.X, 0, 0);
+            shapes.Size = new Vector2(BarsLeft + Reach.Length * (Waveform.BarWidth + Waveform.Gap) - titleSlot.X, (float)IslandGeometry.Compact.Depth);
             Root.Children.InsertAtTop(shapes);
 
             if (!bars)
@@ -173,7 +178,7 @@ internal sealed class NowPlayingRow
             var ease = compositor.CreateCubicBezierEasingFunction(new Vector2(0.42f, 0), new Vector2(0.58f, 1));
             for (int i = 0; i < Reach.Length; i++)
             {
-                float x = BarsLeft - Title.X + i * (Waveform.BarWidth + Waveform.Gap), reach = Reach[i];
+                float x = BarsLeft - titleSlot.X + i * (Waveform.BarWidth + Waveform.Gap), reach = Reach[i];
                 var bar = compositor.CreateRoundedRectangleGeometry();
                 bar.CornerRadius = new Vector2(Waveform.BarWidth / 2);
                 var shape = compositor.CreateSpriteShape(bar);
@@ -208,11 +213,27 @@ internal sealed class NowPlayingRow
 
         public ArtVisual Art { get; }
 
-        /// <summary>The title in its slot: 13 DIP semibold, white, one line, ellipsis.</summary>
-        public void DrawTextRuns(NowPlaying playing) => title.Show(playing.Title, CompactLayout.TitleStyle, Title);
+        /// <summary>
+        /// The title in its slot: 13 DIP semibold, white, one line, ellipsis. With no bars the art and the title are one
+        /// group, placed from the title's width, in the trailing frame with the tomte on.
+        /// </summary>
+        public void DrawTextRuns(NowPlaying playing)
+        {
+            if (!bars)
+            {
+                var art = CompactLayout.Art(mascot);
+                var (lead, x, width) = CompactLayout.Group(mascot, art.Width, TextSlot.Measure(playing.Title, CompactLayout.TitleStyle, 4096));
+                float end = mascot ? CompactLayout.End : 0;
+                Art.Visual.Offset = new Vector3(lead - end, art.Y, 0);
+                titleSlot = new RectangleF(x - end, titleSlot.Y, width, titleSlot.Height);
+            }
+
+            title.Show(playing.Title, CompactLayout.TitleStyle, titleSlot);
+        }
 
         public void Dispose()
         {
+            frame.Children.Remove(Root);
             title.Dispose();
             Art.Dispose();
             shapes.Dispose();

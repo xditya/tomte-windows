@@ -67,7 +67,6 @@ internal sealed unsafe partial class TriggerController : IDisposable
         this.log = log;
         ring = new TimerRing(island.Compositor);
         compact = new CompactTargets(this);
-        island.Content.Children.InsertAtTop(ring.Visual);
         // The timer has no lock and is only touched on this thread. Changed is queued, not run in place, so the
         // caller (the debug switch, a completion inside OnTimer) finishes before the one-shot and the ring re-sync.
         timer.Changed += () => island.Queue.TryEnqueue(ArmTimer);
@@ -1296,7 +1295,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var run = timer.Run ?? finished;
         if (run is not null && CompactShows(playing: false) == CompactContent.TimerRing)
         {
-            ring.Show(run, DateTimeOffset.Now, island.Scale, island.Mascot.Enabled);
+            // Placed from the words the pill will show after it, so it is where it belongs from its first frame, before
+            // the words fade in.
+            var (words, left) = CompactLine(DateTimeOffset.Now);
+            var style = left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle;
+            bool mascot = island.Mascot.Enabled;
+            float x = CompactLayout.Group(mascot, CompactLayout.RingSize, Tomte.Core.Text.TextSlot.Measure(words ?? "", style, 4096)).Lead;
+            ring.Show(run, DateTimeOffset.Now, mascot ? island.Trailing : island.Dips, mascot ? x - CompactLayout.End : x);
         }
         else
         {
@@ -1305,6 +1310,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         CompactChanged?.Invoke();
     }
+
+    /// <summary>The ring follows its words as they are redrawn, in the frame it was shown in.</summary>
+    public void PlaceRing(float x) => ring.Place(x);
 
     private static bool IsTimerDone(IslandEvent e) => e.Source == IslandEventSource.Timer;
 
@@ -1375,7 +1383,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             try
             {
-                arrival = new ArrivalFlight(island, ArrivalPill, ArrivalEnded, log);
+                // A normal start lands in the peek pill, the tomte alone; a first start in the hint's pill.
+                arrival = new ArrivalFlight(island, ArrivalPill, ArrivalEnded, log, alone: settings.FirstRunHintShown);
                 return;
             }
             catch (ExternalException e)
@@ -1398,7 +1407,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         arrival = null;
         // Set before the morph, which reads it for the pill's content: the tomte alone.
         arrivalShowing = settings.FirstRunHintShown;
-        bool shown = machine.State == IslandState.Hidden && (settings.FirstRunHintShown ? Reveal(RevealTrigger.Event, IslandState.Compact) : FirstRunHint());
+        bool shown = machine.State == IslandState.Hidden && (settings.FirstRunHintShown ? Reveal(RevealTrigger.Event, IslandState.Compact, peek: true) : FirstRunHint());
         arrivalShowing &= shown;
         arrival = shown ? flight : null;
         if (!shown)
