@@ -55,6 +55,11 @@ internal static unsafe partial class Program
             return CompositionCaptures(into);
         }
 
+        if (args is ["--close", var closeInto])
+        {
+            return CloseCaptures(closeInto);
+        }
+
         string dir = args.Length > 0 ? args[0] : "captures";
         Directory.CreateDirectory(dir);
         var report = new List<string> { $"machine {Environment.MachineName}, {Environment.OSVersion}" };
@@ -1142,12 +1147,16 @@ internal static unsafe partial class Program
             path->Release();
         }
 
-        /// <summary>The tomte at rest, in its box at the pill's left edge.</summary>
+        /// <summary>The tomte in its box at the pill's left edge, at the size and opacity the shape's depth gives it.</summary>
         public void Mascot(bool pinned = false)
         {
             var box = MascotArt.Box(g);
             var at = new Vector2(box.X, box.Y);
-            float k = MascotArt.SizeDips / MascotArt.ViewBox;
+            float k = box.Width / MascotArt.ViewBox, ride = (float)MascotArt.Ride(g);
+            if (ride < 1)
+            {
+                Layer(ride);
+            }
             uint cap = 0xFF000000 | MascotArt.CapRed, shade = 0xFF000000 | MascotArt.Shade(MascotArt.CapRed);
             Fill(MascotArt.Beard, at, k, 0xFF000000 | MascotArt.BeardColor);
             Fill(MascotArt.BeardShade, at, k, 0xFF000000 | MascotArt.BeardShadeColor);
@@ -1162,6 +1171,11 @@ internal static unsafe partial class Program
                 Circle(at + MascotArt.PinRing.Center * k, MascotArt.PinRing.Radius * k, 0xFF000000);
                 Circle(at + MascotArt.PinDisc.Center * k, MascotArt.PinDisc.Radius * k, StateLook.Accent);
                 Figures(MascotArt.Pin, at, k, 0xFF000000);
+            }
+
+            if (ride < 1)
+            {
+                EndLayer();
             }
         }
 
