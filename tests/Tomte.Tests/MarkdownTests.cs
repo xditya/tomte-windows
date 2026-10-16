@@ -80,6 +80,24 @@ public class MarkdownTests
     }
 
     [Fact]
+    public void AnAnswerReadsItalicAndCodeButNotTheNotesOtherMarkers()
+    {
+        var block = Assert.Single(Markdown.Parse("a *b* `c **d**` ***e***"));
+        Assert.Equal("a b c **d** e", block.Text);
+        Assert.Equal([(2, 1), (12, 1)], block.Italic);
+        Assert.Equal([(4, 7)], block.Code);
+        Assert.Equal([(12, 1)], block.Bold);
+
+        // Left as written: a * before a space, a * never closed, and what only the note reads.
+        foreach (string text in new[] { "5 * 3", "2*", "_x_ snake_case ~~y~~ [a](b)" })
+        {
+            var plain = Assert.Single(Markdown.Parse(text));
+            Assert.Equal(text, plain.Text);
+            Assert.All(plain.Spans, s => Assert.Equal(MarkdownLook.Plain, s.Look));
+        }
+    }
+
+    [Fact]
     public void CodeIsKeptAsItIsAndRulesGo()
     {
         Assert.Equal(

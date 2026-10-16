@@ -20,6 +20,10 @@ public enum TextAlign
 public sealed record TextStyle(float Size, int Weight = 400, uint Color = TextStyle.WhiteColor, TextAlign Align = TextAlign.Leading, bool Tabular = false, string Family = TextStyle.Ui, float LineHeight = 0)
 {
     public const string Ui = "Segoe UI Variable Text";
+
+    /// <summary>The font for code.</summary>
+    public const string Mono = "Consolas";
+
     public const uint WhiteColor = 0xFFFFFFFF;
 
     /// <summary>Secondary text, 60% white.</summary>
@@ -47,16 +51,22 @@ public sealed record TextStyle(float Size, int Weight = 400, uint Color = TextSt
 /// <summary>
 /// One run of text: the string, how it looks, the widest it may be, and how many lines it may take. One line
 /// ends in an ellipsis where it does not fit; more lines wrap at word breaks and the last one shown ends in an
-/// ellipsis when the rest does not fit. <see cref="Bold"/> parts of the text are semibold.
+/// ellipsis when the rest does not fit. <see cref="Bold"/> parts of the text are semibold, <see cref="Italic"/> parts
+/// italic and <see cref="Code"/> parts in <see cref="TextStyle.Mono"/>; a one-line run with a line break in it ignores
+/// them.
 /// </summary>
 public sealed record TextRun(string Text, TextStyle Style, float MaxWidth, int Lines = 1)
 {
-    /// <summary>Parts of the text drawn semibold, as start and length. A one-line run with a line break in it ignores them.</summary>
+    /// <summary>Parts of the text drawn semibold, as start and length.</summary>
     public IReadOnlyList<(int Start, int Length)> Bold { get; init; } = [];
+
+    public IReadOnlyList<(int Start, int Length)> Italic { get; init; } = [];
+
+    public IReadOnlyList<(int Start, int Length)> Code { get; init; } = [];
 
     // By value, parts included, so a view draws a run again only when something in it changed.
     public bool Equals(TextRun? other) => other is not null && Text == other.Text && Style == other.Style && MaxWidth == other.MaxWidth
-        && Lines == other.Lines && Bold.SequenceEqual(other.Bold);
+        && Lines == other.Lines && Bold.SequenceEqual(other.Bold) && Italic.SequenceEqual(other.Italic) && Code.SequenceEqual(other.Code);
 
     public override int GetHashCode() => HashCode.Combine(Text, Style, MaxWidth, Lines, Bold.Count);
 }
@@ -115,6 +125,16 @@ public sealed class TextLayout : IDisposable
                 foreach (var (start, length) in run.Bold)
                 {
                     made.SetFontWeight(DWRITE_FONT_WEIGHT.DWRITE_FONT_WEIGHT_SEMI_BOLD, new DWRITE_TEXT_RANGE { startPosition = (uint)start, length = (uint)length });
+                }
+
+                foreach (var (start, length) in run.Italic)
+                {
+                    made.SetFontStyle(DWRITE_FONT_STYLE.DWRITE_FONT_STYLE_ITALIC, new DWRITE_TEXT_RANGE { startPosition = (uint)start, length = (uint)length });
+                }
+
+                foreach (var (start, length) in run.Code)
+                {
+                    made.SetFontFamilyName(TextStyle.Mono, new DWRITE_TEXT_RANGE { startPosition = (uint)start, length = (uint)length });
                 }
             }
 

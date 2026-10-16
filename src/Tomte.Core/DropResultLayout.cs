@@ -39,8 +39,8 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 /// under it, then the answer, the choices as full-width buttons with their words centred, the last of them (the
 /// default) filled, and the result files as tiles. The panel is the palette's width and grows with what it shows, up to
 /// the palette's height or the monitor's cap, whichever is less.
-/// The answer is read as Markdown (<see cref="Markdown"/>): paragraphs, bold, headings as bold lines, list items with
-/// their marker hanging left of the text, code as it is. It wraps to the panel and scrolls in its band when it is longer.
+/// The answer is read as Markdown (<see cref="Markdown"/>): paragraphs, bold, italic, headings as bold lines, list items
+/// with their marker hanging left of the text, code as it is. It wraps to the panel and scrolls in its band when it is longer.
 /// </summary>
 public sealed class DropResultLayout
 {
@@ -58,7 +58,7 @@ public sealed class DropResultLayout
 
     public static readonly TextStyle IndicatorStyle = TextStyle.Secondary with { Align = TextAlign.Trailing };
     public static readonly TextStyle BodyStyle = TextStyle.Primary with { LineHeight = 19 };
-    public static readonly TextStyle CodeStyle = new(12, Color: 0xFFD6D6DE, Family: "Consolas", LineHeight: 17);
+    public static readonly TextStyle CodeStyle = new(12, Color: 0xFFD6D6DE, Family: TextStyle.Mono, LineHeight: 17);
     public static readonly TextStyle TileName = new(12.5f, 600);
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
@@ -198,7 +198,7 @@ public sealed class DropResultLayout
                 x += hang;
             }
 
-            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), maxLines - lines) { Bold = block.Bold };
+            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), maxLines - lines) { Bold = block.Bold, Italic = block.Italic, Code = block.Code };
             using var laid = TextLayout.Of(run);
             runs.Add(new TextAt(run, new Vector2(x, y)));
             y += laid.Height;
