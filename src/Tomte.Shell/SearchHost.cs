@@ -425,6 +425,7 @@ internal sealed class SearchHost
             candidates = candidates.Append(new SearchItem(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"));
         }
 
+        candidates = candidates.Append(WebSearch.Row(typed, store.Current.WebSearch));
         if (store.Current.Provider is { } provider)
         {
             candidates = candidates
@@ -621,7 +622,7 @@ internal sealed class SearchHost
 
         if (Dry)
         {
-            log?.Invoke($"search: would open {item.Kind} \"{item.Name}\"{(folder ? " in its folder" : "")}{(item.Kind == SearchKind.Place ? $" at {item.Target}" : "")}");
+            log?.Invoke($"search: would open {item.Kind} \"{item.Name}\"{(folder ? " in its folder" : "")}{(item.Kind is SearchKind.Place or SearchKind.Web ? $" at {item.Target}" : "")}");
             triggers.Hide();
             return;
         }
@@ -645,7 +646,11 @@ internal sealed class SearchHost
             return;
         }
 
-        await CountAsync(item);
+        // A web row holds the typed words, which are never stored.
+        if (item.Kind != SearchKind.Web)
+        {
+            await CountAsync(item);
+        }
     }
 
     private async Task CountAsync(SearchItem item)
@@ -687,6 +692,9 @@ internal sealed class SearchHost
                 case SearchKind.Place:
                     var opened = Places.Open(item.Target);
                     return opened.Ok ? null : opened.Message;
+                case SearchKind.Web:
+                    var web = WebSearch.Open(item.Target);
+                    return web.Ok ? null : web.Message;
                 default:
                     using (Process.Start(new ProcessStartInfo(item.Target) { UseShellExecute = true }))
                     {

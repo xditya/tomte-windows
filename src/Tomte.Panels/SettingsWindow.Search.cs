@@ -4,7 +4,7 @@ using Tomte.Core.Search;
 
 namespace Tomte.Panels;
 
-/// <summary>The Search part of the Hotkeys page: which file search is in use, and getting Everything.</summary>
+/// <summary>The Search part of the Hotkeys page: which file search is in use, getting Everything, and the web search engine.</summary>
 public sealed partial class SettingsWindow
 {
     // Under the file search: small local models rarely call AI search's tools.
@@ -21,7 +21,27 @@ public sealed partial class SettingsWindow
         var row = Row("File search", fileSearchNote, getEverything);
         // The row names its control after the row; a screen reader should hear what the button does.
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(getEverything, "Get Everything");
-        return Card(row, Note(AiSearchNote));
+        return Card(row, Row("Web search", Note("What Open in browser in the search box searches with."), WebSearchEngines()), Note(AiSearchNote));
+    }
+
+    // Google, Bing or DuckDuckGo, in the enum's order.
+    private ComboBox WebSearchEngines()
+    {
+        var box = new ComboBox { MinWidth = 200 };
+        foreach (var engine in Enum.GetValues<WebSearchEngine>())
+        {
+            box.Items.Add(WebSearch.Name(engine));
+        }
+
+        box.SelectedIndex = (int)store.Current.WebSearch;
+        box.SelectionChanged += (_, _) =>
+        {
+            if (box.SelectedIndex >= 0)
+            {
+                Save(s => s with { WebSearch = (WebSearchEngine)box.SelectedIndex });
+            }
+        };
+        return box;
     }
 
     private async Task ShowFileSearchAsync()

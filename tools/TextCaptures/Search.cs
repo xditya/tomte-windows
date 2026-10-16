@@ -25,6 +25,7 @@ internal static partial class Program
         new(SearchKind.Folder, "code", @"D:\Projects\code", @"D:\Projects", Path.Combine(WinDir, "Web"), @"D:\Projects\code"),
         new(SearchKind.File, "Codes and passwords for the very long named family accounts spreadsheet.xlsx", @"D:\Home\Codes.xlsx", @"D:\Home\Paperwork\Accounts\Family\2026\Shared with everyone in the house", Path.Combine(WinDir, "win.ini"), @"D:\Home\Codes.xlsx"),
         new(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"),
+        WebSearch.Row("code", WebSearchEngine.Google),
         new(SearchKind.Ask, "Ask Tomte", "code", "\"code\""),
     ];
 
@@ -64,6 +65,9 @@ internal static partial class Program
         // The show in folder button on a selected file, and under the pointer with its state layer and tooltip.
         SearchScene("search-folder", "code", CodeRows, 4, SearchLayout.NoResults, "Files: Everything"),
         SearchScene("search-folder-tip", "code", CodeRows, 4, SearchLayout.NoResults, "Files: Everything", folderTip: true),
+        // Open in browser: searching the web for the words, and opening the address they are.
+        SearchScene("search-web", "code", CodeRows, 8, SearchLayout.NoResults, "Files: Everything"),
+        SearchScene("search-web-address", "example.com/docs", [WebSearch.Row("example.com/docs", WebSearchEngine.Google), new(SearchKind.Ask, "Ask Tomte", "example.com/docs", "\"example.com/docs\"")], 0, SearchLayout.NoResults, "Files: Everything"),
     ];
 
     // The rows a search gives with two apps beside the places, and Ask. Tomte's places take this program's icon here.
@@ -79,6 +83,7 @@ internal static partial class Program
     [
         new(SearchKind.Ask, "Ask Tomte", Sentence, $"\"{Sentence}\""),
         new(SearchKind.AiSearch, SearchLayout.AiRow, Sentence, "Sends file names to Anthropic, never what is in them"),
+        WebSearch.Row(Sentence, WebSearchEngine.Google),
     ];
 
     private static readonly SearchItem[] AiPicked =

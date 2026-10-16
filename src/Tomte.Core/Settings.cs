@@ -43,6 +43,9 @@ public sealed record TomteSettings
     /// <summary>"Not now" on the search's Get Everything card: the "Search every drive" row is not offered again. Settings keeps its button.</summary>
     public bool EverythingOfferDismissed { get; init; }
 
+    /// <summary>The engine the search box's Open in browser row searches with. Google unless the user picks another.</summary>
+    public Search.WebSearchEngine WebSearch { get; init; }
+
     /// <summary>
     /// "Attach to the top edge": draw the island as the notch joined to the screen edge instead of the floating
     /// pill. Read from the file only; the settings window does not show it yet.

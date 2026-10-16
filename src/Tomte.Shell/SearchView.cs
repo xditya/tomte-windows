@@ -17,7 +17,7 @@ namespace Tomte.Shell;
 /// The search box on the island, in the Palette state and the AI box's look: a one-line text box after the tomte, the
 /// results under it by group with a heading each, and a footer with the keys and where files come from. The box keeps
 /// every key: Up and Down move the selection through all rows and wrap, Tab and Shift+Tab jump to the next or previous
-/// group, Enter opens, Ctrl+Shift+Enter shows the row's file in its folder, Ctrl+Enter searches with AI, Page Up and Page
+/// section and wrap, Enter opens, Ctrl+Shift+Enter shows the row's file in its folder, Ctrl+Enter searches with AI, Page Up and Page
 /// Down move a page, Esc clears the
 /// box, then goes back or closes. Left, Right, Home and End stay the box's. The selected row always shows, filled and outlined;
 /// the pointer's hover is the interaction host's, and a click opens a row. A file or folder row, selected or under the
@@ -664,7 +664,7 @@ internal sealed class SearchView : IDisposable, IInteractive
             case NavKeys.Tab:
                 if (rows.Count > 0)
                 {
-                    Select(NextGroup(shift ? -1 : 1));
+                    Select(SearchLayout.NextSection(rows, select, shift ? -1 : 1));
                 }
 
                 return true;
@@ -678,18 +678,6 @@ internal sealed class SearchView : IDisposable, IInteractive
             default:
                 return false;
         }
-    }
-
-    // The first row of the next group, or with -1 of the previous one, wrapping at both ends. From inside a group, -1 goes
-    // to that group's first row first.
-    private int NextGroup(int direction)
-    {
-        var firsts = Enumerable.Range(0, rows.Count).Where(i => i == 0 || rows[i].Group != rows[i - 1].Group).ToList();
-        int current = firsts.LastOrDefault(i => i <= select);
-        int at = firsts.IndexOf(current);
-        return direction > 0 ? firsts[(at + 1) % firsts.Count]
-            : select != current ? current
-            : firsts[(at - 1 + firsts.Count) % firsts.Count];
     }
 
     // Esc closes a card first, then leaves AI search for the results it came from, then clears the box, then goes back to

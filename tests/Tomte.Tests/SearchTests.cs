@@ -571,7 +571,7 @@ public sealed class AiSearchRowTests
         Assert.Equal([Ask, Ai], ranked);
         Assert.Equal([Ask, Ai], SearchRank.AiFirst(ranked, typed));
         // The AI rows are one section, the last, Ask Tomte first.
-        Assert.Equal((4, 4), (Ask.Group, Ai.Group));
+        Assert.Equal((5, 5), (Ask.Group, Ai.Group));
         Assert.Equal([file, Ask, Ai], SearchRank.Order([Ai, Ask, file], "invoices", new Dictionary<string, Launches>()));
     }
 

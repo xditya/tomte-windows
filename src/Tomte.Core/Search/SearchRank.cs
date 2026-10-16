@@ -4,8 +4,8 @@ namespace Tomte.Core.Search;
 
 /// <summary>
 /// What a search row is. Rows are grouped in this order: apps, then places (settings pages, Tomte's own places and
-/// Windows tools), then tiles and shelf items, then files and folders, then the AI rows: Ask, then AI search. The launch
-/// counts store a kind by its number: new kinds go at the end.
+/// Windows tools), then tiles and shelf items, then files and folders, then Open in browser, then the AI rows: Ask, then
+/// AI search. The launch counts store a kind by its number: new kinds go at the end.
 /// </summary>
 public enum SearchKind
 {
@@ -26,6 +26,9 @@ public enum SearchKind
 
     /// <summary>A Windows Settings page, one of Tomte's own places or a Windows tool, from <see cref="Places"/>.</summary>
     Place,
+
+    /// <summary>The row that searches the web for the typed words, or opens the address they are, in the browser.</summary>
+    Web,
 }
 
 /// <summary>
@@ -43,7 +46,8 @@ public sealed record SearchItem(SearchKind Kind, string Name, string Target, str
         SearchKind.Place => 1,
         SearchKind.Shortcut or SearchKind.Shelf => 2,
         SearchKind.Folder or SearchKind.File or SearchKind.GetEverything => 3,
-        _ => 4,
+        SearchKind.Web => 4,
+        _ => 5,
     };
 
     /// <summary>What the launch counts are kept under: the kind and the target, case ignored, as Windows treats paths.</summary>
@@ -344,13 +348,14 @@ public static partial class SearchRank
     /// <summary>
     /// The candidates that match <paramref name="query"/>, grouped, ordered and capped. Files and folders came from a file
     /// search that already matched every typed word, so one this matcher does not follow (accents, say) still shows, last.
-    /// The offer and the AI rows are kept as they are, at the end of their groups: Ask Tomte, then Search with AI.
+    /// The offer, Open in browser and the AI rows are kept as they are, at the end of their groups: Ask Tomte, then Search
+    /// with AI.
     /// </summary>
     public static IReadOnlyList<SearchItem> Order(IEnumerable<SearchItem> candidates, string query, IReadOnlyDictionary<string, Launches> launches)
     {
         var scored = candidates.Select(item => (Item: item, Score: item.Kind switch
         {
-            SearchKind.GetEverything or SearchKind.AiSearch or SearchKind.Ask => -1,
+            SearchKind.GetEverything or SearchKind.Web or SearchKind.AiSearch or SearchKind.Ask => -1,
             SearchKind.File or SearchKind.Folder => Math.Max(1, SearchMatch.Score(item.Name, query)),
             _ => Score(item, query),
         }))
@@ -416,14 +421,14 @@ public static partial class SearchRank
                 .ThenBy(r => r.Item.Name, StringComparer.CurrentCultureIgnoreCase)
                 .Select(r => r.Item)))];
 
-    // The fixed rows (the offer, Ask) are not counted against a group's cap.
+    // The fixed rows (the offer, Open in browser, the AI rows) are not counted against a group's cap.
     private static IEnumerable<SearchItem> Cap(int group, IEnumerable<SearchItem> items)
     {
         int cap = group switch { 0 => MaxApps, 1 or 2 => MaxPlaces, _ => MaxFiles };
         int shown = 0;
         foreach (var item in items)
         {
-            bool fixedRow = item.Kind is SearchKind.GetEverything or SearchKind.AiSearch or SearchKind.Ask;
+            bool fixedRow = item.Kind is SearchKind.GetEverything or SearchKind.Web or SearchKind.AiSearch or SearchKind.Ask;
             if (fixedRow || shown++ < cap)
             {
                 yield return item;

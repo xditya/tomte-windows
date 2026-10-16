@@ -55,6 +55,20 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     /// <summary>The narrowest the search box gets: 60% of an 800 DIP wide screen.</summary>
     public const float NarrowestWidth = 480;
 
+    /// <summary>
+    /// Tab (+1): the first row of the next section, from the last back to the first. Shift+Tab (-1): from inside a
+    /// section its first row, from a first row the previous section's, from the first back to the last.
+    /// </summary>
+    public static int NextSection(IReadOnlyList<SearchItem> rows, int select, int direction)
+    {
+        var firsts = Enumerable.Range(0, rows.Count).Where(i => i == 0 || rows[i].Group != rows[i - 1].Group).ToList();
+        int current = firsts.LastOrDefault(i => i <= select);
+        int at = firsts.IndexOf(current);
+        return direction > 0 ? firsts[(at + 1) % firsts.Count]
+            : select != current ? current
+            : firsts[(at - 1 + firsts.Count) % firsts.Count];
+    }
+
     /// <summary>Enter opens; Ctrl+Shift+Enter shows the row in its folder; Ctrl+Enter searches with AI from any row.</summary>
     public static SearchEnter Enter(bool ctrl, bool shift) => !ctrl ? SearchEnter.Open : shift ? SearchEnter.ShowInFolder : SearchEnter.SearchWithAi;
 
@@ -160,6 +174,7 @@ public sealed class SearchLayout(float width, bool mascot, float height)
         SearchKind.Shelf => "On the shelf",
         SearchKind.Folder => "Folder",
         SearchKind.File => "File",
+        SearchKind.Web => "Web",
         SearchKind.Ask => "AI",
         SearchKind.AiSearch => "Ctrl+Enter",
         _ => "",
