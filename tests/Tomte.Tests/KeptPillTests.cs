@@ -167,4 +167,13 @@ public class KeptPillTests
         // No click on the track, or a hover that opened Media because it was the tab last open: nothing to put back.
         Assert.Null(CompactRules.TabAfterClick(null, PanelId.Media));
     }
+
+    [Fact]
+    public void NoTrackChangePillOverTheKeptPillWhichShowsTheNewTrackItself()
+    {
+        Assert.False(CompactRules.AnnouncesTrack(on: true, CompactReason.Playing));
+        Assert.True(CompactRules.AnnouncesTrack(on: true, CompactReason.None));
+        Assert.True(CompactRules.AnnouncesTrack(on: true, CompactReason.Peek));
+        Assert.False(CompactRules.AnnouncesTrack(on: false, CompactReason.None));
+    }
 }

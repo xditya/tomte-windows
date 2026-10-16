@@ -194,4 +194,7 @@ public static class CompactRules
     /// </summary>
     public static PanelId? TabAfterClick(PanelId? beforeClick, PanelId? current) =>
         beforeClick is { } back && current == PanelId.Media ? back : null;
+
+    /// <summary>The track-change pill shows when the user turned it on, except over the kept pill, whose row already shows the new track.</summary>
+    public static bool AnnouncesTrack(bool on, CompactReason showing) => on && showing != CompactReason.Playing;
 }

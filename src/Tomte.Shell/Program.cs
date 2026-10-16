@@ -487,10 +487,14 @@ internal static partial class Program
         bool announcing = false, keeping = false;
         media.TrackChanged += playing =>
         {
-            if (announcing)
+            if (CompactRules.AnnouncesTrack(announcing, triggers.Compact))
             {
                 log?.Invoke($"media: track changed, raising the event ({playing.App})");
                 triggers.Raise(new IslandEvent(playing.Title, DateTimeOffset.Now) { Source = IslandEventSource.TrackChange });
+            }
+            else if (announcing)
+            {
+                log?.Invoke("media: track changed, the kept pill shows it");
             }
         };
         media.Changed += () => triggers.MediaChanged(media.Current);
