@@ -105,6 +105,24 @@ public sealed class WebSearchTests : IDisposable
     }
 
     [Fact]
+    public void AWebAddressPutsOpenInBrowserFirst()
+    {
+        var none = new Dictionary<string, Launches>();
+        var app = new SearchItem(SearchKind.App, "Example.com Helper", @"shell:AppsFolder\em");
+        var file = new FileHit(@"C:\go\mod\example.com_v1.0.0.txt", false).Item();
+        var rows = SearchRank.Order([app, file, WebSearch.Row("example.com", WebSearchEngine.Google)], SearchRank.Query("example.com"), none);
+        Assert.Equal([SearchKind.Web, SearchKind.App, SearchKind.File], rows.Select(r => r.Kind));
+        Assert.Equal(SearchKind.Web, SearchRank.Order([app, file, WebSearch.Row("open example.com", WebSearchEngine.Google)], SearchRank.Query("open example.com"), none)[0].Kind);
+        // Words, not an address: the app stays first and the web row after the files.
+        rows = SearchRank.Order([app, file, WebSearch.Row("example", WebSearchEngine.Google)], "example", none);
+        Assert.Equal([SearchKind.App, SearchKind.File, SearchKind.Web], rows.Select(r => r.Kind));
+        // A file named exactly what was typed stays first once the files arrive.
+        var makefile = new FileHit(@"D:\src\Makefile.in", false).Item();
+        rows = SearchRank.Order([makefile, WebSearch.Row("Makefile.in", WebSearchEngine.Google)], "Makefile.in", none);
+        Assert.Equal([SearchKind.File, SearchKind.Web], rows.Select(r => r.Kind));
+    }
+
+    [Fact]
     public void TabGoesRoundTheSectionsAndShiftTabGoesBack()
     {
         var rows = SearchRank.Order(

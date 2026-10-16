@@ -365,7 +365,7 @@ public static partial class SearchRank
     /// <summary>The caps: apps; places, and tiles and shelf items, each group its own; files.</summary>
     public const int MaxApps = 5, MaxPlaces = 3, MaxFiles = 8;
 
-    private const int PlacesGroup = 1;
+    private const int PlacesGroup = 1, WebGroup = 4;
 
     /// <summary>The typed text as searched: a leading "open", "go to" or "show" is dropped when something follows it.</summary>
     public static string Query(string typed) => Verb().Replace(typed, "", 1);
@@ -387,7 +387,10 @@ public static partial class SearchRank
             .Where(scored => scored.Score != 0)
             .ToList();
 
-        return Grouped(scored.Select(s => (s.Item, Rank: s.Score >= 0 ? s.Score + Boost(launches, s.Item) : s.Item.Kind == SearchKind.Ask ? int.MinValue + 1 : int.MinValue)), PlacesFirst(scored, query));
+        // Text that is a web address puts Open in browser first, unless a file or folder has that very name ("Makefile.in").
+        bool addressFirst = WebSearch.Address(query) is not null
+            && !scored.Any(s => s.Item.Kind is SearchKind.File or SearchKind.Folder && s.Item.Name.Equals(query.Trim(), StringComparison.OrdinalIgnoreCase));
+        return Grouped(scored.Select(s => (s.Item, Rank: s.Score >= 0 ? s.Score + Boost(launches, s.Item) : s.Item.Kind == SearchKind.Ask ? int.MinValue + 1 : int.MinValue)), PlacesFirst(scored, query), addressFirst);
     }
 
     /// <summary>
@@ -453,10 +456,10 @@ public static partial class SearchRank
     [GeneratedRegex(@"^\s*(?:open|go\s+to|show)\s+(?=\S)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Verb();
 
-    private static IReadOnlyList<SearchItem> Grouped(IEnumerable<(SearchItem Item, int Rank)> ranked, bool placesFirst = false) =>
+    private static IReadOnlyList<SearchItem> Grouped(IEnumerable<(SearchItem Item, int Rank)> ranked, bool placesFirst = false, bool addressFirst = false) =>
         [.. ranked
             .GroupBy(r => r.Item.Group)
-            .OrderBy(g => placesFirst && g.Key == PlacesGroup ? -1 : g.Key)
+            .OrderBy(g => addressFirst && g.Key == WebGroup ? -2 : placesFirst && g.Key == PlacesGroup ? -1 : g.Key)
             .SelectMany(g => Cap(g.Key, g
                 .OrderByDescending(r => r.Rank)
                 .ThenBy(r => r.Item.Name.Length)
