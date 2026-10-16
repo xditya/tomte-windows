@@ -61,7 +61,7 @@ public sealed partial class SettingsWindow
 
             var rows = ReadRows();
             listed = [.. SettingsFind.Rank([.. rows.Select(r => r.Row)], box.Text).Select(i => rows[i])];
-            box.ItemsSource = listed.Count > 0 ? listed.Select(Suggestion).ToList<UIElement>() : new List<UIElement> { Note("No setting found.") };
+            box.ItemsSource = listed.Count > 0 ? listed.Select(Suggestion).ToList<UIElement>() : new List<UIElement> { Caption("No setting found.") };
             // The list is not read out as it changes; a screen reader hears the count instead.
             string count = listed.Count switch { 0 => "No setting found", 1 => "1 setting found", int n => $"{n} settings found" };
             (FrameworkElementAutomationPeer.FromElement(box) ?? FrameworkElementAutomationPeer.CreatePeerForElement(box))
@@ -88,13 +88,16 @@ public sealed partial class SettingsWindow
         return box;
     }
 
-    // The title, and the page under it in the notes' colour.
+    // The title, and the page under it in small type. Neither sets a colour, so a highlighted item's text takes the
+    // highlight's colour, which high contrast themes rely on.
     private static StackPanel Suggestion(FoundRow found)
     {
-        var item = new StackPanel { Tag = found, Padding = new Thickness(0, 4, 0, 4), Children = { new TextBlock { Text = found.Row.Title, TextTrimming = TextTrimming.CharacterEllipsis }, Note(found.Row.Page) } };
+        var item = new StackPanel { Tag = found, Padding = new Thickness(0, 4, 0, 4), Children = { new TextBlock { Text = found.Row.Title, TextTrimming = TextTrimming.CharacterEllipsis }, Caption(found.Row.Page) } };
         AutomationProperties.SetName(item, $"{found.Row.Title}, {found.Row.Page}");
         return item;
     }
+
+    private static TextBlock Caption(string text) => new() { Text = text, Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
 
     // The rows each page shows now, in the window's order. Hidden rows are left out; a row in a closed Expander is kept,
     // since choosing it opens the Expander. A header on the page names the section of the rows after it, an Expander's
