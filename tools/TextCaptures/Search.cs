@@ -109,7 +109,7 @@ internal static partial class Program
         var origin = new Vector2(-(float)PanelSize.PaletteWidth / 2, 0);
         var layout = new SearchLayout((float)PanelSize.PaletteWidth, mascot: true, height);
         c.Pill();
-        c.Mascot();
+        c.Mascot(seat: PaletteLayout.Seat);
         c.RoundRect(Offset(layout.Box, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
         c.Stroke(Offset(layout.Box, origin), PaletteLayout.PromptCorner, PaletteLayout.PromptFocusLine, 1);
         var box = layout.Editor;

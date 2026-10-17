@@ -20,28 +20,37 @@ internal static unsafe partial class Program
         ID2D1DeviceContext* dc;
         d2d->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS.D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &dc);
         var panels = IslandGeometry.Panel(PanelSize.Width, PanelSize.Shelf.H);
-        (string Name, IslandGeometry From, IslandGeometry To)[] morphs =
+        var search = IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight);
+        var seat = PaletteLayout.Seat.Shift;
+        // The tomte's seat goes with the shape, from and to: zero on the top row, the prompt box's row in the search box.
+        (string Name, IslandGeometry From, IslandGeometry To, System.Numerics.Vector2 SeatFrom, System.Numerics.Vector2 SeatTo, SpringPreset Preset)[] morphs =
         [
-            ("compact-close", IslandGeometry.Compact, IslandGeometry.Hidden),
-            ("compact-open", IslandGeometry.Hidden, IslandGeometry.Compact),
-            ("panels-close", panels, IslandGeometry.Hidden),
+            ("compact-close", IslandGeometry.Compact, IslandGeometry.Hidden, default, default, SpringPreset.Snappy),
+            ("compact-open", IslandGeometry.Hidden, IslandGeometry.Compact, default, default, SpringPreset.Snappy),
+            ("panels-close", panels, IslandGeometry.Hidden, default, default, SpringPreset.Snappy),
+            ("search-open", IslandGeometry.Hidden, search, default, seat, SpringPreset.Snappy),
+            ("search-from-pill", IslandGeometry.Compact, search, default, seat, SpringPreset.Gentle),
+            ("search-close", search, IslandGeometry.Hidden, seat, default, SpringPreset.Snappy),
+            ("search-back-to-panels", search, panels, seat, default, SpringPreset.Snappy),
         ];
         foreach (double scale in Scales)
         {
-            foreach (var (name, from, to) in morphs)
+            foreach (var (name, from, to, seatFrom, seatTo, preset) in morphs)
             {
-                // Opening from Hidden and every close are snappy.
-                Spring width = new(), depth = new(), corner = new();
-                Spring[] springs = [width, depth, corner];
+                // The island's width, depth and corner, and its two seat springs, on the morph's preset.
+                Spring width = new(), depth = new(), corner = new(), seatX = new(), seatY = new();
+                Spring[] springs = [width, depth, corner, seatX, seatY];
                 width.Jump(from.Width);
                 depth.Jump(from.Depth);
                 corner.Jump(from.Corner);
+                seatX.Jump(seatFrom.X);
+                seatY.Jump(seatFrom.Y);
                 foreach (var spring in springs)
                 {
-                    spring.Use(SpringPreset.Snappy);
+                    spring.Use(preset);
                 }
 
-                (width.Target, depth.Target, corner.Target) = (to.Width, to.Depth, to.Corner);
+                (width.Target, depth.Target, corner.Target, seatX.Target, seatY.Target) = (to.Width, to.Depth, to.Corner, seatTo.X, seatTo.Y);
                 for (int frame = 0; ; frame++)
                 {
                     bool done = Array.TrueForAll(springs, s => s.Settled);
@@ -50,7 +59,7 @@ internal static unsafe partial class Program
                     {
                         var canvas = new Canvas(dc, live, scale);
                         canvas.Pill();
-                        canvas.Mascot();
+                        canvas.Mascot(shift: new((float)seatX.Value, (float)seatY.Value));
                         canvas.Save(Path.Combine(dir, $"{scale * 100:0}-{name}-{frame:D3}.png"));
                         canvas.Dispose();
                     }
