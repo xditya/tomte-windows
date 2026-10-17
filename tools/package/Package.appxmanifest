@@ -43,10 +43,10 @@
 
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
-    <!-- Windows.Devices.Radios: Wi-Fi and Bluetooth on/off. -->
-    <DeviceCapability Name="radios" />
     <!-- Windows.Graphics.Capture for the palette's screenshot chip: window capture without the yellow border. -->
     <uap11:Capability Name="graphicsCaptureProgrammatic" />
     <uap11:Capability Name="graphicsCaptureWithoutBorder" />
+    <!-- Windows.Devices.Radios: Wi-Fi and Bluetooth on/off. Device capabilities must come after all the others. -->
+    <DeviceCapability Name="radios" />
   </Capabilities>
 </Package>
