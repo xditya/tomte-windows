@@ -5,7 +5,7 @@
   Uri="https://example.invalid/tomte/Tomte.appinstaller"
   Version="0.1.0.0">
   <MainPackage
-    Name="Tomte"
+    Name="xditya.Tomte"
     Publisher="CN=Tomte Dev"
     Version="0.1.0.0"
     ProcessorArchitecture="x64"
