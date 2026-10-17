@@ -145,6 +145,18 @@ public sealed class SearchPlacesTests
     }
 
     [Fact]
+    public void TheAboutPageIsOneOfTomtesPlaces()
+    {
+        var page = Places.Rows([]).Single(r => r.Target == "tomte:settings:About");
+        Assert.Equal(page, Search("about")[0]);
+        Assert.Contains(Search("about"), r => r.Target == "ms-settings:about");
+        Assert.Equal(page, Search("sponsor")[0]);
+        Assert.Equal(page, Search("donate")[0]);
+        // Version and license are Windows' About and Activation in the island's search box.
+        Assert.All(new[] { "version", "license" }, word => Assert.DoesNotContain(Search(word), r => r.Target == page.Target));
+    }
+
+    [Fact]
     public void TheIslandsTabsAreFoundAndOpenTheirTab()
     {
         var shelf = Search("shelf").First(r => r.Detail == "Tomte island");
