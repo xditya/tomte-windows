@@ -148,10 +148,10 @@ public sealed class SearchPlacesTests
     public void TheAboutPageIsOneOfTomtesPlaces()
     {
         var page = Places.Rows([]).Single(r => r.Target == "tomte:settings:About");
-        Assert.Equal(page, Search("about")[0]);
-        Assert.Contains(Search("about"), r => r.Target == "ms-settings:about");
-        Assert.Equal(page, Search("sponsor")[0]);
-        Assert.Equal(page, Search("donate")[0]);
+        Assert.Equal("About Tomte", page.Name);
+        // Windows' About first, then Tomte's.
+        Assert.Equal(["ms-settings:about", "tomte:settings:About"], Search("about").Where(r => r.Kind == SearchKind.Place).Take(2).Select(r => r.Target));
+        Assert.All(new[] { "donate", "sponsor", "support", "about tomte" }, word => Assert.Equal(page, Search(word).First(r => r.Kind == SearchKind.Place)));
         // Version and license are Windows' About and Activation in the island's search box.
         Assert.All(new[] { "version", "license" }, word => Assert.DoesNotContain(Search(word), r => r.Target == page.Target));
     }
