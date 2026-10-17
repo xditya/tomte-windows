@@ -61,6 +61,10 @@ internal sealed unsafe class IslandWindow : IDisposable
     // The centre's place along the top edge, in DIPs from the middle (IslandPlace). Not one of the shape's springs: it
     // moves the window rather than the outline, and a drag sets it straight from the pointer.
     private readonly Spring place = new();
+
+    // The tomte's offset from its place on the top row, toward the row it sits beside (Seat). Not shape springs either:
+    // they take the morph's preset and wait out its lead, but move on their own when the seat changes at rest.
+    private readonly Spring seatX = new(), seatY = new();
     private readonly List<OutlineSegment> segments = new(24);
     private readonly List<Vector2> flattened = new(128);
     private readonly List<System.Drawing.Point> regionPoints = new(128);
@@ -323,8 +327,35 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>The tomte at the island's left edge. Settings set Enabled and CapColor; features set its reactions.</summary>
     public Mascot Mascot { get; }
 
-    /// <summary>Whether an island point is on the tomte's box at the shape's left edge, while the tomte is on.</summary>
-    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(Current).Contains(at.X, at.Y);
+    /// <summary>Whether an island point is on the tomte's box where it is drawn now, while the tomte is on.</summary>
+    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(Current, SeatShift).Contains(at.X, at.Y);
+
+    /// <summary>
+    /// The row the tomte sits beside in what the island shows (<see cref="MascotSeat"/>), or null for its place on the
+    /// pill's or the tab strip's top row. Set with the morph to the shape that shows it, before or after
+    /// <see cref="MorphTo"/> in the same turn: the tomte then travels there on the morph's springs and preset, held as
+    /// long as the shape is, so it opens, closes and turns round with the shape. Set while the shape rests, it moves there
+    /// on its own on the same springs.
+    /// </summary>
+    public MascotSeat? Seat
+    {
+        set
+        {
+            var shift = value?.Shift ?? Vector2.Zero;
+            (seatX.Target, seatY.Target) = (shift.X, shift.Y);
+            if (ReduceMotion)
+            {
+                seatX.Jump(shift.X);
+                seatY.Jump(shift.Y);
+                PlaceMascot(Current);
+            }
+
+            // Hidden, nothing ticks: the springs start from where they are with the next morph, which shows the island.
+            Wake();
+        }
+    }
+
+    private Vector2 SeatShift => new((float)seatX.Value, (float)seatY.Value);
 
     /// <summary>The island is pinned (Ctrl+P): a small mark at the tomte's lower right says so.</summary>
     public bool Pinned
@@ -533,6 +564,8 @@ internal sealed unsafe class IslandWindow : IDisposable
             spring.Use(preset);
         }
 
+        seatX.Use(preset);
+        seatY.Use(preset);
         (width.Target, depth.Target, corner.Target, rampW.Target, rampH.Target) = (to.Width, to.Depth, to.Corner, to.RampW, to.RampH);
 
         // The region goes before the resize; the other order leaves it clipping the enlarged window for a frame.
@@ -788,10 +821,12 @@ internal sealed unsafe class IslandWindow : IDisposable
         double dt = lastTickMs < 0 ? 0 : Math.Min(0.05, (now - lastTickMs) / 1000);
         lastTickMs = now;
         bool finished = false;
+
+        // A close waits for the content to fade out, and the launch arrival can hold a pill; the shape starts after.
+        double islandDt = islandMoving && now - morphStartMs < leadMs ? 0 : dt;
+        bool seating = StepSeat(islandDt);
         if (islandMoving)
         {
-            // A close waits for the content to fade out, and the launch arrival can hold a pill; the shape starts after.
-            double islandDt = now - morphStartMs < leadMs ? 0 : dt;
             bool done = true;
             foreach (var spring in springs)
             {
@@ -830,7 +865,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
 
         // A settle can start the next motion itself (a swell asked for while the pill opened): keep ticking for it.
-        if (visible && (mascotActive || placing || islandMoving))
+        if (visible && (mascotActive || placing || seating || islandMoving))
         {
             return;
         }
@@ -841,6 +876,21 @@ internal sealed unsafe class IslandWindow : IDisposable
             wakeTimer.Interval = TimeSpan.FromSeconds(wait);
             wakeTimer.Start();
         }
+    }
+
+    /// <summary>One step of the seat's springs; true while they still move.</summary>
+    private bool StepSeat(double dt)
+    {
+        if (seatX.Settled && seatY.Settled)
+        {
+            seatX.Jump(seatX.Target);
+            seatY.Jump(seatY.Target);
+            return false;
+        }
+
+        seatX.Step(dt);
+        seatY.Step(dt);
+        return true;
     }
 
     /// <summary>Resume the tick for a morph or a mascot change; nothing runs while the island is hidden.</summary>
@@ -862,6 +912,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     private void FinishWithoutClock()
     {
         islandMoving = false;
+        seatX.Jump(seatX.Target);
+        seatY.Jump(seatY.Target);
+        PlaceMascot(Current);
         if (place.Value != place.Target)
         {
             place.Jump(place.Target);
@@ -915,6 +968,8 @@ internal sealed unsafe class IslandWindow : IDisposable
             ForgetClick();
             Mascot.Park();
             place.Jump(place.Target);
+            seatX.Jump(seatX.Target);
+            seatY.Jump(seatY.Target);
         }
 
         Apply(g);
@@ -994,10 +1049,10 @@ internal sealed unsafe class IslandWindow : IDisposable
         PlaceMascot(g);
     }
 
-    /// <summary>Put the tomte at the left edge of the live shape, at the size and opacity the shape's depth gives it.</summary>
+    /// <summary>Put the tomte at the left edge of the live shape, beside its seat, at the size and opacity the shape's depth gives it.</summary>
     private void PlaceMascot(in IslandGeometry g)
     {
-        var box = MascotArt.Box(g);
+        var box = MascotArt.Box(g, SeatShift);
         float s = (float)scale;
         mascotX = (float)(g.OuterWidth / 2 + box.X) * s;
         mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s, (float)MascotArt.Ride(g));
@@ -1053,6 +1108,8 @@ internal sealed unsafe class IslandWindow : IDisposable
             spring.Jump(spring.Target);
         }
 
+        seatX.Jump(seatX.Target);
+        seatY.Jump(seatY.Target);
         Apply(to);
         ghost.Visual.Offset = new Vector3(oldOffset - root.Offset.X - Margin, -Margin, 0);
         ghost.Visual.Opacity = 1;

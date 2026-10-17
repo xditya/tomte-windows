@@ -74,6 +74,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         settings = store.Current;
         island.MoveTo(settings.IslandOffset);
         island.Message = HandleMessage;
+        // The tomte sits beside the AI box's and the search box's field, and on the top row of every other shape. Set at
+        // the change, before the shape's morph starts, so it travels with the morph; a drop zone's result and the voice
+        // card set their own row after it.
+        machine.Changed += (_, to) => island.Seat = to == IslandState.Palette ? PaletteLayout.Seat : null;
         // Hover, a click or a scroll on Compact opens Panels, and a click on the tomte the palette; on the next turn, so
         // the click or notch that opens them is not also taken by the panel host as a tab switch or a press on the new body.
         // Compact's clicks come through its targets (CompactTargets).

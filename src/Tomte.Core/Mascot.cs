@@ -52,6 +52,9 @@ public static class MascotArt
     /// <summary>Where the art starts across the viewBox: the brim's leftmost point.</summary>
     public const float ArtLeft = 8.1f;
 
+    /// <summary>The same in DIPs from the box's left edge.</summary>
+    public const float ArtLeftDips = ArtLeft * SizeDips / ViewBox;
+
     /// <summary>Whole character and body: bottom centre. Cap: brim centre. Tip: where it leaves the cone.</summary>
     public static readonly Vector2 RootPivot = new(32, 61);
     public static readonly Vector2 BodyPivot = new(32, 61);
@@ -98,14 +101,17 @@ public static class MascotArt
     /// <summary>
     /// The tomte's box in island space (x from the shape's centre line, y from its top) for the shape it sits in: at the
     /// left edge, with the art centred down the top row, which is the shape's depth up to the tab strip's height. The
-    /// peek pill is the box with its inset on both sides, so there the tomte is centred both ways. In a shape shallower
-    /// than a pill, part way through an open or a close, the box is scaled by <see cref="Ride"/> about the shape's
-    /// top-left corner, so the tomte stays in the same place in the pill's top row as it grows or shrinks.
+    /// peek pill is the box with its inset on both sides, so there the tomte is centred both ways. Beside an open shape's
+    /// content, <paramref name="shift"/> (a <see cref="MascotSeat.Shift"/> the island springs with the shape) moves it
+    /// right and makes that top row taller: centred on the field's row once the shape is deep enough to hold the row, and
+    /// down the middle of the shape until then, so it never sits low in a shape still opening or closing. In a shape
+    /// shallower than a pill, part way through an open or a close, the box is scaled by <see cref="Ride"/> about the
+    /// shape's top-left corner, so the tomte stays in the same place in the pill's top row as it grows or shrinks.
     /// </summary>
-    public static System.Drawing.RectangleF Box(in IslandGeometry shape)
+    public static System.Drawing.RectangleF Box(in IslandGeometry shape, Vector2 shift = default)
     {
-        float row = (float)Math.Min(shape.Depth, PanelSpace.TabStripHeight), k = (float)Ride(shape);
-        return new(-(float)shape.Width / 2 + InsetX * k, row / 2 - MiddleY * SizeDips / ViewBox * k, SizeDips * k, SizeDips * k);
+        float row = (float)Math.Min(shape.Depth, PanelSpace.TabStripHeight + (2 * shift.Y)), k = (float)Ride(shape);
+        return new(-(float)shape.Width / 2 + (InsetX + shift.X) * k, row / 2 - MiddleY * SizeDips / ViewBox * k, SizeDips * k, SizeDips * k);
     }
 
     /// <summary>
@@ -127,6 +133,20 @@ public static class MascotArt
     private static OutlineSegment L(float x, float y) => OutlineSegment.Line(new(x, y));
 
     private static OutlineSegment C(float x1, float y1, float x2, float y2, float x, float y) => OutlineSegment.Cubic(new(x1, y1), new(x2, y2), new(x, y));
+}
+
+/// <summary>
+/// Where the tomte sits beside an open shape's content, in DIPs: <paramref name="Row"/> is the middle of the field or the
+/// first line it sits beside, from the shape's top, and <paramref name="Left"/> is where its art starts, from the shape's
+/// left edge: the padding of the content under it, which keeps it as clear of the rounded corner as that content.
+/// </summary>
+public readonly record struct MascotSeat(float Row, float Left)
+{
+    /// <summary>Where content beside the tomte starts, <paramref name="gap"/> after its box.</summary>
+    public float After(float gap) => Left - MascotArt.ArtLeftDips + MascotArt.SizeDips + gap;
+
+    /// <summary>How far the seat is from the tomte's place on the top row of a shape at least as deep as the tab strip.</summary>
+    public Vector2 Shift => new(Left - MascotArt.ArtLeftDips - MascotArt.InsetX, Row - PanelSpace.TabStripHeight / 2);
 }
 
 /// <summary>The state table and the timeline values of the seven states.</summary>

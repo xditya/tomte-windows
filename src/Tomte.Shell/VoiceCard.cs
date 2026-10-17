@@ -24,6 +24,9 @@ internal sealed class VoiceCard : IInteractive, IDisposable
 
     private static readonly VoiceChoice[] Order = [VoiceChoice.Insert, VoiceChoice.Ask, VoiceChoice.Note];
 
+    /// <summary>The tomte beside the words: centred on their first line, as far in from the left edge as they end from the right.</summary>
+    public static readonly MascotSeat Seat = new(Top + (PaletteLayout.AnswerText.LineHeight / 2), Right);
+
     private readonly IslandWindow island;
     private readonly string? askOff;
     private readonly ContainerVisual root;
@@ -43,8 +46,8 @@ internal sealed class VoiceCard : IInteractive, IDisposable
         root.Offset = new Vector3(-Width / 2, 0, 0);
         root.Opacity = 0;
         island.Dips.Children.InsertAtTop(root);
-        // The words and the row start where the pill's line did, after the tomte, which they sit beside.
-        left = CompactLayout.RingLeft(island.Mascot.Enabled);
+        // The words and the row start after the tomte, which they sit beside; with it off, where the pill's line did.
+        left = island.Mascot.Enabled ? Seat.After(CompactLayout.Gap) : CompactLayout.EndInset;
         words = text.Create(root);
         words.Show(new TextRun(transcript, PaletteLayout.AnswerText, Width - left - Right, PaletteLayout.AskLines), new Vector2(left, Top));
         rowY = Top + words.Size.Y + Gap;

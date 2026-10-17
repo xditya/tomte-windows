@@ -176,7 +176,13 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>The back arrow before the prompt box; empty without one.</summary>
     public RectangleF Back => back ? new(Start, Top + ((PromptHeight - BackSize) / 2), BackSize, BackSize) : RectangleF.Empty;
 
-    private float Start => mascot ? MascotArt.InsetX + MascotArt.SizeDips + 10 : Pad;
+    /// <summary>
+    /// The tomte beside the prompt box, the search box's too: centred on the box's first line, its art as far in from the
+    /// left edge as the chips, the answer and the search list below.
+    /// </summary>
+    public static readonly MascotSeat Seat = new(Top + (PromptHeight / 2), Pad);
+
+    private float Start => mascot ? Seat.After(10) : Pad;
 
     /// <summary>The prompt's card: one line tall at least, growing with its text up to about four lines.</summary>
     public RectangleF Prompt => new(Left, Top, width - Pad - Left, Math.Clamp(text + 2 * PromptInsetY, PromptHeight, PromptMaxText + 2 * PromptInsetY));

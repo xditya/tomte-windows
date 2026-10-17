@@ -18,7 +18,7 @@ public static class CompactLayout
     /// The room at either end of the pill: the tomte's art starts this far in at the leading end, words that end the
     /// pill stop this far in at the trailing end, and with the tomte off the first thing starts this far in.
     /// </summary>
-    public const float EndInset = MascotArt.InsetX + (MascotArt.ArtLeft * MascotArt.SizeDips / MascotArt.ViewBox);
+    public const float EndInset = MascotArt.InsetX + MascotArt.ArtLeftDips;
 
     public const float RingSize = 18, RingStroke = 3.5f;
 
