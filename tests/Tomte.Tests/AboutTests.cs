@@ -55,6 +55,25 @@ public sealed class AboutTests
     }
 
     [Fact]
+    public void ButtonsWrapOntoANewLineWhenTheNextWouldNotFit()
+    {
+        (double, double)[] buttons = [(130, 32), (120, 32), (50, 32)];
+        var (at, width, height) = WrapLayout.Place(buttons, 400, 8, 4);
+        Assert.Equal([(0, 0), (138, 0), (266, 0)], at);
+        Assert.Equal((316d, 32d), (width, height));
+
+        (at, width, height) = WrapLayout.Place(buttons, 300, 8, 4);
+        Assert.Equal([(0, 0), (138, 0), (0, 36)], at);
+        Assert.Equal((258d, 68d), (width, height));
+
+        // A line narrower than every button: one per line, none left out.
+        (at, _, height) = WrapLayout.Place(buttons, 100, 8, 4);
+        Assert.Equal([(0, 0), (0, 36), (0, 72)], at);
+        Assert.Equal(104, height);
+        Assert.Equal((0d, 0d), (WrapLayout.Place([], 100, 8, 4).Width, WrapLayout.Place([], 100, 8, 4).Height));
+    }
+
+    [Fact]
     public void TheNoticesNameEveryShippedPackageAtItsVersion()
     {
         string root = RepoRoot();

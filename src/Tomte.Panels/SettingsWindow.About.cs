@@ -14,6 +14,7 @@ using Tomte.Core.Jobs;
 using Tomte.Core.Search;
 using Windows.ApplicationModel;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Foundation;
 
 namespace Tomte.Panels;
 
@@ -69,10 +70,10 @@ public sealed partial class SettingsWindow
             Children =
             {
                 new TextBlock { Text = "Tomte", Style = (Style)Application.Current.Resources["SubtitleTextBlockStyle"] },
-                new TextBlock { Text = $"Made by {About.Developer}" },
+                new TextBlock { Text = $"Made by {About.Developer}", TextWrapping = TextWrapping.Wrap },
             },
         };
-        var links = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16, Margin = new Thickness(0, 4, 0, 0) };
+        var links = new Wrap { Spacing = 16, LineSpacing = 4, Margin = new Thickness(0, 4, 0, 0) };
         foreach (var link in shown.Where(l => l.Kind is AboutLinkKind.Profile or AboutLinkKind.Source))
         {
             links.Children.Add(WebButton(new HyperlinkButton { Padding = new Thickness(0) }, link));
@@ -92,11 +93,11 @@ public sealed partial class SettingsWindow
         return grid;
     }
 
-    // A button per donation page, on a line of their own under the row's text: beside it they would squeeze the text to
-    // nothing in a narrow window.
+    // A button per donation page, under the row's text: beside it they would squeeze the text to nothing in a narrow
+    // window.
     private static Grid DonateRow(TextBlock line, List<AboutLink> pages)
     {
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var buttons = new Wrap { Spacing = 8, LineSpacing = 8 };
         foreach (var page in pages)
         {
             buttons.Children.Add(WebButton(new Button(), page));
@@ -112,12 +113,13 @@ public sealed partial class SettingsWindow
         return row;
     }
 
-    // A button that opens the link's page in the default browser; its tooltip says where that is.
+    // A button that opens the link's page in the default browser; its tooltip says where that is. Its name wraps when the
+    // button is wider than the page.
     private static T WebButton<T>(T button, AboutLink link)
         where T : ButtonBase
     {
         string address = WebSearch.Address(link.Value)!.AbsoluteUri;
-        button.Content = link.Name;
+        button.Content = new TextBlock { Text = link.Name, TextWrapping = TextWrapping.Wrap };
         ToolTipService.SetToolTip(button, address);
         button.Click += (_, _) => _ = Task.Run(() => WebSearch.Open(address));
         return button;
@@ -189,5 +191,39 @@ public sealed partial class SettingsWindow
         {
             Show(note, $"Could not open {NoticesFile}: {e.Message}");
         }
+    }
+
+    // Its children left to right, starting a new line when the next would not fit (see WrapLayout), so the page's links
+    // and buttons are never cut off in a narrow window.
+    private sealed partial class Wrap : Panel
+    {
+        public double Spacing { get; init; }
+
+        public double LineSpacing { get; init; }
+
+        protected override Size MeasureOverride(Size availableSize)
+        {
+            foreach (var child in Children)
+            {
+                child.Measure(new Size(availableSize.Width, double.PositiveInfinity));
+            }
+
+            var (_, width, height) = Lay(availableSize.Width);
+            return new Size(width, height);
+        }
+
+        protected override Size ArrangeOverride(Size finalSize)
+        {
+            var (at, _, _) = Lay(finalSize.Width);
+            for (int i = 0; i < Children.Count; i++)
+            {
+                Children[i].Arrange(new Rect(at[i].X, at[i].Y, Children[i].DesiredSize.Width, Children[i].DesiredSize.Height));
+            }
+
+            return finalSize;
+        }
+
+        private (IReadOnlyList<(double X, double Y)> At, double Width, double Height) Lay(double width) =>
+            WrapLayout.Place([.. Children.Select(c => ((double)c.DesiredSize.Width, (double)c.DesiredSize.Height))], width, Spacing, LineSpacing);
     }
 }
