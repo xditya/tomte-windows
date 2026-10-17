@@ -1,6 +1,6 @@
-# Draft. Not submitted. PackageIdentifier is a placeholder until the publisher name is settled.
+# Draft, not submitted yet.
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
-PackageIdentifier: AdityaS.Tomte
+PackageIdentifier: xditya.Tomte
 PackageVersion: 0.1.0.0
 DefaultLocale: en-US
 ManifestType: version

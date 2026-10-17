@@ -1,11 +1,15 @@
-# Draft. Publisher, URLs and the License value are placeholders to fill in before submission.
+# Draft, not submitted yet.
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
-PackageIdentifier: AdityaS.Tomte
+PackageIdentifier: xditya.Tomte
 PackageVersion: 0.1.0.0
 PackageLocale: en-US
 Publisher: Aditya S
+PublisherUrl: https://xditya.me
 PackageName: Tomte
-License: "TODO: set when LICENSE lands on main"
+PackageUrl: https://tomte.xditya.me
+License: MIT
+LicenseUrl: https://github.com/xditya/tomte-windows/blob/main/LICENSE
+PrivacyUrl: https://tomte.xditya.me/privacy
 ShortDescription: A utility that stays hidden until called and opens from the top edge of the screen.
 Description: >-
   Tomte opens from the top edge of the screen when you call it and is hidden the rest of the time.
