@@ -268,6 +268,7 @@ internal static unsafe class Typing
         var box1 = Look(s, At("- [x]"));
         Check("a checked task is dimmed and struck, its box dimmed only", done.Struck && done.Fore == Dim && box1.Fore == Dim && !box1.Struck, $"{done} / {box1}");
         var open = Look(s, At("open"));
+        float openZoom = s.Zoom;
         Check("an open task is plain, a list item hangs", !open.Struck && open.Fore == White && open.Hang > 10, $"{open}");
         var link = Look(s, At("link"));
         var address = Look(s, At("x.y"));
@@ -416,7 +417,8 @@ internal static unsafe class Typing
         box.Place(box.Box, 1);
         Pump();
         float zoomed = Look(s, At("open")).Hang;
-        Check("at another scale a list item's hang follows the zoom", MathF.Abs(zoomed - open.Hang * s.Zoom) < 0.2f, $"{zoomed} at zoom {s.Zoom:F3}, {open.Hang} at 1");
+        Check("at another scale a list item's hang follows the zoom", MathF.Abs(zoomed - open.Hang * s.Zoom / openZoom) < 0.2f,
+            $"{zoomed} at zoom {s.Zoom:F3}, {open.Hang} at zoom {openZoom:F3}");
     }
 
     // A note of this many lines of mixed Markdown.
