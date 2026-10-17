@@ -1,7 +1,7 @@
 # Draft. InstallerUrl, InstallerSha256 and SignatureSha256 are placeholders until a release is hosted.
 # InstallerSha256:  (Get-FileHash Tomte_<version>_x64.msix).Hash
 # SignatureSha256:  winget hash --msix Tomte_<version>_x64.msix
-# PackageFamilyName: (Get-AppxPackage Tomte).PackageFamilyName, after installing the production-signed build
+# PackageFamilyName: (Get-AppxPackage xditya.Tomte).PackageFamilyName, after installing the production-signed build
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
 PackageIdentifier: xditya.Tomte
 PackageVersion: 0.1.0.0

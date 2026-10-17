@@ -8,11 +8,11 @@
   xmlns:uap11="http://schemas.microsoft.com/appx/manifest/uap/windows10/11"
   IgnorableNamespaces="uap uap5 uap11 rescap">
 
-  <Identity Name="Tomte" Publisher="CN=Tomte Dev" Version="0.1.0.0" ProcessorArchitecture="x64" />
+  <Identity Name="xditya.Tomte" Publisher="CN=Tomte Dev" Version="0.1.0.0" ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>Tomte</DisplayName>
-    <PublisherDisplayName>Aditya S</PublisherDisplayName>
+    <PublisherDisplayName>xditya</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -28,7 +28,7 @@
     <Application Id="Tomte" Executable="Tomte.Shell.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="Tomte"
-        Description="Tomte"
+        Description="Lives in the top edge of your screen: a shelf, shortcuts, media, a scratchpad and clipboard history."
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />

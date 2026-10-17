@@ -119,6 +119,7 @@ if ($LASTEXITCODE) { throw 'signtool sign failed' }
 [xml]$appInstaller = Get-Content "$PSScriptRoot\Tomte.appinstaller"
 $appInstaller.AppInstaller.Uri = "${AppInstallerBaseUri}$name.appinstaller"
 $appInstaller.AppInstaller.Version = $Version
+$appInstaller.AppInstaller.MainPackage.Name = $manifest.Package.Identity.Name
 $appInstaller.AppInstaller.MainPackage.Publisher = $CertSubject
 $appInstaller.AppInstaller.MainPackage.Version = $Version
 $appInstaller.AppInstaller.MainPackage.Uri = "${AppInstallerBaseUri}$(Split-Path $msix -Leaf)"
@@ -150,7 +151,7 @@ if ($Register) {
     # 9. Install.
     Add-AppxPackage -Path $msix -ForceApplicationShutdown
 }
-$package = Get-AppxPackage -Name $name
+$package = Get-AppxPackage -Name $manifest.Package.Identity.Name
 Write-Host "Installed $($package.PackageFullName)"
 Write-Host "Launch:    explorer.exe shell:AppsFolder\$($package.PackageFamilyName)!$name"
 Write-Host "Uninstall: Remove-AppxPackage $($package.PackageFullName)"
