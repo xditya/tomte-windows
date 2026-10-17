@@ -401,8 +401,9 @@ public class MascotTests
     }
 
     // Between the pill or the tab strip and a field's row the tomte travels on the shape's springs: from where it rests in
-    // the shape it leaves to where it rests in the one it reaches, inside the live outline all the way, and its seat's
-    // travel adds no jump to what the shape's own motion does to it in any frame, also when a close is turned round.
+    // the shape it leaves to where it rests in the one it reaches, inside the live outline all the way, its seat's
+    // travel adds no jump to what the shape's own motion does to it in any frame, and it stops when the outline does
+    // (Seated checks that), also when a close is turned round.
     [Fact]
     public void TheTomteTravelsToItsSeatWithTheShape()
     {
@@ -539,7 +540,8 @@ public class MascotTests
         Seated(from, default, to, default, preset, turnAt, turnTo is { } next ? (next, default) : null).ConvertAll(f => f.Shape);
 
     // The same with the island's two seat springs, which take the morph's preset with the shape's: each frame's shape and
-    // the tomte's shift (MascotSeat.Shift) in it.
+    // the tomte's shift (MascotSeat.Shift) in it. The tomte stops when the outline does: by the first frame in which the
+    // width, depth and corner have all settled (after the turn, when there is one), the seat has settled too.
     private static List<(IslandGeometry Shape, Vector2 Shift)> Seated(IslandGeometry from, Vector2 fromSeat, IslandGeometry to, Vector2 toSeat, SpringPreset preset, double turnAt = 0, (IslandGeometry Shape, Vector2 Seat)? turnTo = null)
     {
         Spring width = new(), depth = new(), corner = new(), seatX = new(), seatY = new();
@@ -551,6 +553,7 @@ public class MascotTests
         seatY.Jump(fromSeat.Y);
         Aim(to, toSeat);
         var frames = new List<(IslandGeometry, Vector2)>();
+        bool stopped = false;
         for (double t = FrameDt; t < 3; t += FrameDt)
         {
             if (turnTo is { } next && t >= turnAt)
@@ -564,6 +567,12 @@ public class MascotTests
                 spring.Step(FrameDt);
             }
 
+            if (turnTo is null && !stopped && width.Settled && depth.Settled && corner.Settled)
+            {
+                stopped = true;
+                Assert.True(seatX.Settled && seatY.Settled, $"{from} to {to}, {preset}: the outline stopped at {t:F3} s with the seat still moving");
+            }
+
             frames.Add((new(width.Value, depth.Value, corner.Value), new((float)seatX.Value, (float)seatY.Value)));
             if (turnTo is null && Array.TrueForAll(springs, s => s.Settled))
             {
@@ -571,6 +580,7 @@ public class MascotTests
             }
         }
 
+        Assert.True(stopped, $"{from} to {to}, {preset}: the outline never stopped");
         return frames;
 
         void Aim(IslandGeometry g, Vector2 seat)
