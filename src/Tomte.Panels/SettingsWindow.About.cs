@@ -31,16 +31,18 @@ public sealed partial class SettingsWindow
     private UIElement[] AboutPage()
     {
         var shown = About.Shown(About.Links);
-        var noticesNote = Note("Copyright and license text for the libraries that come with Tomte.");
+        // Under the row, apart from its explanation, so Find a setting never reads an error as what the row is about.
+        var noticesError = Note();
         var notices = new Button { Content = "Open" };
-        notices.Click += (_, _) => OpenNotices(noticesNote);
+        notices.Click += (_, _) => OpenNotices(noticesError);
         List<UIElement> parts =
         [
             Card(Maker(shown)),
             Card(
                 ValueRow("Version", About.Version(PackageVersion(), Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion), null),
                 ValueRow("License", "MIT License", Note("Tomte is free and open source.")),
-                Row("Third-party notices", noticesNote, notices)),
+                Row("Third-party notices", Note("Copyright and license text for the libraries that come with Tomte."), notices),
+                noticesError),
         ];
         AutomationProperties.SetName(notices, "Open the third-party notices");
 
@@ -180,16 +182,17 @@ public sealed partial class SettingsWindow
         return $"{version.Major}.{version.Minor}.{version.Build}.{version.Revision}";
     }
 
-    // In the default text editor, through the shell.
-    private static void OpenNotices(TextBlock note)
+    // In the default text editor, through the shell. A failure shows in the error note, which hides again once it opens.
+    private static void OpenNotices(TextBlock error)
     {
         try
         {
             Process.Start(new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, NoticesFile)) { UseShellExecute = true })?.Dispose();
+            Show(error, null);
         }
         catch (Win32Exception e)
         {
-            Show(note, $"Could not open {NoticesFile}: {e.Message}");
+            Show(error, $"Could not open {NoticesFile}: {e.Message}");
         }
     }
 
