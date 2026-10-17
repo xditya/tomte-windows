@@ -888,6 +888,10 @@ internal sealed class SearchView : IDisposable, IInteractive
 
         island.Interaction.Unregister(this);
         machine.Changed -= OnState;
+        // The footer stays where it is while the view fades: a deeper panel taking the shape over must not carry it down.
+        float s = (float)island.Scale;
+        foot.StopAnimation("Offset");
+        foot.Offset = new Vector3(0, MathF.Floor(MathF.Max((float)island.Current.Depth - layout.Height, 0) * s) / s, 0);
         root.StartAnimation("Opacity", PanelHost.Fade(island.Compositor, 0, PanelHost.FadeOutMs));
         PanelHost.AfterFadeOut(island, Dispose).Start();
     }
