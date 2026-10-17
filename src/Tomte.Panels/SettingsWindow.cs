@@ -152,6 +152,7 @@ public sealed partial class SettingsWindow : Window
                 McpSection(),
                 Header("Skills"),
                 SkillsSection()]),
+            ("About", "\uE946", AboutPage()),
         ];
 
         nav = new NavigationView

@@ -29,6 +29,7 @@ public static class Places
         ("Voice", "Voice", "rambler speech dictation spoken replies microphone"),
         ("AI", "AI", "provider api key model openai anthropic claude gemini ollama"),
         ("AI tools", "AI tools", "tools permissions always allowed desktop automation"),
+        ("About", "About", "about donate donation support sponsor developer credits notices"),
         ("Per-app rules", "Per-app rules", "app rules fullscreen allow deny games"),
         ("AI provider", "AI provider", "api key model provider"),
         ("AI history", "AI history", "conversations answers keep history memory privacy"),
