@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
@@ -8,11 +9,11 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
-using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Jobs;
 using Tomte.Core.Search;
 using Windows.ApplicationModel;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace Tomte.Panels;
 
@@ -133,11 +134,16 @@ public sealed partial class SettingsWindow
             string said;
             try
             {
-                DesktopEffects.CopyToClipboard(payment.Value);
+                var data = new DataPackage();
+                data.SetText(payment.Value);
+                Clipboard.SetContent(data);
+                // The settings process ends with its window; flushed, the text stays on the clipboard after it.
+                Clipboard.Flush();
                 said = "Copied";
             }
-            catch (InvalidOperationException)
+            catch (Exception e) when (e is COMException or UnauthorizedAccessException)
             {
+                // Another app has the clipboard open; it is not waited for here, on the window's thread.
                 said = "Not copied";
             }
 
