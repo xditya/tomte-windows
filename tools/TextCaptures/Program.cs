@@ -919,7 +919,7 @@ internal static unsafe partial class Program
     {
         var origin = new Vector2((float)(-PanelSize.PaletteWidth / 2), 0);
         c.Pill();
-        c.Mascot(pinned, PaletteLayout.Seat);
+        c.Mascot(pinned, PaletteLayout.Seat.Shift);
         float text = 0;
         TextServices? editor = null;
         bool typed = prompt is not null && !voice;
@@ -1255,12 +1255,12 @@ internal static unsafe partial class Program
         }
 
         /// <summary>
-        /// The tomte in its box at the pill's left edge, beside <paramref name="seat"/> when the content has one (or moved
-        /// by <paramref name="shift"/> part way to one), at the size and opacity the shape's depth gives it.
+        /// The tomte in its box at the pill's left edge, moved by <paramref name="shift"/> toward the seat beside the
+        /// content (<see cref="MascotSeat.Shift"/>), at the size and opacity the shape's depth gives it.
         /// </summary>
-        public void Mascot(bool pinned = false, MascotSeat? seat = null, Vector2 shift = default)
+        public void Mascot(bool pinned = false, Vector2 shift = default)
         {
-            var box = MascotArt.Box(g, seat?.Shift ?? shift);
+            var box = MascotArt.Box(g, shift);
             var at = new Vector2(box.X, box.Y);
             float k = box.Width / MascotArt.ViewBox, ride = (float)MascotArt.Ride(g);
             if (ride < 1)
