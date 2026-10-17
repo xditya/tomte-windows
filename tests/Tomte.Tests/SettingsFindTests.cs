@@ -29,8 +29,10 @@ public sealed class SettingsFindTests
         new("About", "", "Version", "", false),
         new("About", "", "License", "Tomte is free and open source.", false),
         new("About", "", "Third-party notices", "Copyright and license text for the libraries that come with Tomte."),
-        new("About", "Support", "Donate", ""),
+        new("About", "Support", "Donate", "Tomte is free, and support keeps it going."),
         new("About", "Support", "UPI ID", "botzhub@ybl"),
+        new("About", "Support", "USDT on BNB Smart Chain (BEP20)", "0xc8cbfa55be28b0836a4ab830ea85c64516dffaf3"),
+        new("About", "Support", "USDT on Tron (TRC20)", "THDKzV4ZKeDBsrFRSbL5XZgqVQUEkPfWcW"),
     ];
 
     private static List<string> Find(string query) => [.. SettingsFind.Rank(Rows, query).Select(i => $"{Rows[i].Title}, {Rows[i].Page}")];
@@ -88,11 +90,12 @@ public sealed class SettingsFindTests
         // Rows with something to click come before rows of text, so the notices come first.
         Assert.Equal(["Third-party notices, About", "License, About"], Find("license"));
         Assert.Equal(["Donate, About"], Find("donate"));
-        Assert.Equal(["Donate, About", "UPI ID, About"], Find("support"));
+        Assert.Equal(["Donate, About", "UPI ID, About", "USDT on BNB Smart Chain (BEP20), About", "USDT on Tron (TRC20), About"], Find("support"));
+        Assert.Equal(["USDT on Tron (TRC20), About"], Find("tron"));
         // "sponsor" is only in the words for the page, so it lists the page's rows.
         foreach (string query in new[] { "about", "sponsor" })
         {
-            Assert.Equal(5, Find(query).Count);
+            Assert.Equal(7, Find(query).Count);
             Assert.All(Find(query), row => Assert.EndsWith(", About", row, StringComparison.Ordinal));
         }
     }
