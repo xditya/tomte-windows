@@ -43,7 +43,8 @@ internal sealed class SearchView : IDisposable, IInteractive
     private readonly TypingFocus focus;
     private readonly TextRenderer text;
     private readonly float width, tallest;
-    private readonly ContainerVisual root, band, scrolled, cardLayer;
+    private readonly ContainerVisual root, band, scrolled, cardLayer, foot;
+    private readonly ExpressionAnimation footEdge;
     private readonly ShapeVisual shapes, selection, cardShapes;
     private readonly CompositionRoundedRectangleGeometry cardBox;
     private readonly CompositionColorBrush boxLine;
@@ -125,8 +126,19 @@ internal sealed class SearchView : IDisposable, IInteractive
         cardLayer.IsVisible = false;
 
         placeholder = text.Create(root);
-        footLeft = text.Create(root);
-        footRight = text.Create(root);
+
+        // While the shape is deeper than the box, the footer rides its live bottom edge, on whole pixels: a box that settles
+        // back once cleared takes it up with the edge instead of leaving it halfway up a shape still closing. Otherwise,
+        // growing or closing, it stays where the layout puts it and the outline clips it, as the list is clipped.
+        foot = c.CreateContainerVisual();
+        root.Children.InsertAtTop(foot);
+        footEdge = c.CreateExpressionAnimation("Vector3(0, Floor(Max(live.Depth - h, 0) * dips.Scale.Y) / dips.Scale.Y, 0)");
+        footEdge.SetReferenceParameter("live", island.Live);
+        footEdge.SetReferenceParameter("dips", island.Dips);
+        footEdge.SetScalarParameter("h", layout.Height);
+        foot.StartAnimation("Offset", footEdge);
+        footLeft = text.Create(foot);
+        footRight = text.Create(foot);
         editor = focus.Create(root, multiline: false, PaletteLayout.PromptSize);
         editor.KeepsKeys = true;
         editor.Place(layout.Editor, island.Scale);
@@ -147,10 +159,10 @@ internal sealed class SearchView : IDisposable, IInteractive
     /// <summary>The text changed: the host searches again.</summary>
     public event Action<string>? Typed;
 
-    /// <summary>The box's height for what it shows, in DIPs. It only grows while the box is open, so the shape settles once.</summary>
+    /// <summary>The box's height for what it shows, in DIPs. It only grows while there is text, so the shape settles once.</summary>
     public float Height => layout.Height;
 
-    /// <summary>The box grew; the island morphs to the new height, gently.</summary>
+    /// <summary>The box grew, or settled back once cleared; the island morphs to the new height, gently.</summary>
     public event Action? HeightChanged;
 
     /// <summary>A row was clicked: it opens.</summary>
@@ -491,12 +503,13 @@ internal sealed class SearchView : IDisposable, IInteractive
         Scrolled();
     }
 
-    // The box grows to what it shows (the list, the hint or a card), up to its tallest; it never shrinks while open, so a
-    // typed letter that shortens the list does not move the shape back and forth.
+    // The box grows to what it shows (the list, the hint or a card), up to its tallest; it never shrinks while there is
+    // text, so a typed letter that shortens the list does not move the shape back and forth. Once the field is cleared and
+    // the rows for the empty field are in, it settles back to their height, so an empty box is not left mostly blank.
     private void Grow()
     {
         float next = SearchLayout.Fit(width, island.Mascot.Enabled, rows, card, tallest, lead);
-        if (next <= layout.Height)
+        if (next == layout.Height || (next < layout.Height && !SearchLayout.Settles(typed, shownFor)))
         {
             return;
         }
@@ -505,6 +518,8 @@ internal sealed class SearchView : IDisposable, IInteractive
         var area = layout.Band;
         band.Offset = new Vector3(area.X, area.Y, 0);
         band.Size = new Vector2(area.Width, area.Height);
+        footEdge.SetScalarParameter("h", next);
+        foot.StartAnimation("Offset", footEdge);
         HeightChanged?.Invoke();
     }
 

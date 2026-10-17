@@ -199,6 +199,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         Content.Children.InsertAtBottom(Dips);
         Live = compositor.CreatePropertySet();
         Live.InsertScalar("RampW", 0);
+        Live.InsertScalar("Depth", 0);
 
         // The body's trailing end in every frame, and the middle of the live top row against the pill's, each a whole
         // number of pixels from Dips' origin, so text placed in it lands on the pixel grid as it does there. At rest on
@@ -278,7 +279,8 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>
     /// The live shape for expressions, set in every frame of a morph: "RampW" is how far in DIPs each fillet of an
     /// attached shape flares out past the body at the top edge, 0 for the floating pill. Content laid out from the
-    /// body's edges, as the tab strip is, takes it off <see cref="Dips"/>' offset.
+    /// body's edges, as the tab strip is, takes it off <see cref="Dips"/>' offset. "Depth" is the shape's depth in DIPs,
+    /// for content that rides its bottom edge.
     /// </summary>
     public CompositionPropertySet Live { get; }
 
@@ -1031,6 +1033,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         IslandOutline.Build(g, attached, segments);
         pill.Geometry.Path = BuildPath(CollectionsMarshal.AsSpan(segments), (float)scale);
         Live.InsertScalar("RampW", (float)g.RampW);
+        Live.InsertScalar("Depth", (float)g.Depth);
 
         // The pill's hairline thins out with its last pixel of depth and goes where the outline has no area left,
         // so a reveal does not start as a line under the gap.

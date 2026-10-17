@@ -23,8 +23,8 @@ public sealed record SearchCard(string Title, string Body, IReadOnlyList<(string
 /// <summary>
 /// The search box's content in DIPs from its top-left corner, in the AI box's look: the box after the tomte, the result
 /// list under it in a band that scrolls, and a footer. The island opens at the palette's smallest and grows to what it
-/// shows (<see cref="Fit"/>), up to the palette's tallest capped at half the monitor; it does not shrink while open, so
-/// the shape settles after the first few letters and typing on does not move it.
+/// shows (<see cref="Fit"/>), up to the palette's tallest capped at half the monitor; it does not shrink while there is
+/// text (<see cref="Settles"/>), so the shape settles after the first few letters and typing on does not move it.
 /// </summary>
 public sealed class SearchLayout(float width, bool mascot, float height)
 {
@@ -76,6 +76,13 @@ public sealed class SearchLayout(float width, bool mascot, float height)
 
     /// <summary>Room under the box for the hint when there are no rows: its three lines at most.</summary>
     public const float EmptyRoom = 56;
+
+    /// <summary>
+    /// Whether the box may get shorter than it is: only with the field cleared and the rows for the empty field shown
+    /// (<paramref name="shownFor"/> is the text the rows on show were found for). While there is text it only grows, so a
+    /// typed letter that shortens the list does not make the shape jump.
+    /// </summary>
+    public static bool Settles(string typed, string? shownFor) => typed.Length == 0 && shownFor == typed;
 
     /// <summary>The island's tallest for search, for a monitor this tall in DIPs.</summary>
     public static float HeightFor(double monitorHeight) => (float)Math.Min(PanelSize.PaletteMaxHeight, 0.5 * monitorHeight);
