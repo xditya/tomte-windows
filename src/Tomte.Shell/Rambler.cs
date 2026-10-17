@@ -289,6 +289,8 @@ internal sealed class Rambler(
         var shown = card = new VoiceCard(island, text, transcript, VoiceChoices.Default(enterDoes(), off is null), off);
         shown.Picked += c => choosing?.TrySetResult(c);
         RemoveView();
+        // The tomte goes beside the words with the card; whatever takes the island from the card puts it back.
+        island.Seat = VoiceCard.Seat;
         _ = island.MorphTo(shown.Shape, SpringPreset.Snappy);
         PaletteSession? session = null;
         while (true)

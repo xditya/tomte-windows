@@ -404,6 +404,8 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         {
             view.Show(result, last.Items);
             triggers.ZonePalette(view.Height, busy);
+            // After the change to the Palette state, which seats the tomte by the prompt box: this panel's row is its head.
+            island.Seat = DropResultLayout.Seat;
         }
     }
 

@@ -125,7 +125,7 @@ internal static partial class Program
         {
             var host = new Vector2(-width / 2, 0);
             c.Pill();
-            c.Mascot();
+            c.Mascot(shift: DropResultLayout.Seat.Shift);
             for (int i = 0; i < layout.Choices.Count; i++)
             {
                 var r = Offset(layout.Choices[i], host);

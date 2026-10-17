@@ -192,8 +192,11 @@ public sealed class TypingTests : IDisposable
     {
         ChipSpec[] chips = [new("Region", ChipIcon.Region, true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, false), new("Screenshot", ChipIcon.Screenshot, false), new("Shelf", ChipIcon.Shelf, true), new("Note", ChipIcon.Note, false)];
         var layout = new PaletteLayout(640, mascot: true, text: 0, chips);
-        // The prompt box sits after the tomte, one line tall; the chips that do not fit start a second row.
-        Assert.Equal(new System.Drawing.RectangleF(41.5f, 12, 584.5f, 36), layout.Prompt);
+        // The prompt box sits after the tomte, whose art starts at the padding, one line tall; the chips that do not fit
+        // start a second row.
+        Assert.Equal(PaletteLayout.Pad - MascotArt.ArtLeftDips + MascotArt.SizeDips + 10, layout.Prompt.X, 3);
+        Assert.Equal((12f, 36f), (layout.Prompt.Y, layout.Prompt.Height));
+        Assert.Equal(640 - PaletteLayout.Pad, layout.Prompt.Right, 3);
         Assert.Equal(58, layout.ChipsTop);
         Assert.Equal(58, layout.Chips[0].Box.Y);
         Assert.True(layout.Chips[^1].Box.Y > layout.ChipsTop, "the last chip wraps");

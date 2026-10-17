@@ -81,9 +81,12 @@ public sealed class DropResultLayout
     private readonly List<RectangleF> tiles = [], choices = [];
     private readonly List<TextSlot> slots = [];
 
+    /// <summary>The tomte beside the head row: centred on it, its art as far in from the left edge as the answer below.</summary>
+    public static readonly MascotSeat Seat = new(HeadTop + (HeadHeight / 2), Pad);
+
     public DropResultLayout(DropResult result, float width, bool mascot, float maxHeight = (float)PanelSize.PaletteMaxHeight)
     {
-        float left = mascot ? MascotArt.InsetX + MascotArt.SizeDips + 10 : Pad, inner = width - 2 * Pad;
+        float left = mascot ? Seat.After(10) : Pad, inner = width - 2 * Pad;
         float indicator = MathF.Ceiling(TextSlot.Measure(result.Indicator, IndicatorStyle, inner / 2));
         slots.Add(new(result.Title, TextStyle.Title, new(left, HeadTop, Math.Max(0, width - Pad - indicator - 10 - left), HeadHeight)));
         slots.Add(new(result.Indicator, IndicatorStyle, new(width - Pad - indicator, HeadTop, indicator, HeadHeight)));

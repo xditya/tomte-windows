@@ -1,6 +1,7 @@
 using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Interaction;
+using Tomte.Core.Search;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -358,6 +359,108 @@ public class MascotTests
         Assert.Equal(IslandGeometry.Peek.Width - peek.Max(p => p.X), peek.Min(p => p.X), 0.1);
     }
 
+    // In the pill, the peek badge, a pill grown under the pointer, the drop surface and above the tab strip, the tomte
+    // stays where it always was: a seat moves it only beside a field.
+    [Fact]
+    public void ThePillAndTheStripKeepTheTomtesPlace()
+    {
+        const float Middle = MascotArt.MiddleY * MascotArt.SizeDips / MascotArt.ViewBox;
+        Assert.Equal(new System.Drawing.RectangleF(-110 + 5.5f, 19 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Compact));
+        Assert.Equal(new System.Drawing.RectangleF(-18.5f + 5.5f, 19 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Peek));
+        Assert.Equal(new System.Drawing.RectangleF(-113 + 5.5f, 20 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Compact.Swollen()));
+        Assert.Equal(new System.Drawing.RectangleF(-210 + 5.5f, 21 - Middle, 26, 26), MascotArt.Box(IslandGeometry.ShelfDrop));
+        Assert.Equal(new System.Drawing.RectangleF(-280 + 5.5f, 21 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Panel(560, 260)));
+    }
+
+    // Beside an open shape's field or first line the tomte is centred on it, its art starts where the content under it
+    // starts, its box ends before what follows it on the row, and the outline stays 6 DIPs or more away: the AI box, with
+    // and without the back arrow, the search box over its list, a drop zone's result.
+    [Fact]
+    public void BesideAFieldTheTomteIsCentredOnItsRow()
+    {
+        var palette = new PaletteLayout(640, mascot: true);
+        var back = new PaletteLayout(640, mascot: true, back: true);
+        var search = new SearchLayout(640, mascot: true, 300);
+        var result = new DropResultLayout(new DropResult("Summarize · Q3-report.pdf", "Sent to ollama", "Kept on the shelf.", false, "Revenue went up.", [], []), 640, mascot: true);
+        (string Name, MascotSeat Seat, IslandGeometry Shape, System.Drawing.RectangleF Field, float Under, float Next)[] cases =
+        [
+            ("AI box", PaletteLayout.Seat, IslandGeometry.Panel(640, 150), palette.Prompt, palette.IncludeLabel.Slot.X, palette.Prompt.X),
+            ("AI box with back", PaletteLayout.Seat, IslandGeometry.Panel(640, 150), back.Prompt, back.IncludeLabel.Slot.X, back.Back.X),
+            ("search box", PaletteLayout.Seat, IslandGeometry.Panel(640, 300), search.Box, search.Band.X, search.Box.X),
+            ("drop result", DropResultLayout.Seat, IslandGeometry.Panel(640, result.Height), result.Slots[0].Slot, result.Band.X + result.Body[0].At.X, result.Slots[0].Slot.X),
+        ];
+        foreach (var (name, seat, shape, field, under, next) in cases)
+        {
+            var art = Art(shape, seat.Shift);
+            Assert.True(Math.Abs(field.Y + (field.Height / 2) - ((art.Min(p => p.Y) + art.Max(p => p.Y)) / 2)) < 0.1, $"{name}: not centred on its row");
+            Assert.True(Math.Abs(art.Min(p => p.X) - under) < 0.1, $"{name}: the art starts at {art.Min(p => p.X):F2}, the content under it at {under:F2}");
+            var box = MascotArt.Box(shape, seat.Shift);
+            Assert.True(box.Right + ((float)shape.Width / 2) <= next, $"{name}: the box runs into what follows it");
+            TomteIsInside(shape, seat.Shift);
+        }
+    }
+
+    // Between the pill or the tab strip and a field's row the tomte travels on the shape's springs: from where it rests in
+    // the shape it leaves to where it rests in the one it reaches, inside the live outline all the way, its seat's
+    // travel adds no jump to what the shape's own motion does to it in any frame, and it stops when the outline does
+    // (Seated checks that), also when a close is turned round.
+    [Fact]
+    public void TheTomteTravelsToItsSeatWithTheShape()
+    {
+        var search = IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight);
+        var tall = IslandGeometry.Panel(PanelSize.PaletteWidth, 400);
+        var panels = IslandGeometry.Panel(PanelSize.Width, PanelSize.Media.H);
+        Vector2 prompt = PaletteLayout.Seat.Shift, head = DropResultLayout.Seat.Shift;
+        (IslandGeometry From, Vector2 FromSeat, IslandGeometry To, Vector2 ToSeat, double TurnAt, IslandGeometry? Back)[] morphs =
+        [
+            (IslandGeometry.Hidden, default, search, prompt, 0, null),
+            (IslandGeometry.Compact, default, search, prompt, 0, null),
+            (panels, default, search, prompt, 0, null),
+            (search, prompt, panels, default, 0, null),
+            (search, prompt, IslandGeometry.Hidden, default, 0, null),
+            (tall, prompt, IslandGeometry.Hidden, default, 0, null),
+            (IslandGeometry.ShelfDrop, default, search, head, 0, null),
+            (search, head, IslandGeometry.Hidden, default, 0, null),
+            (search, prompt, IslandGeometry.Hidden, default, 0.05, search),
+            (search, prompt, IslandGeometry.Hidden, default, 0.12, search),
+            (search, prompt, panels, default, 0.1, search),
+        ];
+        foreach (var (from, fromSeat, to, toSeat, turnAt, back) in morphs)
+        {
+            foreach (var preset in new[] { SpringPreset.Snappy, SpringPreset.Gentle })
+            {
+                var end = back is { } again ? (again, fromSeat) : (to, toSeat);
+                var frames = Seated(from, fromSeat, to, toSeat, preset, turnAt, back is null ? null : end);
+                var (lastShape, lastShift) = (from, fromSeat);
+                foreach (var (shape, shift) in frames)
+                {
+                    // Against the outline's top-left corner, from one frame to the next: the seat's springs add under 0.6 DIP
+                    // across, nothing to the size, and down no more than that plus following the middle of a shape still
+                    // too shallow for the field's row. A seat taken at once would add its 5 to 9 DIPs in one frame.
+                    var bare = Delta(lastShape, default, shape, default);
+                    var seated = Delta(lastShape, lastShift, shape, shift);
+                    float deepened = (float)Math.Abs(shape.Depth - lastShape.Depth);
+                    Assert.True(
+                        Math.Abs(seated.X - bare.X) < 0.6f && Math.Abs(seated.Y - bare.Y) < 0.6f + (deepened / 2) && seated.Z == bare.Z,
+                        $"{from} to {to}, {preset}: the tomte jumped {seated - bare} DIP at {shape}");
+                    TomteIsInside(shape, shift);
+                    (lastShape, lastShift) = (shape, shift);
+                }
+
+                var rest = MascotArt.Box(end.Item1, end.Item2);
+                var arrived = MascotArt.Box(lastShape, lastShift);
+                Assert.True(Math.Abs(rest.X - arrived.X) < 0.3 && Math.Abs(rest.Y - arrived.Y) < 0.3, $"{from} to {to}, {preset}: ends at {arrived}, rests at {rest}");
+            }
+        }
+
+        // The box's left edge from the outline's, its top and its size, and how they changed from one frame to the next.
+        static Vector3 Delta(IslandGeometry a, Vector2 aShift, IslandGeometry b, Vector2 bShift)
+        {
+            System.Drawing.RectangleF p = MascotArt.Box(a, aShift), q = MascotArt.Box(b, bShift);
+            return new Vector3(q.X + ((float)b.Width / 2) - (p.X + ((float)a.Width / 2)), q.Y - p.Y, q.Width - p.Width);
+        }
+    }
+
     // Shallower than the pill, the tomte is its resting self scaled about the shape's top-left corner, in step with the
     // depth, and as faint: half a pill deep, half its size and half seen; a hidden island, nothing.
     [Fact]
@@ -433,20 +536,29 @@ public class MascotTests
 
     // The island's width, depth and corner springs stepped from one shape to another at 165 Hz until they settle, and
     // turned toward another shape after a while if asked.
-    private static List<IslandGeometry> Frames(IslandGeometry from, IslandGeometry to, SpringPreset preset, double turnAt = 0, IslandGeometry? turnTo = null)
+    private static List<IslandGeometry> Frames(IslandGeometry from, IslandGeometry to, SpringPreset preset, double turnAt = 0, IslandGeometry? turnTo = null) =>
+        Seated(from, default, to, default, preset, turnAt, turnTo is { } next ? (next, default) : null).ConvertAll(f => f.Shape);
+
+    // The same with the island's two seat springs, which take the morph's preset with the shape's: each frame's shape and
+    // the tomte's shift (MascotSeat.Shift) in it. The tomte stops when the outline does: by the first frame in which the
+    // width, depth and corner have all settled (after the turn, when there is one), the seat has settled too.
+    private static List<(IslandGeometry Shape, Vector2 Shift)> Seated(IslandGeometry from, Vector2 fromSeat, IslandGeometry to, Vector2 toSeat, SpringPreset preset, double turnAt = 0, (IslandGeometry Shape, Vector2 Seat)? turnTo = null)
     {
-        Spring width = new(), depth = new(), corner = new();
-        Spring[] springs = [width, depth, corner];
+        Spring width = new(), depth = new(), corner = new(), seatX = new(), seatY = new();
+        Spring[] springs = [width, depth, corner, seatX, seatY];
         width.Jump(from.Width);
         depth.Jump(from.Depth);
         corner.Jump(from.Corner);
-        Aim(to);
-        var frames = new List<IslandGeometry>();
+        seatX.Jump(fromSeat.X);
+        seatY.Jump(fromSeat.Y);
+        Aim(to, toSeat);
+        var frames = new List<(IslandGeometry, Vector2)>();
+        bool stopped = false;
         for (double t = FrameDt; t < 3; t += FrameDt)
         {
             if (turnTo is { } next && t >= turnAt)
             {
-                Aim(next);
+                Aim(next.Shape, next.Seat);
                 turnTo = null;
             }
 
@@ -455,35 +567,42 @@ public class MascotTests
                 spring.Step(FrameDt);
             }
 
-            frames.Add(new(width.Value, depth.Value, corner.Value));
+            if (turnTo is null && !stopped && width.Settled && depth.Settled && corner.Settled)
+            {
+                stopped = true;
+                Assert.True(seatX.Settled && seatY.Settled, $"{from} to {to}, {preset}: the outline stopped at {t:F3} s with the seat still moving");
+            }
+
+            frames.Add((new(width.Value, depth.Value, corner.Value), new((float)seatX.Value, (float)seatY.Value)));
             if (turnTo is null && Array.TrueForAll(springs, s => s.Settled))
             {
                 break;
             }
         }
 
+        Assert.True(stopped, $"{from} to {to}, {preset}: the outline never stopped");
         return frames;
 
-        void Aim(IslandGeometry g)
+        void Aim(IslandGeometry g, Vector2 seat)
         {
             foreach (var spring in springs)
             {
                 spring.Use(preset);
             }
 
-            (width.Target, depth.Target, corner.Target) = (g.Width, g.Depth, g.Corner);
+            (width.Target, depth.Target, corner.Target, seatX.Target, seatY.Target) = (g.Width, g.Depth, g.Corner, seat.X, seat.Y);
         }
     }
 
     // All of the tomte's art inside the live outline, with room around it in proportion to its size (6 DIP at rest).
-    private static void TomteIsInside(in IslandGeometry live)
+    private static void TomteIsInside(in IslandGeometry live, Vector2 shift = default)
     {
         if (live.Depth < 1)
         {
             return;
         }
 
-        var art = Art(live);
+        var art = Art(live, shift);
         var segments = new List<OutlineSegment>();
         var outline = new List<Vector2>();
         IslandOutline.Build(live, attached: false, segments);
@@ -520,9 +639,9 @@ public class MascotTests
     }
 
     // The art's flattened outline and the edge of its two circles, in DIPs from the shape's top-left corner.
-    private static List<Vector2> Art(in IslandGeometry shape)
+    private static List<Vector2> Art(in IslandGeometry shape, Vector2 shift = default)
     {
-        var box = MascotArt.Box(shape);
+        var box = MascotArt.Box(shape, shift);
         var at = new Vector2(box.X + (float)shape.Width / 2, box.Y);
         float k = box.Width / MascotArt.ViewBox;
         var points = new List<Vector2>();

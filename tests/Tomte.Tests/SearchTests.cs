@@ -613,6 +613,38 @@ public sealed class AiSearchRowTests
     public void CtrlEnterSearchesWithAiAndCtrlShiftEnterShowsTheFolder(bool ctrl, bool shift, SearchEnter does) =>
         Assert.Equal(does, SearchLayout.Enter(ctrl, shift));
 
+    // Typing never makes the box shorter, so a letter does not move the shape; clearing the field lets it settle back once
+    // the rows for the empty field are the ones on show.
+    [Theory]
+    [InlineData("", "", true)]
+    [InlineData("", "code", false)]
+    [InlineData("", null, false)]
+    [InlineData("c", "c", false)]
+    [InlineData("code", "cod", false)]
+    public void OnlyAClearedBoxSettlesBack(string typed, string? shownFor, bool settles) => Assert.Equal(settles, SearchLayout.Settles(typed, shownFor));
+
+    // The search box's parts share their edges and centres: the field ends where the row highlight does, the footer runs
+    // between the highlight's edges, the icons start as far into a row as the kinds end from its right, and the text in
+    // the field, an icon and a row's words are centred on their field or row.
+    [Theory]
+    [InlineData(640)]
+    [InlineData(SearchLayout.NarrowestWidth)]
+    public void TheSearchBoxSharesItsEdgesAndCentres(float width)
+    {
+        var layout = new SearchLayout(width, mascot: true, 300);
+        var band = layout.Band;
+        var (row, icon, name, _, kind) = layout.Row(0, new SearchItem(SearchKind.App, "Notepad", "notepad", "", "notepad"));
+        Assert.Equal(band.Right, layout.Box.Right, 3);
+        Assert.Equal(band.Width, row.Width, 3);
+        var (left, right) = layout.Footer(SearchLayout.Keys, "Files: Everything");
+        Assert.Equal(band.X, left.Slot.X, 3);
+        Assert.Equal(band.Right, right.Slot.Right, 3);
+        Assert.Equal(icon.X, band.Width - kind.Slot.Right, 3);
+        Assert.Equal(layout.Box.Y + (layout.Box.Height / 2), layout.Editor.Y + (layout.Editor.Height / 2), 3);
+        Assert.Equal(row.Y + (row.Height / 2), icon.Y + (icon.Height / 2), 3);
+        Assert.Equal(row.Y + (row.Height / 2), name.Slot.Y + (name.Slot.Height / 2), 3);
+    }
+
     [Fact]
     public void TheFooterFitsTheNarrowestBox()
     {
