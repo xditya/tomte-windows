@@ -6,7 +6,7 @@
 
 <p align="center">
   A small Windows 11 app that lives in the top edge of your screen.<br>
-  <a href="https://xditya.github.io/tomte-website/"><b>Website</b></a> · <a href="https://github.com/xditya/tomte-windows/releases/latest"><b>Download</b></a> · <a href="#build-from-source">Build from source</a> · <a href="#support">Support</a>
+  <a href="https://tomte.xditya.me"><b>Website</b></a> · <a href="https://github.com/xditya/tomte-windows/releases/latest"><b>Download</b></a> · <a href="#build-from-source">Build from source</a> · <a href="#support">Support</a>
 </p>
 
 <p align="center">
@@ -80,7 +80,7 @@ All of them can be changed in Settings. <kbd>Esc</kbd> closes whatever is open.
   Windows Credential Manager.
 - Nothing goes to an AI provider until you send it.
 
-The full [privacy policy](https://xditya.github.io/tomte-website/privacy.html) lists what is stored and what is sent.
+The full [privacy policy](https://tomte.xditya.me/privacy) lists what is stored and what is sent.
 
 ## Install
 
