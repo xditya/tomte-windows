@@ -27,6 +27,9 @@ Folder URL where the .msix and .appinstaller will be hosted. Written into the .a
 Still builds and signs the .msix, but installs by registering the unpacked folder instead (needs
 Developer Mode, no UAC prompt, no certificate trust). For local work when the machine trust step is not wanted.
 
+.PARAMETER NoInstall
+Stops after signing the .msix and writing the .appinstaller file, without installing anything. For release builds.
+
 .EXAMPLE
 powershell -File tools\package\New-TomtePackage.ps1
 #>
@@ -34,7 +37,8 @@ param(
     [string]$CertSubject = 'CN=Tomte Dev',
     [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version = '0.1.0.0',
     [string]$AppInstallerBaseUri = 'https://example.invalid/tomte/',
-    [switch]$Register
+    [switch]$Register,
+    [switch]$NoInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -119,6 +123,11 @@ $appInstaller.AppInstaller.MainPackage.Publisher = $CertSubject
 $appInstaller.AppInstaller.MainPackage.Version = $Version
 $appInstaller.AppInstaller.MainPackage.Uri = "${AppInstallerBaseUri}$(Split-Path $msix -Leaf)"
 $appInstaller.Save((Join-Path $out "$name.appinstaller"))
+
+if ($NoInstall) {
+    Write-Host "Signed $msix (not installed)"
+    return
+}
 
 if ($Register) {
     # Developer Mode: register the unpacked folder for this user. Gives package identity, skips signature trust.
