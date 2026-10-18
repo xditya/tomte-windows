@@ -6,7 +6,7 @@
 
 <p align="center">
   A small Windows 11 app that lives in the top edge of your screen.<br>
-  <a href="https://tomte.xditya.me"><b>Website</b></a> · <a href="https://github.com/xditya/tomte-windows/releases/latest"><b>Download</b></a> · <a href="#build-from-source">Build from source</a> · <a href="#support">Support</a>
+  <a href="https://tomte.xditya.me"><b>Website</b></a> · <a href="https://apps.microsoft.com/detail/9PG849MLVWZC"><b>Download</b></a> · <a href="#build-from-source">Build from source</a> · <a href="#support">Support</a>
 </p>
 
 <p align="center">
@@ -84,8 +84,18 @@ The full [privacy policy](https://tomte.xditya.me/privacy) lists what is stored 
 
 ## Install
 
-Needs Windows 11 22H2 or later on x64. Download the `.msix` from the [latest release](https://github.com/xditya/tomte-windows/releases/latest), open it
-and choose Install. Tomte starts hidden, with an icon in the notification area.
+Needs Windows 11 22H2 or later on x64.
+
+<a href="https://apps.microsoft.com/detail/9PG849MLVWZC"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" width="200"></a>
+
+Or from the command line, the same Store build:
+
+```powershell
+winget install 9PG849MLVWZC
+```
+
+Tomte starts hidden, with an icon in the notification area. The [releases page](https://tomte.xditya.me/releases) also
+has the `.msix` from GitHub, which isn't signed yet.
 
 ## Build from source
 
