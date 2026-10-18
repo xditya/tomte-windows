@@ -420,7 +420,9 @@ internal sealed class SearchHost
 
         // Files found for earlier text stay while they still hold every word, so the list does not flicker as one types on.
         var still = files.Where(f => words.All(w => f.Name.Contains(w, StringComparison.CurrentCultureIgnoreCase)));
-        var candidates = apps.Concat(places).Concat(tiles).Concat(shelf).Concat(still);
+        // Programs opened before are listed even when the file search did not return them: one letter finds too many files.
+        var programs = Known().Where(i => SearchRank.LaunchedProgram(i, launches) && SearchMatch.Score(i.Name, query) > 0);
+        var candidates = apps.Concat(places).Concat(tiles).Concat(shelf).Concat(still.Concat(programs).DistinctBy(i => i.Key));
         if (EverythingSetup.Offers(source, offerDismissed || store.Current.EverythingOfferDismissed) && installing is null)
         {
             candidates = candidates.Append(new SearchItem(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"));

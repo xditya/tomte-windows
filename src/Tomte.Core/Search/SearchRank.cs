@@ -390,7 +390,7 @@ public static partial class SearchRank
         // Text that is a web address puts Open in browser first, unless a file or folder has that very name ("Makefile.in").
         bool addressFirst = WebSearch.Address(query) is not null
             && !scored.Any(s => s.Item.Kind is SearchKind.File or SearchKind.Folder && s.Item.Name.Equals(query.Trim(), StringComparison.OrdinalIgnoreCase));
-        return Grouped(scored.Select(s => (s.Item, Rank: s.Score >= 0 ? s.Score + Boost(launches, s.Item) : s.Item.Kind == SearchKind.Ask ? int.MinValue + 1 : int.MinValue)), PlacesFirst(scored, query), addressFirst);
+        return Grouped(scored.Select(s => (s.Item, Rank: s.Score >= 0 ? s.Score + Boost(launches, s.Item) : s.Item.Kind == SearchKind.Ask ? int.MinValue + 1 : int.MinValue)), launches, PlacesFirst(scored, query), addressFirst);
     }
 
     /// <summary>
@@ -449,7 +449,7 @@ public static partial class SearchRank
             .OrderByDescending(item => launches[item.Key].Count)
             .ThenByDescending(item => launches[item.Key].LastTicks)
             .ToList();
-        return Grouped(seen.Select((item, i) => (item, seen.Count - i)));
+        return Grouped(seen.Select((item, i) => (item, seen.Count - i)), launches);
     }
 
     /// <summary>Up to 40 points for rows opened from search before: 10 a time, from the fourth time on the same.</summary>
@@ -460,9 +460,16 @@ public static partial class SearchRank
     [GeneratedRegex(@"^\s*(?:open|go\s+to|show)\s+(?=\S)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Verb();
 
-    private static IReadOnlyList<SearchItem> Grouped(IEnumerable<(SearchItem Item, int Rank)> ranked, bool placesFirst = false, bool addressFirst = false) =>
+    /// <summary>
+    /// A program file (an .exe that Start does not list, such as a portable app) opened from search before is listed with
+    /// the apps, so it can lead them; one never opened stays with the files.
+    /// </summary>
+    public static bool LaunchedProgram(SearchItem item, IReadOnlyDictionary<string, Launches> launches) =>
+        item.Kind == SearchKind.File && item.Target.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) && launches.ContainsKey(item.Key);
+
+    private static IReadOnlyList<SearchItem> Grouped(IEnumerable<(SearchItem Item, int Rank)> ranked, IReadOnlyDictionary<string, Launches> launches, bool placesFirst = false, bool addressFirst = false) =>
         [.. ranked
-            .GroupBy(r => r.Item.Group)
+            .GroupBy(r => LaunchedProgram(r.Item, launches) ? 0 : r.Item.Group)
             .OrderBy(g => addressFirst && g.Key == WebGroup ? -2 : placesFirst && g.Key == PlacesGroup ? -1 : g.Key)
             .SelectMany(g => Cap(g.Key, g
                 .OrderByDescending(r => r.Rank)

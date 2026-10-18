@@ -163,6 +163,18 @@ public sealed class SearchTests
     }
 
     [Fact]
+    public void AProgramFileOpenedOftenLeadsTheApps()
+    {
+        // A portable app Start does not list: opened from search before, it passes Arc; never opened, it stays with the files.
+        var ayu = File("AyuGram.exe");
+        var arc = App("Arc");
+        var launches = new Dictionary<string, Launches> { [ayu.Key] = new(7, 1), [arc.Key] = new(2, 1) };
+        Assert.Equal("AyuGram.exe", SearchRank.Order([arc, ayu], "a", launches)[0].Name);
+        Assert.Equal("Arc", SearchRank.Order([arc, ayu], "a", None)[0].Name);
+        Assert.Equal("Arc", SearchRank.Order([arc, File("Agenda.pdf")], "a", new Dictionary<string, Launches> { [File("Agenda.pdf").Key] = new(9, 1) })[0].Name);
+    }
+
+    [Fact]
     public void FilesTheFileSearchFoundStayEvenWhenTheMatcherMissesThem()
     {
         var ordered = SearchRank.Order([File("Résumé.pdf")], "resume", None);
