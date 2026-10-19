@@ -37,10 +37,13 @@ public static class IslandOutline
     public const double Gap = 10;
 
     /// <summary>How far down the pill's drop shadow falls.</summary>
-    public const double ShadowOffsetY = 30;
+    public const double ShadowOffsetY = 14;
 
-    /// <summary>The shadow's softness: a Gaussian blur of sigma 40 DIP, a CSS blur of 80.</summary>
-    public const double ShadowSigma = 40;
+    /// <summary>
+    /// The shadow's softness: a Gaussian blur of sigma 18 DIP, a CSS blur of 36. The window grows by the shadow's reach,
+    /// and that band takes clicks from the apps under it while the island shows, so it stays this tight.
+    /// </summary>
+    public const double ShadowSigma = 18;
 
     /// <summary>Room the shadow gets: two sigma, past which under 1% black is left of it.</summary>
     public const double ShadowReach = 2 * ShadowSigma;

@@ -4,6 +4,7 @@ using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Rambler;
+using Tomte.Core.Text;
 using Windows.UI;
 using Windows.UI.Composition;
 
@@ -36,11 +37,6 @@ internal sealed class Rambler(
     TextRenderer text,
     Action<string> log)
 {
-    // The design's rambler pill is wider than the 220 Compact so the bars fit beside the mascot.
-    private const double PillWidth = 262;
-    private const float GroupWidth = 6 + 8 + Waveform.Bars * Waveform.BarWidth + (Waveform.Bars - 1) * Waveform.Gap;
-    private const float GroupHeight = Waveform.MinHeight + Waveform.Swing;
-    private static Color Mic => ShelfColors.Of(Theme.Accent);
 
     // A slow or stuck provider must not hold the rambler: every later hold waits for this one to finish.
     private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(30);
@@ -48,9 +44,7 @@ internal sealed class Rambler(
     private readonly Stopwatch clock = new();
     private readonly float[] heights = new float[Waveform.Bars];
     private MicCapture? capture;
-    private ShapeVisual? view;
-    private CompositionRoundedRectangleGeometry[]? bars;
-    private CompositionSpriteShape[]? barShapes;
+    private ListeningPill? view;
     private bool transcribing;
     private PaletteSession? command;
     private PaletteHost? palette;
@@ -170,7 +164,7 @@ internal sealed class Rambler(
         {
             machine.TransitionTo(IslandState.Compact);
             island.Mascot.Follow(from, IslandState.Compact);
-            _ = island.MorphTo(IslandGeometry.Compact with { Width = PillWidth }, SpringPreset.Snappy);
+            _ = island.MorphTo(IslandGeometry.Compact, SpringPreset.Snappy);
         }
 
         island.Mascot.Set(MascotState.Rambler);
@@ -493,63 +487,23 @@ internal sealed class Rambler(
 
     private void Level(float rms)
     {
-        if (capture is null || bars is null || barShapes is null)
+        if (capture is null || view is null)
             return;
         double level = Waveform.Level(rms);
-        Waveform.Heights(level, clock.Elapsed.TotalSeconds, heights);
-        SetBars(heights);
+        double seconds = clock.Elapsed.TotalSeconds;
+        Waveform.Heights(level, seconds, heights);
+        view.Set(heights, Waveform.Reached(seconds), seconds);
         Bounce?.Invoke(level);
     }
 
-    private void SetBars(ReadOnlySpan<float> h)
-    {
-        for (int i = 0; i < Waveform.Bars; i++)
-        {
-            bars![i].Size = new Vector2(Waveform.BarWidth, h[i]);
-            barShapes![i].Offset = new Vector2(barShapes[i].Offset.X, (GroupHeight - h[i]) / 2);
-        }
-    }
-
-    /// <summary>A red capsule for the microphone and the seven bars, centred in the pill, in DIPs scaled to the monitor.</summary>
+    /// <summary>The accent dot, the bars and the time held, in the pill's island space; they move when a level arrives, with no timer of their own.</summary>
     private void ShowView()
     {
-        var c = island.Content.Compositor;
-        float s = (float)island.Scale;
-        view = c.CreateShapeVisual();
-        view.Size = new Vector2(GroupWidth, GroupHeight);
-        view.Scale = new Vector3(s, s, 1);
-        // Content is as wide as the current outline, so half its width is the pill's centre at every frame of the morph.
-        view.RelativeOffsetAdjustment = new Vector3(0.5f, 0, 0);
-        // With the tomte on, centre the group in the room right of it rather than in the whole pill.
-        float shift = island.Mascot.Enabled ? (MascotVisual.InsetX + MascotVisual.SizeDips) / 2 : 0;
-        view.Offset = new Vector3((shift - GroupWidth / 2) * s, (float)(IslandGeometry.Compact.Depth - GroupHeight) / 2 * s, 0);
-
-        var mic = c.CreateRoundedRectangleGeometry();
-        mic.Size = new Vector2(6, 11);
-        mic.CornerRadius = new Vector2(3, 3);
-        var micShape = c.CreateSpriteShape(mic);
-        micShape.FillBrush = c.CreateColorBrush(Mic);
-        micShape.Offset = new Vector2(0, (GroupHeight - 11) / 2);
-        view.Shapes.Add(micShape);
-
-        var white = c.CreateColorBrush(ShelfColors.Of(Theme.Ink));
-        bars = new CompositionRoundedRectangleGeometry[Waveform.Bars];
-        barShapes = new CompositionSpriteShape[Waveform.Bars];
-        for (int i = 0; i < Waveform.Bars; i++)
-        {
-            bars[i] = c.CreateRoundedRectangleGeometry();
-            bars[i].CornerRadius = new Vector2(Waveform.BarWidth / 2, Waveform.BarWidth / 2);
-            barShapes[i] = c.CreateSpriteShape(bars[i]);
-            barShapes[i].FillBrush = white;
-            barShapes[i].Offset = new Vector2(14 + i * (Waveform.BarWidth + Waveform.Gap), 0);
-            view.Shapes.Add(barShapes[i]);
-        }
-
+        view = new ListeningPill(island, text);
         Array.Fill(heights, Waveform.MinHeight);
-        SetBars(heights);
-        island.Content.Children.InsertAtTop(view);
-        view.Opacity = 0;
-        view.StartAnimation("Opacity", Fade(c, 1, delayMs: 100, durationMs: 150));
+        view.Set(heights, 1, 0);
+        view.Root.Opacity = 0;
+        view.Root.StartAnimation("Opacity", Fade(island.Compositor, 1, delayMs: 100, durationMs: 150));
     }
 
     /// <summary>Bars flat and dimmed while the speech is turned into text.</summary>
@@ -558,17 +512,15 @@ internal sealed class Rambler(
         if (view is null)
             return;
         Array.Fill(heights, Waveform.MinHeight);
-        SetBars(heights);
-        view.StartAnimation("Opacity", Fade(view.Compositor, 0.4f, 0, 150));
+        view.Set(heights, Waveform.Bars, clock.Elapsed.TotalSeconds);
+        view.Root.StartAnimation("Opacity", Fade(island.Compositor, 0.4f, 0, 150));
     }
 
     private async Task Retract()
     {
         var gone = view;
         view = null;
-        bars = null;
-        barShapes = null;
-        gone?.StartAnimation("Opacity", Fade(gone.Compositor, 0, 0, 100));
+        gone?.Root.StartAnimation("Opacity", Fade(island.Compositor, 0, 0, 100));
         var leaving = card;
         card = null;
         leaving?.FadeOut();
@@ -580,11 +532,7 @@ internal sealed class Rambler(
         }
 
         leaving?.Dispose();
-        if (gone is not null)
-        {
-            island.Content.Children.Remove(gone);
-            gone.Dispose();
-        }
+        gone?.Dispose();
 
         // A hold that began during the morph (still recording, or already transcribing) has the pill now: its own end
         // releases the island.
@@ -592,18 +540,99 @@ internal sealed class Rambler(
             Retracted?.Invoke();
     }
 
-    /// <summary>The microphone and the bars leave at once when the pill turns into the palette.</summary>
+    /// <summary>The dot, the bars and the time leave at once when the pill turns into the palette.</summary>
     private void RemoveView()
     {
-        if (view is not null)
+        view?.Dispose();
+        view = null;
+    }
+
+    /// <summary>
+    /// The listening pill's content, laid out by <see cref="CompactLayout.Listening"/>: the accent dot in its soft halo,
+    /// the bars (those the hold has reached in ink at the level, the rest quiet and flat) and the time held, in mono.
+    /// </summary>
+    private sealed class ListeningPill : IDisposable
+    {
+        private readonly IslandWindow island;
+        private readonly ShapeVisual shapes;
+        private readonly CompositionRoundedRectangleGeometry[] bars = new CompositionRoundedRectangleGeometry[Waveform.Bars];
+        private readonly CompositionSpriteShape[] barShapes = new CompositionSpriteShape[Waveform.Bars];
+        private readonly CompositionColorBrush[] inks = new CompositionColorBrush[Waveform.Bars];
+        private readonly TextVisual elapsed;
+        private readonly System.Drawing.RectangleF elapsedSlot;
+        private int second = -1;
+
+        public ListeningPill(IslandWindow island, TextRenderer text)
         {
-            island.Content.Children.Remove(view);
-            view.Dispose();
+            this.island = island;
+            var c = island.Compositor;
+            float depth = (float)IslandGeometry.Compact.Depth;
+            var (dot, barsX, slot) = CompactLayout.Listening(island.Mascot.Enabled, TextSlot.Measure("0:00", CompactLayout.ElapsedStyle, 200));
+            elapsedSlot = slot;
+            Root = c.CreateContainerVisual();
+            shapes = c.CreateShapeVisual();
+            float left = dot - CompactLayout.Halo;
+            shapes.Offset = new Vector3(left, 0, 0);
+            shapes.Size = new Vector2(slot.X - left, depth);
+            Root.Children.InsertAtTop(shapes);
+            float r = CompactLayout.DotSize / 2;
+            Circle(c, new Vector2(CompactLayout.Halo + r, depth / 2), r + CompactLayout.Halo, ShelfColors.Of(Theme.AccentSoft));
+            Circle(c, new Vector2(CompactLayout.Halo + r, depth / 2), r, ShelfColors.Of(Theme.Accent));
+            for (int i = 0; i < Waveform.Bars; i++)
+            {
+                bars[i] = c.CreateRoundedRectangleGeometry();
+                bars[i].CornerRadius = new Vector2(Waveform.BarWidth / 2);
+                inks[i] = c.CreateColorBrush(ShelfColors.Ink);
+                barShapes[i] = c.CreateSpriteShape(bars[i]);
+                barShapes[i].FillBrush = inks[i];
+                barShapes[i].Offset = new Vector2(barsX - left + i * (Waveform.BarWidth + Waveform.Gap), 0);
+                shapes.Shapes.Add(barShapes[i]);
+            }
+
+            elapsed = text.Create(Root);
+            island.Dips.Children.InsertAtTop(Root);
         }
 
-        view = null;
-        bars = null;
-        barShapes = null;
+        public ContainerVisual Root { get; }
+
+        /// <summary>The bars at these heights, the first <paramref name="reached"/> of them in ink, and the time held.</summary>
+        public void Set(ReadOnlySpan<float> heights, int reached, double seconds)
+        {
+            float depth = (float)IslandGeometry.Compact.Depth;
+            for (int i = 0; i < Waveform.Bars; i++)
+            {
+                float h = i < reached ? heights[i] : Waveform.MinHeight;
+                // Colours change in place: a brush moved off its shape and back does not draw again.
+                inks[i].Color = i < reached ? ShelfColors.Ink : ShelfColors.Ink3;
+                bars[i].Size = new Vector2(Waveform.BarWidth, h);
+                barShapes[i].Offset = new Vector2(barShapes[i].Offset.X, (depth - h) / 2);
+            }
+
+            int s = (int)seconds;
+            if (s != second)
+            {
+                second = s;
+                elapsed.Show($"{s / 60}:{s % 60:00}", CompactLayout.ElapsedStyle, elapsedSlot);
+            }
+        }
+
+        public void Dispose()
+        {
+            island.Dips.Children.Remove(Root);
+            elapsed.Dispose();
+            shapes.Dispose();
+            Root.Dispose();
+        }
+
+        private void Circle(Compositor c, Vector2 center, float radius, Color color)
+        {
+            var geometry = c.CreateEllipseGeometry();
+            geometry.Center = center;
+            geometry.Radius = new Vector2(radius);
+            var shape = c.CreateSpriteShape(geometry);
+            shape.FillBrush = c.CreateColorBrush(color);
+            shapes.Shapes.Add(shape);
+        }
     }
 
     private static ScalarKeyFrameAnimation Fade(Compositor c, float to, int delayMs, int durationMs)

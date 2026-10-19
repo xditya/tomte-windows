@@ -552,7 +552,7 @@ internal static unsafe partial class Program
         const float group = 6 + 8 + (Waveform.Bars * Waveform.BarWidth) + ((Waveform.Bars - 1) * Waveform.Gap), height = Waveform.MinHeight + Waveform.Swing;
         float shift = mascot ? (MascotArt.InsetX + MascotArt.SizeDips) / 2 : 0, x = shift - (group / 2), y = (float)(IslandGeometry.Compact.Depth - height) / 2;
         c.RoundRect(new RectangleF(x, y + ((height - 11) / 2), 6, 11), 3, 0xFFFF6B6B);
-        float[] reach = [.35f, .62f, .85f, 1f, .85f, .62f, .35f];
+        float[] reach = [.35f, .55f, .75f, .9f, 1f, .9f, .75f, .55f, .35f];
         for (int i = 0; i < Waveform.Bars; i++)
         {
             float h = Waveform.MinHeight + (Waveform.Swing * reach[i] * 0.7f);

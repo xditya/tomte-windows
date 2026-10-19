@@ -567,14 +567,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 rambler?.End(keep: wParam == 1);
                 return true;
             case InputThread.MsgUndoUnavailable:
-                log?.Invoke($"hotkey conflict: Win+Alt+Z could not be registered (error {wParam}); the undo pill shows the button only");
-                if (undoPill is { } pill && activity.HasFlag(IslandActivity.Undo))
-                {
-                    pill.KeyTaken();
-                    _ = island.MorphTo(IslandGeometry.Compact with { Width = pill.Width }, SpringPreset.Snappy);
-                    InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
-                }
-
+                log?.Invoke($"hotkey conflict: Win+Alt+Z could not be registered (error {wParam}); the undo pill's button still works");
                 return true;
             case InputThread.MsgConfirmUnavailable:
                 log?.Invoke($"hotkey conflict: Win+Alt+Enter could not be registered (error {wParam})");
@@ -1302,9 +1295,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             // Placed from the words the pill will show after it, so it is where it belongs from its first frame, before
             // the words fade in.
             var (words, left) = CompactLine(DateTimeOffset.Now);
-            var style = left is null ? CompactLayout.LineStyle : CompactLayout.ClockStyle;
             bool mascot = island.Mascot.Enabled;
-            float x = CompactLayout.Group(mascot, CompactLayout.RingSize, Tomte.Core.Text.TextSlot.Measure(words ?? "", style, 4096)).Lead;
+            float x = CompactLayout.Group(mascot, CompactLayout.RingSize, CompactLayout.RingWords(words ?? "", countdown: left is not null)).Lead;
             ring.Show(run, DateTimeOffset.Now, mascot ? island.Trailing : island.Dips, mascot ? x - CompactLayout.End : x);
         }
         else
@@ -1691,6 +1683,25 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
+    /// The drop zones in place of the Shelf-drop pill, this wide and deep within the monitor's cap, still in the
+    /// Shelf-drop state: the drag goes on over them, a drop on one is taken as on the pill, and the island retracts as
+    /// it would from the pill. The pointer is tracked against the new shape.
+    /// </summary>
+    internal void OpenZones(double width, double height)
+    {
+        if (machine.State != IslandState.ShelfDrop)
+        {
+            return;
+        }
+
+        var (w, h) = PanelSize.Fit((width, height), island.MonitorSize);
+        island.PanelLook = true;
+        _ = island.MorphTo(IslandGeometry.Panel(w, h), SpringPreset.Snappy);
+        InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+        log?.Invoke($"drag: held on the pill, drop zones open at {w:F0} x {h:F0}");
+    }
+
+    /// <summary>
     /// A drop zone's panel: the Palette state at this height, held open while its request runs, and once it is done
     /// held by its result, which was paid for, until the user dismisses it: Esc while the pointer is on the island, the
     /// palette hotkey, a press outside the island or another state. The pointer being away never retracts it. <paramref name="hold"/> false leaves a panel
@@ -1849,7 +1860,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
-        var pill = undoPill = new UndoPill(island, machine, text, line, () => island.Queue.TryEnqueue(Undo));
+        var pill = undoPill = new UndoPill(island, machine, text, line, () => undo.Left(DateTimeOffset.Now), () => island.Queue.TryEnqueue(Undo));
         Go(IslandState.Compact, (pill.Width, 0));
         activity |= IslandActivity.Undo;
         // Like an event pill: not armed, so the pointer's first "outside" does not retract it; the undo timer owns the end.

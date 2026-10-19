@@ -195,7 +195,7 @@ public class MascotTests
         var peek = Assert.Single(CompactLayout.Targets(IslandGeometry.Peek, mascot: true));
         Assert.Equal(CompactLayout.TomteId, peek.Id);
         Assert.Null(peek.Tip);
-        Assert.Equal(new System.Drawing.RectangleF(-18.5f, 0, 37, 38), peek.Bounds);
+        Assert.Equal(new System.Drawing.RectangleF(-18.5f, 0, 37, 40), peek.Bounds);
         Assert.Equal(CompactLayout.PillId, Assert.Single(CompactLayout.Targets(IslandGeometry.Compact, mascot: false)).Id);
     }
 
@@ -365,10 +365,10 @@ public class MascotTests
     public void ThePillAndTheStripKeepTheTomtesPlace()
     {
         const float Middle = MascotArt.MiddleY * MascotArt.SizeDips / MascotArt.ViewBox;
-        Assert.Equal(new System.Drawing.RectangleF(-110 + 5.5f, 19 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Compact));
-        Assert.Equal(new System.Drawing.RectangleF(-18.5f + 5.5f, 19 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Peek));
-        Assert.Equal(new System.Drawing.RectangleF(-113 + 5.5f, 20 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Compact.Swollen()));
-        Assert.Equal(new System.Drawing.RectangleF(-210 + 5.5f, 21 - Middle, 26, 26), MascotArt.Box(IslandGeometry.ShelfDrop));
+        Assert.Equal(new System.Drawing.RectangleF(-110 + 5.5f, 20 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Compact));
+        Assert.Equal(new System.Drawing.RectangleF(-18.5f + 5.5f, 20 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Peek));
+        Assert.Equal(new System.Drawing.RectangleF(-113 + 5.5f, 21 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Compact.Swollen()));
+        Assert.Equal(new System.Drawing.RectangleF(-180 + 5.5f, 21 - Middle, 26, 26), MascotArt.Box(IslandGeometry.ShelfDrop));
         Assert.Equal(new System.Drawing.RectangleF(-280 + 5.5f, 21 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Panel(560, 260)));
     }
 
