@@ -201,9 +201,9 @@ public class IslandOutlineTests
     }
 
     [Theory]
-    [InlineData(1.0, 10, 14, 20)]
-    [InlineData(1.25, 13, 18, 25)]
-    [InlineData(1.5, 15, 21, 30)]
+    [InlineData(1.0, 10, 80, 110)]
+    [InlineData(1.25, 13, 100, 138)]
+    [InlineData(1.5, 15, 120, 165)]
     public void TheWindowIsTheGapAndTheDepthWithRoomForTheShadow(double scale, int gap, int side, int below)
     {
         const int centerX = 1280;
@@ -244,7 +244,7 @@ public class IslandOutlineTests
             Assert.False(Holds(region, midX, top - 1.5));
             Assert.False(Holds(region, midX, 0.5));
 
-            // The shadow falls 6 DIPs down and is 14 DIPs soft, so it reaches 20 below the pill and 14 beside it.
+            // The shadow falls 30 DIPs down and is 80 DIPs soft, so it reaches 110 below the pill and 80 beside it.
             double below = (g.Depth + IslandOutline.ShadowOffsetY + IslandOutline.ShadowReach) * scale + top;
             double middle = (g.Depth / 2 + IslandOutline.ShadowOffsetY) * scale + top;
             Assert.True(Holds(region, midX, below - 0.5));

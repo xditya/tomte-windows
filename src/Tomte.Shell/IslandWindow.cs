@@ -178,12 +178,8 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         // Tree: root > [ghost (previous outline, only during a reduced-motion crossfade), live > [pill, Content]].
         // The pill is drawn outside the clip so its stroke keeps both halves; content is clipped by the same path.
-        var gradient = compositor.CreateLinearGradientBrush();
-        gradient.StartPoint = new Vector2(0, 0);
-        gradient.EndPoint = new Vector2(0, 1);
-        gradient.ColorStops.Add(compositor.CreateColorGradientStop(0, Color.FromArgb(255, 0x10, 0x10, 0x12)));
-        gradient.ColorStops.Add(compositor.CreateColorGradientStop(1, Color.FromArgb(255, 0, 0, 0)));
-        pill = new Drawn(compositor, gradient);
+        var fill = compositor.CreateColorBrush(ShelfColors.Of(Theme.Island));
+        pill = new Drawn(compositor, fill);
 
         Content = compositor.CreateContainerVisual();
         Content.Clip = compositor.CreateGeometricClip(pill.Geometry);
@@ -217,7 +213,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         live.Children.InsertAtBottom(pill.Visual);
         live.Children.InsertAtTop(Content);
 
-        ghost = new Drawn(compositor, gradient);
+        ghost = new Drawn(compositor, fill);
         ghost.Visual.Opacity = 0;
         ShadowLook();
 
@@ -1468,7 +1464,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>
-    /// One outline as drawn: the gradient fill with its hairline, and the floating pill's drop shadow, which the
+    /// One outline as drawn: the flat fill with its hairline, and the floating pill's drop shadow, which the
     /// compositor blurs from an off-screen copy of that fill. The live shape and the crossfade ghost are one each.
     /// </summary>
     private sealed class Drawn
@@ -1481,12 +1477,12 @@ internal sealed unsafe class IslandWindow : IDisposable
         private readonly DropShadow shadow;
         private bool shadowOn;
 
-        public Drawn(Compositor compositor, CompositionBrush gradient)
+        public Drawn(Compositor compositor, CompositionBrush fillBrush)
         {
             Geometry = compositor.CreatePathGeometry();
             Shape = compositor.CreateSpriteShape(Geometry);
-            Shape.FillBrush = gradient;
-            Shape.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(26, 255, 255, 255));
+            Shape.FillBrush = fillBrush;
+            Shape.StrokeBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.LineOver));
             Shape.StrokeThickness = 0;
             Shape.Offset = new Vector2(Margin);
             fill = compositor.CreateShapeVisual();
@@ -1496,7 +1492,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             copy.SourceVisual = fill;
             shadow = compositor.CreateDropShadow();
             shadow.Mask = compositor.CreateSurfaceBrush(copy);
-            shadow.Color = Color.FromArgb(255, 0, 0, 0);
+            shadow.Color = ShelfColors.Of(Theme.Shadow);
             shadow.Opacity = 0.35f;
             shadowVisual = compositor.CreateSpriteVisual();
             shadowVisual.Shadow = shadow;
