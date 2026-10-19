@@ -10,7 +10,7 @@ namespace Tomte.Core;
 public static class LassoHint
 {
     public const string Text = "Drag around what you want to ask about · Esc cancels";
-    public const float Height = 38, Side = 18;
+    public const float Height = 40, Side = 18;
     public static readonly TextStyle Style = TextStyle.Primary;
 
     /// <summary>The capsule for a line <paramref name="textWidth"/> wide on a monitor <paramref name="monitorWidth"/> wide.</summary>
