@@ -11,11 +11,12 @@ using Color = Windows.UI.Color;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Compact pill's now-playing row: the art, the title and four bars that move while something
+/// The Compact pill's now-playing row: the art, the title, the artist and four bars that move while something
 /// plays. It shows where <see cref="TriggerController.CompactShows"/> puts it: the push pill when no
 /// timer runs, the peek pill with the tomte off, the track-change event's own pill and the pill kept
 /// while music plays. The media
-/// tracker is watched while such a pill is up; the visuals exist only while the row shows.
+/// tracker is watched while such a pill is up; the visuals exist only while the row shows, so the bars' animations run
+/// only then and nothing ticks once the pill has gone.
 /// </summary>
 internal sealed class NowPlayingRow
 {
@@ -54,6 +55,15 @@ internal sealed class NowPlayingRow
         release = PanelHost.AfterFadeOut(island, Release);
         triggers.Machine.Changed += OnState;
         island.ContentReady += OnContentReady;
+        // Desktop peek grows into the peek pill and back with no change of state: once the pill is no longer the row's,
+        // the row goes and stops watching.
+        triggers.CompactChanged += () =>
+        {
+            if (watching && !Mine)
+            {
+                OnState(IslandState.Compact, IslandState.Compact);
+            }
+        };
     }
 
     // Why the pill is up is settled once it is up, so the row decides at ContentReady whether to watch:
@@ -147,9 +157,9 @@ internal sealed class NowPlayingRow
     {
         private readonly ContainerVisual frame;
         private readonly ShapeVisual shapes;
-        private readonly TextVisual title;
+        private readonly TextVisual title, artist;
         private readonly bool mascot, bars;
-        private RectangleF titleSlot;
+        private readonly RectangleF titleSlot;
 
         public View(Compositor compositor, TextRenderer text, ContainerVisual frame, bool mascot, bool bars)
         {
@@ -159,6 +169,7 @@ internal sealed class NowPlayingRow
             Art = new ArtVisual(compositor, CompactLayout.Art(mascot), CompactLayout.ArtCorner);
             Root.Children.InsertAtTop(Art.Visual);
             title = text.Create(Root);
+            artist = text.Create(Root);
             titleSlot = CompactLayout.Title(mascot);
 
             // One shape visual from the title slot's left edge to the end of the bars.
@@ -172,9 +183,10 @@ internal sealed class NowPlayingRow
                 return;
             }
 
-            // Each bar breathes on its own period, 50 ms after the one before it, from the compositor:
-            // 4 DIPs, up to 4 + 18 x reach, down to 6 + 8 x reach, up to 4 + 16 x reach, back to 4.
-            var white = compositor.CreateColorBrush(Color.FromArgb(255, 255, 255, 255));
+            // Each bar breathes on its own period, 50 ms after the one before it, from the compositor, rising from the
+            // band's foot: 4 DIPs, up to 4 + 10 x reach (the band's 14 at full reach), down to 5 + 3 x reach, up to
+            // 4 + 8 x reach, back to 4.
+            var white = compositor.CreateColorBrush(ShelfColors.Of(Theme.Ink));
             var ease = compositor.CreateCubicBezierEasingFunction(new Vector2(0.42f, 0), new Vector2(0.58f, 1));
             for (int i = 0; i < Reach.Length; i++)
             {
@@ -187,12 +199,12 @@ internal sealed class NowPlayingRow
 
                 var size = compositor.CreateVector2KeyFrameAnimation();
                 var offset = compositor.CreateVector2KeyFrameAnimation();
-                ReadOnlySpan<float> heights =
-                    [Waveform.MinHeight, Waveform.MinHeight + Waveform.Swing * reach, 6 + 8 * reach, Waveform.MinHeight + 16 * reach, Waveform.MinHeight];
+                const float Min = Waveform.MinHeight;
+                ReadOnlySpan<float> heights = [Min, Min + (BarsHeight - Min) * reach, 5 + 3 * reach, Min + 8 * reach, Min];
                 for (int k = 0; k < heights.Length; k++)
                 {
                     size.InsertKeyFrame(k / 4f, new Vector2(Waveform.BarWidth, heights[k]), ease);
-                    offset.InsertKeyFrame(k / 4f, new Vector2(x, BarsTop + (BarsHeight - heights[k]) / 2), ease);
+                    offset.InsertKeyFrame(k / 4f, new Vector2(x, BarsTop + BarsHeight - heights[k]), ease);
                 }
 
                 foreach (var animation in (ReadOnlySpan<KeyFrameAnimation>)[size, offset])
@@ -203,7 +215,7 @@ internal sealed class NowPlayingRow
                 }
 
                 bar.Size = new Vector2(Waveform.BarWidth, heights[0]);
-                shape.Offset = new Vector2(x, BarsTop + (BarsHeight - heights[0]) / 2);
+                shape.Offset = new Vector2(x, BarsTop + BarsHeight - heights[0]);
                 bar.StartAnimation("Size", size);
                 shape.StartAnimation("Offset", offset);
             }
@@ -214,27 +226,34 @@ internal sealed class NowPlayingRow
         public ArtVisual Art { get; }
 
         /// <summary>
-        /// The title in its slot: 13 DIP semibold, white, one line, ellipsis. With no bars the art and the title are one
-        /// group, placed from the title's width, in the trailing frame with the tomte on.
+        /// The title, 13 DIP medium, then the artist, quieter, in what room is left; one line each, ellipsis. With no
+        /// bars the art and the words are one group, placed from their widths, in the trailing frame with the tomte on.
         /// </summary>
         public void DrawTextRuns(NowPlaying playing)
         {
+            float t = TextSlot.Measure(playing.Title, CompactLayout.TitleStyle, 4096);
+            float a = playing.Artist.Length == 0 ? 0 : TextSlot.Measure(playing.Artist, CompactLayout.ArtistStyle, 4096);
+            var room = titleSlot;
             if (!bars)
             {
                 var art = CompactLayout.Art(mascot);
-                var (lead, x, width) = CompactLayout.Group(mascot, art.Width, TextSlot.Measure(playing.Title, CompactLayout.TitleStyle, 4096));
+                var (lead, x, width) = CompactLayout.Group(mascot, art.Width, CompactLayout.TrackWidth(t, a));
                 float end = mascot ? CompactLayout.End : 0;
                 Art.Visual.Offset = new Vector3(lead - end, art.Y, 0);
-                titleSlot = new RectangleF(x - end, titleSlot.Y, width, titleSlot.Height);
+                room = new RectangleF(x - end, 0, width, titleSlot.Height);
             }
 
-            title.Show(playing.Title, CompactLayout.TitleStyle, titleSlot);
+            var (titleAt, artistAt) = CompactLayout.Track(room, t, a);
+            // A pixel more than measured, so a title that fits is never cut by rounding.
+            title.Show(playing.Title, CompactLayout.TitleStyle, titleAt with { Width = titleAt.Width + 1 });
+            artist.Show(artistAt.Width > 0 ? playing.Artist : "", CompactLayout.ArtistStyle, artistAt with { Width = artistAt.Width + 1 });
         }
 
         public void Dispose()
         {
             frame.Children.Remove(Root);
             title.Dispose();
+            artist.Dispose();
             Art.Dispose();
             shapes.Dispose();
             Root.Dispose();

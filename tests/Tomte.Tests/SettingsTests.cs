@@ -38,9 +38,38 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(24, s.Reveal.RetractMarginDip);
         Assert.Equal(400, s.Reveal.RetractDelayMs);
         Assert.True(s.DesktopPeek);
+        Assert.Equal(PeekStyle.Perched, s.PeekStyle);
+        Assert.Equal(PeekCorner.Right, s.PeekCorner);
         Assert.False(s.AttachToTopEdge);
         Assert.Equal(0, s.IslandOffset);
         Assert.Empty(s.AppRules);
+    }
+
+    [Fact]
+    public void TheAccentIsCoralUntilChangedAndAnUnknownColourShowsAsCoral()
+    {
+        Assert.Equal(0xFF6B4Au, new TomteSettings().AccentColor);
+        using (var store = new SettingsStore(File))
+        {
+            store.Save(store.Current with { AccentColor = 0x7CC4FF });
+        }
+
+        Assert.Equal(0x7CC4FFu, AccentColors.Held(SettingsStore.Load(File).AccentColor));
+        Assert.Equal(AccentColors.Default, AccentColors.Held(0x123456));
+        Assert.Equal(4, AccentColors.Choices.Count);
+    }
+
+    [Fact]
+    public void TheIslandFollowsTheTaskbarUntilToldOtherwise()
+    {
+        Assert.Equal(ThemeChoice.FollowTaskbar, new TomteSettings().Theme);
+        using (var store = new SettingsStore(File))
+        {
+            store.Save(store.Current with { Theme = ThemeChoice.Light, AccentColor = AccentColors.Windows });
+        }
+
+        var loaded = SettingsStore.Load(File);
+        Assert.Equal((ThemeChoice.Light, AccentColors.Windows), (loaded.Theme, AccentColors.Held(loaded.AccentColor)));
     }
 
     [Fact]
@@ -110,6 +139,20 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal("Win+Alt+J", s.Hotkeys.Summon);
         Assert.Equal("Win+Alt+N", s.Hotkeys.Scratchpad);
         Assert.True(s.DesktopPeek);
+    }
+
+    [Fact]
+    public void AFileFromBeforePeekStylesKeepsPeekOffAndTheStyleIsSavedByName()
+    {
+        Directory.CreateDirectory(dir);
+        System.IO.File.WriteAllText(File, """{ "desktopPeek": false }""");
+        var off = SettingsStore.Load(File);
+        Assert.False(off.DesktopPeek);
+        Assert.Equal(PeekStyle.Perched, off.PeekStyle);
+
+        string text = SettingsStore.Serialize(new TomteSettings { PeekStyle = PeekStyle.Corner, PeekCorner = PeekCorner.Left });
+        Assert.Contains("\"peekStyle\": \"Corner\"", text);
+        Assert.Contains("\"peekCorner\": \"Left\"", text);
     }
 
     [Fact]

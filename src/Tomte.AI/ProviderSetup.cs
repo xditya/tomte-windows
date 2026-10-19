@@ -64,6 +64,12 @@ public static class ProviderSetup
     public static decimal? CapFrom(double value) => double.IsNaN(value) ? null : Math.Round((decimal)Math.Clamp(value, 0, MaxDailyCapUsd), 2);
 
     /// <summary>
+    /// A saved key as the settings page shows it: dots and its last four characters, so the user can tell which key it
+    /// is. A key shorter than 16 characters shows dots only, so the four never give away much of it.
+    /// </summary>
+    public static string Masked(string key) => "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" + (key.Length >= 16 ? key[^4..] : "");
+
+    /// <summary>
     /// Null when the settings form can be tested, with the key to test in <paramref name="key"/>: the typed one, or the
     /// saved one while the provider stays at the same host. Otherwise what to fix, in plain words.
     /// </summary>

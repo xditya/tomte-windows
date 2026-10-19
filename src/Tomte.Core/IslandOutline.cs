@@ -37,10 +37,13 @@ public static class IslandOutline
     public const double Gap = 10;
 
     /// <summary>How far down the pill's drop shadow falls.</summary>
-    public const double ShadowOffsetY = 6;
+    public const double ShadowOffsetY = 14;
 
-    /// <summary>The shadow's softness: a Gaussian blur of sigma 7 DIP.</summary>
-    public const double ShadowSigma = 7;
+    /// <summary>
+    /// The shadow's softness: a Gaussian blur of sigma 18 DIP, a CSS blur of 36. The window grows by the shadow's reach,
+    /// and that band takes clicks from the apps under it while the island shows, so it stays this tight.
+    /// </summary>
+    public const double ShadowSigma = 18;
 
     /// <summary>Room the shadow gets: two sigma, past which under 1% black is left of it.</summary>
     public const double ShadowReach = 2 * ShadowSigma;
@@ -210,20 +213,47 @@ public static class IslandOutline
         return new System.Drawing.Rectangle(centerX - w / 2, 0, w, h);
     }
 
+    /// <summary>How far a raised outline (<see cref="IslandGeometry.Lift"/>) moves up, in whole pixels, so its edges stay on the pixel grid.</summary>
+    public static int LiftPixels(in IslandGeometry g, double scale) => (int)Math.Round(g.Lift * scale, MidpointRounding.AwayFromZero);
+
     /// <summary>
-    /// The part of a window rectangle the pointer is tracked against for retraction: the outline's box and, for
-    /// the floating pill, the strip between it and the screen edge, so a pointer still resting on the edge after
-    /// a push is on the island. The shadow's room is not part of it.
+    /// The tomte's box on a bare shape (the perched tomte) in window pixels of the floating pill's window: the only part of
+    /// that shape that is drawn, so the only part that takes the pointer. Each side is rounded away from the box.
     /// </summary>
-    public static System.Drawing.Rectangle PointerBounds(System.Drawing.Rectangle window, double scale, bool attached)
+    public static System.Drawing.Rectangle MascotPixels(in IslandGeometry g, double scale)
+    {
+        var (side, top, _) = Insets(scale, attached: false);
+        var box = MascotArt.Box(g);
+        // The centre line, where island space starts across: half the outline's whole pixels, rounded down.
+        double x = side + Math.Floor(Math.Ceiling(g.OuterWidth * scale) / 2), y = top - LiftPixels(g, scale);
+        int left = (int)Math.Floor(x + box.Left * scale), right = (int)Math.Ceiling(x + box.Right * scale);
+        int up = (int)Math.Floor(y + box.Top * scale), down = (int)Math.Ceiling(y + box.Bottom * scale);
+        return System.Drawing.Rectangle.FromLTRB(left, Math.Max(0, up), right, down);
+    }
+
+    /// <summary>
+    /// The part of a window rectangle the pointer is tracked against for retraction and hover: the outline's box down to
+    /// where a raised one ends and, for the floating pill, the strip between it and the screen edge, so a pointer still
+    /// resting on the edge after a push is on the island. The shadow's room is not part of it. On a bare shape it is the
+    /// tomte's box alone, so pointing beside it reaches the app under it.
+    /// </summary>
+    public static System.Drawing.Rectangle PointerBounds(System.Drawing.Rectangle window, in IslandGeometry g, double scale, bool attached)
     {
         if (attached)
         {
             return window;
         }
 
-        var (side, _, bottom) = Insets(scale, attached);
-        return System.Drawing.Rectangle.FromLTRB(window.Left + side, window.Top, window.Right - side, window.Bottom - bottom);
+        if (g.Bare >= 1)
+        {
+            var box = MascotPixels(g, scale);
+            box.Offset(window.Location);
+            return box;
+        }
+
+        var (side, top, _) = Insets(scale, attached);
+        int bottom = window.Top + Math.Max(0, top - LiftPixels(g, scale) + (int)Math.Ceiling(Math.Max(0, g.Depth) * scale));
+        return System.Drawing.Rectangle.FromLTRB(window.Left + side, window.Top, window.Right - side, bottom);
     }
 
     /// <summary>
@@ -248,19 +278,30 @@ public static class IslandOutline
     /// Window-pixel points of the region for a settled geometry. The region clips pixels as well as clicks.
     /// Attached: the outline itself. Floating: the shadow's footprint, which is the pill moved down by the shadow's
     /// offset and grown by its blur, cut off one pixel above the pill's top edge so the gap passes clicks through.
-    /// Each point is rounded away from the shape, so the region never cuts into the outline.
+    /// Raised (the edge lip): the outline alone, cut off by the screen's top edge, so the little that shows is all that
+    /// takes clicks; its shadow is clipped with it. Bare (the perched tomte): the tomte's box. Each point is rounded away
+    /// from the shape, so the region never cuts into the outline.
     /// </summary>
     public static void Region(in IslandGeometry g, double scale, bool attached, List<OutlineSegment> segments, List<Vector2> flattened, List<System.Drawing.Point> into)
     {
+        into.Clear();
+        if (!attached && g.Bare >= 1)
+        {
+            var box = MascotPixels(g, scale);
+            into.AddRange([new(box.Left, box.Top), new(box.Right, box.Top), new(box.Right, box.Bottom), new(box.Left, box.Bottom)]);
+            return;
+        }
+
         var (side, top, _) = Insets(scale, attached);
-        var shape = attached ? g : new IslandGeometry(g.Width + 2 * ShadowReach, g.Depth + 2 * ShadowReach, g.Corner + ShadowReach);
-        double dx = attached ? 0 : -ShadowReach * scale, dy = attached ? 0 : (ShadowOffsetY - ShadowReach) * scale;
+        bool raised = !attached && g.Lift > 0, shadow = !attached && !raised;
+        var shape = shadow ? new IslandGeometry(g.Width + 2 * ShadowReach, g.Depth + 2 * ShadowReach, g.Corner + ShadowReach) : g;
+        double dx = shadow ? -ShadowReach * scale : 0, dy = shadow ? (ShadowOffsetY - ShadowReach) * scale : -LiftPixels(g, scale);
         Build(shape, attached, segments);
         Flatten(segments, flattened);
 
-        into.Clear();
         double cx = shape.OuterWidth / 2 * scale, cy = attached ? 0 : shape.Depth / 2 * scale;
-        int highest = attached ? int.MinValue : -1;
+        // The pill's region starts a pixel above its top edge; a raised outline's at the screen's.
+        int highest = attached ? int.MinValue : raised ? -top : -1;
         foreach (var p in flattened)
         {
             double x = p.X * scale, y = p.Y * scale;

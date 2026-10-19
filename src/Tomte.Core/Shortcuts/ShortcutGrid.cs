@@ -6,24 +6,28 @@ using Tomte.Core.Text;
 namespace Tomte.Core.Shortcuts;
 
 /// <summary>
-/// The Shortcuts panel body in DIPs, origin at its top-left corner under the tab strip: a head line, then four
-/// columns of 80 DIP tiles with a 34 DIP icon, as many rows as the body holds (two at the panel's 560 x 300). The
-/// cells run on past the last row: tile after tile, then the add tile, and the wheel scrolls them by whole rows.
-/// Cell counts from the first row that shows.
+/// The Shortcuts panel body in DIPs, origin at its top-left corner under the tab row: the panel's title line, then as
+/// many columns of 80 DIP tiles with a 34 DIP icon as fit at least <see cref="MinTileWidth"/> wide (six at the panel's
+/// 760, four on a panel the monitor cuts to 520), and as many rows as the body holds (two at 310 tall). The cells run on past the last row: tile after tile, then the add tile, and the wheel scrolls them by
+/// whole rows. Cell counts from the first row that shows.
 /// </summary>
 public static class ShortcutGrid
 {
-    public const float Inset = 14, Top = 12, HeadHeight = 17, HeadGap = 10, Gap = 8, TileHeight = 80, Corner = 8;
+    public const float Inset = Section.BodyPad, Top = Section.BodyTop, Bottom = Section.BodyPad;
+    public const float HeadHeight = 22, HeadGap = 14, Gap = 8, TileHeight = 80, Corner = 14;
     public const float IconSize = 34, IconTop = 12, LabelTop = 54, LabelHeight = 16, LabelInset = 8;
-    public const int Columns = 4;
+    public const float MinTileWidth = 104;
+
+    /// <summary>How many tiles fit across, never fewer than two.</summary>
+    public static int Columns(Vector2 body) => Math.Max(2, (int)((body.X - (2 * Inset) + Gap) / (MinTileWidth + Gap)));
 
     public static float GridTop => Top + HeadHeight + HeadGap;
 
-    /// <summary>Rows that fit with the top inset kept below the last one too.</summary>
-    public static int Rows(Vector2 body) => Math.Max(0, (int)((body.Y - GridTop - Top + Gap) / (TileHeight + Gap)));
+    /// <summary>Rows that fit with the body's padding kept below the last one too.</summary>
+    public static int Rows(Vector2 body) => Math.Max(0, (int)((body.Y - GridTop - Bottom + Gap) / (TileHeight + Gap)));
 
     /// <summary>The last first row there is: the add tile, after every tile, ends up in the bottom row.</summary>
-    public static int MaxFirstRow(int tiles, Vector2 body) => Math.Max(0, (int)Math.Ceiling((tiles + 1) / (double)Columns) - Rows(body));
+    public static int MaxFirstRow(int tiles, Vector2 body) => Math.Max(0, (int)Math.Ceiling((tiles + 1) / (double)Columns(body)) - Rows(body));
 
     /// <summary>A first row asked for (by the wheel, or kept from before), held to the rows there are.</summary>
     public static int FirstRow(int wanted, int tiles, Vector2 body) => Math.Clamp(wanted, 0, MaxFirstRow(tiles, body));
@@ -31,14 +35,15 @@ public static class ShortcutGrid
     /// <summary>The cells that show from this first row: the first one's number, and how many, the add tile counted.</summary>
     public static (int First, int Count) Visible(int firstRow, int tiles, Vector2 body)
     {
-        int first = firstRow * Columns;
-        return (first, Math.Clamp(tiles + 1 - first, 0, Columns * Rows(body)));
+        int first = firstRow * Columns(body);
+        return (first, Math.Clamp(tiles + 1 - first, 0, Columns(body) * Rows(body)));
     }
 
     public static RectangleF Cell(int index, Vector2 body)
     {
-        float width = (body.X - 2 * Inset - (Columns - 1) * Gap) / Columns;
-        return new(Inset + index % Columns * (width + Gap), GridTop + index / Columns * (TileHeight + Gap), width, TileHeight);
+        int columns = Columns(body);
+        float width = (body.X - 2 * Inset - (columns - 1) * Gap) / columns;
+        return new(Inset + index % columns * (width + Gap), GridTop + index / columns * (TileHeight + Gap), width, TileHeight);
     }
 
     public const string AddId = "add", AddTip = "Add a shortcut in Settings";
@@ -59,8 +64,8 @@ public static class ShortcutGrid
         var all = new List<Target>(tiles.Count + 1);
         for (int i = 0; i <= tiles.Count; i++)
         {
-            int row = i / Columns - firstRow;
-            var cell = Cell(i % Columns, body);
+            int row = i / Columns(body) - firstRow;
+            var cell = Cell(i % Columns(body), body);
             cell.Offset(0, row * (TileHeight + Gap));
             if (row < 0 || row >= rows)
             {
@@ -78,7 +83,7 @@ public static class ShortcutGrid
     /// <summary>The first row that shows cell <paramref name="index"/>, scrolling as little as it can.</summary>
     public static int FirstRowFor(int index, int firstRow, int tiles, Vector2 body)
     {
-        int row = index / Columns, rows = Rows(body);
+        int row = index / Columns(body), rows = Rows(body);
         return FirstRow(row < firstRow ? row : row >= firstRow + rows ? row - rows + 1 : firstRow, tiles, body);
     }
 
@@ -88,8 +93,8 @@ public static class ShortcutGrid
     /// <summary>
     /// The icon's square in a cell, in body DIPs, placed on whole pixels at this scale so each of the shell's pixels
     /// lands on one screen pixel. <paramref name="bodyTop"/> is how far the body starts below the island's top edge
-    /// (the tab strip, 42 DIP, which is 52.5 pixels at 125%); the snap is to the island's pixels. Horizontally the
-    /// body starts on a whole pixel at 560 DIP wide, so no offset is needed there.
+    /// (the tab row and the padding over it, 52 DIP, which is 65 pixels at 125%); the snap is to the island's pixels.
+    /// Horizontally the body starts on a whole pixel at 760 DIP wide, so no offset is needed there.
     /// </summary>
     public static RectangleF Icon(RectangleF cell, double scale, float bodyTop)
     {
@@ -110,11 +115,11 @@ public static class ShortcutGrid
     {
         const string title = "Shortcuts";
         var head = Head(body);
-        float after = TextSlot.Measure(title, TextStyle.Title, head.Width) + 10;
+        float after = TextSlot.Measure(title, TextStyle.PageTitle, head.Width) + 10;
         return
         [
-            new(title, TextStyle.Title, head),
-            new("apps, files, folders, web pages, scripts", TextStyle.Secondary, new(head.X + after, head.Y, head.Width - after, head.Height)),
+            new(title, TextStyle.PageTitle, head),
+            new("apps, files, folders, web pages, scripts", Section.Note with { Size = 13 }, new(head.X + after, head.Y, head.Width - after, head.Height)),
         ];
     }
 
@@ -131,9 +136,9 @@ public static class ShortcutGrid
     private static RectangleF InCell(RectangleF slot, RectangleF cell) => new(slot.X - cell.X, slot.Y - cell.Y, slot.Width, slot.Height);
 
     /// <summary>A tile's name, the add tile's word, and why a tile would not open, in the warn colour.</summary>
-    public static readonly TextStyle NameStyle = new(12, Color: 0xFFE9E9EE, Align: TextAlign.Center);
-    public static readonly TextStyle AddStyle = NameStyle with { Color = TextStyle.TertiaryColor };
-    public static readonly TextStyle BadgeStyle = new(10, Color: TextStyle.WarnColor, Align: TextAlign.Trailing);
+    public static TextStyle NameStyle => new(12, Color: Theme.Ink2, Align: TextAlign.Center);
+    public static TextStyle AddStyle => NameStyle with { Color = Theme.Ink3 };
+    public static TextStyle BadgeStyle => new(10, Color: Theme.Warn, Align: TextAlign.Trailing);
 
     /// <summary>The band across a tile's top where why it would not open reads, right-aligned, clear of the card's corners.</summary>
     public static RectangleF BadgeSlot(RectangleF cell) => new(cell.X + 4, cell.Y + 1, cell.Width - 10, 12);

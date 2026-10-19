@@ -89,7 +89,8 @@ internal static partial class Program
             {
                 c.RoundRect(icon, 6, 0x1CFFFFFF);
                 var at = new Vector2(icon.X + (icon.Width - HistoryPanelLayout.IconGlyph) / 2, icon.Y + (icon.Height - HistoryPanelLayout.IconGlyph) / 2);
-                c.Figures(HistoryPanelLayout.Glyph(rows[i].Source), at, HistoryPanelLayout.IconGlyph / 16, 0x99FFFFFF);
+                // Simplification: drawn at the icon set's own 24 DIP box, larger than the island draws it.
+                c.Figures(HistoryPanelLayout.Glyph(rows[i].Source), at, 0x99FFFFFF);
             }
 
             foreach (var line in HistoryPanelLayout.RowText(rows[i], card.Width, opened: i == layout.Opened))

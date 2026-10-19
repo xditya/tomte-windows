@@ -8,24 +8,50 @@ using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
 
-/// <summary>The island's colours: cards, inks, the info blue and the warning amber.</summary>
+/// <summary>The <see cref="Theme"/>'s colours as composition colours, for the shelf and the drop zones.</summary>
 internal static class ShelfColors
 {
-    public static readonly Color Clear = Color.FromArgb(0, 0, 0, 0);
-    public static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
-    public static readonly Color CardSelected = Color.FromArgb(28, 255, 255, 255);
-    public static readonly Color Dash = Color.FromArgb(89, 255, 255, 255);
-    public static readonly Color Line = Color.FromArgb(26, 255, 255, 255);
-    public static readonly Color Info = Color.FromArgb(255, 0x6F, 0xA8, 0xFF);
-    public static readonly Color HotFill = Color.FromArgb(41, 0x6F, 0xA8, 0xFF);
-    public static readonly Color Ink = Color.FromArgb(230, 255, 255, 255);
-    public static readonly Color Ink2 = Color.FromArgb(153, 255, 255, 255);
-    public static readonly Color Ink3 = Color.FromArgb(97, 255, 255, 255);
-    public static readonly Color Warn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
-    public static readonly Color Disabled = Color.FromArgb((byte)(230 * Tomte.Core.Interaction.StateLook.DisabledOpacity), 255, 255, 255);
-    public static readonly Color Mark = Color.FromArgb(77, 255, 255, 255);
-    public static readonly Color WarnFill = Color.FromArgb(41, 0xF0, 0xB3, 0x5A);
+    public static readonly Color Clear = default;
+    public static Color Card => Of(Theme.Card);
+    public static Color CardSelected => Of(Theme.Raised);
+    public static Color Raised => Of(Theme.Raised);
+    public static Color RaisedHi => Of(Theme.RaisedHi);
+    public static Color Dash => Of(Theme.Dash);
+    public static Color Line => Of(Theme.Line);
+    public static Color Ink => Of(Theme.Ink);
+    public static Color Ink2 => Of(Theme.Ink2);
+    public static Color Ink3 => Of(Theme.Ink3);
+    public static Color Warn => Of(Theme.Warn);
+    public static Color Disabled => Of(Theme.WithOpacity(Theme.Ink, Tomte.Core.Interaction.StateLook.DisabledOpacity));
+    public static Color Mark => Of(Theme.LineStrong);
+    public static Color WarnFill => Of(Theme.WarnSoft);
 
+    public static Color Accent => Of(Theme.Accent);
+
+
+    // Brushes that live as long as the island, each with the theme colour it shows.
+    private static readonly List<(CompositionColorBrush Brush, Func<uint> Argb)> Kept = [];
+
+    /// <summary>
+    /// A brush for a view that lives as long as the island: it takes <paramref name="argb"/>'s new value whenever the
+    /// theme changes. Views built on each show use plain brushes instead; this one is never released.
+    /// </summary>
+    public static CompositionColorBrush Live(Compositor compositor, Func<uint> argb)
+    {
+        if (Kept.Count == 0)
+        {
+            Theme.Changed += () => Kept.ForEach(k => k.Brush.Color = Of(k.Argb()));
+        }
+
+        var brush = compositor.CreateColorBrush(Of(argb()));
+        Kept.Add((brush, argb));
+        return brush;
+    }
+
+    /// <summary>An 0xAARRGGBB colour as a composition colour.</summary>
+    public static Color Of(uint argb) => Color.FromArgb((byte)(argb >> 24), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);
+
+    /// <summary>A colour's red, green and blue (any alpha ignored), opaque.</summary>
     public static Color Rgb(uint rgb) => Color.FromArgb(255, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
 
     public static uint Argb(Color c) => (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
@@ -98,7 +124,54 @@ internal sealed class Parts(Compositor compositor, TextRenderer text) : IDisposa
     }
 
     /// <summary>A line of text in a slot of <paramref name="host"/>, which goes with the part.</summary>
-    public void Text(ContainerVisual host, TextSlot line) => Keep(text.Create(host)).Show(line);
+    public TextVisual Text(ContainerVisual host, TextSlot line)
+    {
+        var visual = Keep(text.Create(host));
+        Texts.Add(visual);
+        visual.Show(line);
+        return visual;
+    }
+
+    /// <summary>A run of one or more lines from <paramref name="at"/> in <paramref name="host"/>, which goes with the part.</summary>
+    public void Text(ContainerVisual host, TextRun run, Vector2 at)
+    {
+        var visual = Keep(text.Create(host));
+        Texts.Add(visual);
+        visual.Show(run, at);
+    }
+
+    /// <summary>The part's text visuals, for a list that scrolls them to land them on whole pixels again.</summary>
+    public List<TextVisual> Texts { get; } = [];
+
+    /// <summary>One of the <see cref="Glyphs"/> in <paramref name="ink"/>, drawn to fill the square <paramref name="at"/>.</summary>
+    public void Glyph(ShapeVisual into, GlyphFigure[] figures, Color ink, RectangleF at)
+    {
+        var holder = Keep(compositor.CreateContainerShape());
+        holder.Offset = new Vector2(at.X, at.Y);
+        into.Shapes.Add(holder);
+        PaletteView.DrawGlyph(holder, figures, Brush(ink), at.Width);
+    }
+
+    /// <summary>A sprite in <paramref name="parent"/> at <paramref name="at"/>, cut to a rounded rectangle, filled with <paramref name="brush"/>.</summary>
+    public SpriteVisual Sprite(ContainerVisual parent, RectangleF at, float radius, CompositionBrush brush)
+    {
+        var sprite = Attach(parent, compositor.CreateSpriteVisual());
+        sprite.Offset = new Vector3(at.X, at.Y, 0);
+        sprite.Size = new Vector2(at.Width, at.Height);
+        var round = Keep(compositor.CreateRoundedRectangleGeometry());
+        round.Size = sprite.Size;
+        round.CornerRadius = new Vector2(radius);
+        sprite.Clip = Keep(compositor.CreateGeometricClip(round));
+        sprite.Brush = brush;
+        return sprite;
+    }
+
+    /// <summary>A keycap: the raised cap with its border and the keys in it, in <paramref name="into"/>'s own DIPs.</summary>
+    public void Keycap(ShapeVisual into, RectangleF cap, string keys)
+    {
+        Box(into, cap, Tomte.Core.Keycap.Corner, Brush(ShelfColors.Raised), Brush(ShelfColors.Mark), 1);
+        Text(into, new TextSlot(keys, Tomte.Core.Keycap.Style, cap));
+    }
 
     public void Dispose()
     {
@@ -114,6 +187,7 @@ internal sealed class Parts(Compositor compositor, TextRenderer text) : IDisposa
         }
 
         made.Clear();
+        Texts.Clear();
     }
 }
 
@@ -126,183 +200,5 @@ internal static class Fades
         fade.InsertKeyFrame(1, show ? 1 : 0);
         fade.Duration = TimeSpan.FromMilliseconds(show ? 150 : 100);
         visual.StartAnimation("Opacity", fade);
-    }
-}
-
-/// <summary>
-/// The Shelf-drop state's content: the dashed target to the right of the mascot, lit while a drag the island takes
-/// is over it. With a provider set up, the AI zones sit in a row beside a narrower target; the one under the cursor
-/// is lit instead, and a line under the row says what a drop there does. Built when the state is entered and
-/// released 0.1 s after it is left.
-/// </summary>
-internal sealed class ShelfDropSurface
-{
-    private readonly IslandWindow island;
-    private readonly TextRenderer text;
-    private readonly Func<DropZoneLayout?> zones;
-    private readonly DispatcherQueueTimer release;
-    private readonly Dictionary<DropZone, (CompositionColorBrush Fill, CompositionColorBrush Stroke, Windows.UI.Color Normal)> lit = [];
-    private Parts? parts, leaving;
-    private ContainerVisual? space;
-    private TextVisual? line;
-    private bool fadeInPending, accepting;
-
-    public ShelfDropSurface(IslandWindow island, IslandStateMachine machine, DropTarget drops, TextRenderer text, Func<DropZoneLayout?>? zones = null)
-    {
-        this.island = island;
-        this.text = text;
-        this.zones = zones ?? (() => null);
-        release = island.Queue.CreateTimer();
-        release.IsRepeating = false;
-        release.Interval = TimeSpan.FromMilliseconds(100);
-        release.Tick += (_, _) => Release();
-        machine.Changed += (from, to) =>
-        {
-            if (to == IslandState.ShelfDrop && from != IslandState.ShelfDrop)
-            {
-                Show();
-            }
-            else if (from == IslandState.ShelfDrop && to != IslandState.ShelfDrop)
-            {
-                Hide();
-            }
-        };
-        // A drag the island refuses (its own drag out, a format it does not take) does not light the target.
-        drops.Entered += () =>
-        {
-            accepting = drops.Accepting;
-            Light(Layout is null && accepting ? DropZone.Shelf : null);
-        };
-        drops.Left += () => Light(null);
-        drops.Over += (x, y) =>
-        {
-            if (Layout is { } layout && accepting && space is not null)
-            {
-                Light(layout.At(island.ScreenToIsland(x, y)));
-            }
-        };
-        island.ContentReady += () =>
-        {
-            if (fadeInPending && space is not null)
-            {
-                fadeInPending = false;
-                Fades.Run(space, parts!, show: true);
-            }
-        };
-    }
-
-    /// <summary>The zones drawn now; null while the surface is the shelf's alone.</summary>
-    public DropZoneLayout? Layout { get; private set; }
-
-    /// <summary>Where a drop now would go: the zone lit under the cursor, null while nothing the island takes is over it.</summary>
-    public DropZone? Hot { get; private set; }
-
-    private void Show()
-    {
-        Release();
-        var p = parts = new Parts(island.Compositor, text);
-        // Island space: DIPs from the island's centre line and top edge, scaled and kept centred by the island.
-        space = p.Attach(island.Dips, island.Compositor.CreateContainerVisual());
-        space.Opacity = 0;
-        fadeInPending = true;
-        Hot = null;
-        var g = IslandGeometry.ShelfDrop;
-        var layout = Layout = zones();
-        var r = layout?.Target ?? ShelfLayout.DropTarget(g.Width, g.Depth);
-        var shapes = p.Shapes(space, r);
-        var target = Card(p, shapes, DropZone.Shelf, new RectangleF(0, 0, r.Width, r.Height), ShelfColors.Dash, 1.5f);
-        target.StrokeDashArray.Add(3);
-        target.StrokeDashArray.Add(2);
-        var ink = p.Brush(ShelfColors.Ink2);
-        if (layout is null)
-        {
-            // A folder and the label, centred together.
-            var (x, label) = ShelfLayout.DropLabel(new SizeF(r.Width, r.Height));
-            float y = r.Height / 2;
-            p.Box(shapes, new RectangleF(x, y - 7, 7, 4), 1.5f, null, ink, 1.4f);
-            p.Box(shapes, new RectangleF(x, y - 5, 16, 12), 2, null, ink, 1.4f);
-            p.Text(shapes, label);
-            return;
-        }
-
-        // The folder over the word, both centred, then each zone with its words, then the line under the row.
-        var (word, glyph) = layout.TargetText();
-        if (glyph is { } folder)
-        {
-            var at = folder - new Vector2(r.X, r.Y);
-            p.Box(shapes, new RectangleF(at.X, at.Y, 7, 4), 1.5f, null, ink, 1.4f);
-            p.Box(shapes, new RectangleF(at.X, at.Y + 2, 16, 12), 2, null, ink, 1.4f);
-        }
-
-        p.Keep(text.Create(shapes)).Show(word.Run, word.At - new Vector2(r.X, r.Y));
-        foreach (var (zone, rect) in layout.Zones)
-        {
-            var card = p.Shapes(space, rect);
-            var box = Card(p, card, zone, new RectangleF(0, 0, rect.Width, rect.Height), zone == DropZone.Skill ? ShelfColors.Dash : ShelfColors.Line, 1);
-            if (zone == DropZone.Skill)
-            {
-                box.StrokeDashArray.Add(3);
-                box.StrokeDashArray.Add(2);
-            }
-
-            var words = layout.ZoneText(zone, rect);
-            p.Keep(text.Create(card)).Show(words.Run, words.At - new Vector2(rect.X, rect.Y));
-        }
-
-        line = p.Keep(text.Create(space));
-    }
-
-    /// <summary>A target or zone card whose colours <see cref="Light"/> changes in place.</summary>
-    private CompositionSpriteShape Card(Parts p, ShapeVisual into, DropZone zone, RectangleF r, Windows.UI.Color rest, float thickness)
-    {
-        var fill = p.Brush(ShelfColors.Clear);
-        var stroke = p.Brush(rest);
-        lit[zone] = (fill, stroke, rest);
-        return p.Box(into, r, 8, fill, stroke, thickness);
-    }
-
-    private void Light(DropZone? hot)
-    {
-        if (hot == Hot || space is null)
-        {
-            return;
-        }
-
-        Hot = hot;
-        // Colours change in place: a brush moved off its shape and back does not draw again.
-        foreach (var (zone, (fill, stroke, normal)) in lit)
-        {
-            fill.Color = zone == hot ? ShelfColors.HotFill : ShelfColors.Clear;
-            stroke.Color = zone == hot ? ShelfColors.Info : normal;
-        }
-
-        if (Layout is { } layout && line is not null)
-        {
-            line.Show(hot is { } zone ? layout.LineText(zone) : new TextSlot("", DropZoneLayout.LineStyle, layout.Line));
-        }
-    }
-
-    private void Hide()
-    {
-        if (parts is null)
-        {
-            return;
-        }
-
-        Release();
-        leaving = parts;
-        Fades.Run(space!, leaving, show: false);
-        (parts, space, line, Layout, Hot) = (null, null, null, null, null);
-        lit.Clear();
-
-        // A one-shot timer, not the fade's end: with the display asleep the compositor finishes no animation.
-        release.Start();
-    }
-
-    private void Release()
-    {
-        release.Stop();
-        leaving?.Dispose();
-        leaving = null;
     }
 }

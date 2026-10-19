@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Tomte.Core;
 using Tomte.Core.Text;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Controls.RichEdit;
@@ -13,10 +14,17 @@ namespace Tomte.Shell;
 /// </summary>
 internal sealed unsafe class NoteStyle : IDisposable
 {
-    // COLORREF, 0x00BBGGRR, as they read over the note's card: white at about 60% for markers and done tasks, the
-    // palette's info blue for links, code a little grey on white at about 8%.
-    private const int White = 0xFFFFFF, Dim = 0xA3A3A3, LinkColor = 0xFFA86F, CodeColor = 0xDED6D6, CodeBack = 0x2C2A2A;
-    private const string Mono = "Consolas";
+    // As COLORREFs over the note's card: secondary ink for markers and done tasks, the link colour for links, and code
+    // on a raised fill.
+    private static int White => (int)TextServices.ColorRef(Theme.Ink).Value;
+
+    private static int Dim => (int)TextServices.ColorRef(Theme.Ink2).Value;
+
+    private static int LinkColor => (int)TextServices.ColorRef(Theme.Link).Value;
+
+    private static int CodeColor => (int)TextServices.ColorRef(Theme.Ink).Value;
+
+    private static int CodeBack => (int)TextServices.ColorRef(Theme.Raised).Value;
 
     // The box's paragraphs stop a tab every half inch.
     private const float TabDips = 48;
@@ -132,7 +140,7 @@ internal sealed unsafe class NoteStyle : IDisposable
             const MarkdownLook headings = MarkdownLook.Heading1 | MarkdownLook.Heading2 | MarkdownLook.Heading3 | MarkdownLook.Heading4;
             bool code = (look & MarkdownLook.Code) != 0;
             font->Reset(tomConstants.tomDefault);
-            nint name = Marshal.StringToBSTR(code ? Mono : TextStyle.Ui);
+            nint name = Marshal.StringToBSTR(code ? TextStyle.Mono : TextStyle.Ui);
             try
             {
                 font->SetName(new BSTR((char*)name));

@@ -2,11 +2,13 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Input;
+using Microsoft.UI.Text;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.XamlTypeInfo;
@@ -21,6 +23,8 @@ using Windows.Graphics;
 using Windows.UI.Core;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Color = Windows.UI.Color;
+using Colors = Microsoft.UI.Colors;
 using VirtualKey = Windows.System.VirtualKey;
 
 namespace Tomte.Panels;
@@ -47,7 +51,7 @@ public sealed partial class SettingsWindow : Window
     private readonly NavigationView nav;
     private readonly StackPanel rulesList = new() { Spacing = 4 };
     private readonly StackPanel grantsList = new() { Spacing = 4 };
-    private readonly ToggleSwitch startup = new() { OnContent = "On", OffContent = "Off" };
+    private readonly ToggleSwitch startup = new() { OnContent = "On", OffContent = "Off", MinWidth = 0 };
     private readonly TextBlock startupNote = Note();
     private readonly TextBlock clearedNote = Note();
     private readonly TextBlock voiceNote = Note();
@@ -58,111 +62,95 @@ public sealed partial class SettingsWindow : Window
         Title = "Tomte settings";
         SystemBackdrop = new MicaBackdrop { Kind = MicaKind.Base };
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "tomte.ico"));
-        // Light or dark with Windows' app mode, and again when that changes; the window's content already follows it.
-        AppWindow.TitleBar.PreferredTheme = TitleBarTheme.UseDefaultAppMode;
+        // Always dark, like the island, whatever Windows' app mode is.
+        AppWindow.TitleBar.PreferredTheme = TitleBarTheme.Dark;
         double scale = PInvoke.GetDpiForWindow(new HWND(WinRT.Interop.WindowNative.GetWindowHandle(this))) / 96.0;
-        // 960 x 820 DIPs where that fits, never taller or wider than the monitor's work area; each page scrolls inside.
+        // 1200 x 800 DIPs where that fits, never taller or wider than the monitor's work area; each page scrolls inside.
         var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
-        int width = Math.Min((int)(960 * scale), work.Width), height = Math.Min((int)(820 * scale), work.Height);
+        int width = Math.Min((int)(1200 * scale), work.Width), height = Math.Min((int)(800 * scale), work.Height);
         AppWindow.MoveAndResize(new RectInt32(work.X + (work.Width - width) / 2, work.Y + (work.Height - height) / 2, width, height));
+        FollowAccent();
 
         var kept = new Tomte.Core.Clipboard.ClipboardRetention();
-        // A page per group, listed on the left as in Windows Settings. Every control is made here, once, so a page left
-        // and opened again shows what it showed.
-        (string Name, string Glyph, UIElement[] Parts)[] pages =
+        // A page per group, listed on the left as in Windows Settings, under a header for each group of pages. Every control
+        // is made here, once, so a page left and opened again shows what it showed.
+        (string Group, (string Name, string Glyph, string Lede, UIElement[] Parts)[] Pages)[] groups =
         [
-            ("General", "\uE713", [Card(
-                Row("Start with Windows", startupNote, startup),
-                Row("Desktop peek", Note("Show the tomte at the top of the screen when no window is there. Point at it to open the island."), Toggle(s => s.DesktopPeek, (s, v) => s with { DesktopPeek = v })),
-                Row("Track changes", Note("Show the pill for a few seconds when another track starts playing."), Toggle(s => s.MediaTrackChangeEvent, (s, v) => s with { MediaTrackChangeEvent = v })),
-                Row("Keep showing while music plays", Note("Keep the pill at the top of the screen with what is playing. It goes 5 seconds after the music pauses or stops, and still hides over fullscreen apps."), Toggle(s => s.KeepWhilePlaying, (s, v) => s with { KeepWhilePlaying = v })),
-                Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors()),
-                Row("Island position", Note("Drag the island along the top edge to move it. Double-click an empty part of its tab row to put it back in the middle."), ResetPosition()))]),
-            ("Opening and closing", "\uE962", [
-                Card(
-                    Row("Edge push", Note("Push the cursor up against the top edge to reveal the island."), RevealToggle(r => r.EdgePush, (r, v) => r with { EdgePush = v })),
-                    Row("Dwell", Note("Resting in the reveal zone this many milliseconds also reveals it. 0 turns it off."), Number(0, 3000, r => r.DwellMs, (r, v) => r with { DwellMs = (int)v })),
-                    Row("Open the panels", Note("Open the panels after resting on the pill, in milliseconds."), Number(RevealSettings.ExpandDwellMinMs, RevealSettings.ExpandDwellMaxMs, r => r.ExpandDwellMs, (r, v) => r with { ExpandDwellMs = (int)v })),
-                    Row("Drag reveal", Note("Dragging a file to the top edge shows the shelf."), RevealToggle(r => r.DragReveal, (r, v) => r with { DragReveal = v }))),
-                new Expander
-                {
-                    Header = "Advanced",
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                    Content = new StackPanel
-                    {
-                        Spacing = 12,
-                        Children =
-                        {
-                            Row("Reveal zone", Note("Width of the zone under the island along the top edge, in percent."), Number(10, 100, r => r.ZoneFraction * 100, (r, v) => r with { ZoneFraction = v / 100 })),
-                            Row("Push strength, mouse", Note("Upward mouse movement needed, in raw counts. Raise it if the island opens by accident."), Number(10, 1000, r => r.PushCounts, (r, v) => r with { PushCounts = (int)v })),
-                            Row("Push strength, touchpad", Note("The same for a precision touchpad."), Number(10, 1000, r => r.TouchpadPushCounts, (r, v) => r with { TouchpadPushCounts = (int)v })),
-                            Row("Push time", Note("The push has to happen within this many milliseconds."), Number(100, 2000, r => r.PushWindowMs, (r, v) => r with { PushWindowMs = (int)v })),
-                            Row("Drag distance", Note("How close to the top edge a drag has to come, in pixels at 100% scale."), Number(8, 200, r => r.DragApproachDip, (r, v) => r with { DragApproachDip = (int)v })),
-                            Row("Drop wait", Note("Milliseconds to wait for a real drop before the shelf goes away."), Number(200, 3000, r => r.DragEnterTimeoutMs, (r, v) => r with { DragEnterTimeoutMs = (int)v })),
-                            Row("Retract margin", Note("How far outside the island the cursor can go before it starts to retract, in pixels at 100% scale."), Number(0, 200, r => r.RetractMarginDip, (r, v) => r with { RetractMarginDip = (int)v })),
-                            Row("Retract delay", Note("Milliseconds outside that margin before the island retracts."), Number(100, 5000, r => r.RetractDelayMs, (r, v) => r with { RetractDelayMs = (int)v })),
-                        },
-                    },
-                },
-                Header("Per-app rules"),
-                Card(
-                    Note("Allow: edge push and drag reveal work even when the app is fullscreen. Deny: only hotkeys open the island while the app is in front. Deny with hotkeys: the hotkeys go to the app as well."),
-                    rulesList,
-                    AddRuleRow())]),
-            ("Hotkeys", "\uE765", [Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), Note("The Copilot key cannot open Tomte yet.")])]),
-            ("Search", "\uE721", [SearchSection()]),
-            ("Shelf and shortcuts", "\uE7B8", [
-                Header("Shelf"),
-                Card(Row(
-                    "Remove from the shelf after dragging out",
-                    Note("When an app takes the drop, links to your files leave the shelf and the files stay where they are. Copies the shelf keeps (images, notes, attachments) stay, unless notes or images went out on their own."),
-                    Toggle(s => s.RemoveAfterDragOut, (s, v) => s with { RemoveAfterDragOut = v }))),
-                Header(ShortcutsHeader),
-                ShortcutsSection()]),
-            ("Clipboard", "\uE77F", [Card(Row(
-                "Keep history",
-                Note($"Keeps the last {kept.MaxItems} pieces of text and {kept.MaxImages} images you copy, on this PC, for up to {kept.MaxDays} days. Never kept: an image over {kept.MaxImageBytes >> 20} MB as a PNG, items password managers mark, and anything copied while Tomte is paused or an app with a deny rule is in front. Turning it off deletes the history."),
-                Toggle(s => s.KeepClipboardHistory, (s, v) => s with { KeepClipboardHistory = v })))]),
-            ("Voice", "\uE720", [Card(
-                Row("When you finish speaking, Enter does", voiceNote, VoiceEnter()),
-                Row("Spoken replies", Note("Read the answer to a voice command aloud with Windows speech."), Toggle(s => s.SpokenReplies, (s, v) => s with { SpokenReplies = v })))]),
-            ("AI", "\uF4A5", [
-                Header("AI provider"),
-                ProviderSection(),
-                Header("AI history"),
-                Card(
-                    Row("Undo after closing", Note("After you close an AI answer, an AI search, a drop zone result or the words you spoke, Undo on the island (or Win+Alt+Z) brings it back for this long. A request still running goes on until then."), UndoAfterClosing()),
-                    Row("Keep history",
-                        Note($"Keeps your last {AiHistory.MaxItems} AI conversations and drop zone results, on this PC, for up to {AiHistory.MaxDays} days: what you asked, the names of what you attached, the answers, the model and the cost. Attached content is never kept, and nothing leaves this PC. Turning it off deletes the history."),
-                        KeepHistory()),
-                    Row("Clear history", clearedNote, ClearHistory()))]),
-            ("AI tools", "\uE90F", [
-                Card(
-                    Note("What the AI can do when you ask, once a provider is set up. A tool that asks each time can be always allowed from its prompt. By voice, every tool asks first, always allowed or not, and MCP server tools are not offered."),
-                    Row("Desktop automation", Note("Let the typed palette list, click, type into and select controls in other apps. Every action asks first and none can be always allowed. Never by voice."),
-                        Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } }))),
-                Header("Always allowed"),
-                Card(grantsList),
-                Header("Scheduled jobs"),
-                JobsSection(),
-                Header("All tools"),
-                Card([.. BuiltInTools.All.Select(ToolRow)]),
-                Header("MCP servers"),
-                McpSection(),
-                Header("Skills"),
-                SkillsSection()]),
-            ("About", "\uE946", AboutPage()),
+            ("Everyday", [
+                ("Opening and closing", "\uE962", "How the island shows itself, when it goes away, and how it looks.", [
+                    Card(
+                        Row("Edge push", Note("Push the cursor up against the top edge to reveal the island."), RevealToggle(r => r.EdgePush, (r, v) => r with { EdgePush = v })),
+                        Row("Dwell", Note("Resting in the reveal zone this many milliseconds also reveals it. 0 turns it off."), Number(0, 3000, r => r.DwellMs, (r, v) => r with { DwellMs = (int)v })),
+                        Row("Open the panels", Note("Open the panels after resting on the pill, in milliseconds."), Number(RevealSettings.ExpandDwellMinMs, RevealSettings.ExpandDwellMaxMs, r => r.ExpandDwellMs, (r, v) => r with { ExpandDwellMs = (int)v })),
+                        Row("Drag reveal", Note("Dragging a file to the top edge shows the shelf."), RevealToggle(r => r.DragReveal, (r, v) => r with { DragReveal = v }))),
+                    Advanced(
+                        Row("Reveal zone", Note("Width of the zone under the island along the top edge, in percent."), Number(10, 100, r => r.ZoneFraction * 100, (r, v) => r with { ZoneFraction = v / 100 })),
+                        Row("Push strength, mouse", Note("Upward mouse movement needed, in raw counts. Raise it if the island opens by accident."), Number(10, 1000, r => r.PushCounts, (r, v) => r with { PushCounts = (int)v })),
+                        Row("Push strength, touchpad", Note("The same for a precision touchpad."), Number(10, 1000, r => r.TouchpadPushCounts, (r, v) => r with { TouchpadPushCounts = (int)v })),
+                        Row("Push time", Note("The push has to happen within this many milliseconds."), Number(100, 2000, r => r.PushWindowMs, (r, v) => r with { PushWindowMs = (int)v })),
+                        Row("Drag distance", Note("How close to the top edge a drag has to come, in pixels at 100% scale."), Number(8, 200, r => r.DragApproachDip, (r, v) => r with { DragApproachDip = (int)v })),
+                        Row("Drop wait", Note("Milliseconds to wait for a real drop before the shelf goes away."), Number(200, 3000, r => r.DragEnterTimeoutMs, (r, v) => r with { DragEnterTimeoutMs = (int)v })),
+                        Row("Retract margin", Note("How far outside the island the cursor can go before it starts to retract, in pixels at 100% scale."), Number(0, 200, r => r.RetractMarginDip, (r, v) => r with { RetractMarginDip = (int)v })),
+                        Row("Retract delay", Note("Milliseconds outside that margin before the island retracts."), Number(100, 5000, r => r.RetractDelayMs, (r, v) => r with { RetractDelayMs = (int)v }))),
+                    Header("General"),
+                    Card(
+                        Row("Start with Windows", startupNote, startup),
+                        StackedRow("Desktop peek", Note("How Tomte rests at the top of the screen when no window is there: perched on the edge, an edge lip, the pill, or a small pill in a corner, clear of a clock or widget in the middle. Point at it to open the island."), PeekStyles(), 14),
+                        Row("Track changes", Note("Show the pill for a few seconds when another track starts playing."), Toggle(s => s.MediaTrackChangeEvent, (s, v) => s with { MediaTrackChangeEvent = v })),
+                        Row("Keep showing while music plays", Note("Keep the pill at the top of the screen with what is playing. It goes 5 seconds after the music pauses or stops, and still hides over fullscreen apps."), Toggle(s => s.KeepWhilePlaying, (s, v) => s with { KeepWhilePlaying = v })),
+                        Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors()),
+                        Row("Island position", Note("Drag the island along the top edge to move it. Double-click an empty part of its tab row to put it back in the middle."), ResetPosition())),
+                    Header("Appearance"),
+                    Appearance(),
+                    Header("Per-app rules"),
+                    Card(
+                        Note("Allow: edge push and drag reveal work even when the app is fullscreen. Deny: only hotkeys open the island while the app is in front. Deny with hotkeys: the hotkeys go to the app as well."),
+                        rulesList,
+                        AddRuleRow())]),
+                ("Hotkeys", "\uE765", "Keys that open Tomte from any app. Click a box, then press the keys.", [Card([.. Enum.GetValues<HotkeyAction>().Select(HotkeyRow), Note("The Copilot key cannot open Tomte yet.")])]),
+                ("Search", "\uE721", "Where the search box looks for files, and what it searches the web with.", [SearchSection()]),
+                ("Shelf and shortcuts", "\uE7B8", "The files you keep on the shelf and the tiles in the Shortcuts tab.", [
+                    Header("Shelf"),
+                    Card(Row(
+                        "Remove from the shelf after dragging out",
+                        Note("When an app takes the drop, links to your files leave the shelf and the files stay where they are. Copies the shelf keeps (images, notes, attachments) stay, unless notes or images went out on their own."),
+                        Toggle(s => s.RemoveAfterDragOut, (s, v) => s with { RemoveAfterDragOut = v }))),
+                    Header(ShortcutsHeader),
+                    ShortcutsSection()]),
+                ("Clipboard", "\uE77F", "What Tomte keeps of what you copy. It stays on this PC.", [Card(Row(
+                    "Keep history",
+                    Note($"Keeps the last {kept.MaxItems} pieces of text and {kept.MaxImages} images you copy, on this PC, for up to {kept.MaxDays} days. Never kept: an image over {kept.MaxImageBytes >> 20} MB as a PNG, items password managers mark, and anything copied while Tomte is paused or an app with a deny rule is in front. Turning it off deletes the history."),
+                    Toggle(s => s.KeepClipboardHistory, (s, v) => s with { KeepClipboardHistory = v })))]),
+                ("Voice", "\uE720", "What happens to the words you say after a hold.", [Card(
+                    Row("When you finish speaking, Enter does", voiceNote, VoiceEnter()),
+                    Row("Spoken replies", Note("Read the answer to a voice command aloud with Windows speech."), Toggle(s => s.SpokenReplies, (s, v) => s with { SpokenReplies = v })))]),
+            ]),
+            ("AI", [
+                (ProviderPage, "\uF4A5", "Tomte sends a request only when you ask, or when a job you made runs. With no provider set up, the AI layer stays off.", ProviderSection()),
+                ("Tools and permissions", "\uE90F", "What the AI may do on this PC, and what it asks you first.", [
+                    Card(
+                        Note("What the AI can do when you ask, once a provider is set up. A tool that asks each time can be always allowed from its prompt. By voice, every tool asks first, always allowed or not, and MCP server tools are not offered."),
+                        Row("Desktop automation", Note("Let the typed palette list, click, type into and select controls in other apps. Every action asks first and none can be always allowed. Never by voice."),
+                            Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } }))),
+                    Header("Always allowed"),
+                    Card(grantsList),
+                    Header("All tools"),
+                    Card([.. BuiltInTools.All.Select(ToolRow)])]),
+                ("Jobs", "\uE823", "Requests you scheduled in the AI box or by voice.", [JobsSection()]),
+                ("MCP servers", "\uE839", "Other programs that give the AI more tools.", [McpSection()]),
+                ("Skills", "\uE8A5", "Folders of instructions the AI reads when a request fits them.", [SkillsSection()]),
+            ]),
         ];
 
         nav = new NavigationView
         {
             PaneDisplayMode = NavigationViewPaneDisplayMode.Left,
-            OpenPaneLength = 240,
+            OpenPaneLength = 268,
             IsPaneToggleButtonVisible = false,
             IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
             IsSettingsVisible = false,
-            AutoSuggestBox = Finder(),
+            RequestedTheme = ElementTheme.Dark,
+            PaneCustomContent = Finder(),
         };
         // Up and Down in the page list open each page as they reach it, so Tab goes on into the page that shows. Tab and
         // Shift+Tab come back into the list at the open page, not at the first one, and open nothing; Windows does not
@@ -183,21 +171,20 @@ public sealed partial class SettingsWindow : Window
                 DispatcherQueue.TryEnqueue(() => page.Focus(FocusState.Keyboard));
             }
         };
-        foreach (var (name, glyph, parts) in pages)
+        foreach (var (group, members) in groups)
         {
-            var page = new StackPanel { Spacing = 8, MaxWidth = 760, Padding = new Thickness(24, 0, 24, 32) };
-            page.Children.Add(new TextBlock { Text = name, Style = (Style)Application.Current.Resources["TitleTextBlockStyle"], Margin = new Thickness(4, 28, 0, 8) });
-            foreach (var part in parts)
+            nav.MenuItems.Add(PaneText(group.ToUpperInvariant(), 30, 80));
+            foreach (var (name, glyph, lede, parts) in members)
             {
-                page.Children.Add(part);
+                nav.MenuItems.Add(PageItem(name, glyph, lede, parts));
             }
-
-            nav.MenuItems.Add(new NavigationViewItem { Content = name, Icon = new FontIcon { Glyph = glyph }, Tag = new ScrollViewer { Content = page } });
         }
 
-        nav.SelectionChanged += (_, e) => nav.Content = ((NavigationViewItem)e.SelectedItem).Tag;
-        nav.SelectedItem = nav.MenuItems[0];
-        nav.Content = ((NavigationViewItem)nav.MenuItems[0]).Tag;
+        // About sits at the foot of the list, apart from the groups, and the promise under it.
+        nav.FooterMenuItems.Add(PageItem("About", "\uE946", "Who makes Tomte, and what it is made with.", AboutPage()));
+        nav.FooterMenuItems.Add(PaneText("No account, no telemetry.\nEverything stays in one file on this PC.", 44, 0));
+        nav.SelectionChanged += (_, e) => Open((NavigationViewItem)e.SelectedItem);
+        Open(PageItems.First());
         if (startSection is not null)
         {
             GoTo(startSection);
@@ -223,6 +210,65 @@ public sealed partial class SettingsWindow : Window
         Hotkey.Pause(DataFolder, false);
     }
 
+    // Every page in the list, the groups' then About.
+    private IEnumerable<NavigationViewItem> PageItems => nav.MenuItems.Concat(nav.FooterMenuItems).OfType<NavigationViewItem>();
+
+    private static StackPanel PageOf(NavigationViewItem item) => (StackPanel)((ScrollViewer)item.Tag).Content;
+
+    // The page's title and lede, then its parts, in a column that scrolls.
+    private static NavigationViewItem PageItem(string name, string glyph, string lede, UIElement[] parts)
+    {
+        var page = new StackPanel { Spacing = 12, MaxWidth = 932, Padding = new Thickness(40, 32, 40, 40) };
+        page.Children.Add(new StackPanel
+        {
+            Spacing = 6,
+            Margin = new Thickness(0, 0, 0, 8),
+            Children =
+            {
+                new TextBlock { Text = name, FontFamily = new FontFamily("Segoe UI Variable Display"), FontSize = 26, FontWeight = FontWeights.SemiBold, CharacterSpacing = -20, Foreground = Palette.Brush(Palette.Ink) },
+                new TextBlock { Text = lede, FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = Palette.Brush(Palette.Ink2) },
+            },
+        });
+        foreach (var part in parts)
+        {
+            page.Children.Add(part);
+        }
+
+        return new NavigationViewItem { Content = name, FontSize = 13, Icon = new FontIcon { Glyph = glyph, FontSize = 16 }, Tag = new ScrollViewer { Content = page } };
+    }
+
+    // Small text in the page list that is not a page: a group's name above its pages, or the line at the foot. A header
+    // item, so the list skips it with the keyboard and never selects it; its template sets the header type, so the type
+    // is set again on its text once it is made.
+    private static NavigationViewItemHeader PaneText(string text, double height, int spacing)
+    {
+        var item = new NavigationViewItemHeader { Content = text, Foreground = Palette.Brush(Palette.Ink3) };
+        AutomationProperties.SetAccessibilityView(item, AccessibilityView.Content);
+        item.Loaded += (_, _) =>
+        {
+            if (Descendant<TextBlock>(item) is { } shown)
+            {
+                shown.FontSize = 11;
+                shown.FontWeight = FontWeights.Normal;
+                shown.CharacterSpacing = spacing;
+                shown.LineHeight = 16;
+                ((FrameworkElement)shown.Parent).Height = height;
+            }
+        };
+        return item;
+    }
+
+    // Shows the item's page and marks it, the open page's name a little heavier than the rest.
+    private void Open(NavigationViewItem item)
+    {
+        nav.SelectedItem = item;
+        nav.Content = item.Tag;
+        foreach (var other in PageItems)
+        {
+            other.FontWeight = ReferenceEquals(other, item) ? FontWeights.Medium : FontWeights.Normal;
+        }
+    }
+
     /// <summary>
     /// Starts WinUI on this thread, shows the window and returns when it closes. <paramref name="settingsPath"/> is the
     /// shell's settings file (null for the default); tomte.db is the one next to it. <paramref name="section"/> is the
@@ -239,21 +285,21 @@ public sealed partial class SettingsWindow : Window
         });
     }
 
-    // The page whose title or one of whose headers is this text opens, and once laid out that header goes to the top of
-    // the page. Text that no page has changes nothing.
+    // The page whose title is this text, or that has a section of this name, opens, and once laid out the title or the
+    // section goes to the top of the page. Text that no page has changes nothing.
     private void GoTo(string section)
     {
-        foreach (var item in nav.MenuItems.OfType<NavigationViewItem>())
+        foreach (var item in PageItems)
         {
             var scroller = (ScrollViewer)item.Tag;
-            if (((StackPanel)scroller.Content).Children.OfType<TextBlock>().FirstOrDefault(h => h.Text == section) is not { } header)
+            var page = PageOf(item);
+            if (((string)item.Content == section ? page.Children[0] as FrameworkElement : SectionIn(page, section)) is not { } header)
             {
                 continue;
             }
 
             // Before the window is laid out the list may not raise its change yet, so the page is set here too.
-            nav.SelectedItem = item;
-            nav.Content = scroller;
+            Open(item);
             var options = new BringIntoViewOptions { VerticalAlignmentRatio = 0, VerticalOffset = 28, AnimationDesired = false };
             if (scroller.IsLoaded)
             {
@@ -270,6 +316,26 @@ public sealed partial class SettingsWindow : Window
             scroller.Loaded += Bring;
             return;
         }
+    }
+
+    // A header on the page, or a part marked as a section of its own (a card with no header, alone or in a row of cards).
+    private static FrameworkElement? SectionIn(StackPanel page, string section)
+    {
+        static bool Marked(UIElement part, string name) => part is FrameworkElement { Tag: SectionName marked } && marked.Name == name;
+        foreach (var part in page.Children.Skip(1))
+        {
+            if ((part is TextBlock header && header.Text == section) || Marked(part, section))
+            {
+                return (FrameworkElement)part;
+            }
+
+            if (part is Grid { Tag: null } cards && cards.Children.FirstOrDefault(c => Marked(c, section)) is FrameworkElement found)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     // A static procedure, so there is no delegate for the collector to take while Windows still calls it.
@@ -294,7 +360,7 @@ public sealed partial class SettingsWindow : Window
 
     private ToggleSwitch Toggle(Func<TomteSettings, bool> get, Func<TomteSettings, bool, TomteSettings> set)
     {
-        var toggle = new ToggleSwitch { IsOn = get(store.Current), OnContent = "On", OffContent = "Off" };
+        var toggle = new ToggleSwitch { IsOn = get(store.Current), OnContent = "On", OffContent = "Off", MinWidth = 0 };
         toggle.Toggled += (_, _) => Save(s => set(s, toggle.IsOn));
         return toggle;
     }
@@ -324,7 +390,7 @@ public sealed partial class SettingsWindow : Window
             ask.IsEnabled = canAsk;
             box.SelectedIndex = (int)VoiceChoices.Default(s.VoiceEnter, canAsk);
             showing = false;
-            voiceNote.Text = (canAsk ? "" : VoiceChoices.NoProvider + " Set one up on the AI page. ")
+            voiceNote.Text = (canAsk ? "" : VoiceChoices.NoProvider + $" Set one up on the {ProviderPage} page. ")
                 + "After you speak, Alt+I, Alt+A and Alt+N pick Insert, Ask Tomte and Add to note, and Esc throws the words away.";
             voiceNote.Visibility = Visibility.Visible;
         }
@@ -342,22 +408,53 @@ public sealed partial class SettingsWindow : Window
     }
 
     // Off, 5 seconds or 10 seconds; a hand-edited number shows as the choice it acts as.
-    private ComboBox UndoAfterClosing()
+    private Border UndoAfterClosing()
     {
         int[] seconds = [0, 5, 10];
-        var box = new ComboBox { ItemsSource = new[] { "Off", "5 seconds", "10 seconds" }, MinWidth = 200 };
-        box.SelectedIndex = Array.IndexOf(seconds, (int)(UndoClose.Time(store.Current.UndoSeconds)?.TotalSeconds ?? 0));
-        box.SelectionChanged += (_, _) => Save(s => s with { UndoSeconds = seconds[Math.Max(0, box.SelectedIndex)] });
-        return box;
+        int current = (int)(UndoClose.Time(store.Current.UndoSeconds)?.TotalSeconds ?? 0);
+        var (track, choices) = Segmented([.. seconds.Select(v => v == 0 ? "Off" : $"{v} s")], Array.IndexOf(seconds, current), i => Save(s => s with { UndoSeconds = seconds[i] }));
+        for (int i = 1; i < seconds.Length; i++)
+        {
+            AutomationProperties.SetName(choices[i], $"{seconds[i]} seconds");
+        }
+
+        return track;
+    }
+
+    // Choices as buttons side by side on a track, the chosen one raised. A click on the chosen one leaves it chosen.
+    private (Border Track, List<ToggleButton> Choices) Segmented(string[] labels, int chosen, Action<int> pick)
+    {
+        var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+        var choices = new List<ToggleButton>();
+        for (int i = 0; i < labels.Length; i++)
+        {
+            int index = i;
+            var choice = new ToggleButton { Content = labels[i], IsChecked = i == chosen, Height = 30, MinWidth = 0, Padding = new Thickness(14, 0, 14, 0), CornerRadius = new CornerRadius(8), FontSize = 12 };
+            AutomationProperties.SetName(choice, labels[i]);
+            choice.Click += (_, _) =>
+            {
+                choices.ForEach(c => c.IsChecked = ReferenceEquals(c, choice));
+                pick(index);
+            };
+            choices.Add(choice);
+            bar.Children.Add(choice);
+        }
+
+        var track = new Border { Child = bar, Padding = new Thickness(3), CornerRadius = new CornerRadius(10), Background = Palette.Brush(Palette.Field), HorizontalAlignment = HorizontalAlignment.Left };
+        Look(track, "ToggleButton", "", Colors.Transparent, Palette.Hover, Palette.Ink2);
+        Look(track, "ToggleButton", "Checked", Palette.RaisedHi, Palette.RaisedHi, Palette.Ink);
+        return (track, choices);
     }
 
     // Turning the history off deletes it here too, so it is gone even when the shell is not running.
-    private ToggleSwitch KeepHistory()
+    private CheckBox KeepHistory()
     {
-        var keep = Toggle(s => s.KeepAiHistory, (s, v) => s with { KeepAiHistory = v });
-        keep.Toggled += async (_, _) =>
+        var keep = new CheckBox { IsChecked = store.Current.KeepAiHistory, MinWidth = 0 };
+        keep.Click += async (_, _) =>
         {
-            if (!keep.IsOn)
+            bool on = keep.IsChecked == true;
+            Save(s => s with { KeepAiHistory = on });
+            if (!on)
             {
                 await ClearAiHistory();
             }
@@ -436,7 +533,7 @@ public sealed partial class SettingsWindow : Window
         {
             note.Text = error ?? Hint;
             note.Visibility = Visibility.Visible;
-            note.Foreground = (Brush)Application.Current.Resources[error is null ? "TextFillColorSecondaryBrush" : "SystemFillColorCriticalBrush"];
+            note.Foreground = error is null ? Palette.Brush(Palette.Ink3) : (Brush)Application.Current.Resources["SystemFillColorCriticalBrush"];
             if (error is not null)
             {
                 // Said aloud too: a screen reader stays on the box, not on the note.
@@ -689,48 +786,84 @@ public sealed partial class SettingsWindow : Window
     }
 
     private static TextBlock Header(string text) =>
-        new() { Text = text, Style = (Style)Application.Current.Resources["BodyStrongTextBlockStyle"], Margin = new Thickness(4, 16, 0, 4) };
+        new() { Text = text, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Palette.Brush(Palette.Ink), Margin = new Thickness(2, 14, 0, 0) };
 
     private static TextBlock Note(string? text = null) => new()
     {
         Text = text ?? "",
         TextWrapping = TextWrapping.Wrap,
-        Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"],
-        Foreground = (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"],
+        FontSize = 12,
+        LineHeight = 17,
+        Foreground = Palette.Brush(Palette.Ink3),
         Visibility = text is null ? Visibility.Collapsed : Visibility.Visible,
     };
 
-    private static Border Card(params UIElement[] rows)
+    // A rounded card with a line between its rows.
+    private static Border Card(params UIElement[] rows) => new()
     {
-        var panel = new StackPanel { Spacing = 12 };
+        Child = Cells(rows),
+        CornerRadius = new CornerRadius(14),
+        BorderThickness = new Thickness(1),
+        Background = Palette.Brush(Palette.Card),
+        BorderBrush = Palette.Brush(Palette.Line),
+    };
+
+    // Each row padded, with a line above every row but the first. A row's place hides with the row, so a hidden row
+    // leaves no gap or extra line.
+    private static StackPanel Cells(UIElement[] rows)
+    {
+        var panel = new StackPanel();
         foreach (var row in rows)
         {
-            panel.Children.Add(row);
+            var cell = new Border
+            {
+                Child = row,
+                Padding = new Thickness(18, 14, 18, 14),
+                BorderThickness = new Thickness(0, panel.Children.Count == 0 ? 0 : 1, 0, 0),
+                BorderBrush = Palette.Brush(Palette.Line),
+                Visibility = row.Visibility,
+            };
+            row.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (_, _) => cell.Visibility = row.Visibility);
+            panel.Children.Add(cell);
         }
 
-        return new Border
-        {
-            Child = panel,
-            Padding = new Thickness(16),
-            CornerRadius = new CornerRadius(8),
-            BorderThickness = new Thickness(1),
-            Background = (Brush)Application.Current.Resources["CardBackgroundFillColorDefaultBrush"],
-            BorderBrush = (Brush)Application.Current.Resources["CardStrokeColorDefaultBrush"],
-        };
+        return panel;
     }
 
-    // Label and note on the left, the control on the right, as in Windows Settings. The row keeps its parts, so Find a
-    // setting reads the rows the pages show.
+    // The fine-tuning, folded away under the card it tunes, in the same card look.
+    private static Expander Advanced(params UIElement[] rows)
+    {
+        var expander = new Expander
+        {
+            Header = "Advanced",
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            CornerRadius = new CornerRadius(14),
+            Content = Cells(rows),
+        };
+        expander.Resources["ExpanderHeaderBackground"] = expander.Resources["ExpanderContentBackground"] = Palette.Brush(Palette.Card);
+        expander.Resources["ExpanderHeaderBorderBrush"] = expander.Resources["ExpanderContentBorderBrush"] = Palette.Brush(Palette.Line);
+        expander.Resources["ExpanderContentPadding"] = new Thickness(0);
+        return expander;
+    }
+
+    // Label and note on the left, the control on the right, as in Windows Settings; a box or a list is 300 wide. The row
+    // keeps its parts, so Find a setting reads the rows the pages show.
     private static Grid Row(string label, TextBlock? note, FrameworkElement control)
     {
-        var title = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap };
-        var grid = new Grid { ColumnSpacing = 16, Tag = new RowParts(title, note, control) };
+        var title = new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap, FontSize = 14, FontWeight = FontWeights.Medium, Foreground = Palette.Brush(Palette.Ink) };
+        var grid = new Grid { ColumnSpacing = 24, Tag = new RowParts(title, note, control) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Children = { title } };
+        var text = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center, Children = { title } };
         if (note is not null)
         {
             text.Children.Add(note);
+        }
+
+        if (control is TextBox or PasswordBox or ComboBox or NumberBox)
+        {
+            control.Width = 300;
         }
 
         control.VerticalAlignment = VerticalAlignment.Center;
@@ -741,10 +874,39 @@ public sealed partial class SettingsWindow : Window
         return grid;
     }
 
+    // A row whose control goes under its text, at the left, for a control too wide to sit beside it.
+    private static Grid StackedRow(string label, TextBlock? note, FrameworkElement control, double spacing = 12)
+    {
+        var row = Row(label, note, control);
+        row.RowSpacing = spacing;
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        control.HorizontalAlignment = HorizontalAlignment.Left;
+        Grid.SetRow(control, 1);
+        Grid.SetColumn(control, 0);
+        Grid.SetColumnSpan(control, 2);
+        return row;
+    }
+
+    // Colours for a control's look at rest, under the pointer and pressed, set as the resources its template reads, so the
+    // template's states keep working. State is "" or "Checked", for a toggle button that is on.
+    private static void Look(FrameworkElement scope, string control, string state, Color fill, Color hover, Color text)
+    {
+        foreach (var (pointer, color) in new[] { ("", fill), ("PointerOver", hover), ("Pressed", hover) })
+        {
+            scope.Resources[$"{control}Background{state}{pointer}"] = Palette.Brush(color);
+            scope.Resources[$"{control}Foreground{state}{pointer}"] = Palette.Brush(text);
+            scope.Resources[$"{control}BorderBrush{state}{pointer}"] = Palette.Brush(Colors.Transparent);
+        }
+    }
+
     /// <summary>A code-only app: the metadata provider lets XamlControlsResources resolve the built-in control types.</summary>
     private sealed class SettingsApp : Application, IXamlMetadataProvider
     {
         private readonly XamlControlsXamlMetaDataProvider provider = new();
+
+        // Dark whatever Windows' app mode is, so every brush looked up here is the dark one.
+        public SettingsApp() => RequestedTheme = ApplicationTheme.Dark;
 
         public IXamlType GetXamlType(Type type) => provider.GetXamlType(type);
 
@@ -755,6 +917,7 @@ public sealed partial class SettingsWindow : Window
         protected override void OnLaunched(LaunchActivatedEventArgs args)
         {
             Resources.MergedDictionaries.Add(new XamlControlsResources());
+            Palette.UseDarkLook(Resources);
             var window = new SettingsWindow();
             window.Closed += (_, _) => Exit();
             window.Activate();

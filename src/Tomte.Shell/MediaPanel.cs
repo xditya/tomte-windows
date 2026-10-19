@@ -3,6 +3,7 @@ using System.Numerics;
 using Tomte.Core;
 using Tomte.Core.Interaction;
 using Tomte.Core.Media;
+using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -43,13 +44,16 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
 
     public PanelId Id => PanelId.Media;
 
+    /// <summary>Where the card sits in a body this size: across the Media panel's body, or another view's section for it.</summary>
+    public Func<Vector2, MediaPanelLayout> LayoutFor { get; init; } = size => new MediaPanelLayout(size.X);
+
     public IReadOnlyList<Target> Targets => targets;
 
     public event Action? TargetsChanged;
 
     public void Shown(ContainerVisual body, Vector2 size)
     {
-        layout = new MediaPanelLayout(size.X);
+        layout = LayoutFor(size);
         view = new View(island, text, body, size, layout, now, log);
         bodyWidth = size.X;
         // With no report 2 s after a seek, the bar goes back to the last position the app gave.
@@ -369,22 +373,24 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
     private sealed class View : IDisposable
     {
         // The icons are drawn in a 24 unit box, 14 DIPs wide, centred in their button.
-        private const float GlyphBox = 24, GlyphSize = 14;
-
-        private static readonly Color White = Color.FromArgb(255, 255, 255, 255);
+        private static Color White => ShelfColors.Of(Theme.Ink);
+        private static Color Skip => ShelfColors.Of(Theme.Ink2);
         // A button the app does not take is drawn at the disabled opacity.
-        private static readonly Color Dim = Color.FromArgb((byte)(255 * StateLook.DisabledOpacity), 255, 255, 255);
-        private static readonly Color Black = Color.FromArgb(255, 0, 0, 0);
-        private static readonly Color Clear = Color.FromArgb(0, 0, 0, 0);
-        private static readonly Color Card = Color.FromArgb(255, 0x2A, 0x2A, 0x2F);
+        private static Color Dim => ShelfColors.Of(Theme.WithOpacity(Theme.Ink, StateLook.DisabledOpacity));
+        private static Color Section => ShelfColors.Of(Theme.Card);
+        // The play and pause glyphs are cut out of the light disc in the island's own colour.
+        private static Color Black => ShelfColors.Of(Theme.Island);
+        private static readonly Color Clear = default;
+        private static Color Card => ShelfColors.Of(Theme.RaisedHi);
+        private static Color Track => ShelfColors.Of(Theme.Track);
 
         private readonly Compositor compositor;
         private readonly MediaPanelLayout layout;
         private readonly Func<DateTimeOffset> now;
         private readonly Action<string>? log;
         private readonly ArtVisual art;
-        private readonly ShapeVisual shapes, seekShapes;
-        private readonly TextVisual title, artist, elapsed, total, seekTime;
+        private readonly ShapeVisual back, shapes, seekShapes;
+        private readonly TextVisual overline, title, artist, elapsed, total, seekTime;
         private readonly Windows.System.DispatcherQueueTimer clock;
         private NowPlaying shown = NowPlaying.None;
         private bool hovered, scrubbing;
@@ -401,14 +407,20 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             this.layout = layout;
             this.now = now;
             this.log = log;
-            art = new ArtVisual(compositor, MediaPanelLayout.Art, MediaPanelLayout.ArtCorner);
+            // The card under everything, then the art on it.
+            back = compositor.CreateShapeVisual();
+            back.Size = size;
+            body.Children.InsertAtTop(back);
+            Add(back.Shapes, Rounded(layout.Card, Tomte.Core.Section.Corner), compositor.CreateColorBrush(Section));
+            art = new ArtVisual(compositor, layout.Art, MediaPanelLayout.ArtCorner);
             body.Children.InsertAtTop(art.Visual);
 
             shapes = compositor.CreateShapeVisual();
             shapes.Size = size;
             body.Children.InsertAtTop(shapes);
 
-            (title, artist, elapsed, total) = (text.Create(body), text.Create(body), text.Create(body), text.Create(body));
+            (overline, title, artist, elapsed, total) = (text.Create(body), text.Create(body), text.Create(body), text.Create(body), text.Create(body));
+            overline.Show(MediaPanelLayout.Overline, TextStyle.Overline, layout.OverlineSlot);
             clock = island.Queue.CreateTimer();
             clock.IsRepeating = false;
             clock.Tick += (_, _) => ShowClocks();
@@ -430,26 +442,16 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             dot.StartAnimation("Center", ride);
             knob = Add(shapes.Shapes, dot, compositor.CreateColorBrush());
 
-            var glyph = Glyph(layout.Previous);
-            previous = compositor.CreateColorBrush();
-            Add(glyph.Shapes, Bar(6, 4, 2, 16), previous);
-            Add(glyph.Shapes, Triangle(new(20, 4), new(9, 12), new(20, 20)), previous);
+            previous = Glyph(layout.Previous, Glyphs.Prev);
 
             var button = layout.PlayPause;
             var disc = compositor.CreateEllipseGeometry();
             disc.Center = new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2);
             disc.Radius = new Vector2(MediaPanelLayout.Disc / 2);
             circle = Add(shapes.Shapes, disc, compositor.CreateColorBrush());
-            glyph = Glyph(button);
-            play = Add(glyph.Shapes, Triangle(new(7, 4), new(21, 12), new(7, 20)), compositor.CreateColorBrush());
-            pause = compositor.CreateColorBrush();
-            Add(glyph.Shapes, Bar(6, 4, 4, 16), pause);
-            Add(glyph.Shapes, Bar(14, 4, 4, 16), pause);
-
-            glyph = Glyph(layout.Next);
-            next = compositor.CreateColorBrush();
-            Add(glyph.Shapes, Bar(16, 4, 2, 16), next);
-            Add(glyph.Shapes, Triangle(new(4, 4), new(15, 12), new(4, 20)), next);
+            play = Glyph(button, Glyphs.Play);
+            pause = Glyph(button, Glyphs.Pause);
+            next = Glyph(layout.Next, Glyphs.Next);
 
             // The seek time's card and its clock, over everything else: it sits over the artist's line.
             seekShapes = compositor.CreateShapeVisual();
@@ -504,15 +506,15 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             art.Show(playing.Thumbnail, log);
 
             // A command the app does not accept is drawn disabled, and its target is too.
-            previous.Color = playing.Accepts(MediaCommand.Previous) ? White : Dim;
-            next.Color = playing.Accepts(MediaCommand.Next) ? White : Dim;
+            previous.Color = playing.Accepts(MediaCommand.Previous) ? Skip : Dim;
+            next.Color = playing.Accepts(MediaCommand.Next) ? Skip : Dim;
             circle.Color = playing.PlayPause == MediaCommand.None ? Dim : White;
             play.Color = playing.IsPlaying ? Clear : Black;
             pause.Color = playing.IsPlaying ? Black : Clear;
 
             // An app with no timeline gets no bar at all, rather than an empty one that never moves. A drag keeps the fill where it holds it.
             var bar = layout.Bar;
-            track.Color = playing.Timeline is null ? Clear : Color.FromArgb(41, 255, 255, 255);
+            track.Color = playing.Timeline is null ? Clear : Track;
             fill.Color = playing.Timeline is null ? Clear : White;
             shown = playing;
             ShowKnob();
@@ -539,8 +541,10 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             clock.Stop();
             fillShape.StopAnimation("Size");
             art.Dispose();
+            back.Dispose();
             shapes.Dispose();
             seekShapes.Dispose();
+            overline.Dispose();
             title.Dispose();
             artist.Dispose();
             elapsed.Dispose();
@@ -588,7 +592,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             clock.Stop();
             var at = now();
             var timeline = shown.Timeline;
-            elapsed.Show(timeline is { } t ? NowPlaying.Clock(t.PositionAt(at)) : "", MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed);
+            elapsed.Show(timeline is { } t ? NowPlaying.Clock(t.PositionAt(at)) : "", MediaPanelLayout.ElapsedStyle, layout.Elapsed);
             total.Show(timeline is { } d ? NowPlaying.Clock(d.Duration) : "", MediaPanelLayout.TotalStyle, layout.Total);
             if (timeline is { Playing: true, Rate: > 0 } moving && moving.PositionAt(at) < moving.End)
             {
@@ -606,13 +610,15 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             return brush;
         }
 
-        private CompositionContainerShape Glyph(RectangleF button)
+        // A glyph centred in its button, in a brush of its own that the state recolours.
+        private CompositionColorBrush Glyph(RectangleF button, GlyphFigure[] figures)
         {
+            var brush = compositor.CreateColorBrush();
             var glyph = compositor.CreateContainerShape();
-            glyph.Scale = new Vector2(GlyphSize / GlyphBox);
-            glyph.Offset = new Vector2(button.X + (button.Width - GlyphSize) / 2, button.Y + (button.Height - GlyphSize) / 2);
+            PaletteView.DrawGlyph(glyph, figures, brush, MediaPanelLayout.Glyph);
+            glyph.Offset = new Vector2(button.X + (button.Width - MediaPanelLayout.Glyph) / 2, button.Y + (button.Height - MediaPanelLayout.Glyph) / 2);
             shapes.Shapes.Add(glyph);
-            return glyph;
+            return brush;
         }
 
         private CompositionRoundedRectangleGeometry Rounded(RectangleF rect, float radius)
@@ -623,16 +629,5 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
             geometry.CornerRadius = new Vector2(radius);
             return geometry;
         }
-
-        private CompositionRectangleGeometry Bar(float x, float y, float width, float height)
-        {
-            var geometry = compositor.CreateRectangleGeometry();
-            geometry.Offset = new Vector2(x, y);
-            geometry.Size = new Vector2(width, height);
-            return geometry;
-        }
-
-        private CompositionPathGeometry Triangle(Vector2 a, Vector2 b, Vector2 c) =>
-            compositor.CreatePathGeometry(IslandWindow.BuildPath([OutlineSegment.Move(a), OutlineSegment.Line(b), OutlineSegment.Line(c)], 1));
     }
 }

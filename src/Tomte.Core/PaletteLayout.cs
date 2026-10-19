@@ -46,46 +46,78 @@ public sealed record Confirmation(string Summary, string Line, bool AlwaysAllow,
 /// <summary>The picture before a chip's name.</summary>
 public enum ChipIcon { Selection, Window, Screenshot, Shelf, Note, Region }
 
-/// <summary>A chip to draw: its short name, its picture and whether it is on.</summary>
-public readonly record struct ChipSpec(string Name, ChipIcon Icon, bool On);
+/// <summary>A chip to draw: its short name, its picture, whether it is on, and whether it shows a thumbnail of what it holds.</summary>
+public readonly record struct ChipSpec(string Name, ChipIcon Icon, bool On, bool Thumb = false);
 
 /// <summary>
-/// A chip laid out: its pill, which is also where it takes clicks, the picture at its left, its name, and the mark at its
-/// right, a "+" while off and a tick while on.
+/// A chip laid out: its pill, which is also where it takes clicks, the picture at its left (the region's thumbnail for a
+/// chip that holds one), its name, and the mark at its right, a "+" while off and a close cross while on.
 /// </summary>
-public readonly record struct LaidChip(RectangleF Box, RectangleF Icon, TextSlot Label, RectangleF Mark, bool On);
-
-/// <summary>
-/// The palette's content in DIPs from its top-left corner: the prompt box after the tomte, the chips under it in as
-/// many rows as they need, the answer, a tool's question while one is open, and the footer along the bottom. The
-/// palette is as tall as that needs, from 150 to 480 DIPs; an answer longer than the room left scrolls in its band.
-/// <paramref name="text"/> is the prompt's own height (the text box's content height), which the box grows with.
-/// <paramref name="send"/> puts a Send button at the box's right end, for a palette with a text box. <paramref name="sends"/>
-/// is the line under the chips saying what the next send carries; empty for none. <paramref name="back"/> puts the back
-/// arrow before the prompt box, for a palette opened from the panels.
-/// </summary>
-public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false, string sends = "", bool back = false)
+public readonly record struct LaidChip(RectangleF Box, RectangleF Icon, TextSlot Label, RectangleF Mark, bool On, bool Thumb = false)
 {
-    public const float Pad = 14, Top = 12, Bottom = 10, Gap = 10, BlockGap = 6;
-    public const float PromptHeight = 36, PromptInsetX = 12, PromptInsetY = 9, PromptCorner = 8;
+    public float Corner => Thumb ? PaletteLayout.ThumbChipCorner : Box.Height / 2;
+}
 
-    /// <summary>The prompt box grows with its text up to this, then its text scrolls: about four lines.</summary>
-    public const float PromptMaxText = 72;
+/// <summary>An action under an answer: its id, its pill, its word, and whether it is the outlined one.</summary>
+public readonly record struct LaidAction(string Id, RectangleF Box, TextSlot Label, bool Outlined);
+
+/// <summary>
+/// The footer laid out: the divider above it, the status dot, where the request went, what this answer cost, what today
+/// cost against the cap, and the meter for it with its fill's width.
+/// </summary>
+public readonly record struct PaletteFoot(RectangleF Divider, RectangleF Dot, TextSlot Provider, TextSlot Cost, TextSlot Spend, RectangleF Meter, float Fill);
+
+/// <summary>
+/// The palette's content in DIPs from its top-left corner: the prompt card after the tomte, with the chips first in it,
+/// then the text box and Send; what the next send carries under it; the answer beside its sparkle; the actions under a
+/// finished answer; a tool's question while one is open; and the footer along the bottom. The palette is as tall as that
+/// needs, from 150 to 480 DIPs; an answer longer than the room left scrolls in its band. <paramref name="text"/> is the
+/// prompt's own height (the text box's content height), which the card grows with. <paramref name="send"/> puts a Send
+/// button at the card's right end, for a palette with a text box. <paramref name="sends"/> is the line under the card
+/// saying what the next send carries; empty for none. <paramref name="back"/> puts the back arrow before the card, for a
+/// palette opened from the panels. <paramref name="actions"/> are the actions under the answer, by id; none while it is
+/// not finished.
+/// </summary>
+public sealed class PaletteLayout(float width, bool mascot, float text = 0, IReadOnlyList<ChipSpec>? chips = null, Confirmation? confirm = null, bool send = false, string sends = "", bool back = false, IReadOnlyList<string>? actions = null)
+{
+    public const float Pad = 16, Top = 14, Bottom = 16, Gap = 14, BlockGap = 8;
+
+    /// <summary>The prompt card: one row of 40 inside a 6 inset (8 at the left), its text centred on that row.</summary>
+    public const float PromptHeight = 52, PromptInset = 6, PromptInsetLeft = 8, PromptCorner = 18, RowHeight = 40, RowGap = 6;
+
+    /// <summary>The prompt's own text, and a line of it.</summary>
+    public const float PromptSize = 15, PromptLine = 20, PromptInsetY = (PromptHeight - PromptLine) / 2;
+
+    /// <summary>The card grows with its text up to this, then its text scrolls: four lines.</summary>
+    public const float PromptMaxText = 4 * PromptLine;
 
     /// <summary>
-    /// A chip is as tall as its click area, so all of it is drawn: the picture, a gap, the name, a gap and the mark
-    /// between the side paddings. "Include" stands before the first row, and the rows after it start under the first chip.
+    /// A chip: 30 high and fully round, the picture, a gap, the name, a gap and the mark between the side paddings. One
+    /// that holds a picture (the circled region) is as tall as the card's row, with its thumbnail where the picture goes.
     /// </summary>
-    public const float ChipHeight = StateLook.ChipHeight, ChipPadX = 10, ChipGap = 6, ChipCorner = ChipHeight / 2, ChipMaxText = 160;
-    public const float IconSize = 16, IconGap = 6, MarkSize = 10, MarkGap = 6, IncludeGap = 8, SendsHeight = 16;
+    public const float ChipHeight = 30, ChipPadX = 10, ChipGap = 6, ChipCorner = ChipHeight / 2, ChipMaxText = 160;
+    public const float IconSize = 14, IconGap = 5, MarkSize = 14, MarkGap = 6;
+    public const float ThumbChipHeight = RowHeight, ThumbChipCorner = 12, ThumbWidth = 40, ThumbHeight = 32, ThumbCorner = 8, ThumbInset = 4, ThumbGap = 8;
 
-    /// <summary>Send sits inside the prompt's card at its right end, level with the last line, its corner inset with the card's.</summary>
-    public const float SendSize = 28, SendInset = 4, SendGap = 6, SendCorner = PromptCorner - SendInset;
+    /// <summary>The text box shares the chips' row while it keeps this much of it; else it goes under them.</summary>
+    public const float MinEditor = 200, ChipEditorGap = 10;
 
-    public const float FootHeight = 14;
+    /// <summary>Send sits inside the card at its right end, level with the last line, its corner inset with the card's.</summary>
+    public const float SendSize = 40, SendInset = PromptInset, SendGap = 10, SendCorner = 12, SendGlyph = 18;
+
+    public const float SendsHeight = 16;
+
+    /// <summary>The answer: a sparkle in a 30 DIP gutter, 8 in from the edge of the content, its words in the column after it.</summary>
+    public const float AnswerInset = 8, Gutter = 30, SparkleSize = 18;
+
+    /// <summary>The actions under a finished answer: round pills, aligned with the answer's words.</summary>
+    public const float ActionHeight = 32, ActionPadX = 12, ActionGap = 6;
+
+    /// <summary>The footer: a line of text under a divider with 12 above it; the meter 64 by 4.</summary>
+    public const float FootHeight = 16, FootTop = 12, FootGap = 10, DotSize = 6, MeterWidth = 64, MeterHeight = 4, MeterMin = 4;
 
     /// <summary>A tool's question: a card above the footer, its summary on up to three lines, then why it asks and the buttons.</summary>
-    public const float AskPad = 10, AskGap = 6, ButtonHeight = 28, ButtonPadX = 14, ButtonGap = 6, ButtonCorner = 8, ButtonMinWidth = 64;
+    public const float AskPad = 12, AskGap = 8, ButtonHeight = 32, ButtonPadX = 14, ButtonGap = 6, ButtonCorner = 10, ButtonMinWidth = 64;
 
     public const int AskLines = 3, PromptLines = 4;
 
@@ -96,105 +128,170 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const int JobLines = 8;
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
-    public const float WheelStep = 3 * 20;
+    public const float WheelStep = 3 * 21;
 
-    /// <summary>The prompt's own text: 13 DIP white, as the text box draws it.</summary>
-    public const float PromptSize = 13;
+    public static TextStyle Placeholder => new(PromptSize, Color: Theme.Ink3);
 
-    public static readonly TextStyle Placeholder = new(PromptSize, Color: TextStyle.TertiaryColor);
-    public static readonly TextStyle AnswerText = new(13, Color: 0xFFE9E9EE, LineHeight: 20);
-    public static readonly TextStyle StepText = new(12, Color: TextStyle.SecondaryColor, LineHeight: 18);
-    public static readonly TextStyle ErrorText = AnswerText with { Color = TextStyle.WarnColor };
-    public static readonly TextStyle Chip = new(12, Color: TextStyle.SecondaryColor);
-    public static readonly TextStyle ChipOn = Chip with { Color = StateLook.CheckedText };
-    public static readonly TextStyle Provider = TextStyle.Small with { Color = 0xFFBCD3FF };
-    public static readonly TextStyle Spend = TextStyle.Small with { Align = TextAlign.Trailing };
+    /// <summary>The model's words; the first paragraph of an answer stands larger, in <see cref="Lead"/>.</summary>
+    public static TextStyle AnswerText => TextStyle.Body;
+
+    public static TextStyle Lead => new(18, 500, LineHeight: 27, Tracking: -0.01f);
+    public static TextStyle StepText => new(12, Color: Theme.Ink2, LineHeight: 18);
+    public static TextStyle ErrorText => AnswerText with { Color = Theme.Warn };
+    public static TextStyle Chip => TextStyle.Secondary;
+    public static TextStyle ChipOn => Chip with { Color = Theme.Ink };
+    public static TextStyle ThumbLabel => Chip with { Family = TextStyle.Mono };
+    public static TextStyle Provider => TextStyle.Secondary with { Color = Theme.Ink3 };
+    public static TextStyle Cost => Provider with { Family = TextStyle.Mono };
+    public static TextStyle Spend => Cost with { Align = TextAlign.Trailing };
+    public static TextStyle Action => new(12, Align: TextAlign.Center);
+    public static TextStyle OutlinedAction => Action with { Color = Theme.Ink2 };
 
     /// <summary>What was said, where a palette with no text box (the voice palette) shows its prompt.</summary>
-    public static readonly TextStyle PromptText = new(PromptSize);
+    public static TextStyle PromptText => new(PromptSize);
 
-    public static readonly TextStyle AskSummary = AnswerText with { Color = TextStyle.WhiteColor };
-    public static readonly TextStyle AskLine = new(11, Color: TextStyle.SecondaryColor);
-    public static readonly TextStyle Button = new(12, 500, Align: TextAlign.Center);
-    public static readonly TextStyle RunButton = Button with { Weight = 600, Color = 0xFF000000 };
+    public static TextStyle AskSummary => AnswerText with { Color = Theme.Ink };
+    public static TextStyle AskLine => new(11, Color: Theme.Ink2);
+    public static TextStyle Button => new(12, 500, Align: TextAlign.Center);
+    public static TextStyle RunButton => Button with { Weight = 600, Color = Theme.OnAccent };
 
     public const string Hint = "Ask about what is in front of you…";
     public const string Off = "The AI layer is off";
     public const string Setup = "Add a provider key to use the palette.";
     public const string Run = "Run", Schedule = "Schedule", Cancel = "Cancel", AlwaysAllow = "Always allow";
-    public const string Include = "Include", SendTip = "Send";
+    public const string SendTip = "Send";
+
+    /// <summary>The actions under a finished answer, by id and word: three filled, then Follow up outlined.</summary>
+    public const string CopyId = "copy", NoteId = "note", ShelfId = "shelf", FollowId = "follow";
+
+    public static string ActionLabel(string id) => id switch
+    {
+        CopyId => "Copy",
+        NoteId => "Add to note",
+        ShelfId => "Keep on shelf",
+        _ => "Follow up",
+    };
+
+    /// <summary>What an action's pill says once it has done its work, so a second click is not needed to find out.</summary>
+    public static string ActionDone(string id) => id switch
+    {
+        CopyId => "Copied",
+        NoteId => "Added to note",
+        ShelfId => "On the shelf",
+        _ => ActionLabel(id),
+    };
 
     /// <summary>The foot's provider line while a card asks before a tool runs: nothing is on its way until the user answers.</summary>
     public const string Waiting = "Waiting for you";
 
     /// <summary>
-    /// An off chip: a faint fill, an outline at about 4.5:1 against the palette, and grey ink for its picture and "+".
-    /// An on chip takes the accent fill with black ink. Glyph ink is opaque, so a glyph fades as one.
+    /// An off chip: no fill, a strong outline, and secondary ink for its picture and "+". An on chip, which holds something
+    /// for the send, is raised with the main ink and a close cross. Glyph ink is opaque, so a glyph fades as one.
     /// </summary>
-    public const uint ChipFill = 0x0FFFFFFF, ChipOutline = 0x73FFFFFF, ChipInk = 0xFFA3A3A5;
+    public static uint ChipOutline => Theme.LineStrong;
+
+    public static uint ChipInk => Theme.Ink2;
+
+    public static uint ChipOnFill => Theme.Raised;
+
+    public static uint ChipOnInk => Theme.Ink;
 
     /// <summary>
     /// The path a chip's outline follows and the stroke's width in DIPs: one pixel wide, half a pixel inside the pill's
     /// edges put on whole pixels, so it lights whole pixels at any scale; two half-lit ones would fall under 3:1.
     /// <paramref name="parent"/> is where the pill's space starts, in DIPs from a whole pixel.
     /// </summary>
-    public static (RectangleF Path, float Corner, float Stroke) ChipStroke(RectangleF pill, Vector2 parent, double scale)
+    public static (RectangleF Path, float Corner, float Stroke) ChipStroke(LaidChip chip, Vector2 parent, double scale)
     {
+        var pill = chip.Box;
         float half = (float)(0.5 / scale);
         float left = PixelGrid.Snap(parent.X, pill.Left, scale), top = PixelGrid.Snap(parent.Y, pill.Top, scale);
         float right = PixelGrid.Snap(parent.X, pill.Right, scale), bottom = PixelGrid.Snap(parent.Y, pill.Bottom, scale);
-        return (RectangleF.FromLTRB(left + half, top + half, right - half, bottom - half), ChipCorner - half, 2 * half);
+        return (RectangleF.FromLTRB(left + half, top + half, right - half, bottom - half), chip.Corner - half, 2 * half);
     }
 
-    /// <summary>The prompt card's outline, which takes the accent while the box has the keys.</summary>
-    public const uint PromptLine = 0x1AFFFFFF, PromptFocusLine = 0x996FA8FF;
+    /// <summary>Send: an accent button with the accent's ink for its arrow.</summary>
+    public static uint SendFill => Theme.Accent;
 
-    /// <summary>Send: a white button with a black arrow.</summary>
-    public const uint SendFill = 0xFFFFFFFF, SendInk = 0xFF000000;
+    public static uint SendInk => Theme.OnAccent;
 
     /// <summary>
     /// The question's card carries the accent in its outline so it reads as waiting for the user. Its buttons are filled
-    /// and outlined as the chips are; Run is white, or the warning colour for what is asked every time.
+    /// raised and outlined as the chips are; Run takes the accent, or the warning colour for what is asked every time.
     /// </summary>
-    public const uint AskOutline = 0x666FA8FF, ButtonFill = 0x1AFFFFFF, ButtonOutline = ChipOutline, RunFill = 0xFFFFFFFF, RunWarn = 0xFFF0B35A;
+    public static uint AskOutline => Theme.WithOpacity(Theme.Accent, 0.4f);
 
-    private IReadOnlyList<LaidChip>? row;
-    private float? askHeight, includeWidth;
+    public static uint ButtonFill => Theme.Raised;
+
+    public static uint ButtonOutline => ChipOutline;
+
+    public static uint RunWarn => Theme.Warn;
+
+    public static uint RunFill => Theme.Accent;
+
+    /// <summary>The filled actions are raised; Follow up is outlined as an off chip is. The divider over the footer, and the meter.</summary>
+    public static uint ActionFill => Theme.Raised;
+
+    public static uint ActionOutline => Theme.LineStrong;
+
+    public static uint Divider => Theme.Raised;
+
+    public static uint MeterTrack => Theme.Track;
+
+    public static uint MeterFill => Theme.Ink;
+
+    private (IReadOnlyList<LaidChip> Chips, int Rows, bool Shared)? row;
+    private float? askHeight;
 
     // What each run of the last answer measured.
     private Dictionary<TextRun, (float Width, float Height, int Lines, bool Trimmed)> measured = [];
 
     public float Width => width;
 
-    /// <summary>The back arrow: as big as Send, level with the prompt's first line, after the tomte.</summary>
-    public const float BackSize = SendSize, BackGap = 6, BackCorner = SendCorner;
+    /// <summary>The back arrow: as big as Send, level with the card's first row, after the tomte.</summary>
+    public const float BackSize = SendSize, BackGap = 8, BackCorner = SendCorner;
 
     public const string BackId = "back", BackTip = "Back", BackKey = "Alt+Left";
 
     public float Left => Start + (back ? BackSize + BackGap : 0);
 
-    /// <summary>The back arrow before the prompt box; empty without one.</summary>
+    /// <summary>The back arrow before the prompt card; empty without one.</summary>
     public RectangleF Back => back ? new(Start, Top + ((PromptHeight - BackSize) / 2), BackSize, BackSize) : RectangleF.Empty;
 
     /// <summary>
-    /// The tomte beside the prompt box, the search box's too: centred on the box's first line, its art as far in from the
-    /// left edge as the chips, the answer and the search list below.
+    /// The tomte beside the prompt card: centred on its first row, its art as far in from the left edge as the content
+    /// below it.
     /// </summary>
     public static readonly MascotSeat Seat = new(Top + (PromptHeight / 2), Pad);
 
     private float Start => mascot ? Seat.After(10) : Pad;
 
-    /// <summary>The prompt's card: one line tall at least, growing with its text up to about four lines.</summary>
-    public RectangleF Prompt => new(Left, Top, width - Pad - Left, Math.Clamp(text + 2 * PromptInsetY, PromptHeight, PromptMaxText + 2 * PromptInsetY));
+    // The chips' room inside the card: from its left inset to Send's gap.
+    private float RoomLeft => Left + PromptInsetLeft;
 
-    /// <summary>Where the prompt's text box sits inside the card, short of Send when there is one.</summary>
+    private float RoomRight => width - Pad - (send ? SendInset + SendSize + SendGap : PromptInset);
+
+    /// <summary>The card: one row tall at least, a row more for each row of chips that does not leave room for the text, growing with its text.</summary>
+    public RectangleF Prompt
+    {
+        get
+        {
+            float body = Math.Clamp(text, PromptLine, PromptMaxText);
+            return new(Left, Top, width - Pad - Left, Math.Max(PromptHeight, EditorTop - Top + body + PromptInsetY));
+        }
+    }
+
+    // The text box's top: centred on the first row, or on the row under the chips when they took the whole width.
+    private float EditorTop => Top + PromptInsetY + (Laid.Shared ? 0 : Laid.Rows * (RowHeight + RowGap));
+
+    /// <summary>Where the prompt's text box sits inside the card: after the chips on their row when there is room, short of Send.</summary>
     public RectangleF Editor
     {
         get
         {
-            var card = Prompt;
-            float right = send ? SendInset + SendSize + SendGap : PromptInsetX;
-            return new(card.X + PromptInsetX, card.Y + PromptInsetY, card.Width - PromptInsetX - right, card.Height - 2 * PromptInsetY);
+            var (laid, _, shared) = Laid;
+            float left = shared && laid.Count > 0 ? laid[^1].Box.Right + ChipEditorGap : RoomLeft;
+            return new(left, EditorTop, Math.Max(0, RoomRight - left), Math.Clamp(text, PromptLine, PromptMaxText));
         }
     }
 
@@ -211,36 +308,28 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>Send works while the prompt has more than white space and nothing is being sent.</summary>
     public static bool CanSend(string prompt, bool sending) => !sending && !string.IsNullOrWhiteSpace(prompt);
 
-    public float ChipsTop => Top + Prompt.Height + Gap;
-
     /// <summary>
-    /// One pill per chip, 6 apart, in rows after "Include": a chip that does not fit beside the one before starts the
-    /// next row, under the first chip. A name is cut with an ellipsis at 160 DIP, or at the row's width.
+    /// One pill per chip, 6 apart, in the card's rows from its left: a chip that does not fit beside the one before starts
+    /// the next row. A name is cut with an ellipsis at 160 DIP, or at the row's width.
     /// </summary>
-    public IReadOnlyList<LaidChip> Chips => row ??= LayChips();
+    public IReadOnlyList<LaidChip> Chips => Laid.Chips;
 
-    /// <summary>"Include" before the first row, as tall as a chip; empty with no chips.</summary>
-    public TextSlot IncludeLabel => new(chips is { Count: > 0 } ? Include : "", Chip, new RectangleF(Pad, ChipsTop, IncludeWidth, ChipHeight));
+    /// <summary>What the next send carries, on one line under the card from where the chips start; empty while no chip is on.</summary>
+    public TextSlot SendsLine => new(sends, TextStyle.Small, new RectangleF(Pad + AnswerInset, Prompt.Bottom + BlockGap, width - (2 * (Pad + AnswerInset)), sends.Length > 0 ? SendsHeight : 0));
 
-    /// <summary>What the next send carries, on one line under the chips from where they start; empty while no chip is on.</summary>
-    public TextSlot SendsLine
-    {
-        get
-        {
-            float x = Pad + IncludeWidth + IncludeGap;
-            return new(sends, Chip, new RectangleF(x, ChipsBottom + ChipGap, width - Pad - x, sends.Length > 0 ? SendsHeight : 0));
-        }
-    }
+    public float AnswerTop => (sends.Length > 0 ? SendsLine.Slot.Bottom : Prompt.Bottom) + Gap;
 
-    public float AnswerTop => (sends.Length > 0 ? SendsLine.Slot.Bottom : ChipsBottom) + Gap;
+    /// <summary>The answer's words start after the sparkle's gutter.</summary>
+    public float AnswerX => Pad + AnswerInset + Gutter;
 
-    private float ChipsBottom => Chips.Count > 0 ? Chips[^1].Box.Bottom : ChipsTop - Gap;
+    public float AnswerWidth => width - AnswerX - Pad - AnswerInset;
 
-    public float AnswerWidth => width - 2 * Pad;
+    /// <summary>The sparkle before the answer, in band space: in the gutter, centred on the lead's first line.</summary>
+    public RectangleF Sparkle => new(Pad + AnswerInset, (Lead.LineHeight - SparkleSize) / 2, SparkleSize, SparkleSize);
 
     /// <summary>The palette's height for an answer this tall.</summary>
     public float Height(float answer) =>
-        (float)Math.Clamp(AnswerTop + (answer > 0 ? answer + Gap : 0) + AskRoom + FootHeight + Bottom, PanelSize.PaletteMinHeight, PanelSize.PaletteMaxHeight);
+        (float)Math.Clamp(AnswerTop + (answer > 0 ? answer + Gap : 0) + ActionRoom + AskRoom + FootRoom + Bottom, PanelSize.PaletteMinHeight, PanelSize.PaletteMaxHeight);
 
     /// <summary>The hint in an empty prompt box. With skill commands it names them: typing one is the only way to find them.</summary>
     public static string HintFor(IEnumerable<string> commands) =>
@@ -257,7 +346,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
             return null;
         }
 
-        var card = new RectangleF(Pad, height - Bottom - FootHeight - Gap - AskHeight, AnswerWidth, AskHeight);
+        var card = new RectangleF(Pad, height - Bottom - FootRoom - Gap - AskHeight, width - (2 * Pad), AskHeight);
         float inner = card.Width - 2 * AskPad, rowY = card.Bottom - AskPad - ButtonHeight, right = card.Right - AskPad;
         var buttons = new List<(ConfirmButton, RectangleF, TextSlot)>();
         foreach (var (button, label, style) in new[] { (ConfirmButton.Run, confirm.Job ? Schedule : Run, RunButton), (ConfirmButton.Cancel, Cancel, Button), (ConfirmButton.AlwaysAllow, AlwaysAllow, Button) })
@@ -301,9 +390,13 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     private float AskRoom => AskHeight > 0 ? AskHeight + Gap : 0;
 
+    private float ActionRoom => actions is { Count: > 0 } ? ActionHeight + Gap : 0;
+
+    private const float FootRoom = FootTop + FootHeight;
+
     private float SummaryHeight(string summary)
     {
-        using var laid = TextLayout.Of(new TextRun(summary, AskSummary, AnswerWidth - 2 * AskPad, SummaryLines));
+        using var laid = TextLayout.Of(new TextRun(summary, AskSummary, width - (2 * Pad) - 2 * AskPad, SummaryLines));
         return laid.Height;
     }
 
@@ -317,8 +410,30 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         return !laid.Trimmed;
     }
 
+    /// <summary>
+    /// The actions under the answer in a palette of <paramref name="height"/>, from the answer's column, above the
+    /// question and the footer: filled pills, Follow up outlined. <paramref name="done"/> are the ones that did their work,
+    /// which say so; their pills keep their width.
+    /// </summary>
+    public IReadOnlyList<LaidAction> Actions(float height, IReadOnlyCollection<string>? done = null)
+    {
+        var laid = new List<LaidAction>();
+        float x = AnswerX, y = height - Bottom - FootRoom - AskRoom - Gap - ActionHeight;
+        foreach (string id in actions ?? [])
+        {
+            bool outlined = id == FollowId;
+            var style = outlined ? OutlinedAction : Action;
+            float w = Math.Max(TextSlot.Measure(ActionLabel(id), style, 400), TextSlot.Measure(ActionDone(id), style, 400)) + (2 * ActionPadX);
+            var box = new RectangleF(x, y, w, ActionHeight);
+            laid.Add(new(id, box, new TextSlot(done?.Contains(id) == true ? ActionDone(id) : ActionLabel(id), style, box), outlined));
+            x = box.Right + ActionGap;
+        }
+
+        return laid;
+    }
+
     /// <summary>The AI history button at the footer's left: a clock, as big as the smallest target, centred on the footer's line.</summary>
-    public RectangleF History(float height) => new(Pad - 5, height - Bottom - (FootHeight / 2) - (StateLook.MinTarget / 2), StateLook.MinTarget, StateLook.MinTarget);
+    public RectangleF History(float height) => new(Pad + AnswerInset - 5, height - Bottom - (FootHeight / 2) - (StateLook.MinTarget / 2), StateLook.MinTarget, StateLook.MinTarget);
 
     public Target HistoryTarget(float height) => new(HistoryId, History(height), 6, TargetKind.Button, Tip: HistoryTip, Key: "Ctrl+H");
 
@@ -344,27 +459,48 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         return line.Length <= 60 ? line : line[..59].TrimEnd() + "…";
     }
 
-    /// <summary>The footer: where the request went or is going on the left after the history button, the steps and the spend on the right.</summary>
-    public IReadOnlyList<TextSlot> Foot(string provider, int steps, decimal spent, decimal? cap, float height)
+    /// <summary>
+    /// The footer under its divider: the history button when there is one, the status dot, where the request went or is
+    /// going and the tool steps, this answer's cost, then at the right what today cost against the cap and the meter.
+    /// </summary>
+    public PaletteFoot Foot(string provider, int steps, decimal cost, decimal spent, decimal? cap, float height, bool history = false)
     {
-        var foot = new RectangleF(Pad, height - Bottom - FootHeight, width - 2 * Pad, FootHeight);
-        float half = foot.Width / 2, after = History(height).Right + 4 - foot.X;
-        return
-        [
-            new(provider, Provider, new RectangleF(foot.X + after, foot.Y, half + 40 - after, FootHeight)),
-            new(SpendLine(steps, spent, cap), Spend, new RectangleF(foot.X + half + 50, foot.Y, half - 50, FootHeight)),
-        ];
+        float y = height - Bottom - FootHeight, left = Pad + AnswerInset, right = width - Pad - AnswerInset;
+        var divider = new RectangleF(Pad, y - FootTop, width - (2 * Pad), 1);
+        float x = history ? History(height).Right + 4 : left;
+        var dot = new RectangleF(x, y + ((FootHeight - DotSize) / 2), DotSize, DotSize);
+        var meter = cap is null ? RectangleF.Empty : new RectangleF(right - MeterWidth, y + ((FootHeight - MeterHeight) / 2), MeterWidth, MeterHeight);
+        string spend = SpendLine(spent, cap);
+        float spendRight = cap is null ? right : meter.X - FootGap, spendWidth = TextSlot.Measure(spend, Spend, right - left);
+        var spendSlot = new RectangleF(spendRight - spendWidth, y, spendWidth, FootHeight);
+        string line = steps > 0 ? string.Create(CultureInfo.InvariantCulture, $"{provider} · {steps} tool step{(steps == 1 ? "" : "s")}") : provider;
+        string costLine = CostLine(cost);
+        float from = dot.Right + FootGap, room = Math.Max(0, spendSlot.X - FootGap - from);
+        float costWidth = costLine.Length == 0 ? 0 : Math.Min(TextSlot.Measure(costLine, Cost, room), room / 3);
+        float providerWidth = Math.Min(TextSlot.Measure(line, Provider, room), room - costWidth - (costWidth > 0 ? 6 : 0));
+        float fill = cap is { } c && c > 0 ? Math.Clamp((float)(spent / c), 0, 1) * MeterWidth : 0;
+        return new(divider, dot, new TextSlot(line, Provider, new RectangleF(from, y, Math.Max(0, providerWidth), FootHeight)),
+            new TextSlot(costLine, Cost, new RectangleF(from + providerWidth + 6, y, costWidth, FootHeight)),
+            new TextSlot(spend, Spend, spendSlot), meter, cap is null ? 0 : Math.Max(MeterMin, fill));
     }
 
-    public static string SpendLine(int steps, decimal spent, decimal? cap) =>
-        string.Create(CultureInfo.InvariantCulture, $"{steps} tool step{(steps == 1 ? "" : "s")} · ${spent:0.00} today{(cap is { } c ? $" of ${c:0.00} cap" : "")}");
+    /// <summary>Today's spend against the cap: "$0.12 / $10 today", or "$0.12 today" with no cap.</summary>
+    public static string SpendLine(decimal spent, decimal? cap) =>
+        cap is { } c ? string.Create(CultureInfo.InvariantCulture, $"${spent:0.00} / ${c:0.##} today") : string.Create(CultureInfo.InvariantCulture, $"${spent:0.00} today");
+
+    /// <summary>What this answer cost, after a dot, to a tenth of a cent; empty while nothing has cost anything.</summary>
+    public static string CostLine(decimal cost) => cost > 0 ? string.Create(CultureInfo.InvariantCulture, $"· ${cost:0.00#}") : "";
+
+    /// <summary>The status dot: a send that went, one that failed, or nothing sent yet.</summary>
+    public static uint StatusDot(string provider, bool failed) => failed ? Theme.Warn : provider.StartsWith("Sent to", StringComparison.Ordinal) ? Theme.Ok : Theme.Ink3;
 
     /// <summary>
-    /// The answer's blocks laid out whole, one under the other, each where it starts from the top of the answer, and the
-    /// height of them all. Blocks in <see cref="AnswerText"/> are the model's words, read as Markdown as the drop result
-    /// reads them; while the answer is <paramref name="streaming"/> the last block shows only what has settled
-    /// (<see cref="Markdown.Settled"/>). Tool steps, an error and the follow-up line stay plain. Empty blocks take no room.
-    /// A run the last answer had is not laid out again, so a streamed word costs about the block it changed.
+    /// The answer's blocks laid out whole in the answer's column, one under the other, each where it starts from the top
+    /// of the answer, and the height of them all. Blocks in <see cref="AnswerText"/> are the model's words, read as
+    /// Markdown as the drop result reads them; the first paragraph of the first one stands in <see cref="Lead"/>. While the
+    /// answer is <paramref name="streaming"/> the last block shows only what has settled (<see cref="Markdown.Settled"/>).
+    /// Tool steps, an error and the follow-up line stay plain. Empty blocks take no room. A run the last answer had is not
+    /// laid out again, so a streamed word costs about the block it changed.
     /// </summary>
     public (IReadOnlyList<TextAt> Runs, float Height) Answer(IReadOnlyList<(string Text, TextStyle Style)> blocks, bool streaming = false)
     {
@@ -382,26 +518,44 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         }
 
         float y = 0;
+        bool lead = true;
         var runs = new List<TextAt>();
+        void Lay(IReadOnlyList<MarkdownBlock> parsed, TextStyle style)
+        {
+            float top = y + (runs.Count > 0 ? BlockGap : 0);
+            var (laid, height) = DropResultLayout.Lay(parsed, style, AnswerWidth, cut: false, maxLines: int.MaxValue, measure: Measure);
+            if (laid.Count > 0)
+            {
+                // Lay starts its runs at the drop result's padding, not the answer's column.
+                runs.AddRange(laid.Select(r => r with { At = r.At + new Vector2(AnswerX - DropResultLayout.Pad, top) }));
+                y = top + height;
+            }
+        }
+
         for (int i = 0; i < blocks.Count; i++)
         {
             var (block, style) = blocks[i];
-            float top = y + (runs.Count > 0 ? BlockGap : 0);
             if (style == AnswerText)
             {
-                string shown = streaming && i == blocks.Count - 1 ? Markdown.Settled(block) : block;
-                var (laid, height) = DropResultLayout.Lay(Markdown.Parse(shown), style, AnswerWidth, cut: false, maxLines: int.MaxValue, measure: Measure);
-                if (laid.Count > 0)
+                var parsed = Markdown.Parse(streaming && i == blocks.Count - 1 ? Markdown.Settled(block) : block);
+                if (lead && parsed.Count > 0)
                 {
-                    // Lay starts its runs at the drop result's padding, not the palette's.
-                    runs.AddRange(laid.Select(r => r with { At = r.At + new Vector2(Pad - DropResultLayout.Pad, top) }));
-                    y = top + height;
+                    // The answer's first paragraph is its lead; a list or a heading first is not.
+                    lead = false;
+                    int first = parsed[0].Kind == MarkdownKind.Paragraph ? 1 : 0;
+                    Lay([.. parsed.Take(first)], Lead);
+                    Lay([.. parsed.Skip(first)], AnswerText);
+                }
+                else
+                {
+                    Lay(parsed, AnswerText);
                 }
             }
             else if (block.Length > 0)
             {
+                float top = y + (runs.Count > 0 ? BlockGap : 0);
                 var size = Measure(new TextRun(block, style, AnswerWidth, Lines: int.MaxValue));
-                runs.Add(new(new TextRun(block, style, AnswerWidth, size.Lines), new Vector2(Pad, top)));
+                runs.Add(new(new TextRun(block, style, AnswerWidth, size.Lines), new Vector2(AnswerX, top)));
                 y = top + size.Height;
             }
         }
@@ -409,8 +563,8 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         return (runs, y);
     }
 
-    /// <summary>Where the answer shows in a palette of <paramref name="height"/>: under the chips, above the question and the footer. It scrolls inside.</summary>
-    public RectangleF AnswerBand(float height) => new(0, AnswerTop, width, Math.Max(0, height - Bottom - FootHeight - Gap - AskRoom - AnswerTop));
+    /// <summary>Where the answer shows in a palette of <paramref name="height"/>: under the card, above the actions, the question and the footer. It scrolls inside.</summary>
+    public RectangleF AnswerBand(float height) => new(0, AnswerTop, width, Math.Max(0, height - Bottom - FootRoom - Gap - AskRoom - ActionRoom - AnswerTop));
 
     public float MaxScroll(float answer, float height) => Math.Max(0, answer - AnswerBand(height).Height);
 
@@ -430,35 +584,40 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>Pinned to the end: scrolled to the end, or to where the end shows anyway.</summary>
     public bool AtEnd(float scroll, float answer, float height) => scroll >= MaxScroll(answer, height) - 0.5f;
 
-    private float IncludeWidth => includeWidth ??= TextSlot.Measure(Include, Chip, ChipMaxText);
+    private (IReadOnlyList<LaidChip> Chips, int Rows, bool Shared) Laid => row ??= LayChips();
 
-    private List<LaidChip> LayChips()
+    private (IReadOnlyList<LaidChip>, int, bool) LayChips()
     {
-        const float Fixed = 2 * ChipPadX + IconSize + IconGap + MarkGap + MarkSize;
-        float start = Pad + IncludeWidth + IncludeGap, x = start, y = ChipsTop, right = width - Pad;
+        float start = RoomLeft, right = RoomRight, x = start;
+        int rows = chips is { Count: > 0 } ? 1 : 0;
         var laid = new List<LaidChip>();
-        foreach (var (name, icon, on) in chips ?? [])
+        foreach (var (name, icon, on, thumb) in chips ?? [])
         {
-            var style = on ? ChipOn : Chip;
-            float w = Fixed + TextSlot.Measure(name, style, Math.Min(ChipMaxText, right - start - Fixed));
+            var style = thumb ? ThumbLabel : on ? ChipOn : Chip;
+            float lead = thumb ? ThumbInset + ThumbWidth + ThumbGap : ChipPadX + IconSize + IconGap;
+            float fixedWidth = lead + MarkGap + MarkSize + ChipPadX;
+            float w = fixedWidth + TextSlot.Measure(name, style, Math.Max(0, Math.Min(ChipMaxText, right - start - fixedWidth)));
             if (x > start && x + w > right)
             {
-                (x, y) = (start, y + ChipHeight + ChipGap);
+                (x, rows) = (start, rows + 1);
             }
 
-            float middle = y + ChipHeight / 2, labelX = x + ChipPadX + IconSize + IconGap;
-            var mark = new RectangleF(x + w - ChipPadX - MarkSize, middle - MarkSize / 2, MarkSize, MarkSize);
-            laid.Add(new(new RectangleF(x, y, w, ChipHeight), new RectangleF(x + ChipPadX, middle - IconSize / 2, IconSize, IconSize),
-                new TextSlot(name, style, new RectangleF(labelX, y, mark.X - MarkGap - labelX, ChipHeight)), mark, on));
+            float h = thumb ? ThumbChipHeight : ChipHeight, rowTop = Top + PromptInset + ((rows - 1) * (RowHeight + RowGap));
+            float y = rowTop + ((RowHeight - h) / 2), middle = y + (h / 2), labelX = x + lead;
+            var picture = thumb ? new RectangleF(x + ThumbInset, middle - (ThumbHeight / 2), ThumbWidth, ThumbHeight) : new RectangleF(x + ChipPadX, middle - (IconSize / 2), IconSize, IconSize);
+            var mark = new RectangleF(x + w - ChipPadX - MarkSize, middle - (MarkSize / 2), MarkSize, MarkSize);
+            laid.Add(new(new RectangleF(x, y, w, h), picture, new TextSlot(name, style, new RectangleF(labelX, y, mark.X - MarkGap - labelX, h)), mark, on, thumb));
             x += w + ChipGap;
         }
 
-        return laid;
+        // One row of chips that leaves the text box its room shares the row with it.
+        bool shared = rows <= 1 && (laid.Count == 0 || laid[^1].Box.Right + ChipEditorGap + MinEditor <= right);
+        return (laid, rows, shared);
     }
 }
 
-/// <summary>One closed figure of a glyph: filled, or stroked <see cref="PaletteGlyphs.Stroke"/> wide along its outline.</summary>
-public readonly record struct GlyphFigure(OutlineSegment[] Path, bool Stroked = false);
+/// <summary>One figure of a glyph: filled, or stroked <see cref="PaletteGlyphs.Stroke"/> wide along its outline. Closed unless <paramref name="Open"/>.</summary>
+public readonly record struct GlyphFigure(OutlineSegment[] Path, bool Stroked = false, bool Open = false);
 
 /// <summary>
 /// The palette's glyphs in DIPs from their box's top-left corner: a chip's picture in a 16 box, its "+" and tick in a

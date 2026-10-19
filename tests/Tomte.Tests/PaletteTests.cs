@@ -449,7 +449,7 @@ public class PaletteTests : IDisposable
         var chips = ContextChips.For(ContextChips.Lasso([1], 200, 100), "hi", "notepad", "notes.txt - Notepad", _ => Task.FromResult(Array.Empty<byte>()), shelf, _scratchpad);
         chips[2].On = true;
         Assert.Equal(
-            [new("Region", ChipIcon.Region, true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, true), new("Screenshot", ChipIcon.Screenshot, false), new("Shelf", ChipIcon.Shelf, false), new ChipSpec("Note", ChipIcon.Note, false)],
+            [new("Region", ChipIcon.Region, true, Thumb: true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, true), new("Screenshot", ChipIcon.Screenshot, false), new("Shelf", ChipIcon.Shelf, false), new ChipSpec("Note", ChipIcon.Note, false)],
             chips.Select(c => c.Spec));
 
         // Nothing selected and an empty shelf: those chips have nothing to add, and the palette leaves them out.
@@ -636,24 +636,26 @@ public class PaletteLayoutTests
     }
 
     [Fact]
-    public void ChipsAreTogglesWithAPictureANameAndAMarkAfterInclude()
+    public void ChipsAreTogglesWithAPictureANameAndAMarkFirstInThePrompt()
     {
-        ChipSpec[] chips = [new("Region", ChipIcon.Region, true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, false), new("Screenshot", ChipIcon.Screenshot, true), new("Shelf", ChipIcon.Shelf, false), new("Note", ChipIcon.Note, false)];
-        var layout = new PaletteLayout(640, mascot: true, chips: chips);
+        ChipSpec[] chips = [new("Region", ChipIcon.Region, true, Thumb: true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, false), new("Screenshot", ChipIcon.Screenshot, true), new("Shelf", ChipIcon.Shelf, false), new("Note", ChipIcon.Note, false)];
+        var layout = new PaletteLayout(720, mascot: true, chips: chips, send: true);
 
-        // "Include" first, in the first row; the chips after it, each as tall as its click area must be.
-        var include = layout.IncludeLabel;
-        Assert.Equal(("Include", PaletteLayout.Pad, layout.ChipsTop), (include.Text, include.Slot.X, include.Slot.Y));
-        Assert.True(layout.Chips[0].Box.X >= include.Slot.Right + PaletteLayout.IncludeGap - 0.01f);
         Assert.All(layout.Chips, chip =>
         {
-            Assert.Equal(Tomte.Core.Interaction.StateLook.ChipHeight, chip.Box.Height);
+            // 30 high and round, or as tall as the card's row with the region's thumbnail; inside the card.
+            Assert.Equal(chip.Thumb ? PaletteLayout.ThumbChipHeight : PaletteLayout.ChipHeight, chip.Box.Height);
+            Assert.True(layout.Prompt.Contains(chip.Box));
             // The picture, the name and the mark sit inside the pill, left to right, without touching.
             Assert.True(chip.Box.Contains(chip.Icon) && chip.Box.Contains(chip.Mark));
             Assert.True(chip.Icon.Right < chip.Label.Slot.X && chip.Label.Slot.Right < chip.Mark.X);
             Assert.Equal(chip.Box.Y + chip.Box.Height / 2, chip.Icon.Y + chip.Icon.Height / 2, 2);
             Assert.Equal(chip.Box.Y + chip.Box.Height / 2, chip.Mark.Y + chip.Mark.Height / 2, 2);
         });
+        var region = layout.Chips[0];
+        Assert.Equal((PaletteLayout.ThumbWidth, PaletteLayout.ThumbHeight), (region.Icon.Width, region.Icon.Height));
+        Assert.Equal((PaletteLayout.ThumbChipCorner, PaletteLayout.ChipCorner), (region.Corner, layout.Chips[1].Corner));
+        Assert.Equal(PaletteLayout.ThumbLabel, region.Label.Style);
 
         // On or off as asked, in the on style; no two pills overlap; a row that wraps starts under the first chip.
         Assert.Equal([true, false, false, true, false, false], layout.Chips.Select(c => c.On));
@@ -664,40 +666,42 @@ public class PaletteLayoutTests
             Assert.False(layout.Chips[i].Box.IntersectsWith(layout.Chips[i - 1].Box));
         }
 
-        var wrapped = layout.Chips.First(c => c.Box.Y > layout.ChipsTop);
-        Assert.Equal(layout.Chips[0].Box.X, wrapped.Box.X);
-        Assert.Equal(layout.ChipsTop + PaletteLayout.ChipHeight + PaletteLayout.ChipGap, wrapped.Box.Y);
+        var wrapped = layout.Chips.First(c => c.Box.Y > region.Box.Bottom);
+        Assert.Equal(region.Box.X, wrapped.Box.X);
+        Assert.Equal(layout.Prompt.Y + PaletteLayout.PromptInset + PaletteLayout.RowHeight + PaletteLayout.RowGap, wrapped.Box.Y - ((PaletteLayout.RowHeight - PaletteLayout.ChipHeight) / 2), 2);
 
-        // With no chips there is no "Include" and the answer starts under the prompt.
-        var none = new PaletteLayout(640, mascot: true);
-        Assert.Equal("", none.IncludeLabel.Text);
+        // With no chips the text box starts at the card's left inset.
+        var none = new PaletteLayout(720, mascot: true);
         Assert.Empty(none.Chips);
+        Assert.Equal(none.Prompt.X + PaletteLayout.PromptInsetLeft, none.Editor.X);
 
-        // The line of what the send carries sits under the chips, where they start, and the answer moves down for it.
-        var line = new PaletteLayout(640, mascot: true, chips: chips, sends: "Sends your question and the region you circled");
+        // The line of what the send carries sits under the card, and the answer moves down for it.
+        var line = new PaletteLayout(720, mascot: true, chips: chips, send: true, sends: "Sends your question and the region you circled");
         var sends = line.SendsLine;
-        Assert.Equal(layout.Chips[^1].Box.Bottom + PaletteLayout.ChipGap, sends.Slot.Y);
-        Assert.Equal(layout.Chips[0].Box.X, sends.Slot.X);
+        Assert.Equal(line.Prompt.Bottom + PaletteLayout.BlockGap, sends.Slot.Y);
         Assert.Equal(sends.Slot.Bottom + PaletteLayout.Gap, line.AnswerTop);
-        Assert.Equal(layout.AnswerTop + PaletteLayout.ChipGap + PaletteLayout.SendsHeight, line.AnswerTop, 2);
+        Assert.Equal(layout.AnswerTop + PaletteLayout.BlockGap + PaletteLayout.SendsHeight, line.AnswerTop, 2);
         Assert.Equal("", layout.SendsLine.Text);
     }
 
     [Fact]
     public void SendSitsAtThePromptsRightEndAndWorksOnlyWithSomethingToSend()
     {
-        var plain = new PaletteLayout(640, mascot: true);
-        var layout = new PaletteLayout(640, mascot: true, text: 52, send: true);
+        var plain = new PaletteLayout(720, mascot: true);
+        var layout = new PaletteLayout(720, mascot: true, text: 52, send: true);
         Assert.Equal(System.Drawing.RectangleF.Empty, plain.Send);
 
         // Inside the card at its right end, level with the last line as the box grows; the text box stops short of it.
         var card = layout.Prompt;
         var send = layout.Send;
+        Assert.Equal((PaletteLayout.SendSize, PaletteLayout.SendSize), (send.Width, send.Height));
         Assert.Equal(card.Right - PaletteLayout.SendInset, send.Right);
         Assert.Equal(card.Bottom - PaletteLayout.SendInset, send.Bottom);
-        Assert.True(send.Width >= Tomte.Core.Interaction.StateLook.MinTarget && send.Height >= Tomte.Core.Interaction.StateLook.MinTarget);
         Assert.Equal(send.X - PaletteLayout.SendGap, layout.Editor.Right, 2);
         Assert.Equal(plain.Editor.X, layout.Editor.X);
+        // One line: Send fills the card's row, the card its least.
+        var one = new PaletteLayout(720, mascot: true, send: true);
+        Assert.Equal(one.Prompt.Y + PaletteLayout.PromptInset, one.Send.Y);
 
         Assert.False(PaletteLayout.CanSend("", sending: false));
         Assert.False(PaletteLayout.CanSend(" \r\n", sending: false));
@@ -708,11 +712,11 @@ public class PaletteLayoutTests
     [Fact]
     public void TheBackArrowSitsBetweenTheTomteAndThePromptOnlyWhenOpenedFromThePanels()
     {
-        var plain = new PaletteLayout(640, mascot: true);
-        var back = new PaletteLayout(640, mascot: true, back: true);
+        var plain = new PaletteLayout(720, mascot: true);
+        var back = new PaletteLayout(720, mascot: true, back: true);
         Assert.Equal(System.Drawing.RectangleF.Empty, plain.Back);
 
-        // After the tomte, level with the prompt's first line; the prompt moves right by the arrow and its gap.
+        // After the tomte, level with the card's first row; the card moves right by the arrow and its gap.
         var arrow = back.Back;
         Assert.True(arrow.Left >= MascotArt.InsetX + MascotArt.SizeDips);
         Assert.Equal(plain.Prompt.Y + (PaletteLayout.PromptHeight / 2), arrow.Y + (arrow.Height / 2));
@@ -720,13 +724,13 @@ public class PaletteLayoutTests
         Assert.Equal(plain.Prompt.Right, back.Prompt.Right);
         Assert.True(arrow.Width >= Tomte.Core.Interaction.StateLook.MinTarget);
         // With the tomte off it starts at the padding.
-        Assert.Equal(PaletteLayout.Pad, new PaletteLayout(640, mascot: false, back: true).Back.X);
+        Assert.Equal(PaletteLayout.Pad, new PaletteLayout(720, mascot: false, back: true).Back.X);
     }
 
     [Fact]
     public void PageDownAndPageUpMoveTheAnswerByItsBandLessALineAndStopAtItsEnds()
     {
-        var layout = new PaletteLayout(640, mascot: true);
+        var layout = new PaletteLayout(720, mascot: true);
         float height = (float)PanelSize.PaletteMaxHeight, answer = 2000, band = layout.AnswerBand(height).Height;
         float page = band - (PaletteLayout.WheelStep / 3);
 
@@ -741,8 +745,8 @@ public class PaletteLayoutTests
     [Fact]
     public void GlyphsStayInTheirBoxes()
     {
-        foreach (var (figures, size) in Enum.GetValues<ChipIcon>().Select(i => (PaletteGlyphs.Icon(i), PaletteLayout.IconSize))
-            .Append((PaletteGlyphs.Plus, PaletteLayout.MarkSize)).Append((PaletteGlyphs.Tick, PaletteLayout.MarkSize)).Append((PaletteGlyphs.Send, PaletteGlyphs.SendSize))
+        foreach (var (figures, size) in Enum.GetValues<ChipIcon>().Select(i => (PaletteGlyphs.Icon(i), PaletteGlyphs.SendSize))
+            .Append((PaletteGlyphs.Plus, 10f)).Append((PaletteGlyphs.Tick, 10f)).Append((PaletteGlyphs.Send, PaletteGlyphs.SendSize))
             .Append((PaletteGlyphs.Back, PaletteGlyphs.SendSize)))
         {
             Assert.All(figures.SelectMany(f => f.Path.Select(s => (s.End, f.Stroked))), p =>

@@ -21,7 +21,7 @@ namespace Tomte.Tests;
 public sealed class DropZoneTests : IDisposable
 {
     private const string Report = "Q3 report\nRevenue went up 12%.\nCosts held flat.\n";
-    private static readonly IslandGeometry Surface = IslandGeometry.ShelfDrop;
+    private const double Surface = DropZoneLayout.Width;
     private readonly string _dir = Path.Combine(Path.GetTempPath(), $"tomte-zones-{Guid.NewGuid():N}");
     private readonly List<string> _opened = [];
     private readonly List<ToolRequest> _asked = [];
@@ -75,65 +75,147 @@ public sealed class DropZoneTests : IDisposable
 
     private static List<string?> UserTexts(JsonNode body) => [.. body["messages"]!.AsArray().Where(m => (string?)m!["role"] == "user").SelectMany(m => m!["content"] is JsonArray parts ? parts.Select(p => (string?)p!["text"]) : [(string?)m!["content"]])];
 
-    // The surface
+    // The pill and the zones
 
     [Fact]
     public void WithoutAProviderNoZoneIsDrawn()
     {
-        Assert.Null(DropZoneLayout.For(null, null, Surface.Width, Surface.Depth));
-        Assert.Null(DropZoneLayout.For("", "notes", Surface.Width, Surface.Depth));
+        Assert.Null(DropZoneLayout.For(null, null, Surface));
+        Assert.Null(DropZoneLayout.For("", "notes", Surface));
     }
 
     [Fact]
     public void TheSettingsDecideWhetherZonesShowAndWhatTheSlotCarries()
     {
         var noModel = new TomteSettings { Provider = new ProviderConfig("api.anthropic.com", ProviderKind.Anthropic) };
-        Assert.Null(DropZoneLayout.For(new TomteSettings(), Surface.Width, Surface.Depth));
-        Assert.Null(DropZoneLayout.For(noModel, Surface.Width, Surface.Depth));
-        Assert.Null(DropZoneLayout.For(noModel with { Provider = noModel.Provider! with { DefaultModel = "" } }, Surface.Width, Surface.Depth));
+        Assert.Null(DropZoneLayout.For(new TomteSettings(), Surface));
+        Assert.Null(DropZoneLayout.For(noModel, Surface));
+        Assert.Null(DropZoneLayout.For(noModel with { Provider = noModel.Provider! with { DefaultModel = "" } }, Surface));
         Assert.False(DropZoneLayout.HasProvider(noModel));
 
         var set = noModel with { Provider = noModel.Provider! with { DefaultModel = "claude-sonnet-4-5" } };
         Assert.True(DropZoneLayout.HasProvider(set));
-        var layout = DropZoneLayout.For(set, Surface.Width, Surface.Depth)!;
+        var layout = DropZoneLayout.For(set, Surface)!;
         Assert.True(layout.SlotEmpty);
-        Assert.Equal("Summarize: sends the file to api.anthropic.com", layout.Says(DropZone.Summarize));
+        // The company, not the host its key goes to; any other server by its host.
+        Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Summarize));
+        var local = new TomteSettings { Provider = Ollama };
+        Assert.Equal("Sends to ollama", DropZoneLayout.For(local, Surface)!.Sub(DropZone.Rename));
 
         // A picked skill shows only while it is on, by its own name, not one that starts the same way.
         Assert.Null(DropZoneLayout.SlotSkill(set with { DropZoneSkill = "notes" }));
         Assert.Null(DropZoneLayout.SlotSkill(set with { DropZoneSkill = "notes", EnabledSkills = ["notes-two#1a2b"] }));
         var on = set with { DropZoneSkill = "notes", EnabledSkills = ["other#9f", "notes#1a2b"] };
         Assert.Equal("notes", DropZoneLayout.SlotSkill(on));
-        Assert.False(DropZoneLayout.For(on, Surface.Width, Surface.Depth)!.SlotEmpty);
+        Assert.False(DropZoneLayout.For(on, Surface)!.SlotEmpty);
+    }
+
+    [Theory]
+    [InlineData(1000, 1)]
+    [InlineData(900, 1)]
+    [InlineData(899, 2)]
+    [InlineData(768, 2)]
+    public void SixTilesShareARowFrom900WideAndMakeTwoRowsOfThreeBelow(double width, int rows)
+    {
+        var layout = DropZoneLayout.For("Anthropic", null, width)!;
+        Assert.Equal([DropZone.Shelf, DropZone.Summarize, DropZone.Ask, DropZone.Tables, DropZone.Rename, DropZone.Skill], layout.Zones.Select(z => z.Zone));
+        Assert.Equal(rows, layout.Zones.Select(z => z.Rect.Y).Distinct().Count());
+        float left = (float)(-width / 2) + DropZoneLayout.PadSide;
+        int columns = rows == 1 ? 6 : 3;
+        for (int i = 0; i < layout.Zones.Count; i++)
+        {
+            var rect = layout.Zones[i].Rect;
+            Assert.Equal(DropZoneLayout.TileHeight, rect.Height);
+            Assert.Equal(DropZoneLayout.PadTop + DropZoneLayout.HeadHeight + DropZoneLayout.HeadGap + (i / columns * (128 + 8)), rect.Y, 3);
+            if (i % columns == 0)
+            {
+                Assert.Equal(left, rect.X, 3);
+            }
+            else
+            {
+                Assert.Equal(DropZoneLayout.TileGap, rect.X - layout.Zones[i - 1].Rect.Right, 3);
+            }
+
+            if (i % columns == columns - 1)
+            {
+                Assert.Equal(-left, rect.Right, 3);
+            }
+        }
+
+        // The panel: 14 above the head, 12 between the rows of things, 16 below the line.
+        Assert.Equal(layout.Zones[^1].Rect.Bottom + 12 + 16 + 16, layout.Height, 3);
+        Assert.Equal(rows == 1 ? 222 : 358, layout.Height, 3);
+        Assert.Equal(layout.Zones[^1].Rect.Bottom + 12, layout.FootSlot.Slot.Y, 3);
+        Assert.Equal(DropZoneLayout.Foot, layout.FootSlot.Text);
     }
 
     [Fact]
-    public void TheZonesSitInARowBesideTheShelfAndTheirWordsFit()
+    public void EachTileSaysWhatItDoesAndWhetherAnythingIsSent()
     {
-        var all = ShelfLayout.DropTarget(Surface.Width, Surface.Depth);
-        foreach (string? skill in new[] { null, "invoice-parser" })
-        {
-            var layout = DropZoneLayout.For("ollama", skill, Surface.Width, Surface.Depth)!;
-            Assert.Equal([DropZone.Summarize, DropZone.Ask, DropZone.Tables, DropZone.Rename, DropZone.Skill], layout.Zones.Select(z => z.Zone));
-            Assert.Equal(skill is null, layout.SlotEmpty);
-            Assert.Equal(all.X, layout.Target.X);
-            Assert.Equal(all.Right, layout.Zones[^1].Rect.Right, 3);
-            Assert.True(layout.Target.Width >= 60, $"the shelf's target is {layout.Target.Width} DIP wide");
-            float right = layout.Target.Right;
-            foreach (var (zone, rect) in layout.Zones)
-            {
-                Assert.Equal(DropZoneLayout.Gap, rect.X - right, 3);
-                right = rect.Right;
-                var words = layout.ZoneText(zone, rect);
-                using var laid = TextLayout.Of(words.Run);
-                Assert.True(!laid.Trimmed || zone == DropZone.Skill, $"{DropZoneLayout.Label(zone, skill)} is cut");
-                Assert.InRange(words.At.Y, rect.Y, rect.Bottom - laid.Height);
-            }
+        var layout = DropZoneLayout.For("Anthropic", null, Surface)!;
+        Assert.Equal(["Keep on shelf", "Summarize", "Ask about it", "Tables to CSV", "Rename by content", "Add a skill"], layout.Zones.Select(z => DropZoneLayout.Label(z.Zone, null)));
+        Assert.Equal("Nothing is sent", layout.Sub(DropZone.Shelf));
+        Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Summarize));
+        Assert.Equal("Opens Ask · nothing sent yet", layout.Sub(DropZone.Ask));
+        Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Tables));
+        Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Rename));
+        Assert.Equal("Pick one in Settings", layout.Sub(DropZone.Skill));
+        Assert.Equal("Sends to Anthropic", DropZoneLayout.For("Anthropic", "notes", Surface)!.Sub(DropZone.Skill));
+        Assert.Equal("notes", DropZoneLayout.Label(DropZone.Skill, "notes"));
+        Assert.All(Enum.GetValues<DropZone>(), z => Assert.DoesNotContain("—", layout.Sub(z)));
 
-            using var target = TextLayout.Of(layout.TargetText().Label.Run);
-            Assert.False(target.Trimmed);
-            Assert.True(layout.Line.Bottom <= Surface.Depth - 10);
+        // In the narrowest tile the monitor allows, the glyph sits at the top, the name and its line at the foot, whole.
+        var narrow = DropZoneLayout.For("Anthropic", null, 768)!;
+        foreach (var (zone, rect) in narrow.Zones.Concat(layout.Zones))
+        {
+            var (glyph, label, sub) = layout.TileText(zone, rect.Size);
+            Assert.Equal(new System.Drawing.RectangleF(14, 14, 22, 22), glyph);
+            Assert.Equal(rect.Height - 14, sub.Slot.Bottom, 3);
+            Assert.True(label.Slot.Bottom <= sub.Slot.Top);
+            Assert.True(label.Slot.Top >= glyph.Bottom);
+            using var name = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
+            Assert.False(name.Trimmed, $"{label.Text} is cut at {rect.Width}");
         }
+
+        using var foot = TextLayout.Of(new TextRun(narrow.FootSlot.Text, narrow.FootSlot.Style, narrow.FootSlot.Slot.Width));
+        Assert.False(foot.Trimmed);
+    }
+
+    [Fact]
+    public void TheHeadNamesTheFileItsSizeAndItsEstimate()
+    {
+        Assert.Equal("1.2 MB · about 1,090 tokens", DropZoneLayout.Facts(1_258_291, 1090));
+        Assert.Equal("1.2 MB", DropZoneLayout.Facts(1_258_291, null));
+        Assert.Equal("about 40 tokens", DropZoneLayout.Facts(null, 40));
+        Assert.Equal("", DropZoneLayout.Facts(null, null));
+
+        var layout = DropZoneLayout.For("Anthropic", null, Surface)!;
+        var head = layout.Head("cover.png", DropZoneLayout.Facts(1_258_291, 1090), mascot: true);
+        Assert.Equal("cover.png", head[0].Text);
+        Assert.Equal(DropZoneLayout.Seat.After(CompactLayout.Gap) - 500, head[0].Slot.X, 3);
+        Assert.Equal(head[0].Slot.Right + CompactLayout.Gap, head[1].Slot.X, 3);
+        Assert.Equal(DropZoneLayout.Hint, head[2].Text);
+        Assert.Equal(500 - 16 - 6, head[2].Slot.Right, 3);
+        Assert.True(head[1].Slot.Right <= head[2].Slot.Left);
+        foreach (var line in head)
+        {
+            using var laid = TextLayout.Of(new TextRun(line.Text, line.Style, line.Slot.Width));
+            Assert.False(laid.Trimmed, line.Text);
+        }
+
+        // A name too long for the row is cut, never the size or the hint; without the tomte the name starts at the inset.
+        var longOne = layout.Head(new string('a', 300) + ".pdf", "1.2 MB", mascot: false);
+        Assert.Equal(-500 + 16 + 6, longOne[0].Slot.X, 3);
+        Assert.True(longOne[1].Slot.Right <= longOne[2].Slot.Left);
+        Assert.Equal("1.2 MB", longOne[1].Text);
+    }
+
+    // The tomte sits on the head row, its art in line with the tiles' content and centred on the row.
+    [Fact]
+    public void TheTomteSitsOnTheHeadRow()
+    {
+        Assert.Equal(DropZoneLayout.PadTop + (DropZoneLayout.HeadHeight / 2), DropZoneLayout.Seat.Row);
+        Assert.Equal(DropZoneLayout.PadSide + DropZoneLayout.HeadInset, DropZoneLayout.Seat.Left);
     }
 
     public static TheoryData<double> Scales => [1.0, 1.25, 1.5];
@@ -144,8 +226,8 @@ public sealed class DropZoneTests : IDisposable
     {
         // The drop point comes in pixels; the island maps it into island space, whose origin is one pixel in plus half
         // the outline's width, carrying the scale.
-        var layout = DropZoneLayout.For("ollama", "notes", Surface.Width, Surface.Depth)!;
-        float originX = 1 + (float)(Surface.OuterWidth / 2 * scale);
+        var layout = DropZoneLayout.For("Anthropic", "notes", Surface)!;
+        float originX = 1 + (float)(Surface / 2 * scale);
         (int, int) Pixel(float x, float y) => ((int)Math.Round(originX + x * scale), (int)Math.Round(1 + y * scale));
         DropZone At(int px, int py) => layout.At(PanelSpace.FromPixels(px, py, originX, 1, scale));
         foreach (var (zone, rect) in layout.Zones)
@@ -156,36 +238,65 @@ public sealed class DropZoneTests : IDisposable
             var (right, bottom) = Pixel(rect.Right, rect.Bottom);
             Assert.Equal(zone, At(left + 2, top + 2));
             Assert.Equal(zone, At(right - 2, bottom - 2));
-            // Two pixels out of a zone is the gap or the line below, which belong to the shelf.
-            Assert.Equal(DropZone.Shelf, At(left - 2, cy));
+            // Two pixels out of a zone is a gap, the head or the line below, which belong to the shelf.
             Assert.Equal(DropZone.Shelf, At(cx, bottom + 2));
+            Assert.Equal(DropZone.Shelf, At(cx, top - 2));
         }
 
-        var (tx, ty) = Pixel(layout.Target.X + layout.Target.Width / 2, layout.Target.Y + layout.Target.Height / 2);
-        Assert.Equal(DropZone.Shelf, At(tx, ty));
-
         // With no skill picked the slot is drawn empty, and a drop on it goes on the shelf like anywhere else.
-        var empty = DropZoneLayout.For("ollama", null, Surface.Width, Surface.Depth)!;
+        var empty = DropZoneLayout.For("Anthropic", null, Surface)!;
         var slot = empty.Zones[^1].Rect;
         Assert.Equal(DropZoneLayout.EmptySlot, DropZoneLayout.Label(DropZone.Skill, null));
         var (sx, sy) = Pixel(slot.X + slot.Width / 2, slot.Y + slot.Height / 2);
         Assert.Equal(DropZone.Shelf, empty.At(PanelSpace.FromPixels(sx, sy, originX, 1, scale)));
-        Assert.Equal(empty.Says(DropZone.Shelf), empty.Says(DropZone.Skill));
     }
 
+    // The pill's words are one group centred across it, clear of the tomte and inside the dashed ring.
     [Fact]
-    public void TheLineSaysWhatADropDoesAndWhereTheFileGoes()
+    public void ThePillSaysDropOnTheShelfAndOffersTheHoldOnlyWithZones()
     {
-        var layout = DropZoneLayout.For("ollama", "notes", Surface.Width, Surface.Depth)!;
-        Assert.Equal("Summarize: sends the file to ollama", layout.Says(DropZone.Summarize));
-        Assert.Equal("Tables to CSV: sends the file to ollama", layout.Says(DropZone.Tables));
-        Assert.Equal("Rename by content: sends the file to ollama", layout.Says(DropZone.Rename));
-        Assert.Equal("notes: sends the file to ollama with this skill", layout.Says(DropZone.Skill));
-        Assert.EndsWith("nothing is sent yet", layout.Says(DropZone.Ask));
-        Assert.EndsWith("nothing is sent", layout.Says(DropZone.Shelf));
-        Assert.All(Enum.GetValues<DropZone>(), z => Assert.DoesNotContain("—", layout.Says(z)));
-        // Each sentence fits the line under the row.
-        Assert.All(Enum.GetValues<DropZone>(), z => Assert.True(TextSlot.Measure(layout.Says(z), DropZoneLayout.LineStyle, 1000) <= layout.Line.Width, layout.Says(z)));
+        var g = IslandGeometry.ShelfDrop;
+        foreach (bool hint in new[] { true, false })
+        {
+            var (glyph, label, more) = DropZoneLayout.Pill(hint);
+            Assert.Equal("Drop on the shelf", label.Text);
+            Assert.Equal(hint ? "or hold for actions" : "", more.Text);
+            float right = hint ? more.Slot.Right : label.Slot.Right;
+            Assert.Equal(0, (glyph.X + right) / 2, 3);
+            Assert.Equal(glyph.Right + CompactLayout.Gap, label.Slot.X, 3);
+            Assert.Equal(g.Depth / 2, glyph.Y + (glyph.Height / 2), 3);
+            Assert.True(glyph.X >= MascotArt.Box(g).Right, "the group clears the tomte");
+            Assert.True(right <= (g.Width / 2) - DropZoneLayout.RingInset - 10, "the group stays inside the ring");
+            using var laid = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
+            Assert.False(laid.Trimmed);
+        }
+    }
+
+    // A drag held still on the pill for 600 ms opens the zones; moving on starts the wait again, and leaving ends it.
+    [Fact]
+    public void HoldingTheDragStillOpensTheZones()
+    {
+        Assert.Equal(600, DropHold.HoldMs);
+        var hold = new DropHold();
+        Assert.False(hold.Due(10_000));
+        Assert.True(hold.Over(new(0, 20), 1000));
+        Assert.False(hold.Over(new(4, 22), 1300)); // a tremor is still held
+        Assert.False(hold.Due(1599));
+        Assert.Equal(1, hold.Left(1599));
+        Assert.True(hold.Due(1600));
+
+        // A real move starts it again from there.
+        Assert.True(hold.Over(new(40, 20), 1700));
+        Assert.False(hold.Due(2200));
+        Assert.True(hold.Due(2300));
+
+        // Leaving the pill (or the zones opening) ends the wait; coming back starts it afresh.
+        hold.Reset();
+        Assert.False(hold.Due(9000));
+        Assert.Equal(0, hold.Left(9000));
+        Assert.True(hold.Over(new(40, 20), 9000));
+        Assert.False(hold.Due(9599));
+        Assert.True(hold.Due(9600));
     }
 
     // What each zone sends and what comes back
@@ -416,7 +527,7 @@ public sealed class DropZoneTests : IDisposable
     public void APressOnTheResultLandsOnItsTileOrChoiceAtEveryScale(double scale)
     {
         var result = new DropResult("Tables to CSV · sales.pdf", "Sent to ollama · llama3.2:3b", "2 files kept on the shelf.", false, "The file has two tables.",
-            [new("sales table 1.csv", ResultTile.OnShelf, 0x2E8B57), new("sales table 2.csv", ResultTile.OnShelf, 0x2E8B57)], ["Truncate: send the start.", "Cancel: send nothing."]);
+            [new("sales table 1.csv", ResultTile.OnShelf, Theme.KindPicture), new("sales table 2.csv", ResultTile.OnShelf, Theme.KindPicture)], ["Truncate: send the start.", "Cancel: send nothing."]);
         float width = (float)PanelSize.PaletteWidth;
         var layout = new DropResultLayout(result, width, mascot: true);
         var shape = IslandGeometry.Panel(width, layout.Height);

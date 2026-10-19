@@ -92,25 +92,30 @@ public class PanelTests
     [Fact]
     public void EveryPanelHasItsSize()
     {
-        Assert.Equal((560, 140), PanelSize.Of(PanelId.Media));
-        Assert.Equal((560, 300), PanelSize.Of(PanelId.Shortcuts));
-        Assert.Equal((560, 320), PanelSize.Of(PanelId.Scratchpad));
-        Assert.Equal((560, 260), PanelSize.Of(PanelId.Shelf));
-        Assert.Equal((560, 360), PanelSize.Of(PanelId.Clipboard));
-        Assert.Equal((560, 400), PanelSize.Of(PanelId.History));
+        Assert.Equal((760, HomeLayout.Height), PanelSize.Of(PanelId.Home));
+        Assert.Equal((760, 172), PanelSize.Of(PanelId.Media));
+        Assert.Equal((760, 310), PanelSize.Of(PanelId.Shortcuts));
+        Assert.Equal((760, 330), PanelSize.Of(PanelId.Scratchpad));
+        Assert.Equal((760, 500), PanelSize.Of(PanelId.Shelf));
+        Assert.Equal((760, 480), PanelSize.Of(PanelId.Clipboard));
+        Assert.Equal((760, 410), PanelSize.Of(PanelId.History));
     }
 
     [Fact]
-    public void TheTabStripIsTheSameOnEveryTab()
+    public void TheTabRowIsTheSameOnEveryTab()
     {
-        // One width for every panel: a label is where it was on the tab before, so a click goes to the tab it was aimed at.
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
+        // One width for every panel: with the same tab current, every tab and button is where it was on any other panel.
+        var all = Enum.GetValues<PanelId>();
         Assert.All(all, id => Assert.Equal(PanelSize.Width, PanelSize.Of(id).W));
         foreach (bool mascot in new[] { true, false })
         {
-            var onShelf = TabStrip.Labels(all, PanelId.Shelf, (float)PanelSize.Width, mascot).Select(l => (l.Text, l.Slot)).ToList();
-            Assert.Equal(all.Length, onShelf.Count);
-            Assert.All(all, current => Assert.Equal(onShelf, TabStrip.Labels(all, current, (float)PanelSize.Of(current).W, mascot).Select(l => (l.Text, l.Slot))));
+            foreach (var current in all)
+            {
+                var here = TabStrip.Layout(all, current, (float)PanelSize.Width, mascot, "Win+Alt+Space", 8);
+                Assert.All(all, other => Assert.Equal(here.Tabs, TabStrip.Layout(all, current, (float)PanelSize.Of(other).W, mascot, "Win+Alt+Space", 8).Tabs));
+                // The rail starts at the same place whichever tab is current.
+                Assert.Equal(here.Rail.X, TabStrip.Layout(all, PanelId.Home, (float)PanelSize.Width, mascot).Rail.X);
+            }
         }
     }
 
@@ -118,10 +123,10 @@ public class PanelTests
     public void PanelsAreCappedAtSixtyByFiftyPercentOfTheMonitor()
     {
         // 2560 x 1440 at 150% is 1706.7 x 960 DIPs: nothing is capped.
-        Assert.Equal((560, 360), PanelSize.Fit(PanelSize.Clipboard, (1706.7, 960)));
-        // 1366 x 768 at 125% is 1092.8 x 614.4 DIPs: 560 wide fits, 360 tall is cut to 307.2.
+        Assert.Equal((760, 480), PanelSize.Fit(PanelSize.Clipboard, (1706.7, 960)));
+        // 1366 x 768 at 125% is 1092.8 x 614.4 DIPs: 760 wide is cut to 655.68, 480 tall to 307.2.
         var fitted = PanelSize.Fit(PanelSize.Clipboard, (1092.8, 614.4));
-        Assert.Equal(560, fitted.W);
+        Assert.Equal(655.68, fitted.W, 6);
         Assert.Equal(307.2, fitted.H, 6);
         // 800 x 600 at 100%: 480 wide at most.
         Assert.Equal(480, PanelSize.Fit(PanelSize.Shelf, (800, 600)).W, 6);
@@ -166,9 +171,9 @@ public class PanelTests
         Assert.InRange(right.X, 99.5f, 100.5f);
         Assert.InRange(right.Y, 49.5f, 50.5f);
 
-        // The body's origin is its top-left corner under the 42 DIP tab strip; the panel is centred on x = 0.
-        Assert.Equal(new Vector2(0, 0), PanelSpace.ToBody(new Vector2(-190, 42), 380));
-        Assert.Equal(new Vector2(380, 98), PanelSpace.ToBody(new Vector2(190, 140), 380));
+        // The body's origin is its top-left corner under the 12 DIP padding and the 40 DIP tab row; the panel is centred on x = 0.
+        Assert.Equal(new Vector2(0, 0), PanelSpace.ToBody(new Vector2(-190, 52), 380));
+        Assert.Equal(new Vector2(380, 88), PanelSpace.ToBody(new Vector2(190, 140), 380));
     }
 
     [Theory]
@@ -204,128 +209,123 @@ public class PanelTests
     }
 
     [Fact]
-    public void TabLabelsRunInTabOrderAfterTheTomteAndStayInsideThePanel()
+    public void TheCurrentTabShowsItsNameAndTheOthersTheirIconAlone()
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
-        var wide = TabStrip.Labels(all, PanelId.Media, 560, mascot: true);
+        var all = Enum.GetValues<PanelId>();
+        var row = TabStrip.Layout(all, PanelId.Media, 760, mascot: true, "Win+Alt+Space", 8);
 
-        Assert.Equal(["Shelf", "Shortcuts", "Media", "Scratchpad", "Clipboard", "History"], wide.Select(label => label.Text));
-        // After the tomte (5.5 in, 26 wide, 6 more), each pill its measured text and 10 DIP either side, 2 apart.
-        Assert.Equal(37.5f, wide[0].Slot.X);
-        for (int i = 0; i < wide.Count; i++)
+        Assert.Equal(all, row.Tabs.Select(t => t.Id));
+        // The tomte (16 in, 28 wide), 12 more, then the rail, 3 DIP round the tabs, 2 between them, 34 high in the 40 row.
+        Assert.Equal(new System.Drawing.RectangleF(56, 12, row.Rail.Width, 40), row.Rail);
+        Assert.Equal(59, row.Tabs[0].Bounds.X);
+        float word = Tomte.Core.Text.TextSlot.Measure("Media", TabStrip.Label, 760);
+        for (int i = 0; i < row.Tabs.Count; i++)
         {
-            float text = Tomte.Core.Text.TextSlot.Measure(wide[i].Text, wide[i].Style, 560);
-            Assert.Equal(text + 2 * TabStrip.PadX, wide[i].Slot.Width, 0.01);
-            Assert.Equal(i == 2 ? TabStrip.Current : TabStrip.Label, wide[i].Style);
-            Assert.Equal(PanelSpace.TabStripHeight / 2, wide[i].Slot.Y + wide[i].Slot.Height / 2, 0.01);
+            var tab = row.Tabs[i];
+            Assert.Equal((15f, 34f), (tab.Bounds.Y, tab.Bounds.Height));
+            Assert.Equal(32, tab.Icon.Y + (tab.Icon.Height / 2), 0.01);
             if (i > 0)
             {
-                Assert.Equal(wide[i - 1].Slot.Right + TabStrip.Gap, wide[i].Slot.X, 0.01);
+                Assert.Equal(row.Tabs[i - 1].Bounds.Right + TabStrip.Gap, tab.Bounds.X, 0.01);
+            }
+
+            if (tab.Id == PanelId.Media)
+            {
+                // 11 before the icon, 18 icon, 6, the name, 14 after.
+                Assert.Equal("Media", tab.Label!.Value.Text);
+                Assert.Equal(11 + 18 + 6 + word + 14, tab.Bounds.Width, 0.01);
+                Assert.Equal(tab.Bounds.X + 11, tab.Icon.X, 0.01);
+            }
+            else
+            {
+                Assert.Null(tab.Label);
+                Assert.Equal(38, tab.Bounds.Width);
+                Assert.Equal(tab.Bounds.X + 10, tab.Icon.X, 0.01);
             }
         }
 
-        // A panel cut to a small monitor, here to 380 wide: what does not fit is cut or left out, never past the right padding.
-        var narrow = TabStrip.Labels(all, PanelId.Media, 380, mascot: true);
-        Assert.InRange(narrow.Count, 3, 6);
-        Assert.All(narrow, label => Assert.True(label.Slot.Right <= 380 - TabStrip.RightPad + 0.01, $"{label.Text} ends at {label.Slot.Right}"));
-        // With the tomte off the labels start at the left padding; only registered panels get one.
-        Assert.Equal(TabStrip.LeftPad, TabStrip.Labels([PanelId.Media], PanelId.Media, 380, mascot: false)[0].Slot.X);
-        Assert.Single(TabStrip.Labels([PanelId.Media], PanelId.Media, 380, mascot: true));
+        Assert.Equal(row.Tabs[^1].Bounds.Right + 3, row.Rail.Right, 0.01);
+        // With the tomte off the rail starts at the left padding.
+        Assert.Equal(16, TabStrip.Layout(all, PanelId.Media, 760, mascot: false).Rail.X);
     }
 
-    [Fact]
-    public void APressOnALabelPicksItsTabAndNothingElseDoes()
+    [Theory]
+    [InlineData(0, null)]
+    [InlineData(8, "8")]
+    [InlineData(99, "99")]
+    [InlineData(140, "99+")]
+    public void TheShelfTabCountsWhatIsOnTheShelf(int items, string? count)
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
-        var labels = TabStrip.Labels(all, PanelId.Shelf, 560, mascot: true);
-
-        for (int i = 0; i < labels.Count; i++)
+        var row = TabStrip.Layout(Enum.GetValues<PanelId>(), PanelId.Home, 760, mascot: true, shelfCount: items);
+        var shelf = row.Tabs.Single(t => t.Id == PanelId.Shelf);
+        Assert.Equal(count, shelf.Count);
+        Assert.All(row.Tabs.Where(t => t.Id != PanelId.Shelf), t => Assert.Null(t.Badge));
+        Assert.Equal(count is null, shelf.Badge is null);
+        if (shelf.Badge is { } badge)
         {
-            Assert.Equal(all[i], TabStrip.At(labels[i].Slot.X + 1, all, PanelId.Shelf, 560, mascot: true));
-            Assert.Equal(all[i], TabStrip.At(labels[i].Slot.Right - 1, all, PanelId.Shelf, 560, mascot: true));
-        }
-
-        // The tomte, the gap between two labels and the room after the last one are no tab.
-        Assert.Null(TabStrip.At(MascotArt.InsetX + 1, all, PanelId.Shelf, 560, mascot: true));
-        Assert.Null(TabStrip.At(labels[0].Slot.Right + TabStrip.Gap / 2, all, PanelId.Shelf, 560, mascot: true));
-        Assert.Null(TabStrip.At(labels[^1].Slot.Right + 1, all, PanelId.Shelf, 560, mascot: true));
-
-        // Anywhere along a narrow strip, only a tab that got a label can be pressed.
-        var shownTabs = all.Take(TabStrip.Labels(all, PanelId.Media, 380, mascot: true).Count).ToHashSet();
-        for (float x = 0; x < 380; x++)
-        {
-            Assert.True(TabStrip.At(x, all, PanelId.Media, 380, mascot: true) is not { } id || shownTabs.Contains(id), $"x {x}");
+            // 15 high, at least as wide, 3 below the tab's top, ending 6 past the icon.
+            Assert.Equal(15, badge.Height);
+            Assert.True(badge.Width >= 15);
+            Assert.Equal(shelf.Bounds.Y + 3, badge.Y);
+            Assert.Equal(shelf.Icon.Right + 6, badge.Right, 0.01);
         }
     }
 
-    private static readonly float[] PanelWidths = [(float)PanelSize.Media.W, (float)PanelSize.Shortcuts.W, (float)PanelSize.Scratchpad.W, (float)PanelSize.Shelf.W, (float)PanelSize.Clipboard.W];
-
     [Fact]
-    public void TheAskPillEndsAtTheRightPaddingOfEveryPanelAndNoLabelRunsIntoIt()
+    public void TheButtonsEndTheRowAndTheSearchButtonCarriesItsShortcutWhenThereIsRoom()
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
-        foreach (float width in PanelWidths)
-        {
-            var (card, glyph, word) = TabStrip.AskPill(width);
-            Assert.Equal(width - TabStrip.RightPad, card.Right, 0.01);
-            Assert.Equal(TabStrip.Height, card.Height);
-            Assert.Equal(PanelSpace.TabStripHeight / 2, card.Y + card.Height / 2, 0.01);
-            // The sparkle, then the word, inside the card with the tab labels' padding either side.
-            Assert.Equal("Ask", word.Text);
-            Assert.Equal(card.Left + TabStrip.PadX, glyph.Left, 0.01);
-            Assert.Equal(glyph.Right + TabStrip.GlyphGap, word.Slot.Left, 0.01);
-            Assert.Equal(card.Right - TabStrip.PadX, word.Slot.Right, 0.01);
-            Assert.Equal(PanelSpace.TabStripHeight / 2, glyph.Y + glyph.Height / 2, 0.01);
+        var all = Enum.GetValues<PanelId>();
+        var row = TabStrip.Layout(all, PanelId.Home, 760, mascot: true, "Win+Alt+Space");
 
-            foreach (bool mascot in new[] { true, false })
+        // Settings: 36 round at the right padding, 12 after the search button, both centred on the row.
+        Assert.Equal(new System.Drawing.RectangleF(760 - 16 - 36, 14, 36, 36), row.Settings);
+        Assert.Equal(row.Settings.X - 12, row.Search.Right, 0.01);
+        Assert.Equal((14f, 36f), (row.Search.Y, row.Search.Height));
+        Assert.Equal("Win Alt Space", row.KeycapText);
+        Assert.Equal("Search", row.SearchLabel!.Value.Text);
+        // 12, the magnifier, 8, the word, 8, the cap, 8.
+        Assert.Equal(row.Search.X + 12, row.SearchIcon.X, 0.01);
+        Assert.Equal(row.SearchIcon.Right + 8, row.SearchLabel!.Value.Slot.X, 0.01);
+        Assert.Equal(row.SearchLabel!.Value.Slot.Right + 8, row.Keycap!.Value.X, 0.01);
+        Assert.Equal(row.Search.Right - 8, row.Keycap!.Value.Right, 0.01);
+        Assert.Equal(Keycap.Height, row.Keycap!.Value.Height);
+
+        // With no shortcut set there is no cap.
+        var none = TabStrip.Layout(all, PanelId.Home, 760, mascot: true);
+        Assert.Null(none.Keycap);
+        Assert.NotNull(none.SearchLabel);
+
+        // Narrower than the rail and the wide button need, the button is round; every tab still shows, all short of it.
+        for (float width = 470; width <= 760; width += 2)
+        {
+            foreach (var current in all)
             {
-                foreach (var current in all)
+                var r = TabStrip.Layout(all, current, width, mascot: true, "Win+Alt+Space", 8);
+                Assert.Equal(all.Length, r.Tabs.Count);
+                Assert.True(r.Rail.Right + 12 <= r.Search.X + 0.01, $"{current} at {width}: rail ends at {r.Rail.Right}, search at {r.Search.X}");
+                if (r.SearchLabel is null)
                 {
-                    var labels = TabStrip.Labels(all, current, width, mascot);
-                    Assert.True(labels.Count >= 3, $"{labels.Count} labels at {width}");
-                    Assert.All(labels, label => Assert.True(label.Slot.Right <= card.Left - TabStrip.Gap + 0.01, $"{label.Text} ends at {label.Slot.Right}, Ask starts at {card.Left}"));
-                }
-            }
-        }
-    }
-
-    [Fact]
-    public void TheSearchButtonSitsJustBeforeAskAndEveryTabKeepsItsWholeWordFrom476To560()
-    {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
-        // From a panel cut to 60% of a 1024 px screen at 125% (491 DIP) and of an 800 px one (480), and a bit below,
-        // up to the panel width: every tab shown, every word whole, all short of the search button.
-        for (float width = 476; width <= (float)PanelSize.Width; width += 0.5f)
-        {
-            var ask = TabStrip.AskPill(width).Card;
-            var (card, glyph) = TabStrip.SearchButton(width);
-            Assert.Equal(ask.Left - TabStrip.Gap, card.Right, 0.01);
-            Assert.Equal((ask.Y, ask.Height), (card.Y, card.Height));
-            Assert.Equal(card.Height, card.Width);
-            Assert.Equal(card.X + card.Width / 2, glyph.X + glyph.Width / 2, 0.01);
-            Assert.Equal(PanelSpace.TabStripHeight / 2, glyph.Y + glyph.Height / 2, 0.01);
-            foreach (bool mascot in new[] { true, false })
-            {
-                foreach (var current in all)
-                {
-                    var labels = TabStrip.Labels(all, current, width, mascot);
-                    Assert.Equal(all.Length, labels.Count);
-                    Assert.All(labels, label =>
-                    {
-                        Assert.True(label.Slot.Width >= Tomte.Core.Text.TextSlot.Measure(label.Text, label.Style, width), $"{label.Text} cut at {width}");
-                        Assert.True(label.Slot.Right <= card.Left - TabStrip.Gap + 0.01, $"{label.Text} ends at {label.Slot.Right}, search starts at {card.Left}");
-                    });
+                    Assert.Equal(36, r.Search.Width);
                 }
             }
         }
 
-        // At the panel width the padding is whole too, with the tomte on.
-        var full = TabStrip.Labels(all, PanelId.Scratchpad, (float)PanelSize.Width, mascot: true);
-        Assert.All(full, label => Assert.Equal(Tomte.Core.Text.TextSlot.Measure(label.Text, label.Style, 560) + 2 * TabStrip.PadX, label.Slot.Width, 0.01));
+        Assert.Null(TabStrip.Layout(all, PanelId.Scratchpad, 500, mascot: true, "Win+Alt+Space").SearchLabel);
+    }
 
-        // Narrower, the padding gives way before a label is cut: at 490 every label keeps more than the least padding.
-        var tight = TabStrip.Labels(all, PanelId.Shelf, 490, mascot: true);
-        Assert.All(tight, label => Assert.InRange(label.Slot.Width - Tomte.Core.Text.TextSlot.Measure(label.Text, label.Style, 490), 2 * TabStrip.MinPadX - 0.01, 2 * TabStrip.PadX - 0.01));
+    [Fact]
+    public void TheCurrentTabsNameGivesWayOnANarrowPanel()
+    {
+        var all = Enum.GetValues<PanelId>();
+        // Room for the rail with the name cut: the name keeps what is left, never less than the least.
+        var cut = TabStrip.Layout(all, PanelId.Scratchpad, 470, mascot: true);
+        var tab = cut.Tabs.Single(t => t.Id == PanelId.Scratchpad);
+        Assert.True(tab.Label is null || tab.Label.Value.Slot.Width >= TabStrip.MinLabel);
+        Assert.True(cut.Rail.Right + 12 <= cut.Search.X + 0.01);
+        // No room for a name at all: the current tab is an icon like the rest.
+        var bare = TabStrip.Layout(all, PanelId.Scratchpad, 440, mascot: true);
+        Assert.Null(bare.Tabs.Single(t => t.Id == PanelId.Scratchpad).Label);
+        Assert.All(bare.Tabs, t => Assert.Equal(38, t.Bounds.Width));
     }
 
     [Theory]
@@ -335,57 +335,39 @@ public class PanelTests
     [InlineData("Win+Alt", "Search")]
     public void TheSearchButtonsTipNamesTheShortcutSetInSettings(string chord, string tip) => Assert.Equal(tip, TabStrip.SearchTip(chord));
 
+    [Theory]
+    [InlineData("Win+Alt+Space", "Win Alt Space")]
+    [InlineData("ctrl+shift+f", "Ctrl Shift F")]
+    [InlineData("", null)]
+    public void AKeycapShowsTheWholeChordOnOneCap(string chord, string? words) => Assert.Equal(words, Keycap.Words(chord));
+
     [Fact]
-    public void AnAttachedStripStartsAtTheBodyNotAtTheRamps()
+    public void TheTomteSitsInTheTabRowAtTheLeftPaddingAndALittleLarger()
     {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
+        var shape = IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H);
+        var seat = TabStrip.Seat;
+        var box = MascotArt.Box(shape, seat.Shift, seat.Grow);
+        Assert.Equal(-380 + 16, box.X, 0.01);
+        Assert.Equal(28, box.Width, 0.01);
+        // The art's middle row on the row's middle, 12 + 20 down.
+        Assert.Equal(32, box.Y + (MascotArt.MiddleY * box.Height / MascotArt.ViewBox), 0.01);
+        // Content after it starts where the rail does.
+        Assert.Equal(56, seat.After(TabStrip.AfterMascot), 0.01);
+    }
+
+    [Fact]
+    public void AnAttachedRowStartsAtTheBodyNotAtTheRamps()
+    {
+        var all = Enum.GetValues<PanelId>();
         var shape = IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H).Attached();
         Assert.True(shape.RampW > 0);
         float width = (float)shape.Width;
 
-        // The tomte sits at the body's left edge, so the first label, laid out from there too, starts after it.
-        var box = MascotArt.Box(shape);
-        var first = TabStrip.Labels(all, PanelId.Shelf, width, mascot: true)[0];
-        Assert.True(PanelSpace.ToStrip(new(box.Right, PanelSpace.TabStripHeight / 2), shape) <= first.Slot.X);
-        Assert.Null(TabStrip.At(PanelSpace.ToStrip(new(box.X + box.Width / 2, PanelSpace.TabStripHeight / 2), shape), all, PanelId.Shelf, width, mascot: true));
-
-        // The Ask pill ends at the body's right padding, not short of it by the ramps.
-        float right = width / 2 - TabStrip.RightPad;
-        Assert.True(TabStrip.OnAsk(PanelSpace.ToStrip(new(right - 1, PanelSpace.TabStripHeight / 2), shape), width));
-        Assert.False(TabStrip.OnAsk(PanelSpace.ToStrip(new(right + 1, PanelSpace.TabStripHeight / 2), shape), width));
-    }
-
-    [Fact]
-    public void TheAskPillFollowsTheLiveRightEdgeThroughAMorph()
-    {
-        // Through a morph's live widths up to the panel's, a press just inside the live shape's right padding is on Ask.
-        foreach (double live in new[] { 380, 430, 470, 510, PanelSize.Width })
-        {
-            var shape = IslandGeometry.Panel(live, 200);
-            float right = (float)live / 2 - TabStrip.RightPad;
-            Assert.True(TabStrip.OnAsk(PanelSpace.ToStrip(new(right - 1, 20), shape), (float)shape.Width), $"at {live}");
-            Assert.False(TabStrip.OnAsk(PanelSpace.ToStrip(new(right + 1, 20), shape), (float)shape.Width), $"at {live}");
-        }
-    }
-
-    [Fact]
-    public void APressOnTheAskPillIsAskAndNoTab()
-    {
-        PanelId[] all = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media, PanelId.Scratchpad, PanelId.Clipboard, PanelId.History];
-        foreach (float width in PanelWidths)
-        {
-            var card = TabStrip.AskPill(width).Card;
-            Assert.True(TabStrip.OnAsk(card.Left, width));
-            Assert.True(TabStrip.OnAsk(card.Right - 0.5f, width));
-            Assert.False(TabStrip.OnAsk(card.Left - 0.5f, width));
-            Assert.False(TabStrip.OnAsk(card.Right, width));
-            for (float x = 0; x < width; x++)
-            {
-                if (TabStrip.OnAsk(x, width))
-                {
-                    Assert.Null(TabStrip.At(x, all, PanelId.Media, width, mascot: true));
-                }
-            }
-        }
+        // The tomte sits at the body's left edge, so the rail, laid out from there too, starts after it.
+        var box = MascotArt.Box(shape, TabStrip.Seat.Shift, TabStrip.Seat.Grow);
+        var row = TabStrip.Layout(all, PanelId.Shelf, width, mascot: true);
+        Assert.True(PanelSpace.ToStrip(new(box.Right, TabStrip.Middle), shape) <= row.Rail.X + 0.01);
+        // The settings button ends at the body's right padding, not short of it by the ramps.
+        Assert.Equal(width - TabStrip.Pad, row.Settings.Right, 0.01);
     }
 }

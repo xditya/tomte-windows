@@ -6,27 +6,32 @@ using Tomte.Core.Interaction;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Windows.Win32;
+using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Clipboard tab: the Keep history switch, the history rows newest first (a picked row is the
-/// selected one) with a remove button each, and Clear all, which asks once before it clears; or the off or
-/// empty state. Composition visuals in DIPs laid out by <see cref="ClipboardPanelLayout"/>, built when the tab
-/// shows and released when it hides. Rows come from the watch's worker, so <see cref="Shown"/> returns at once
-/// and the rows are drawn when they land. Row text is the history's shortened form, one line each. Clicks and
-/// keys come through the island's interaction host: arrows move between rows and their remove buttons, Enter
-/// copies a row again, Delete removes it.
+/// The Clipboard tab: the Keep history switch and the filter field in the head row; the history rows newest first,
+/// grouped under when they were copied, the selected one raised; beside them the selected row's preview with Paste, Pin,
+/// To shelf and Remove; and Clear all, which asks once and keeps pinned items. Or the off or empty state. Composition
+/// visuals in DIPs laid out by <see cref="ClipboardPanelLayout"/>, built when the tab shows and released when it hides.
+/// Rows come from the watch's worker, so <see cref="Shown"/> returns at once and the rows are drawn when they land. Clicks
+/// and keys come through the island's interaction host: arrows move between rows and the preview follows the focus, a
+/// click or Enter copies a row again, Delete removes it, and typing in the filter narrows the list.
 /// </summary>
-internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, Action<bool> keepHistory, TextRenderer text, Action<string>? log) : IPanel, IInteractive
+internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, Action<bool> keepHistory, TextRenderer text, TypingFocus focus, Action paste,
+    Func<ShelfEntry, Task> toShelf, Action<string>? log) : IPanel, IInteractive
 {
     private View? view;
-    private IReadOnlyList<ClipboardRow> rows = [];
+    private EditorView? filterBox;
+    private IReadOnlyList<ClipboardRow> rows = [], shown = [];
+    private IReadOnlyList<ClipboardLine> lines = [];
     private IReadOnlyList<Target> targets = [];
+    private string filter = "";
     private float scroll;
     private long selected = -1;
-    private int generation;
+    private int generation, previewing;
     private bool historyOn, asking;
     private long askedAt, removedAt;
     private Windows.System.DispatcherQueueTimer? askTimer;
@@ -37,9 +42,60 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
     public event Action? TargetsChanged;
 
+    private ClipboardRow? Selected => shown.FirstOrDefault(r => r.Id == selected);
+
     public void Shown(ContainerVisual body, Vector2 size)
     {
-        view = new View(island.Compositor, text, body, new ClipboardPanelLayout(size), island.Scale, log);
+        var layout = new ClipboardPanelLayout(size);
+        view = new View(island.Compositor, text, body, layout, island.Scale, log);
+        var box = filterBox = focus.Create(body, multiline: false, TextStyle.Primary.Size);
+        box.Place(layout.FilterBox, island.Scale);
+        box.Visual.IsVisible = false;
+        // Tab and Down leave the filter for the first row it lets through, Shift+Tab for the switch before it.
+        box.BeforeKey = (message, wParam, _) =>
+        {
+            var key = (VIRTUAL_KEY)wParam;
+            if (message != PInvoke.WM_KEYDOWN || key is not (VIRTUAL_KEY.VK_TAB or VIRTUAL_KEY.VK_DOWN))
+            {
+                return false;
+            }
+
+            bool back = key == VIRTUAL_KEY.VK_TAB && PInvoke.GetKeyState((int)VIRTUAL_KEY.VK_SHIFT) < 0;
+            string to = !back && shown.Count > 0 ? ClipboardPanelLayout.RowId(shown[0].Id) : ClipboardPanelLayout.SwitchId;
+            if (!focus.TakeKeys())
+            {
+                return false;
+            }
+
+            island.Interaction.ShowFocus();
+            island.Interaction.Focus(this, to);
+            return true;
+        };
+        box.Services.Changed += () => island.Queue.TryEnqueue(() =>
+        {
+            if (filterBox == box)
+            {
+                Filtered(box.Services.Text);
+            }
+        });
+        // Esc empties the filter first; with nothing in it, it leaves the box for the tab's label, and a second Esc
+        // closes the island as before.
+        box.Escape = () =>
+        {
+            if (box.Services.Text.Length > 0)
+            {
+                box.Services.Text = "";
+                return true;
+            }
+
+            if (!focus.TakeKeys())
+            {
+                return false;
+            }
+
+            island.Interaction.FocusTab();
+            return true;
+        };
         watch.Changed += OnChanged;
         Reload();
     }
@@ -48,22 +104,27 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
     {
         watch.Changed -= OnChanged;
         generation++;
+        filterBox?.Dispose();
+        filterBox = null;
         view?.Dispose();
         view = null;
-        rows = [];
+        (rows, shown, lines, filter) = ([], [], [], "");
         (scroll, selected) = (0, -1);
         Ask(false);
     }
 
-    /// <summary>Presses come through the targets.</summary>
+    /// <summary>A press on the filter field's padding gives its box the keys; everything else comes through the targets.</summary>
     public void Press(Vector2 point)
     {
+        if (filterBox is not null && view is not null && historyOn && view.Layout.Filter.Contains(point.X, point.Y) && !filterBox.Box.Contains(point.X, point.Y))
+        {
+            focus.Take(filterBox);
+        }
     }
 
     /// <summary>
-    /// A click within the double-click time of the last one is dropped on Clear all's question and on a remove button:
-    /// a double or triple click would answer the question before it could be read, or take the next row too once the
-    /// first has gone (each x is a target of its own, so the host sees two single clicks).
+    /// A click within the double-click time of the last one is dropped on Clear all's question and on Remove: a double or
+    /// triple click would answer the question before it could be read, or take the next row too once the first has gone.
     /// </summary>
     public void Activate(string id)
     {
@@ -75,6 +136,13 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         if (id == ClipboardPanelLayout.SwitchId)
         {
             keepHistory(!watch.On);
+        }
+        else if (id == ClipboardPanelLayout.FilterId)
+        {
+            if (filterBox is not null && focus.HasKeys)
+            {
+                focus.Take(filterBox);
+            }
         }
         else if (id == ClipboardPanelLayout.ClearId && asking)
         {
@@ -88,61 +156,66 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         {
             Ask(true);
         }
-        else if (Find(id) is ({ } index, true))
+        else if (Selected is { } row && Enum.GetValues<ClipboardPanelLayout.PreviewAction>().FirstOrDefault(a => ClipboardPanelLayout.ActionId(a) == id) is var action && ClipboardPanelLayout.ActionId(action) == id)
         {
-            if (!Soon(removedAt))
-            {
-                removedAt = Environment.TickCount64;
-                Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
-            }
+            Act(action, row, id);
         }
-        else if (Find(id) is ({ } picked, false))
+        else if (Find(id) is { } index)
         {
-            Pick(rows[picked], id);
+            Select(shown[index].Id);
+            Pick(shown[index], id);
         }
     }
 
-    /// <summary>
-    /// On a row or its remove button, Delete removes the row and Ctrl+C copies its entry again, as Enter on the row does;
-    /// a held key acts once.
-    /// </summary>
+    /// <summary>On a row, Delete removes it and Ctrl+C copies its entry again, as Enter does; a held key acts once.</summary>
     public bool KeyDown(string id, NavKey key, bool repeat)
     {
-        if (key is not (NavKey.Remove or NavKey.Copy) || Find(id) is not ({ } index, _))
+        if (key is not (NavKey.Remove or NavKey.Copy) || Find(id) is not { } index)
         {
             return false;
         }
 
         if (!repeat && key == NavKey.Remove)
         {
-            Observe(watch.RemoveAsync(rows[index].Id), "remove the item");
+            Observe(watch.RemoveAsync(shown[index].Id), "remove the item");
         }
         else if (!repeat)
         {
-            Pick(rows[index], ClipboardPanelLayout.RowId(rows[index].Id));
+            Pick(shown[index], ClipboardPanelLayout.RowId(shown[index].Id));
         }
 
         return true;
     }
 
-    /// <summary>Focus or the pointer on a row not wholly in view scrolls the list just far enough to show all of it.</summary>
+    /// <summary>
+    /// Focus or the pointer on a row not wholly in view scrolls the list just far enough to show all of it; keyboard focus
+    /// on a row also selects it, so the preview follows the arrows.
+    /// </summary>
     public void Hovered(string? id)
     {
-        if (view is null || id is null || Find(id) is not ({ } index, _) || view.Layout.ScrolledTo(index, scroll, rows.Count) is var to && to == scroll)
+        if (view is null || id is null || Find(id) is not { } index)
         {
             return;
         }
 
-        scroll = to;
-        view.Scroll(scroll);
-        Retarget();
+        if (island.Interaction.UsingKeys && island.Interaction.IsFocus(this, id))
+        {
+            Select(shown[index].Id);
+        }
+
+        if (view.Layout.ScrolledTo(lines, index, scroll) is var to && to != scroll)
+        {
+            scroll = to;
+            view.Scroll(scroll);
+            Retarget();
+        }
     }
 
     public void Wheel(Vector2 point, int delta)
     {
         if (view is not null)
         {
-            scroll = view.Layout.Scrolled(scroll, delta, rows.Count);
+            scroll = view.Layout.Scrolled(scroll, delta, lines);
             view.Scroll(scroll);
             Retarget();
         }
@@ -150,26 +223,24 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
     private static bool Soon(long since) => Environment.TickCount64 - since < PInvoke.GetDoubleClickTime();
 
-    // The row a target stands for, and whether it is the row's remove button.
-    private (int? Index, bool Remove) Find(string id)
+    // The shown row a target stands for.
+    private int? Find(string id)
     {
-        for (int i = 0; i < rows.Count; i++)
+        for (int i = 0; i < shown.Count; i++)
         {
-            if (id == ClipboardPanelLayout.RowId(rows[i].Id) || id == ClipboardPanelLayout.RemoveId(rows[i].Id))
+            if (id == ClipboardPanelLayout.RowId(shown[i].Id))
             {
-                return (i, id == ClipboardPanelLayout.RemoveId(rows[i].Id));
+                return i;
             }
         }
 
-        return (null, false);
+        return null;
     }
 
     /// <summary>The row goes back on the clipboard; once it has gone to the listener, "Copied" shows at the row.</summary>
     private async void Pick(ClipboardRow row, string id)
     {
         int shownAs = generation;
-        selected = row.Id;
-        view?.Select(selected);
         try
         {
             if (await watch.PickAsync(row.Id) && shownAs == generation)
@@ -180,6 +251,65 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         catch (Exception e)
         {
             log?.Invoke($"clipboard panel: could not put the item back ({e.GetType().Name})");
+        }
+    }
+
+    /// <summary>
+    /// A preview button. Paste puts the item back on the clipboard and pastes it into the app that had the keys, once the
+    /// island has gone; Pin pins or unpins; To shelf puts the whole item on the shelf; Remove deletes it.
+    /// </summary>
+    private async void Act(ClipboardPanelLayout.PreviewAction action, ClipboardRow row, string id)
+    {
+        int shownAs = generation;
+        try
+        {
+            switch (action)
+            {
+                case ClipboardPanelLayout.PreviewAction.Paste:
+                    if (await watch.PickAsync(row.Id) && shownAs == generation)
+                    {
+                        paste();
+                    }
+
+                    break;
+                case ClipboardPanelLayout.PreviewAction.Pin:
+                    await watch.PinAsync(row.Id, !row.Pinned);
+                    break;
+                case ClipboardPanelLayout.PreviewAction.Shelf:
+                    ShelfEntry? entry = null;
+                    if (row.IsImage && await watch.ImageAsync(row.Id) is { } png)
+                    {
+                        entry = new ShelfEntry(ShelfKind.Content, $"Image {row.Width}x{row.Height}.png", Content: png);
+                    }
+                    else if (!row.IsImage && await watch.TextAsync(row.Id) is { } words)
+                    {
+                        var (name, bytes) = ShelfFormats.FromText(words);
+                        entry = new ShelfEntry(ShelfKind.Content, name, Content: bytes);
+                    }
+
+                    if (entry is not null)
+                    {
+                        await toShelf(entry);
+                        if (shownAs == generation)
+                        {
+                            island.Interaction.Acknowledge(this, id, "On the shelf");
+                        }
+                    }
+
+                    break;
+                default:
+                    if (!Soon(removedAt))
+                    {
+                        removedAt = Environment.TickCount64;
+                        await watch.RemoveAsync(row.Id);
+                    }
+
+                    break;
+            }
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"clipboard panel: {action} did not work ({e.GetType().Name})");
         }
     }
 
@@ -202,14 +332,75 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             askTimer.Start();
         }
 
-        view?.ShowClearAll(asking);
+        view?.ShowClearAll(asking, watch.Retention);
         Retarget();
     }
 
     private void Retarget()
     {
-        targets = view is null ? [] : view.Layout.Targets(historyOn, [.. rows.Select(row => row.Id)], scroll, asking);
+        targets = view is null ? [] : view.Layout.Targets(historyOn, shown, lines, scroll, asking, Selected, rows.Count > 0);
         TargetsChanged?.Invoke();
+    }
+
+    /// <summary>Another row is selected: its fill and keycap, and its preview.</summary>
+    private void Select(long id)
+    {
+        if (id == selected || view is null)
+        {
+            return;
+        }
+
+        long was = selected;
+        selected = id;
+        view.Select(was, selected, DateTimeOffset.Now);
+        Preview();
+        Retarget();
+    }
+
+    /// <summary>The selected row's preview: drawn at once from the row, then again with its whole text or its picture.</summary>
+    private async void Preview()
+    {
+        int asked = ++previewing, shownAs = generation;
+        var row = Selected;
+        view?.Preview(row, null, null);
+        if (row is null || view is null || !view.Layout.HasPreview)
+        {
+            return;
+        }
+
+        try
+        {
+            if (row.IsImage)
+            {
+                var at = view.Layout.PreviewImage(row.Width, row.Height);
+                int w = Math.Max(1, (int)Math.Round(at.Width * island.Scale)), h = Math.Max(1, (int)Math.Round(at.Height * island.Scale));
+                if (await watch.ImageAsync(row.Id) is { } png && asked == previewing && shownAs == generation)
+                {
+                    var compositor = island.Compositor;
+                    var (surfaces, brush) = await Task.Run(() =>
+                    {
+                        var pixels = ClipboardImages.Thumbnail(png, w, h);
+                        var made = new PixelSurfaces(compositor);
+                        return (made, made.Brush(w, h, pixels));
+                    });
+                    if (asked != previewing || shownAs != generation || view is null)
+                    {
+                        surfaces.Dispose();
+                        return;
+                    }
+
+                    view.Preview(row, null, (surfaces, brush));
+                }
+            }
+            else if (await watch.TextAsync(row.Id) is { } whole && asked == previewing && shownAs == generation)
+            {
+                view?.Preview(row, whole, null);
+            }
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"clipboard panel: no preview ({e.GetType().Name})");
+        }
     }
 
     // Raised on a worker thread or the UI thread; the redraw always runs on the UI thread.
@@ -236,8 +427,56 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
         }
 
         (rows, historyOn) = (next, on);
-        scroll = Math.Min(scroll, view.Layout.MaxScroll(rows.Count));
-        view.Show(on, rows, selected, scroll, DateTimeOffset.Now, watch.Retention, asking);
+        Draw(keepScroll: true);
+    }
+
+    private void Filtered(string typed)
+    {
+        if (typed == filter || view is null)
+        {
+            return;
+        }
+
+        filter = typed;
+        scroll = 0;
+        Draw(keepScroll: false);
+    }
+
+    /// <summary>Draws the rows the filter lets through; the selection stays on its row while it shows, else goes to the newest.</summary>
+    private void Draw(bool keepScroll)
+    {
+        if (view is null)
+        {
+            return;
+        }
+
+        var now = DateTimeOffset.Now;
+        shown = [.. rows.Where(r => r.Matches(filter))];
+        lines = ClipboardPanelLayout.Lines(shown, now);
+        if (!shown.Any(r => r.Id == selected))
+        {
+            selected = shown.Count > 0 ? shown[0].Id : -1;
+        }
+
+        scroll = keepScroll ? Math.Min(scroll, view.Layout.MaxScroll(lines)) : 0;
+        if (filterBox is not null)
+        {
+            filterBox.Visual.IsVisible = historyOn;
+            if (!historyOn && focus.Focused == filterBox)
+            {
+                focus.TakeKeys();
+            }
+        }
+
+        view.Show(historyOn, shown, lines, selected, scroll, now, watch.Retention, asking, filter.Length > 0, rows.Count > 0);
+        if (filterBox?.Visual.Parent is { } parent)
+        {
+            // The field's capsule was drawn again, on top: the box goes back over it.
+            parent.Children.Remove(filterBox.Visual);
+            parent.Children.InsertAtTop(filterBox.Visual);
+        }
+
+        Preview();
         Retarget();
     }
 
@@ -255,42 +494,33 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
     private sealed class View : IDisposable
     {
-        private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
-        private static readonly Color CardSelected = Color.FromArgb(28, 255, 255, 255);
-        private static readonly Color Line = Color.FromArgb(46, 255, 255, 255);
-        private static readonly Color Glyph = Color.FromArgb(153, 255, 255, 255);
-        private static readonly Color Faint = Color.FromArgb(97, 255, 255, 255);
-        private static readonly Color Off = Color.FromArgb(51, 255, 255, 255);
-        private static readonly Color On = Color.FromArgb(255, 0x6F, 0xA8, 0xFF);
-        private static readonly Color White = Color.FromArgb(255, 255, 255, 255);
-        private static readonly Color Outline = Color.FromArgb(64, 255, 255, 255);
-        private static readonly Color Warn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
+        private static readonly Color Clear = default;
+        private static Color Card => ShelfColors.Of(Theme.Card);
+        private static Color Raised => ShelfColors.Of(Theme.Raised);
+        private static Color Edge => ShelfColors.Of(Theme.Dash);
+        private static Color Glyph => ShelfColors.Of(Theme.Ink2);
+        private static Color Faint => ShelfColors.Of(Theme.Ink3);
+        private static Color Off => ShelfColors.Of(Theme.LineStrong);
+        private static Color Knob => ShelfColors.Of(Theme.Ink);
+        private static Color Ink => ShelfColors.Of(Theme.Ink);
+        private static Color Link => ShelfColors.Of(Theme.Link);
 
         private readonly Compositor c;
         private readonly TextRenderer text;
         private readonly ContainerVisual body;
-        private readonly ShapeVisual frame;
         private readonly ContainerVisual list;
         private readonly ContainerVisual rowsVisual;
-        private readonly List<(long Id, CompositionColorBrush Fill)> rowBrushes = [];
-
-        // Every text visual of the current build; the rows' own move with the scroll and land on whole pixels again.
-        private readonly List<TextVisual> texts = [], rowTexts = [];
+        private readonly Dictionary<long, RowParts> rowParts = [];
         private readonly double scale;
         private readonly Action<string>? log;
+        private Parts? frame, listParts, preview;
+        private PixelSurfaces? previewSurfaces;
         private ClipboardThumbs? thumbs;
-
-        // Clear all, while history has rows: when it asks only its outline and word change.
-        private CompositionRoundedRectangleGeometry? clearOutline;
-        private CompositionColorBrush? clearStroke;
-        private TextVisual? clearWord;
+        private TextVisual? clearWord, footWords;
 
         public View(Compositor compositor, TextRenderer text, ContainerVisual body, ClipboardPanelLayout layout, double scale, Action<string>? log)
         {
             (c, this.text, this.body, Layout, this.scale, this.log) = (compositor, text, body, layout, scale, log);
-            frame = c.CreateShapeVisual();
-            frame.Size = layout.Body;
-            body.Children.InsertAtTop(frame);
 
             // The list scrolls under an inset clip, so a row half out of view is cut at the list's edge.
             var area = layout.List;
@@ -305,200 +535,258 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
         public ClipboardPanelLayout Layout { get; }
 
-        public void Show(bool on, IReadOnlyList<ClipboardRow> rows, long selected, float scroll, DateTimeOffset now, ClipboardRetention kept, bool asking)
+        // One row's parts: its own shapes, its fill and inner line (recoloured when it is selected), and what changes
+        // with that (its words and its end), rebuilt then.
+        private sealed record RowParts(ClipboardRow Row, ShapeVisual Shapes, CompositionColorBrush Fill, CompositionColorBrush Line)
         {
-            frame.Shapes.Clear();
-            DisposeTexts();
-            (clearOutline, clearStroke, clearWord) = (null, null, null);
-            thumbs?.Dispose();
+            public Parts? Words { get; set; }
+        }
+
+        public void Show(bool on, IReadOnlyList<ClipboardRow> rows, IReadOnlyList<ClipboardLine> lines, long selected, float scroll, DateTimeOffset now, ClipboardRetention kept, bool asking, bool filtered, bool any)
+        {
+            ClearRows();
+            frame?.Dispose();
+            var f = frame = new Parts(c, text);
+            var into = f.Shapes(body, new RectangleF(0, 0, Layout.Body.X, Layout.Body.Y));
             thumbs = new ClipboardThumbs(c, scale, log);
-            var old = rowsVisual.Children.ToList();
-            rowsVisual.Children.RemoveAll();
-            old.ForEach(row => row.Dispose());
-            rowBrushes.Clear();
-            foreach (var line in Layout.HeadText(on, kept))
+
+            // The head row: the switch's label and track, and while history is on the filter field.
+            f.Text(into, new TextSlot(ClipboardPanelLayout.KeepHistory, TextStyle.Secondary, RectangleF.FromLTRB(ClipboardPanelLayout.Pad, Layout.Head.Y, Layout.Switch.X, Layout.Head.Bottom)));
+            var track = Layout.Switch;
+            f.Box(into, track, track.Height / 2, f.Brush(on ? ShelfColors.Accent : Off));
+            const float knob = 14;
+            f.Box(into, new RectangleF(on ? track.Right - 3 - knob : track.X + 3, track.Y + (track.Height - knob) / 2, knob, knob), knob / 2, f.Brush(Knob));
+            if (on)
             {
-                Text(texts, body).Show(line);
+                var field = Layout.Filter;
+                f.Box(into, field, field.Height / 2, f.Brush(Card));
+                f.Glyph(into, Glyphs.Search, Faint, Layout.FilterGlyphBox);
+                Hint = f.Text(into, new TextSlot(filtered ? "" : ClipboardPanelLayout.FilterHint, ClipboardPanelLayout.HintStyle, Layout.FilterBox));
             }
 
-            DrawSwitch(on);
             if (!on || rows.Count == 0)
             {
-                Box(Layout.List, Layout.BoxText(on, kept));
+                var box = Layout.Box;
+                f.Box(into, box, ClipboardPanelLayout.PreviewCorner, null, f.Brush(Off), 1);
+                foreach (var line in Layout.BoxText(on, kept, filtered && any))
+                {
+                    f.Text(into, line);
+                }
+            }
+
+            if (on && any)
+            {
+                f.Glyph(into, Glyphs.Lock, Faint, Layout.LockBox);
+                var foot = Layout.FootText(asking, kept);
+                footWords = f.Text(into, foot[0]);
+                clearWord = f.Text(into, foot[1]);
+            }
+
+            if (!on || rows.Count == 0)
+            {
+                Preview(null, null, null);
                 return;
             }
 
-            Text(texts, body).Show(Layout.FootText(asking)[0]);
-            clearOutline = c.CreateRoundedRectangleGeometry();
-            clearOutline.CornerRadius = new Vector2(ClipboardPanelLayout.Corner);
-            clearStroke = c.CreateColorBrush();
-            var outline = c.CreateSpriteShape(clearOutline);
-            outline.StrokeBrush = clearStroke;
-            outline.StrokeThickness = 1;
-            frame.Shapes.Add(outline);
-            clearWord = Text(texts, body);
-            ShowClearAll(asking);
-
+            var lp = listParts = new Parts(c, text);
             float width = Layout.List.Width;
-            for (int i = 0; i < rows.Count; i++)
+            foreach (var line in lines)
             {
-                rowsVisual.Children.InsertAtTop(Row(rows[i], ClipboardPanelLayout.Row(i, width), rows[i].Id == selected, now));
+                if (line.IsHeading)
+                {
+                    lp.Text(rowsVisual, ClipboardPanelLayout.HeadingSlot(line, width));
+                    continue;
+                }
+
+                var row = rows[line.Row];
+                rowParts[row.Id] = Row(row, new RectangleF(0, line.Y, width, line.Height), row.Id == selected, now);
             }
 
             Scroll(scroll);
             thumbs.Load();
         }
 
-        /// <summary>Clear all at rest, or asking: the outline fits the word, and both turn the warn colour while it asks.</summary>
-        public void ShowClearAll(bool asking)
-        {
-            if (clearOutline is null || clearStroke is null || clearWord is null)
-            {
-                return;
-            }
+        /// <summary>The filter's hint, shown while nothing is typed.</summary>
+        public TextVisual? Hint { get; private set; }
 
-            var button = Layout.ClearAll(asking);
-            clearOutline.Offset = new Vector2(button.X + 0.5f, button.Y + 0.5f);
-            clearOutline.Size = new Vector2(button.Width - 1, button.Height - 1);
-            clearStroke.Color = asking ? Warn : Outline;
-            clearWord.Show(Layout.FootText(asking)[1]);
+        /// <summary>Clear all's word, or its question in the warn colour.</summary>
+        public void ShowClearAll(bool asking, ClipboardRetention kept)
+        {
+            if (clearWord is not null && footWords is not null)
+            {
+                var foot = Layout.FootText(asking, kept);
+                footWords.Show(foot[0]);
+                clearWord.Show(foot[1]);
+            }
         }
 
-        public void Select(long selected)
+        /// <summary>The selection moved: both rows recoloured (never swapped: a brush taken off its shape and put back does not draw again) and their words rebuilt.</summary>
+        public void Select(long was, long now, DateTimeOffset at)
         {
-            // Recoloured, never swapped: a brush taken off its shape and put back does not draw again.
-            foreach (var (id, fill) in rowBrushes)
+            foreach (long id in (ReadOnlySpan<long>)[was, now])
             {
-                fill.Color = id == selected ? CardSelected : Card;
+                if (rowParts.TryGetValue(id, out var parts))
+                {
+                    bool on = id == now;
+                    parts.Fill.Color = on ? Raised : Clear;
+                    parts.Line.Color = on ? Edge : Clear;
+                    Words(parts, on, at);
+                }
             }
         }
 
         public void Scroll(float scroll)
         {
             rowsVisual.Offset = new Vector3(0, -scroll, 0);
-            foreach (var visual in rowTexts)
+            foreach (var visual in (listParts?.Texts ?? []).Concat(rowParts.Values.SelectMany(r => r.Words?.Texts ?? [])))
             {
                 visual.Refresh();
             }
         }
 
+        /// <summary>
+        /// The preview card for <paramref name="row"/>: its meta line, its text (the row's start until the whole text came)
+        /// or its picture, and the buttons. Nothing without a row or the room for it.
+        /// </summary>
+        public void Preview(ClipboardRow? row, string? whole, (PixelSurfaces Surfaces, CompositionSurfaceBrush Brush)? picture)
+        {
+            preview?.Dispose();
+            preview = null;
+            previewSurfaces?.Dispose();
+            previewSurfaces = picture?.Surfaces;
+            if (row is null || !Layout.HasPreview)
+            {
+                picture?.Surfaces.Dispose();
+                previewSurfaces = null;
+                return;
+            }
+
+            var p = preview = new Parts(c, text);
+            var card = Layout.Preview;
+            var into = p.Shapes(body, new RectangleF(0, 0, Layout.Body.X, Layout.Body.Y));
+            p.Box(into, card, ClipboardPanelLayout.PreviewCorner, p.Brush(Card));
+            p.Text(into, Layout.PreviewMeta(row.Meta()));
+            var area = Layout.PreviewArea;
+            if (row.IsImage)
+            {
+                if (picture is { } shown)
+                {
+                    p.Sprite(body, Layout.PreviewImage(row.Width, row.Height), 6, shown.Brush);
+                }
+            }
+            else if (row.Colour is { } colour)
+            {
+                p.Box(into, new RectangleF(area.X, area.Y, Math.Min(area.Width, 96), Math.Min(area.Height, 64)), 10, p.Brush(ShelfColors.Rgb(colour)));
+            }
+            else
+            {
+                p.Text(into, Layout.PreviewText(whole ?? row.Display), new Vector2(area.X, area.Y));
+            }
+
+            foreach (var (action, box) in Layout.Actions())
+            {
+                bool paste = action == ClipboardPanelLayout.PreviewAction.Paste;
+                p.Box(into, box, ClipboardPanelLayout.ButtonCorner, p.Brush(paste ? Ink : Raised));
+                if (action == ClipboardPanelLayout.PreviewAction.Remove)
+                {
+                    const float glyph = 16;
+                    p.Glyph(into, Glyphs.Close, Glyph, new RectangleF(box.X + (box.Width - glyph) / 2, box.Y + (box.Height - glyph) / 2, glyph, glyph));
+                }
+                else
+                {
+                    p.Text(into, new TextSlot(ClipboardPanelLayout.ActionText(action, row.Pinned), paste ? ClipboardPanelLayout.PasteStyle : ClipboardPanelLayout.SecondaryButtonStyle, box));
+                }
+            }
+        }
+
         public void Dispose()
         {
-            DisposeTexts();
-            thumbs?.Dispose();
+            ClearRows();
+            frame?.Dispose();
+            Preview(null, null, null);
             body.Children.RemoveAll();
-            frame.Dispose();
             rowsVisual.Dispose();
             list.Dispose();
         }
 
-        private ShapeVisual Row(ClipboardRow row, RectangleF at, bool selected, DateTimeOffset now)
+        private void ClearRows()
+        {
+            thumbs?.Dispose();
+            thumbs = null;
+            listParts?.Dispose();
+            listParts = null;
+            foreach (var parts in rowParts.Values)
+            {
+                parts.Words?.Dispose();
+            }
+
+            rowParts.Clear();
+            var old = rowsVisual.Children.ToList();
+            rowsVisual.Children.RemoveAll();
+            old.ForEach(row => row.Dispose());
+            (clearWord, footWords, Hint) = (null, null, null);
+        }
+
+        private RowParts Row(ClipboardRow row, RectangleF at, bool selected, DateTimeOffset now)
         {
             var shapes = c.CreateShapeVisual();
             shapes.Size = new Vector2(at.Width, at.Height);
             shapes.Offset = new Vector3(at.X, at.Y, 0);
-            var fill = c.CreateColorBrush(selected ? CardSelected : Card);
-            rowBrushes.Add((row.Id, fill));
-            Rounded(shapes, new RectangleF(0, 0, at.Width, at.Height), ClipboardPanelLayout.Corner, fill);
+            rowsVisual.Children.InsertAtTop(shapes);
+            var fill = c.CreateColorBrush(selected ? Raised : Clear);
+            var line = c.CreateColorBrush(selected ? Edge : Clear);
+            var local = new RectangleF(0, 0, at.Width, at.Height);
+            Rounded(shapes, local, ClipboardPanelLayout.Corner, fill, null);
+            Rounded(shapes, RectangleF.Inflate(local, -0.5f, -0.5f), ClipboardPanelLayout.Corner - 0.5f, null, line);
 
-            // The kind icon: three lines for text, two links for an address; an image shows its thumbnail.
+            // What kind of item it is: the thumbnail, the colour, the link in the link colour, or lines of text.
             var icon = ClipboardPanelLayout.IconIn;
             if (row.Thumb is { } thumb)
             {
                 thumbs!.Add(shapes, thumb);
             }
+            else if (row.Colour is { } colour)
+            {
+                Rounded(shapes, icon, ClipboardPanelLayout.SwatchCorner, c.CreateColorBrush(ShelfColors.Rgb(colour)), null);
+            }
             else
             {
-                Rounded(shapes, icon, 6, c.CreateColorBrush(CardSelected));
+                var holder = c.CreateContainerShape();
+                holder.Offset = new Vector2(icon.X, icon.Y);
+                shapes.Shapes.Add(holder);
+                PaletteView.DrawGlyph(holder, row.IsLink ? Glyphs.Link : Glyphs.Text, c.CreateColorBrush(row.IsLink ? Link : Glyph), icon.Width);
             }
 
-            var glyph = c.CreateColorBrush(Glyph);
-            if (row.IsLink)
-            {
-                Stroked(shapes, new RectangleF(icon.X + 5, icon.Y + 9, 9, 6), 3, glyph);
-                Stroked(shapes, new RectangleF(icon.X + 10, icon.Y + 9, 9, 6), 3, glyph);
-            }
-            else if (!row.IsImage)
-            {
-                foreach (var (y, w) in (ReadOnlySpan<(float, float)>)[(7, 12), (11, 12), (15, 8)])
-                {
-                    Rounded(shapes, new RectangleF(icon.X + 6, icon.Y + y, w, 2), 1, glyph);
-                }
-            }
-
-            // Remove: an x in a small circle at the row's right end, the age left of it.
-            var remove = ClipboardPanelLayout.RemoveIn(at.Width);
-            Rounded(shapes, remove, remove.Width / 2, c.CreateColorBrush(Card));
-            var cross = c.CreateColorBrush(Faint);
-            var mid = new Vector2(remove.X + remove.Width / 2, remove.Y + remove.Height / 2);
-            foreach (float angle in (ReadOnlySpan<float>)[MathF.PI / 4, -MathF.PI / 4])
-            {
-                var bar = c.CreateRoundedRectangleGeometry();
-                bar.Size = new Vector2(10, 1.5f);
-                bar.CornerRadius = new Vector2(0.75f);
-                var shape = c.CreateSpriteShape(bar);
-                shape.FillBrush = cross;
-                shape.CenterPoint = new Vector2(5, 0.75f);
-                shape.RotationAngle = angle;
-                shape.Offset = mid - new Vector2(5, 0.75f);
-                shapes.Shapes.Add(shape);
-            }
-
-            foreach (var line in ClipboardPanelLayout.RowText(row.Display, row.Ago(now), at.Width, row.IsImage))
-            {
-                Text(rowTexts, shapes).Show(line);
-            }
-
-            return shapes;
+            var parts = new RowParts(row, shapes, fill, line);
+            Words(parts, selected, now);
+            return parts;
         }
 
-        private TextVisual Text(List<TextVisual> into, ContainerVisual host)
+        // A row's words and its end: the age, the pin, or the Enter keycap while it is selected.
+        private void Words(RowParts parts, bool selected, DateTimeOffset now)
         {
-            var visual = text.Create(host);
-            into.Add(visual);
-            return visual;
-        }
-
-        private void DisposeTexts()
-        {
-            foreach (var visual in texts.Concat(rowTexts))
+            parts.Words?.Dispose();
+            var w = parts.Words = new Parts(c, text);
+            var row = parts.Row;
+            float width = parts.Shapes.Size.X;
+            var end = selected ? ClipboardPanelLayout.RowEnd.Enter : row.Pinned ? ClipboardPanelLayout.RowEnd.Pin : ClipboardPanelLayout.RowEnd.Age;
+            var into = w.Shapes(parts.Shapes, new RectangleF(0, 0, width, ClipboardPanelLayout.RowHeight));
+            foreach (var line in ClipboardPanelLayout.RowText(row, row.When(now), end, width))
             {
-                visual.Dispose();
+                w.Text(into, line);
             }
 
-            texts.Clear();
-            rowTexts.Clear();
-        }
-
-        private void DrawSwitch(bool on)
-        {
-            var track = Layout.Switch;
-            Rounded(frame, track, track.Height / 2, c.CreateColorBrush(on ? On : Off));
-            var knob = c.CreateEllipseGeometry();
-            knob.Radius = new Vector2(7);
-            knob.Center = new Vector2(on ? track.Right - 9 : track.X + 9, track.Y + track.Height / 2);
-            var shape = c.CreateSpriteShape(knob);
-            shape.FillBrush = c.CreateColorBrush(White);
-            frame.Shapes.Add(shape);
-        }
-
-        private void Box(RectangleF area, IReadOnlyList<TextSlot> lines)
-        {
-            var outline = c.CreateRoundedRectangleGeometry();
-            outline.Offset = new Vector2(area.X + 0.5f, area.Y + 0.5f);
-            outline.Size = new Vector2(area.Width - 1, area.Height - 1);
-            outline.CornerRadius = new Vector2(ClipboardPanelLayout.Corner);
-            var shape = c.CreateSpriteShape(outline);
-            shape.StrokeBrush = c.CreateColorBrush(Line);
-            shape.StrokeThickness = 1;
-            frame.Shapes.Add(shape);
-            foreach (var line in lines)
+            if (end == ClipboardPanelLayout.RowEnd.Enter)
             {
-                Text(texts, body).Show(line);
+                w.Keycap(into, ClipboardPanelLayout.EnterIn(width), ClipboardPanelLayout.Enter);
+            }
+            else if (end == ClipboardPanelLayout.RowEnd.Pin)
+            {
+                w.Glyph(into, Glyphs.Pin, ShelfColors.Accent, ClipboardPanelLayout.PinIn(width));
             }
         }
 
-        private void Rounded(ShapeVisual into, RectangleF r, float radius, CompositionBrush fill)
+        private void Rounded(ShapeVisual into, RectangleF r, float radius, CompositionBrush? fill, CompositionBrush? stroke)
         {
             var geometry = c.CreateRoundedRectangleGeometry();
             geometry.Offset = new Vector2(r.X, r.Y);
@@ -506,18 +794,8 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             geometry.CornerRadius = new Vector2(radius);
             var shape = c.CreateSpriteShape(geometry);
             shape.FillBrush = fill;
-            into.Shapes.Add(shape);
-        }
-
-        private void Stroked(ShapeVisual into, RectangleF r, float radius, CompositionBrush stroke)
-        {
-            var geometry = c.CreateRoundedRectangleGeometry();
-            geometry.Offset = new Vector2(r.X, r.Y);
-            geometry.Size = new Vector2(r.Width, r.Height);
-            geometry.CornerRadius = new Vector2(radius);
-            var shape = c.CreateSpriteShape(geometry);
             shape.StrokeBrush = stroke;
-            shape.StrokeThickness = 1.5f;
+            shape.StrokeThickness = stroke is null ? 0 : 1;
             into.Shapes.Add(shape);
         }
     }

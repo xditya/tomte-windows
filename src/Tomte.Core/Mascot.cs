@@ -107,11 +107,13 @@ public static class MascotArt
     /// down the middle of the shape until then, so it never sits low in a shape still opening or closing. In a shape
     /// shallower than a pill, part way through an open or a close, the box is scaled by <see cref="Ride"/> about the
     /// shape's top-left corner, so the tomte stays in the same place in the pill's top row as it grows or shrinks.
+    /// <paramref name="grow"/> (a seat's <see cref="MascotSeat.Grow"/>, sprung the same way) draws it larger than on the
+    /// pill, about the same middle row.
     /// </summary>
-    public static System.Drawing.RectangleF Box(in IslandGeometry shape, Vector2 shift = default)
+    public static System.Drawing.RectangleF Box(in IslandGeometry shape, Vector2 shift = default, float grow = 1)
     {
-        float row = (float)Math.Min(shape.Depth, PanelSpace.TabStripHeight + (2 * shift.Y)), k = (float)Ride(shape);
-        return new(-(float)shape.Width / 2 + (InsetX + shift.X) * k, row / 2 - MiddleY * SizeDips / ViewBox * k, SizeDips * k, SizeDips * k);
+        float row = (float)Math.Min(shape.Depth, PanelSpace.TabStripHeight + (2 * shift.Y)), k = (float)Ride(shape), size = SizeDips * k * grow;
+        return new(-(float)shape.Width / 2 + (InsetX + shift.X) * k, row / 2 - MiddleY * size / ViewBox, size, size);
     }
 
     /// <summary>
@@ -139,14 +141,20 @@ public static class MascotArt
 /// Where the tomte sits beside an open shape's content, in DIPs: <paramref name="Row"/> is the middle of the field or the
 /// first line it sits beside, from the shape's top, and <paramref name="Left"/> is where its art starts, from the shape's
 /// left edge: the padding of the content under it, which keeps it as clear of the rounded corner as that content.
+/// <paramref name="Size"/> is the box's size there.
 /// </summary>
-public readonly record struct MascotSeat(float Row, float Left)
+public readonly record struct MascotSeat(float Row, float Left, float Size = MascotArt.SizeDips)
 {
     /// <summary>Where content beside the tomte starts, <paramref name="gap"/> after its box.</summary>
-    public float After(float gap) => Left - MascotArt.ArtLeftDips + MascotArt.SizeDips + gap;
+    public float After(float gap) => Left - ArtLeft + Size + gap;
 
     /// <summary>How far the seat is from the tomte's place on the top row of a shape at least as deep as the tab strip.</summary>
-    public Vector2 Shift => new(Left - MascotArt.ArtLeftDips - MascotArt.InsetX, Row - PanelSpace.TabStripHeight / 2);
+    public Vector2 Shift => new(Left - ArtLeft - MascotArt.InsetX, Row - PanelSpace.TabStripHeight / 2);
+
+    /// <summary>The box's size against its size on the pill.</summary>
+    public float Grow => Size / MascotArt.SizeDips;
+
+    private float ArtLeft => MascotArt.ArtLeft * Size / MascotArt.ViewBox;
 }
 
 /// <summary>The state table and the timeline values of the seven states.</summary>

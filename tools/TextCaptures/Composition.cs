@@ -97,15 +97,17 @@ internal static partial class Program
             frame.CopyToBuffer(pixels.AsBuffer());
             Canvas.Png(Path.Combine(dir, $"{scale * 100:0}-tip-acknowledged-composition.png"), pixels, width, height);
 
-            // The accent is the one blue on the card: count its pixels inside the mark's box.
+            // The accent is the one colour on the card that is near it: count its pixels inside the mark's box.
             int blue = 0;
+            uint accent = StateLook.Accent;
             var box = Rectangle.Round(new RectangleF((float)((ackMark.X - island.X) * scale), (float)(ackMark.Y * scale), (float)(ackMark.Width * scale), (float)(ackMark.Height * scale)));
             for (int y = Math.Max(0, box.Top); y < Math.Min(height, box.Bottom); y++)
             {
                 for (int x = Math.Max(0, box.Left); x < Math.Min(width, box.Right); x++)
                 {
                     int i = (y * width + x) * 4;
-                    blue += pixels[i] > pixels[i + 2] + 64 ? 1 : 0;
+                    int off = Math.Abs(pixels[i] - (int)(accent & 0xFF)) + Math.Abs(pixels[i + 1] - (int)(accent >> 8 & 0xFF)) + Math.Abs(pixels[i + 2] - (int)(accent >> 16 & 0xFF));
+                    blue += off < 96 ? 1 : 0;
                 }
             }
 

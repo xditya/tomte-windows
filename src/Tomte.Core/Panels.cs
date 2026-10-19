@@ -1,3 +1,4 @@
+using System.Drawing;
 using System.Numerics;
 using Tomte.Core.Text;
 
@@ -6,6 +7,7 @@ namespace Tomte.Core;
 /// <summary>The tabs of the Panels state. The enum order is the tab order.</summary>
 public enum PanelId
 {
+    Home,
     Shelf,
     Shortcuts,
     Media,
@@ -17,7 +19,7 @@ public enum PanelId
 /// <summary>
 /// Which panels exist and which one Panels shows. Tabs sit in <see cref="PanelId"/> order whatever order
 /// features register in. Until something is selected the first tab is current; after that the choice
-/// sticks, so reopening Panels lands on the last-used tab.
+/// sticks until <see cref="Reset"/>, which the island calls when it hides, so it opens on the first tab again.
 /// the last-used tab lives in memory; write it to the store if it should survive a restart.
 /// </summary>
 public sealed class PanelTabs
@@ -49,6 +51,9 @@ public sealed class PanelTabs
         return true;
     }
 
+    /// <summary>Back to the first tab, as if nothing had been selected.</summary>
+    public void Reset() => selected = null;
+
     /// <summary>The next tab (+1) or the previous one (-1), wrapping at both ends. False with fewer than two panels.</summary>
     public bool Step(int direction)
     {
@@ -65,57 +70,47 @@ public sealed class PanelTabs
 }
 
 /// <summary>
-/// The tab labels in the 42 DIP strip, in DIPs from the panel's left edge and top: after the tomte (or the left
-/// padding with it off), each label centred in a pill 10 DIP wider than its text on each side (less, down to 6, on a
-/// strip too short for that), 2 DIP apart, the current one white, the others at 60%. The Ask pill, which opens the
-/// palette, always ends at the right padding, with the search button just before it; a label that would still run into
-/// them is cut to the room left, and one with almost no room is left out.
+/// The row at the top of every panel, in DIPs from the panel's left edge and top. The tomte sits at the left padding;
+/// after it comes the rail, a capsule holding one tab per panel in tab order, and at the right end the search button and
+/// the settings button. The current tab shows its icon and its name on a lighter capsule; the others show the icon alone
+/// and give their name as the tooltip. The Shelf tab carries a count of what is on the shelf. The search button shows
+/// its word and the search shortcut when the row has room for them, and is a round icon button when it has not; the
+/// current tab's name gives way next, cut to the room left and dropped when almost none is.
 /// </summary>
 public static class TabStrip
 {
-    public const float PadX = 10, MinPadX = 6, Gap = 2, Height = 28, Corner = 8, AfterMascot = 6, LeftPad = 8, RightPad = 10, MinWidth = 32;
+    public const float Pad = 16, MascotSize = 28, AfterMascot = 12;
+    public const float Inset = 3, TabHeight = 34, TabWidth = 38, Gap = 2;
+    public const float Icon = 18, IconGap = 6, LabelLeft = 11, LabelRight = 14, MinLabel = 24;
+    public const float Badge = 15, BadgeTop = 3, BadgeAfterIcon = 6, BadgePadX = 4;
+    public const float Button = 36, ButtonGap = 12, SearchLeft = 12, SearchRight = 8, SearchGap = 8;
 
-    /// <summary>The sparkle before the Ask pill's word: this tall, this far before the word.</summary>
-    public const float GlyphHeight = 11, GlyphGap = 5;
+    public const string SearchText = "Search", SettingsText = "Settings";
 
-    /// <summary>The Ask pill's word and sparkle are light blue, so it reads as an action and not a tab; its card is the same blue, faint.</summary>
-    public const uint AskColor = 0xFFBCD3FF, AskCard = 0x1FBCD3FF;
+    /// <summary>The current tab's name.</summary>
+    public static TextStyle Label => new(13, 500);
 
-    public const string AskText = "Ask";
+    public static TextStyle SearchLabel => new(13, Color: Theme.Ink2);
 
-    /// <summary>The magnifier's box in the search button, in DIPs.</summary>
-    public const float SearchGlyphSize = 14;
+    /// <summary>The Shelf tab's count, on the accent.</summary>
+    public static TextStyle BadgeLabel => new(10, 700, Theme.OnAccent, TextAlign.Center);
 
-    /// <summary>The magnifier in its 14 DIP box: a ring stroked round (5.75, 5.75) and a handle off it to the lower right.</summary>
-    public static readonly GlyphFigure[] SearchGlyph =
-    [
-        new(
-        [
-            OutlineSegment.Move(new(9.75f, 5.75f)),
-            OutlineSegment.Cubic(new(9.75f, 7.96f), new(7.96f, 9.75f), new(5.75f, 9.75f)),
-            OutlineSegment.Cubic(new(3.54f, 9.75f), new(1.75f, 7.96f), new(1.75f, 5.75f)),
-            OutlineSegment.Cubic(new(1.75f, 3.54f), new(3.54f, 1.75f), new(5.75f, 1.75f)),
-            OutlineSegment.Cubic(new(7.96f, 1.75f), new(9.75f, 3.54f), new(9.75f, 5.75f)),
-        ], Stroked: true),
-        new(Polygon(8.93f, 7.87f, 13.13f, 12.07f, 12.07f, 13.13f, 7.87f, 8.93f)),
-    ];
+    /// <summary>The middle of the row, from the panel's top.</summary>
+    public static float Middle => PanelSpace.TopPad + (PanelSpace.TabStripHeight / 2);
 
-    public static readonly TextStyle Label = new(12.5f, Color: TextStyle.SecondaryColor, Align: TextAlign.Center);
-    public static readonly TextStyle Current = Label with { Color = TextStyle.WhiteColor };
-    public static readonly TextStyle AskLabel = Label with { Color = AskColor };
+    /// <summary>Where the tomte sits on an open panel: its box at the left padding, centred down the row, a little larger than on the pill.</summary>
+    public static MascotSeat Seat => new(Middle, Pad + (MascotArt.ArtLeft * MascotSize / MascotArt.ViewBox), MascotSize);
 
-    /// <summary>The sparkle's box, in the units of <see cref="Sparkle"/>.</summary>
-    public static readonly Vector2 SparkleBox = new(17.5f, 19);
+    /// <summary>One tab: its capsule, its icon's box, the name when it shows, and the count's capsule and words when it has one.</summary>
+    public readonly record struct Tab(PanelId Id, RectangleF Bounds, RectangleF Icon, TextSlot? Label, RectangleF? Badge, string? Count);
 
-    /// <summary>The sparkle: a large four-pointed star and a small one below it to the right, one closed figure each.</summary>
-    public static readonly OutlineSegment[][] Sparkle =
-    [
-        Polygon(7, 0, 8.8f, 5.2f, 14, 7, 8.8f, 8.8f, 7, 14, 5.2f, 8.8f, 0, 7, 5.2f, 5.2f),
-        Polygon(14, 12, 14.9f, 14.6f, 17.5f, 15.5f, 14.9f, 16.4f, 14, 19, 13.1f, 16.4f, 10.5f, 15.5f, 13.1f, 14.6f),
-    ];
+    /// <summary>The whole row. <see cref="SearchLabel"/> and <see cref="Keycap"/> are null while the search button is a round one.</summary>
+    public sealed record Row(RectangleF Rail, IReadOnlyList<Tab> Tabs, RectangleF Search, RectangleF SearchIcon, TextSlot? SearchLabel,
+        RectangleF? Keycap, string? KeycapText, RectangleF Settings, RectangleF SettingsIcon);
 
     public static string Name(PanelId id) => id switch
     {
+        PanelId.Home => "Home",
         PanelId.Shelf => "Shelf",
         PanelId.Shortcuts => "Shortcuts",
         PanelId.Media => "Media",
@@ -124,86 +119,90 @@ public static class TabStrip
         _ => "Clipboard",
     };
 
-    /// <summary>One label per tab, in tab order; the current one's slot is also where its pill goes.</summary>
-    public static IReadOnlyList<TextSlot> Labels(IEnumerable<PanelId> tabs, PanelId? current, float panelWidth, bool mascot)
+    public static GlyphFigure[] Glyph(PanelId id) => id switch
     {
-        float x = mascot ? MascotArt.InsetX + MascotArt.SizeDips + AfterMascot : LeftPad;
-        float y = (PanelSpace.TabStripHeight - Height) / 2;
-        float end = SearchButton(panelWidth).Card.Left - Gap;
-        var words = tabs.Select(id => (Text: Name(id), Style: id == current ? Current : Label)).ToList();
-        var widths = words.Select(w => TextSlot.Measure(w.Text, w.Style, panelWidth)).ToList();
-        // Short of room, every label's padding gives way first, down to MinPadX, before the last ones are cut or left out.
-        float pad = Math.Clamp((end - x - widths.Sum() - (Gap * (words.Count - 1))) / (2 * Math.Max(1, words.Count)), MinPadX, PadX);
-        var labels = new List<TextSlot>();
-        for (int i = 0; i < words.Count; i++)
+        PanelId.Home => Glyphs.Home,
+        PanelId.Shelf => Glyphs.Shelf,
+        PanelId.Shortcuts => Glyphs.Shortcuts,
+        PanelId.Media => Glyphs.Media,
+        PanelId.Scratchpad => Glyphs.Scratchpad,
+        PanelId.History => Glyphs.History,
+        _ => Glyphs.Clipboard,
+    };
+
+    /// <summary>The count on the Shelf tab: none for an empty shelf, and 99+ past 99.</summary>
+    public static string? Count(int items) => items <= 0 ? null : items > 99 ? "99+" : items.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The row for these tabs on a panel this wide. <paramref name="searchKey"/> is the search shortcut as set in
+    /// Settings ("Win+Alt+Space"), which the wide search button shows on a keycap; <paramref name="shelfCount"/> is what is
+    /// on the shelf.
+    /// </summary>
+    public static Row Layout(IReadOnlyCollection<PanelId> tabs, PanelId? current, float panelWidth, bool mascot, string searchKey = "", int shelfCount = 0)
+    {
+        float mid = Middle;
+        var settings = Round(panelWidth - Pad - Button, mid);
+        float searchEnd = settings.Left - ButtonGap, railLeft = mascot ? Pad + MascotSize + AfterMascot : Pad;
+
+        // Every tab at its icon width, then what the current one's name adds on top of that.
+        float iconsOnly = (tabs.Count * TabWidth) + (Math.Max(0, tabs.Count - 1) * Gap) + (2 * Inset);
+        const float NamedExtra = LabelLeft + Icon + IconGap + LabelRight - TabWidth;
+        float name = current is { } c && tabs.Contains(c) ? TextSlot.Measure(Name(c), Label, panelWidth) : 0;
+
+        string? cap = Keycap.Words(searchKey);
+        float word = MathF.Ceiling(TextSlot.Measure(SearchText, SearchLabel, panelWidth));
+        float capWidth = cap is null ? 0 : Keycap.Width(cap);
+        float wide = SearchLeft + Icon + SearchGap + word + (cap is null ? 0 : SearchGap + capWidth) + SearchRight;
+        bool roomy = railLeft + iconsOnly + (name > 0 ? NamedExtra + name : 0) + ButtonGap <= searchEnd - wide;
+        float searchLeft = searchEnd - (roomy ? wide : Button);
+
+        float labelWidth = Math.Min(name, searchLeft - ButtonGap - railLeft - iconsOnly - NamedExtra);
+        bool named = labelWidth >= MinLabel;
+        var list = new List<Tab>(tabs.Count);
+        float x = railLeft + Inset, top = mid - (TabHeight / 2);
+        foreach (var id in tabs)
         {
-            float room = end - x;
-            if (room < MinWidth)
+            bool showsName = named && id == current;
+            float width = showsName ? LabelLeft + Icon + IconGap + labelWidth + LabelRight : TabWidth;
+            var icon = new RectangleF(showsName ? x + LabelLeft : x + ((TabWidth - Icon) / 2), mid - (Icon / 2), Icon, Icon);
+            TextSlot? label = showsName ? new(Name(id), Label, new(icon.Right + IconGap, top, labelWidth, TabHeight)) : null;
+            RectangleF? badge = null;
+            string? count = id == PanelId.Shelf ? Count(shelfCount) : null;
+            if (count is not null)
             {
-                break;
+                float w = Math.Max(Badge, MathF.Ceiling(TextSlot.Measure(count, BadgeLabel, panelWidth)) + (2 * BadgePadX));
+                badge = new RectangleF(icon.Right + BadgeAfterIcon - w, top + BadgeTop, w, Badge);
             }
 
-            float width = widths[i] + (2 * pad);
-            labels.Add(new(words[i].Text, words[i].Style, new(x, y, Math.Min(width, room), Height)));
+            list.Add(new(id, new(x, top, width, TabHeight), icon, label, badge, count));
             x += width + Gap;
         }
 
-        return labels;
-    }
-
-    /// <summary>The tab whose label is under <paramref name="x"/>, in DIPs from the panel's left edge; null between or past them.</summary>
-    public static PanelId? At(float x, IReadOnlyCollection<PanelId> tabs, PanelId? current, float panelWidth, bool mascot)
-    {
-        var labels = Labels(tabs, current, panelWidth, mascot);
-        int i = 0;
-        foreach (var id in tabs.Take(labels.Count))
+        var rail = new RectangleF(railLeft, PanelSpace.TopPad, (tabs.Count == 0 ? 2 * Inset : x - Gap + Inset) - railLeft, PanelSpace.TabStripHeight);
+        if (!roomy)
         {
-            var slot = labels[i++].Slot;
-            if (x >= slot.Left && x < slot.Right)
-            {
-                return id;
-            }
+            var round = Round(searchLeft, mid);
+            return new(rail, list, round, Centered(round), null, null, null, settings, Centered(settings));
         }
 
-        return null;
-    }
-
-    /// <summary>
-    /// The Ask pill at the strip's right padding, as tall as a tab's: its card, the sparkle's box and the word, with
-    /// <see cref="PadX"/> before the sparkle and after the word.
-    /// </summary>
-    public static (System.Drawing.RectangleF Card, System.Drawing.RectangleF Glyph, TextSlot Label) AskPill(float panelWidth)
-    {
-        float text = TextSlot.Measure(AskText, AskLabel, panelWidth);
-        float glyph = GlyphHeight * SparkleBox.X / SparkleBox.Y;
-        float width = PadX + glyph + GlyphGap + text + PadX;
-        float x = panelWidth - RightPad - width, y = (PanelSpace.TabStripHeight - Height) / 2;
-        return (new(x, y, width, Height),
-            new(x + PadX, (PanelSpace.TabStripHeight - GlyphHeight) / 2, glyph, GlyphHeight),
-            new(AskText, AskLabel, new(x + PadX + glyph + GlyphGap, y, text, Height)));
-    }
-
-    /// <summary>The search button just before the Ask pill: a square card as tall as a tab's, with the magnifier centred in it.</summary>
-    public static (System.Drawing.RectangleF Card, System.Drawing.RectangleF Glyph) SearchButton(float panelWidth)
-    {
-        var ask = AskPill(panelWidth).Card;
-        float x = ask.Left - Gap - Height, inset = (Height - SearchGlyphSize) / 2;
-        return (new(x, ask.Y, Height, Height), new(x + inset, ask.Y + inset, SearchGlyphSize, SearchGlyphSize));
+        var search = new RectangleF(searchLeft, mid - (Button / 2), wide, Button);
+        var lens = new RectangleF(searchLeft + SearchLeft, mid - (Icon / 2), Icon, Icon);
+        var text = new TextSlot(SearchText, SearchLabel, new(lens.Right + SearchGap, search.Y, word, Button));
+        RectangleF? key = cap is null ? null : new RectangleF(text.Slot.Right + SearchGap, mid - (Keycap.Height / 2), capWidth, Keycap.Height);
+        return new(rail, list, search, lens, text, key, cap, settings, Centered(settings));
     }
 
     /// <summary>The search button's tooltip: the search shortcut as set in Settings, or Search alone when none is set.</summary>
     public static string SearchTip(string chord) => Hotkey.TryParse(chord, out var key, out _) ? $"Search ({key})" : "Search";
 
-    /// <summary>Whether <paramref name="x"/>, in DIPs from the panel's left edge, is on the Ask pill.</summary>
-    public static bool OnAsk(float x, float panelWidth)
-    {
-        var card = AskPill(panelWidth).Card;
-        return x >= card.Left && x < card.Right;
-    }
+    private static RectangleF Round(float x, float mid) => new(x, mid - (Button / 2), Button, Button);
+
+    private static RectangleF Centered(RectangleF button) => new(button.X + ((button.Width - Icon) / 2), button.Y + ((button.Height - Icon) / 2), Icon, Icon);
 
     internal static OutlineSegment[] Polygon(params float[] xy) =>
         [OutlineSegment.Move(new(xy[0], xy[1])), .. Enumerable.Range(1, (xy.Length / 2) - 1).Select(i => OutlineSegment.Line(new(xy[2 * i], xy[(2 * i) + 1])))];
 }
+
 
 /// <summary>
 /// The two coordinate spaces island content uses, both in DIPs. Island space has x = 0 on the island's
@@ -212,14 +211,18 @@ public static class TabStrip
 /// </summary>
 public static class PanelSpace
 {
-    public const float TabStripHeight = 42;
+    /// <summary>The padding above the tab row, and the row itself.</summary>
+    public const float TopPad = 12, TabStripHeight = 40;
+
+    /// <summary>The host's part at the top of a panel, the padding and the row; the body starts under it.</summary>
+    public const float Head = TopPad + TabStripHeight;
 
     /// <summary>A point in window pixels to island space; the origin is where island space starts in the window.</summary>
     public static Vector2 FromPixels(int x, int y, float originX, float originY, double scale) =>
         new((float)((x - originX) / scale), (float)((y - originY) / scale));
 
     public static Vector2 ToBody(Vector2 island, double panelWidth) =>
-        new(island.X + (float)panelWidth / 2, island.Y - TabStripHeight);
+        new(island.X + (float)panelWidth / 2, island.Y - Head);
 
     /// <summary>
     /// An island point's x from the tab strip's left edge, which is the shape's body edge, as <see cref="TabStrip"/>

@@ -141,6 +141,8 @@ internal sealed class SearchHost
     {
         var (width, height) = triggers.SearchSize;
         var shown = view = new SearchView(island, triggers.Machine, text, focus, (float)width, (float)height);
+        // The tomte sits beside the query field, which starts as far in as the list under it.
+        island.Seat = SearchLayout.Seat;
         shown.Typed += _ => Typed();
         shown.Clicked += item => Chosen(item, folder: false);
         shown.FolderClicked += item => Chosen(item, folder: true);
@@ -432,7 +434,7 @@ internal sealed class SearchHost
         if (store.Current.Provider is { } provider)
         {
             candidates = candidates
-                .Append(new SearchItem(SearchKind.Ask, "Ask Tomte", typed.Trim(), $"\"{typed.Trim()}\""))
+                .Append(new SearchItem(SearchKind.Ask, $"Ask Tomte about “{typed.Trim()}”", typed.Trim()))
                 .Append(new SearchItem(SearchKind.AiSearch, SearchLayout.AiRow, typed.Trim(), $"Sends file names to {ProviderSetup.NameOf(provider.Id)}, never what is in them"));
         }
 
@@ -462,9 +464,9 @@ internal sealed class SearchHost
 
     private string Source() => filesFrom.Length > 0 ? filesFrom : source switch
     {
-        FileSource.Everything => "Files: Everything",
+        FileSource.Everything => "Everything",
         FileSource.EverythingStopped => "Starting Everything",
-        _ => "Files: Windows index",
+        _ => "Windows index",
     };
 
     private async Task FilesAsync(IReadOnlyList<string> words, CancellationToken cancel)
@@ -498,7 +500,7 @@ internal sealed class SearchHost
 
         log?.Invoke($"search: {found.Hits?.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "no"} files from {(found.Everything ? "Everything" : "the Windows index")} in {watch.ElapsedMilliseconds} ms");
         files = found.Hits?.Select(h => h.Item()).ToList() ?? [];
-        filesFrom = found.Everything ? "Files: Everything" : found.Hits is null ? "Files: index is off" : "Files: Windows index";
+        filesFrom = found.Everything ? "Everything" : found.Hits is null ? SearchLayout.IndexOff : "Windows index";
         if (found.Everything)
         {
             source = FileSource.Everything;

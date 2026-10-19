@@ -233,9 +233,9 @@ public sealed class PaletteQuestionTests : IDisposable
     [Fact]
     public void TheQuestionSitsAboveTheFooterWithRunLastAndAlwaysAllowOnlyWhereOffered()
     {
-        var plain = new PaletteLayout(640, mascot: true);
+        var plain = new PaletteLayout(720, mascot: true);
         var confirm = new Confirmation("Turn dark mode on", Confirmation.LineFor(ActionTier.ExternalEffect, ConfirmKeys.Prompt), AlwaysAllow: true, Destructive: false);
-        var layout = new PaletteLayout(640, mascot: true, confirm: confirm);
+        var layout = new PaletteLayout(720, mascot: true, confirm: confirm);
         Assert.Null(plain.Ask(150));
 
         // The card takes its own room: the palette grows by it, it starts under the chips while there is no answer,
@@ -245,7 +245,7 @@ public sealed class PaletteQuestionTests : IDisposable
         float height = layout.Height(100);
         Assert.Equal(plain.Height(100) + layout.Ask(height)!.Value.Card.Height + PaletteLayout.Gap, height, 1);
         var ask = layout.Ask(height)!.Value;
-        Assert.Equal(height - PaletteLayout.Bottom - PaletteLayout.FootHeight - PaletteLayout.Gap, ask.Card.Bottom, 1);
+        Assert.Equal(height - PaletteLayout.Bottom - PaletteLayout.FootTop - PaletteLayout.FootHeight - PaletteLayout.Gap, ask.Card.Bottom, 1);
         Assert.Equal(PaletteLayout.Pad, ask.Card.X);
         Assert.Equal(100, layout.AnswerBand(height).Height, 1);
         Assert.Equal(layout.AnswerBand(height).Bottom, ask.Card.Y - PaletteLayout.Gap, 1);
@@ -263,7 +263,7 @@ public sealed class PaletteQuestionTests : IDisposable
         Assert.True(ask.Buttons[0].Box.Right < ask.Buttons[1].Box.X && ask.Buttons[1].Box.Right < ask.Buttons[2].Box.X);
 
         // A tier that never offers it shows Cancel and Run only; by voice the keys are the chord.
-        var power = new PaletteLayout(640, mascot: true, confirm: confirm with { AlwaysAllow = false, Line = Confirmation.LineFor(ActionTier.Destructive, ConfirmKeys.Voice) });
+        var power = new PaletteLayout(720, mascot: true, confirm: confirm with { AlwaysAllow = false, Line = Confirmation.LineFor(ActionTier.Destructive, ConfirmKeys.Voice) });
         var asked = power.Ask(power.Height(0))!.Value;
         Assert.Equal([ConfirmButton.Cancel, ConfirmButton.Run], asked.Buttons.Select(b => b.Button));
         Assert.Equal("Asks every time · Win+Alt+Enter runs it, Esc cancels", asked.Line.Text);
@@ -275,7 +275,7 @@ public sealed class PaletteQuestionTests : IDisposable
         string summary = "Every weekday at 09:00: " + string.Join(' ', Enumerable.Repeat("Read the shelf item notes.txt and add a line to the note.", 5))
             + " Uses read_shelf_item and write_scratchpad. Sends to Anthropic · claude-haiku-5-5 each time.";
         var job = new Confirmation(summary, Confirmation.LineFor(ActionTier.ExternalEffect, ConfirmKeys.Prompt, job: true), AlwaysAllow: false, Destructive: false, Job: true);
-        var layout = new PaletteLayout(640, mascot: true, confirm: job);
+        var layout = new PaletteLayout(720, mascot: true, confirm: job);
 
         var ask = layout.Ask(layout.Height(0))!.Value;
 

@@ -23,9 +23,15 @@ public sealed partial class SettingsWindow
     // A row as read from its page: what is matched, and where to take the user. Inside is the Expander it is in, if any.
     private sealed record FoundRow(SettingRow Row, NavigationViewItem Page, Grid Element, FrameworkElement Control, Expander? Inside);
 
-    private AutoSuggestBox Finder()
+    // Marks a part of a page as a section of its own, for a card with no header above it: Find a setting names its rows'
+    // section after it, and the shell can open the window at it.
+    private sealed record SectionName(string Name);
+
+    // The box with a magnifier at its start and its key at its end; the key steps aside while there is text, for the
+    // box's clear button.
+    private Grid Finder()
     {
-        var box = new AutoSuggestBox { PlaceholderText = "Find a setting", QueryIcon = new SymbolIcon(Symbol.Find), UpdateTextOnSelect = false };
+        var box = new AutoSuggestBox { PlaceholderText = "Find a setting", UpdateTextOnSelect = false, FontSize = 13 };
         AutomationProperties.SetName(box, "Find a setting");
         // Without a tooltip of its own: WinUI's would cover the title bar each time the box takes the focus.
         AutomationProperties.SetAcceleratorKey(box, "Ctrl+F");
@@ -93,7 +99,55 @@ public sealed partial class SettingsWindow
                 Clear();
             }
         };
-        return box;
+        var glass = new FontIcon { Glyph = "\uE721", FontSize = 14, Foreground = Palette.Brush(Palette.Ink3), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0), IsHitTestVisible = false };
+        var key = Keycap("Ctrl F");
+        key.HorizontalAlignment = HorizontalAlignment.Right;
+        key.Margin = new Thickness(0, 0, 8, 0);
+        box.TextChanged += (_, _) => key.Visibility = box.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // Room in the box's own text field for the magnifier and the key.
+        box.Loaded += (_, _) =>
+        {
+            if (Descendant<TextBox>(box) is { } text)
+            {
+                text.Padding = new Thickness(36, 9, 64, 0);
+                text.MinHeight = 38;
+            }
+        };
+        var field = new Grid { Margin = new Thickness(12, 4, 12, 14), Children = { box, glass, key } };
+        foreach (string state in new[] { "", "PointerOver" })
+        {
+            field.Resources["TextControlBackground" + state] = Palette.Brush(Palette.Card);
+        }
+
+        return field;
+    }
+
+    // A key's name in a small raised box, as on the island.
+    private static Border Keycap(string text) => new()
+    {
+        Child = new TextBlock { Text = text, FontFamily = new FontFamily(Palette.Mono), FontSize = 11, Foreground = Palette.Brush(Palette.Ink2) },
+        Padding = new Thickness(6, 3, 6, 4),
+        CornerRadius = new CornerRadius(6),
+        BorderThickness = new Thickness(1),
+        Background = Palette.Brush(Palette.Raised),
+        BorderBrush = Palette.Brush(Palette.LineStrong),
+        VerticalAlignment = VerticalAlignment.Center,
+        IsHitTestVisible = false,
+    };
+
+    private static T? Descendant<T>(DependencyObject parent)
+        where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if ((child as T ?? Descendant<T>(child)) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     // The title, and the page under it in small type. Neither sets a colour, so a highlighted item's text takes the
@@ -109,15 +163,19 @@ public sealed partial class SettingsWindow
 
     // The rows each page shows now, in the window's order. Hidden rows are left out; a row in a closed Expander is kept,
     // since choosing it opens the Expander. A header on the page names the section of the rows after it, an Expander's
-    // header the rows in it.
+    // header the rows in it, and a part marked with a SectionName the rows inside it.
     private List<FoundRow> ReadRows()
     {
         var rows = new List<FoundRow>();
-        foreach (var page in nav.MenuItems.OfType<NavigationViewItem>())
+        foreach (var page in PageItems)
         {
-            string section = "";
-            void Walk(UIElement element, Expander? inside)
+            void Walk(UIElement element, string section, Expander? inside)
             {
+                if (element is FrameworkElement { Tag: SectionName marked })
+                {
+                    section = marked.Name;
+                }
+
                 switch (element)
                 {
                     case { Visibility: Visibility.Collapsed }:
@@ -129,29 +187,30 @@ public sealed partial class SettingsWindow
                     case Panel panel:
                         foreach (var child in panel.Children)
                         {
-                            Walk(child, inside);
+                            Walk(child, section, inside);
                         }
 
                         return;
                     case Border { Child: { } child }:
-                        Walk(child, inside);
+                        Walk(child, section, inside);
                         return;
                     case Expander { Content: UIElement content } expander:
-                        Walk(content, expander);
+                        Walk(content, section, expander);
                         return;
                 }
             }
 
-            // The first child is the page's title.
-            foreach (var part in ((StackPanel)((ScrollViewer)page.Tag).Content).Children.Skip(1))
+            // The first part is the page's title and lede.
+            string header = "";
+            foreach (var part in PageOf(page).Children.Skip(1))
             {
-                if (part is TextBlock header)
+                if (part is TextBlock text)
                 {
-                    section = header.Text;
+                    header = text.Text;
                 }
                 else
                 {
-                    Walk(part, null);
+                    Walk(part, header, null);
                 }
             }
         }
@@ -161,8 +220,7 @@ public sealed partial class SettingsWindow
 
     private async Task ShowAsync(FoundRow found)
     {
-        nav.SelectedItem = found.Page;
-        nav.Content = found.Page.Tag;
+        Open(found.Page);
         // A page not shown before has no layout yet; the row needs one to be brought into view.
         nav.UpdateLayout();
         if (found.Inside is { IsExpanded: false } expander)

@@ -45,21 +45,24 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 public sealed class DropResultLayout
 {
     public const float Pad = 16, HeadTop = 12, HeadHeight = 18, LineTop = 34, LineHeight = 14, BodyTop = 58;
-    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8, Corner = 8;
+    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8;
+
+    /// <summary>A choice is a rectangular button; a result file is a small tile with its kind's square.</summary>
+    public const float Corner = 10, TileCorner = 12, IconCorner = 8;
 
     /// <summary>A choice's words, and the default's on its button filled with <see cref="StateLook.Accent"/>.</summary>
-    public static readonly TextStyle ChoiceStyle = TextStyle.Secondary with { Color = TextStyle.WhiteColor, Align = TextAlign.Center };
-    public static readonly TextStyle DefaultChoiceStyle = ChoiceStyle with { Color = StateLook.CheckedText, Weight = 600 };
+    public static TextStyle ChoiceStyle => TextStyle.Secondary with { Color = Theme.Ink, Align = TextAlign.Center };
+    public static TextStyle DefaultChoiceStyle => ChoiceStyle with { Color = StateLook.CheckedText, Weight = 600 };
 
     /// <summary>A list level's indent, which is also how far a bullet's text hangs right of the bullet.</summary>
     public const float Indent = 16;
 
     public const float BlockGap = 8, ItemGap = 3;
 
-    public static readonly TextStyle IndicatorStyle = TextStyle.Secondary with { Align = TextAlign.Trailing };
-    public static readonly TextStyle BodyStyle = TextStyle.Primary with { LineHeight = 19 };
-    public static readonly TextStyle CodeStyle = new(12, Color: 0xFFD6D6DE, Family: TextStyle.Mono, LineHeight: 17);
-    public static readonly TextStyle TileName = new(12.5f, 600);
+    public static TextStyle IndicatorStyle => TextStyle.Secondary with { Align = TextAlign.Trailing };
+    public static TextStyle BodyStyle => TextStyle.Primary with { LineHeight = 19 };
+    public static TextStyle CodeStyle => new(12, Family: TextStyle.Mono, LineHeight: 17);
+    public static TextStyle TileName => TextStyle.Title;
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
     public const float WheelStep = 3 * 19;
@@ -76,7 +79,7 @@ public sealed class DropResultLayout
     /// <summary>The line under an answer that was cut at <see cref="MaxLines"/> or <see cref="MaxChars"/>.</summary>
     public const string Rest = "The answer goes on. All of it is in its file on the shelf.";
 
-    public static readonly TextStyle RestStyle = TextStyle.Secondary with { LineHeight = 19 };
+    public static TextStyle RestStyle => TextStyle.Secondary with { LineHeight = 19 };
 
     private readonly List<RectangleF> tiles = [], choices = [];
     private readonly List<TextSlot> slots = [];
@@ -105,7 +108,7 @@ public sealed class DropResultLayout
         {
             // A cut never splits a character in two.
             int read = shown.Length <= MaxChars ? shown.Length : char.IsHighSurrogate(shown[MaxChars - 1]) ? MaxChars - 1 : MaxChars;
-            (Body, BodyHeight) = Lay(Markdown.Parse(shown[..read]), problem ? BodyStyle with { Color = TextStyle.WarnColor } : BodyStyle, inner, read < shown.Length);
+            (Body, BodyHeight) = Lay(Markdown.Parse(shown[..read]), problem ? BodyStyle with { Color = Theme.Warn } : BodyStyle, inner, read < shown.Length);
             // What fits above the choices and tiles; the rest scrolls.
             float room = Math.Max(BodyStyle.LineHeight, maxHeight - y - below - Pad - 4);
             Band = new RectangleF(0, y, width, Math.Min(MathF.Ceiling(BodyHeight), room));

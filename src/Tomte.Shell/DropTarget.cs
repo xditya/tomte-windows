@@ -10,6 +10,13 @@ using Windows.Win32.UI.Shell;
 
 namespace Tomte.Shell;
 
+/// <summary>What a drag carries first, as the drop zones' head row names it: its name, its path when it is a file on disk, and its size when known.</summary>
+internal sealed record DragItem(string Name, string? Path, long? Bytes)
+{
+    /// <summary>The name dragged text goes by; its size is its length in UTF-8.</summary>
+    public const string TextName = "Text";
+}
+
 /// <summary>
 /// The island's OLE drop target, registered once while hidden so DragEnter arrives the moment the surface is under a
 /// real drag. It takes files (CF_HDROP), virtual files (FileGroupDescriptorW with FileContents, what browsers and mail
@@ -62,6 +69,49 @@ internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
 
     /// <summary>The drag over the island now carries something the island takes.</summary>
     public bool Accepting => offer != 0;
+
+    /// <summary>
+    /// The first item the drag over the island carries, read from its formats without taking anything: a file's name,
+    /// path and size on disk, a virtual file's name and the size its source declares, or "Text" and its length. Null
+    /// when nothing the island takes is over it, or the source would not say.
+    /// </summary>
+    public DragItem? Peek()
+    {
+        if (data is null || offer == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (offer == CfHDrop)
+            {
+                var paths = ShelfFormats.ParseDropFiles(Global(data, CfHDrop));
+                if (paths is not [var path, ..])
+                {
+                    return null;
+                }
+
+                long? size = File.Exists(path) ? new FileInfo(path).Length : null;
+                return new DragItem(Path.GetFileName(path.TrimEnd('\\')) is { Length: > 0 } name ? name : path, path, size);
+            }
+
+            if (offer == cfDescriptor)
+            {
+                var file = ShelfFormats.ParseDescriptor(Global(data, cfDescriptor)).FirstOrDefault(f => !f.IsFolder);
+                return file.Name is null ? null : new DragItem(file.Name, null, file.DeclaredSize);
+            }
+
+            var text = MemoryMarshal.Cast<byte, char>(Global(data, CfUnicodeText));
+            int end = text.IndexOf('\0');
+            return new DragItem(DragItem.TextName, null, System.Text.Encoding.UTF8.GetByteCount(end < 0 ? text : text[..end]));
+        }
+        catch (Exception e) when (e is COMException or ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            log?.Invoke($"drop target: could not read what the drag carries: {e.Message}");
+            return null;
+        }
+    }
 
     /// <summary>Writes one virtual file into the shelf as it is read and returns its path, or null when it is refused.</summary>
     public Func<string, ReadChunk, string?>? Receive { get; set; }

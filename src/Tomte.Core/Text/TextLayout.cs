@@ -14,38 +14,51 @@ public enum TextAlign
 
 /// <summary>
 /// How a run looks: size in DIPs, weight (400 regular, 500 medium, 600 semibold), colour as 0xAARRGGBB,
-/// where it sits inside its width, tabular figures for clocks, so the digits do not shift as they change, and
-/// a line height for text of several lines (0 keeps the font's own).
+/// where it sits inside its width, tabular figures for clocks, so the digits do not shift as they change, a line
+/// height for text of several lines (0 keeps the font's own), and tracking, the extra room after each character as a
+/// fraction of the size (negative tightens).
 /// </summary>
-public sealed record TextStyle(float Size, int Weight = 400, uint Color = TextStyle.WhiteColor, TextAlign Align = TextAlign.Leading, bool Tabular = false, string Family = TextStyle.Ui, float LineHeight = 0)
+public sealed record TextStyle(float Size, int Weight = 400, uint Color = 0, TextAlign Align = TextAlign.Leading, bool Tabular = false, string Family = TextStyle.Ui, float LineHeight = 0, float Tracking = 0)
 {
+    /// <summary>The colour as 0xAARRGGBB; left out (0), the scheme's <see cref="Theme.Ink"/> when the style is made.</summary>
+    public uint Color { get; init; } = Color == 0 ? Theme.Ink : Color;
+
+    /// <summary>The interface font. From <see cref="DisplayFrom"/> DIPs up its display cut is used instead.</summary>
     public const string Ui = "Segoe UI Variable Text";
 
-    /// <summary>The font for code.</summary>
-    public const string Mono = "Consolas";
+    public const string Display = "Segoe UI Variable Display";
 
-    public const uint WhiteColor = 0xFFFFFFFF;
+    public const float DisplayFrom = 20;
 
-    /// <summary>Secondary text, 60% white.</summary>
-    public const uint SecondaryColor = 0x99FFFFFF;
+    /// <summary>The font for code and for numbers: Cascadia Mono where Windows has it, else Consolas.</summary>
+    public static readonly string Mono = TextLayout.Installed("Cascadia Mono") ? "Cascadia Mono" : "Consolas";
 
-    /// <summary>Tertiary text, 38% white.</summary>
-    public const uint TertiaryColor = 0x61FFFFFF;
+    /// <summary>A voice transcript, an answer's first line: 20 DIP medium, a little tight.</summary>
+    public static TextStyle Hero => new(20, 500, Tracking: -0.01f);
 
-    /// <summary>Something did not work.</summary>
-    public const uint WarnColor = 0xFFF0B35A;
+    /// <summary>A panel's own title: 18 DIP semibold, a little tight.</summary>
+    public static TextStyle PageTitle => new(18, 600, Tracking: -0.01f);
 
-    /// <summary>A panel's heading: 13 DIP semibold, white.</summary>
-    public static readonly TextStyle Title = new(13, 600);
+    /// <summary>A section's heading inside a panel: 13 DIP semibold.</summary>
+    public static TextStyle Title => new(13, 600);
 
-    /// <summary>A row's own text: 12.5 DIP, white.</summary>
-    public static readonly TextStyle Primary = new(12.5f);
+    /// <summary>A row's own text, a tile's name, a button's word: 13 DIP.</summary>
+    public static TextStyle Primary => new(13);
 
-    /// <summary>What goes beside a heading, a switch's label, a button's word: 12 DIP, 60% white.</summary>
-    public static readonly TextStyle Secondary = new(12, Color: SecondaryColor);
+    /// <summary>Note and preview text: 14 DIP on lines half as tall again.</summary>
+    public static TextStyle Body => new(14, LineHeight: 21);
 
-    /// <summary>Footers, ages and hints: 11 DIP, 38% white.</summary>
-    public static readonly TextStyle Small = new(11, Color: TertiaryColor);
+    /// <summary>What goes beside a heading, a hint, a tab's label at rest: 12 DIP, secondary ink.</summary>
+    public static TextStyle Secondary => new(12, Color: Theme.Ink2);
+
+    /// <summary>Sizes, ages and footers: 11 DIP, tertiary ink.</summary>
+    public static TextStyle Small => new(11, Color: Theme.Ink3);
+
+    /// <summary>A group's heading, its words written in capitals: 11 DIP medium, tertiary ink, spaced out.</summary>
+    public static TextStyle Overline => new(11, 500, Theme.Ink3, Tracking: 0.08f);
+
+    /// <summary>Numbers a user compares (times, costs, sizes) and ids, paths and keys: 12 DIP mono, tabular.</summary>
+    public static TextStyle Figures => new(12, Tabular: true, Family: Mono);
 }
 
 /// <summary>
@@ -64,9 +77,15 @@ public sealed record TextRun(string Text, TextStyle Style, float MaxWidth, int L
 
     public IReadOnlyList<(int Start, int Length)> Code { get; init; } = [];
 
+    /// <summary>Parts of the text drawn in <see cref="TintColor"/> instead of the style's colour (the letters a search matched).</summary>
+    public IReadOnlyList<(int Start, int Length)> Tint { get; init; } = [];
+
+    public uint TintColor { get; init; }
+
     // By value, parts included, so a view draws a run again only when something in it changed.
     public bool Equals(TextRun? other) => other is not null && Text == other.Text && Style == other.Style && MaxWidth == other.MaxWidth
-        && Lines == other.Lines && Bold.SequenceEqual(other.Bold) && Italic.SequenceEqual(other.Italic) && Code.SequenceEqual(other.Code);
+        && Lines == other.Lines && Bold.SequenceEqual(other.Bold) && Italic.SequenceEqual(other.Italic) && Code.SequenceEqual(other.Code)
+        && Tint.SequenceEqual(other.Tint) && TintColor == other.TintColor;
 
     public override int GetHashCode() => HashCode.Combine(Text, Style, MaxWidth, Lines, Bold.Count);
 }
@@ -120,7 +139,8 @@ public sealed class TextLayout : IDisposable
                 made.SetTypography(Typesetter.Tabular, new DWRITE_TEXT_RANGE { startPosition = 0, length = (uint)text.Length });
             }
 
-            if (ReferenceEquals(text, run.Text))
+            KeepsParts = ReferenceEquals(text, run.Text);
+            if (KeepsParts)
             {
                 foreach (var (start, length) in run.Bold)
                 {
@@ -136,6 +156,11 @@ public sealed class TextLayout : IDisposable
                 {
                     made.SetFontFamilyName(TextStyle.Mono, new DWRITE_TEXT_RANGE { startPosition = (uint)start, length = (uint)length });
                 }
+            }
+
+            if (run.Style.Tracking != 0)
+            {
+                ((IDWriteTextLayout1)made).SetCharacterSpacing(0, run.Style.Tracking * run.Style.Size, 0, new DWRITE_TEXT_RANGE { startPosition = 0, length = (uint)text.Length });
             }
 
             // Several lines wrap at word breaks, and a word wider than the run (an address, a hash) breaks where it has to.
@@ -199,10 +224,28 @@ public sealed class TextLayout : IDisposable
     /// <summary>The run did not fit its width or its line count and was cut with an ellipsis.</summary>
     public bool Trimmed { get; }
 
+    /// <summary>The run's parts (bold, code, tint) apply: false for a one-line run whose line breaks were joined.</summary>
+    public bool KeepsParts { get; }
+
     /// <summary>The layout as an IDWriteTextLayout pointer for Direct2D's DrawTextLayout, valid until Dispose.</summary>
     public nint Native => native;
 
     public static TextLayout Of(TextRun run) => new(run);
+
+    /// <summary>Whether Windows has the font family <paramref name="family"/> installed.</summary>
+    public static bool Installed(string family)
+    {
+        Typesetter.Factory.GetSystemFontCollection(out var fonts, false);
+        try
+        {
+            fonts.FindFamilyName(family, out _, out var exists);
+            return exists;
+        }
+        finally
+        {
+            Marshal.FinalReleaseComObject(fonts);
+        }
+    }
 
     public void Dispose()
     {
@@ -301,13 +344,14 @@ public sealed class TextLayout : IDisposable
 
         public static (IDWriteTextFormat Format, IDWriteInlineObject Ellipsis) Format(TextStyle style)
         {
-            var key = (style.Family, style.Size, style.Weight);
+            string family = style.Family == TextStyle.Ui && style.Size >= TextStyle.DisplayFrom ? TextStyle.Display : style.Family;
+            var key = (family, style.Size, style.Weight);
             lock (Gate)
             {
                 if (!Formats.TryGetValue(key, out var made))
                 {
                     // A family that is not installed falls back to the system font, character by character.
-                    Factory.CreateTextFormat(style.Family, null, (DWRITE_FONT_WEIGHT)style.Weight, DWRITE_FONT_STYLE.DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH.DWRITE_FONT_STRETCH_NORMAL, style.Size, "en-us", out var format);
+                    Factory.CreateTextFormat(family, null, (DWRITE_FONT_WEIGHT)style.Weight, DWRITE_FONT_STYLE.DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH.DWRITE_FONT_STRETCH_NORMAL, style.Size, "en-us", out var format);
                     Factory.CreateEllipsisTrimmingSign(format, out var ellipsis);
                     made = (format, ellipsis);
                     Formats.Add(key, made);

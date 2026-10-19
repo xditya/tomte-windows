@@ -40,17 +40,18 @@ internal sealed unsafe class EditorView : IDisposable
 
     /// <param name="dips">Island space: the container whose children are laid out in DIPs; offsets are summed up to it to land on whole pixels.</param>
     /// <param name="window">The window that has keyboard focus while the box is typed in.</param>
-    public EditorView(Compositor compositor, DispatcherQueue queue, ContainerVisual host, ContainerVisual dips, HWND window, bool multiline, float fontDips)
+    public EditorView(Compositor compositor, DispatcherQueue queue, ContainerVisual host, ContainerVisual dips, HWND window, bool multiline, float fontDips, int weight = 400)
     {
         this.queue = queue;
         this.dips = dips;
-        Services = new TextServices(window, multiline, fontDips);
+        Services = new TextServices(window, multiline, fontDips, weight: weight);
         brush = compositor.CreateSurfaceBrush();
         brush.Stretch = CompositionStretch.Fill;
         Visual = compositor.CreateSpriteVisual();
         Visual.Brush = brush;
         caret = compositor.CreateSpriteVisual();
-        caret.Brush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255));
+        uint ink = Theme.Ink;
+        caret.Brush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb((byte)(ink >> 24), (byte)(ink >> 16), (byte)(ink >> 8), (byte)ink));
         caret.IsVisible = false;
         Visual.Children.InsertAtTop(caret);
         host.Children.InsertAtTop(Visual);
@@ -83,6 +84,12 @@ internal sealed unsafe class EditorView : IDisposable
     }
 
     public SpriteVisual Visual { get; }
+
+    /// <summary>The caret's colour; the text's own ink until set.</summary>
+    public uint CaretInk
+    {
+        set => ((CompositionColorBrush)caret.Brush).Color = Windows.UI.Color.FromArgb((byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value);
+    }
 
     public TextServices Services { get; }
 

@@ -42,7 +42,7 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
     private bool acquired, disposed;
 
     /// <param name="window">The window that gets keyboard focus while the user types here: the island, or a message-only window offscreen.</param>
-    public TextServices(HWND window, bool multiline, float fontDips, uint textColor = 0xFFFFFF)
+    public TextServices(HWND window, bool multiline, float fontDips, uint textColor = 0, int weight = 400)
     {
         this.window = window;
         // No beep (Backspace at the start rings otherwise), no drag of the selection (the island has its own drag and
@@ -55,10 +55,9 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
         charFormat->Base.dwMask = CFM_MASK.CFM_FACE | CFM_MASK.CFM_SIZE | CFM_MASK.CFM_COLOR | CFM_MASK.CFM_BOLD | CFM_MASK.CFM_ITALIC
             | CFM_MASK.CFM_UNDERLINE | CFM_MASK.CFM_STRIKEOUT | CFM_MASK.CFM_OFFSET | CFM_MASK.CFM_CHARSET | CFM_MASK.CFM_WEIGHT;
         charFormat->Base.yHeight = EditorScale.Twips(fontDips);
-        // COLORREF is 0x00BBGGRR.
-        charFormat->Base.crTextColor = (COLORREF)(((textColor & 0xFF) << 16) | (textColor & 0xFF00) | ((textColor >> 16) & 0xFF));
+        charFormat->Base.crTextColor = ColorRef(textColor == 0 ? Theme.Ink : textColor);
         charFormat->Base.bCharSet = FONT_CHARSET.DEFAULT_CHARSET;
-        charFormat->wWeight = 400;
+        charFormat->wWeight = (ushort)weight;
         TextStyle.Ui.AsSpan().CopyTo(charFormat->Base.szFaceName.AsSpan());
 
         paraFormat = (PARAFORMAT2*)NativeMemory.AllocZeroed((nuint)sizeof(PARAFORMAT2));
@@ -659,12 +658,16 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
 
     public COLORREF TxGetSysColor(SYS_COLOR_INDEX nIndex) => nIndex switch
     {
-        // A selection blue that reads on the island's near-black, with the text kept white.
-        SYS_COLOR_INDEX.COLOR_HIGHLIGHT => (COLORREF)0x00D77800,
-        SYS_COLOR_INDEX.COLOR_HIGHLIGHTTEXT or SYS_COLOR_INDEX.COLOR_WINDOWTEXT => (COLORREF)0x00FFFFFF,
-        SYS_COLOR_INDEX.COLOR_WINDOW => (COLORREF)0x00121010,
-        _ => (COLORREF)0x00808080,
+        // The selection takes the accent and the accent's ink; the rest is the island's fill and ink.
+        SYS_COLOR_INDEX.COLOR_HIGHLIGHT => ColorRef(Theme.Accent),
+        SYS_COLOR_INDEX.COLOR_HIGHLIGHTTEXT => ColorRef(Theme.OnAccent),
+        SYS_COLOR_INDEX.COLOR_WINDOWTEXT => ColorRef(Theme.Ink),
+        SYS_COLOR_INDEX.COLOR_WINDOW => ColorRef(Theme.Island),
+        _ => ColorRef(Theme.Ink3),
     };
+
+    /// <summary>An 0xAARRGGBB colour as a COLORREF, 0x00BBGGRR; the alpha is dropped.</summary>
+    public static COLORREF ColorRef(uint argb) => (COLORREF)(((argb & 0xFF) << 16) | (argb & 0xFF00) | ((argb >> 16) & 0xFF));
 
     public HRESULT TxGetBackStyle(TXTBACKSTYLE* pstyle)
     {

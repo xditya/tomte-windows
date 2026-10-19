@@ -5,6 +5,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using Tomte.Core;
 using Tomte.Core.Interaction;
+using Tomte.Core.Shortcuts;
 using Tomte.Core.Triggers;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -15,20 +16,29 @@ using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
-
 /// <summary>
-/// The Shelf panel's body: a band and a grid of tiles under it, newest first, two rows of four at the Shelf panel's
-/// 560 x 260, the wheel scrolling a row a notch. The band shows the head row, or the action buttons of the tile under
-/// the pointer or with keyboard focus. A click selects (Ctrl adds or takes away), a double click or Enter opens, a press
-/// and drag drags the tile out (the whole selection when it is one of it), and the buttons act on the same items.
-/// Remove asks once. Missing items are dimmed, with their own meta line. The island's interaction host runs the
+/// The Shelf panel's body: a head row, a grid of tiles under it, newest first, and a footer; two rows of four at the
+/// Shelf panel's size, three columns on a narrow one, the wheel scrolling a row a notch. The head row shows the title and
+/// the count, or the action buttons of the tile under the pointer or with keyboard focus, and always the filter, which
+/// keeps its choice while Tomte runs. Each tile previews its item: the picture, the first lines of a text, a link's host,
+/// a folder, or a page's sketch. A click selects (Ctrl adds or takes away), a double click or Enter opens, a press and
+/// drag drags the tile out (the whole selection when it is one of it), and the buttons act on the same items. Remove
+/// and Clear shelf ask once. Missing items are dimmed, with their own meta line. The island's interaction host runs the
 /// presses, hover, tooltips and focus.
 /// </summary>
 internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log) : IPanel, IInteractive
 {
     private readonly HashSet<long> selected = [];
+
+    // What the tiles read about their items and the pictures on the page, for one showing of the panel.
+    private readonly Dictionary<string, ShelfPeek> peeks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CompositionSurfaceBrush> thumbs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> loading = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<PixelSurfaces> surfaces = [];
+    private int generation;
+
     private DataTransferManager? shareManager;
-    private Windows.System.DispatcherQueueTimer? shareWait, bandWait, confirmWait;
+    private Windows.System.DispatcherQueueTimer? shareWait, bandWait, confirmWait, clearWait;
     private List<ShelfItem> sharing = [];
     private int shareAsked;
     private ContainerVisual? body;
@@ -36,6 +46,14 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     private Parts? parts, band;
     private int first, wheel;
     private IReadOnlyList<Target> targets = [];
+
+    // The filter stays as it was left from one showing to the next; the items it lets through, as last built.
+    private ShelfFilter filter;
+    private List<ShelfItem> showing = [];
+
+    // Clear shelf asks first; when it asked, so a double click does not answer it.
+    private bool clearing;
+    private long clearAskedAt;
 
     // The item whose actions the band shows, the one it changes to once the wait is over, and when that is due, in ms.
     private long? shown, pending, due;
@@ -75,8 +93,15 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         bandWait?.Stop();
         (shown, due, last, hovering) = (null, null, null, null);
         Drop();
+        Clearing(false);
         first = wheel = 0;
         targets = [];
+        generation++;
+        peeks.Clear();
+        thumbs.Clear();
+        loading.Clear();
+        surfaces.ForEach(s => s.Dispose());
+        surfaces.Clear();
     }
 
     /// <summary>A press on none of the targets: the selection goes. The host runs the presses on targets.</summary>
@@ -105,7 +130,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
 
         wheel -= notches * 120;
-        int next = ShelfLayout.Scroll(first, notches, shelf.Items.Count, size);
+        int next = ShelfLayout.Scroll(first, notches, showing.Count, size);
         if (next != first)
         {
             first = next;
@@ -117,6 +142,25 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     public void Activate(string id, ActivateBy by)
     {
+        if (Enum.GetValues<ShelfFilter>().FirstOrDefault(f => ShelfLayout.FilterId(f) == id) is var picked && ShelfLayout.FilterId(picked) == id)
+        {
+            if (picked != filter)
+            {
+                (filter, first) = (picked, 0);
+                selected.Clear();
+                Show(null);
+                Rebuild();
+            }
+
+            return;
+        }
+
+        if (id == ShelfLayout.ClearId)
+        {
+            Clear();
+            return;
+        }
+
         if (ActionOf(id) is { } action)
         {
             // The first click of a double click already acted.
@@ -163,7 +207,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     {
         if (key is NavKey.Up or NavKey.Down or NavKey.Left or NavKey.Right && Item(id) is { } from)
         {
-            var items = shelf.Items;
+            var items = showing;
             int index = items.ToList().IndexOf(from);
             int next = key is NavKey.Up or NavKey.Down
                 ? ShelfLayout.ScrollFor(first, index, key == NavKey.Down ? 1 : -1, items.Count, size)
@@ -296,6 +340,57 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
     }
 
+    /// <summary>
+    /// Clear shelf: the first click asks, a second within a few seconds takes every item off the shelf. Files stay where
+    /// they are. A second click sooner than the double-click time is the first one doubled and does not count.
+    /// </summary>
+    private void Clear()
+    {
+        long now = Environment.TickCount64;
+        if (!clearing)
+        {
+            clearAskedAt = now;
+            Clearing(true);
+            return;
+        }
+
+        if (now - clearAskedAt < PInvoke.GetDoubleClickTime())
+        {
+            return;
+        }
+
+        Clearing(false);
+        var all = shelf.Items.ToList();
+        log?.Invoke($"shelf: clearing {all.Count} items");
+        selected.Clear();
+        Show(null);
+        _ = shelf.Remove(all);
+    }
+
+    private void Clearing(bool on)
+    {
+        bool was = clearing;
+        clearing = on;
+        clearWait?.Stop();
+        if (on)
+        {
+            if (clearWait is null)
+            {
+                clearWait = island.Queue.CreateTimer();
+                clearWait.Interval = TimeSpan.FromMilliseconds(RemoveQuestion.AskMs);
+                clearWait.IsRepeating = false;
+                clearWait.Tick += (_, _) => Clearing(false);
+            }
+
+            clearWait.Start();
+        }
+
+        if (was != on)
+        {
+            Rebuild();
+        }
+    }
+
     private static unsafe nint Handle(HWND hwnd) => (nint)hwnd.Value;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -314,7 +409,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     /// <summary>The item the band shows the actions of, while its tile is on the page.</summary>
     private ShelfItem? Owner()
     {
-        var items = shelf.Items;
+        var items = showing;
         for (int i = first; i < first + ShelfLayout.Visible(size, first, items.Count); i++)
         {
             if (items[i].Id == shown)
@@ -498,31 +593,69 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
         parts?.Dispose();
         var p = parts = new Parts(island.Compositor, text);
-        var items = shelf.Items;
+        var all = shelf.Items;
+        showing = [.. all.Where(i => ShelfLayout.Matches(i, filter))];
+        var items = showing;
         selected.RemoveWhere(id => !items.Any(i => i.Id == id));
         first = ShelfLayout.Scroll(first, 0, items.Count, size);
         if (items.Count == 0)
         {
-            var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadBottom);
+            var empty = RectangleF.FromLTRB(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - ShelfLayout.PadX, ShelfLayout.GridBottom(size));
             var box = p.Shapes(body, empty);
-            p.Box(box, new RectangleF(0, 0, empty.Width, empty.Height), 8, null, p.Brush(Color.FromArgb(46, 255, 255, 255)), 1).StrokeDashArray.Add(3);
+            var outline = p.Box(box, new RectangleF(0, 0, empty.Width, empty.Height), ShelfLayout.TileCorner, null, p.Brush(ShelfColors.Dash), 1.5f);
+            outline.StrokeDashArray.Add(3);
+            outline.StrokeDashArray.Add(2);
             foreach (var line in ShelfLayout.EmptyText(empty.Size))
             {
                 p.Text(box, line);
             }
         }
 
-        for (int slot = 0; slot < ShelfLayout.Visible(size, first, items.Count); slot++)
+        int visible = ShelfLayout.Visible(size, first, items.Count);
+        for (int slot = 0; slot < visible; slot++)
         {
             Tile(p, items[first + slot], ShelfLayout.Tile(slot, size), selected.Contains(items[first + slot].Id));
         }
 
+        if (ShelfLayout.DropSlotAt(size, first, items.Count) is int free)
+        {
+            var r = ShelfLayout.Tile(free, size);
+            var dash = p.Shapes(body, r);
+            var outline = p.Box(dash, new RectangleF(0, 0, r.Width, r.Height), ShelfLayout.TileCorner, null, p.Brush(ShelfColors.Dash), 1.5f);
+            outline.StrokeDashArray.Add(3);
+            outline.StrokeDashArray.Add(2);
+            var (plus, words, at) = ShelfLayout.DropSlotText(r.Size);
+            p.Glyph(dash, Glyphs.Plus, ShelfColors.Ink2, plus);
+            p.Text(dash, words, at);
+        }
+
+        Foot(p, all.Count > 0);
         Band();
+        Load(items.Skip(first).Take(visible));
+    }
+
+    /// <summary>The footer: the hint, the keys a focused tile takes, and Clear shelf while there is anything to clear.</summary>
+    private void Foot(Parts p, bool any)
+    {
+        var foot = ShelfLayout.Foot(size, clearing);
+        var into = p.Shapes(body!, new RectangleF(0, 0, size.X, size.Y));
+        p.Text(into, foot.Hint);
+        foreach (var (cap, keys, does) in foot.Keys)
+        {
+            p.Keycap(into, cap, keys.Text);
+            p.Text(into, does);
+        }
+
+        if (any)
+        {
+            p.Text(into, foot.ClearLabel);
+        }
     }
 
     /// <summary>
     /// The band over the grid, built apart from the tiles so that the pointer moving between tiles redraws only it: the
-    /// head row, or the action buttons of the owner's tile, which is outlined unless the selection's outline is on it.
+    /// title and the count, or the action buttons of the owner's tile, which is outlined unless the selection's ring is
+    /// on it; and the filter at the right end.
     /// </summary>
     private void Band()
     {
@@ -535,14 +668,26 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
         var b = band = new Parts(island.Compositor, text);
         var into = b.Shapes(body, new RectangleF(0, 0, size.X, ShelfLayout.GridTop));
-        var items = shelf.Items;
+        var all = shelf.Items;
         var owner = Owner();
         var acting = owner is null ? [] : Acting(owner);
         bool confirming = question.Asks(owner?.Id, Environment.TickCount64);
-        targets = ShelfLayout.Targets(size, first, items, owner, acting, confirming);
+        targets = ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Count > 0);
+        var (track, segments) = ShelfLayout.Filter(size, filter);
+        b.Box(into, track, track.Height / 2, b.Brush(ShelfColors.Card));
+        foreach (var segment in segments)
+        {
+            if (segment.Filter == filter)
+            {
+                b.Box(into, segment.Box, segment.Box.Height / 2, b.Brush(ShelfColors.RaisedHi));
+            }
+
+            b.Text(into, segment.Label);
+        }
+
         if (owner is null)
         {
-            foreach (var line in ShelfLayout.HeadText(size, items.Count))
+            foreach (var line in ShelfLayout.HeadText(size, all.Count))
             {
                 b.Text(into, line);
             }
@@ -561,7 +706,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         {
             bool asking = confirming && slot.Action == ShelfAction.Remove;
             bool allowed = acting.Any(i => ShelfStore.Allows(slot.Action, i));
-            b.Box(into, slot.Box, ShelfLayout.ActionCorner, b.Brush(asking ? ShelfColors.WarnFill : ShelfColors.Card));
+            b.Box(into, slot.Box, ShelfLayout.ActionCorner, b.Brush(asking ? ShelfColors.WarnFill : ShelfColors.Raised));
             var ink = asking ? ShelfColors.Warn : allowed ? ShelfColors.Ink : ShelfColors.Disabled;
             Glyph(b, into, slot.Action, slot.Icon, b.Brush(ink));
             if (slot.Label is { } label)
@@ -575,18 +720,165 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     private void Tile(Parts p, ShelfItem item, RectangleF r, bool isSelected)
     {
+        if (isSelected)
+        {
+            // The ring sits outside the tile: the box's stroke is drawn inside its own edge.
+            var ring = RectangleF.Inflate(r, ShelfLayout.RingWidth, ShelfLayout.RingWidth);
+            var around = p.Shapes(body!, ring);
+            p.Box(around, new RectangleF(0, 0, ring.Width, ring.Height), ShelfLayout.TileCorner + ShelfLayout.RingWidth, null, p.Brush(ShelfColors.Accent), ShelfLayout.RingWidth);
+        }
+
         var v = p.Shapes(body!, r);
         v.Opacity = item.Missing ? 0.55f : 1;
-        var local = new RectangleF(0, 0, r.Width, r.Height);
-        p.Box(v, local, ShelfLayout.TileCorner, p.Brush(isSelected ? ShelfColors.CardSelected : ShelfColors.Card), isSelected ? p.Brush(ShelfColors.Info) : null, 1);
-        const float pad = ShelfLayout.TilePad, icon = ShelfLayout.Icon;
-        // a coloured square by kind stands in for the file's own icon and thumbnail, which go on image
-        // surfaces through the panel host's art device once it merges.
-        p.Box(v, new RectangleF(pad, pad, icon, icon), 7, p.Brush(ShelfColors.Rgb(ShelfLayout.KindColor(item))));
-        foreach (var line in ShelfLayout.TileText(item, r.Size))
+        p.Box(v, new RectangleF(0, 0, r.Width, r.Height), ShelfLayout.TileCorner, p.Brush(ShelfColors.Card));
+        var peek = peeks.GetValueOrDefault(item.Path);
+        Preview(p, v, item, ShelfLayout.PreviewIn(r.Size), peek);
+        foreach (var line in ShelfLayout.TileText(item, r.Size, peek))
         {
             p.Text(v, line);
         }
+    }
+
+    /// <summary>The square at a tile's top: the picture, the first lines, the link, the folder, or a page's or a sheet's sketch.</summary>
+    private void Preview(Parts p, ShapeVisual v, ShelfItem item, RectangleF at, ShelfPeek? peek)
+    {
+        const float corner = ShelfLayout.PreviewCorner;
+        var kind = ShelfLayout.PreviewOf(item);
+        p.Box(v, at, corner, p.Brush(kind == ShelfPreview.Document ? ShelfColors.Of(Theme.Paper) : ShelfColors.Raised));
+        var offset = new Vector2(at.X, at.Y);
+        switch (kind)
+        {
+            case ShelfPreview.Image when thumbs.TryGetValue(item.Path, out var picture):
+                p.Sprite(v, at, corner, picture);
+                break;
+            case ShelfPreview.Text when peek?.Text is { } words:
+                var (run, from) = ShelfLayout.PeekText(words, at.Size);
+                p.Text(v, run, offset + from);
+                break;
+            case ShelfPreview.Link:
+                var (glyph, host) = ShelfLayout.LinkPreview(peek?.Link?.Host ?? ShelfLayout.DisplayName(item), at.Size);
+                glyph.Offset(at.X, at.Y);
+                p.Glyph(v, Glyphs.Link, ShelfColors.Of(Theme.Link), glyph);
+                p.Text(v, host with { Slot = host.Slot with { X = host.Slot.X + at.X, Y = host.Slot.Y + at.Y } });
+                break;
+            case ShelfPreview.Folder:
+                var folder = ShelfLayout.FolderGlyph(at.Size);
+                folder.Offset(at.X, at.Y);
+                p.Glyph(v, Glyphs.Folder, ShelfColors.Of(Theme.Folder), folder);
+                break;
+            case ShelfPreview.Document:
+                foreach (var (bar, heading) in ShelfLayout.PageSketch(at.Size))
+                {
+                    p.Box(v, bar with { X = bar.X + at.X, Y = bar.Y + at.Y }, 2, p.Brush(ShelfColors.Of(heading ? Theme.PaperInk : Theme.PaperLine)));
+                }
+
+                break;
+            case ShelfPreview.Sheet:
+                foreach (var (cell, header) in ShelfLayout.SheetSketch(at.Size))
+                {
+                    p.Box(v, cell with { X = cell.X + at.X, Y = cell.Y + at.Y }, 2, p.Brush(ShelfColors.Of(header ? Theme.KindPicture : Theme.LineStrong)));
+                }
+
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Reads what the tiles on the page show beyond their names, on a pool thread, once per showing of the panel: a text's
+    /// start, a link's address, a folder's count, a picture's size and the shell's thumbnail for it. The tiles are built
+    /// again once it lands.
+    /// </summary>
+    private async void Load(IEnumerable<ShelfItem> items)
+    {
+        var wanted = items.Where(i => !i.Missing && !peeks.ContainsKey(i.Path) && loading.Add(i.Path)).ToList();
+        if (wanted.Count == 0)
+        {
+            return;
+        }
+
+        int shownAs = generation;
+        var compositor = island.Compositor;
+        int px = (int)Math.Ceiling(Math.Max(ShelfLayout.TileWidth(size) - 2 * ShelfLayout.TilePad, ShelfLayout.Preview) * island.Scale);
+        try
+        {
+            var (made, found) = await Task.Run(async () =>
+            {
+                PixelSurfaces? made = null;
+                var found = new List<(ShelfItem Item, ShelfPeek Peek, CompositionSurfaceBrush? Picture)>();
+                foreach (var item in wanted)
+                {
+                    var peek = await Peek(item);
+                    CompositionSurfaceBrush? picture = null;
+                    // Simplification: the shell fits the picture into a square, so a tall photo is scaled up to cover the
+                    // wide preview and looks soft; asking for a larger square would fix it at more memory.
+                    if (ShelfLayout.PreviewOf(item) == ShelfPreview.Image && ShellIcon.Thumbnail(item.Path, px) is { } image)
+                    {
+                        made ??= new PixelSurfaces(compositor);
+                        picture = made.Brush(image.Width, image.Height, image.Pixels);
+                        picture.Stretch = CompositionStretch.UniformToFill;
+                    }
+
+                    found.Add((item, peek, picture));
+                }
+
+                return (Made: made, Found: found);
+            });
+            if (shownAs != generation)
+            {
+                made?.Dispose();
+                return;
+            }
+
+            if (made is not null)
+            {
+                surfaces.Add(made);
+            }
+
+            foreach (var (item, peek, picture) in found)
+            {
+                peeks[item.Path] = peek;
+                if (picture is not null)
+                {
+                    thumbs[item.Path] = picture;
+                }
+            }
+
+            Rebuild();
+        }
+        catch (Exception e)
+        {
+            // No device, or a file that went: the tiles keep their sketches.
+            log?.Invoke($"shelf: previews not read ({e.GetType().Name})");
+        }
+    }
+
+    // On a pool thread. Anything that cannot be read is left out of the peek.
+    private static async Task<ShelfPeek> Peek(ShelfItem item)
+    {
+        try
+        {
+            switch (ShelfLayout.PreviewOf(item))
+            {
+                case ShelfPreview.Text when ShelfStore.ReadTextFile(item.Path) is { } text:
+                    return new ShelfPeek(text.Length > 400 ? text[..400] : text, text.Length);
+                case ShelfPreview.Link when ShelfStore.ReadTextFile(item.Path) is { } shortcut:
+                    var line = shortcut.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.StartsWith("URL=", StringComparison.OrdinalIgnoreCase));
+                    return new ShelfPeek(Link: line is not null && Uri.TryCreate(line[4..], UriKind.Absolute, out var uri) ? uri : null);
+                case ShelfPreview.Folder:
+                    return new ShelfPeek(Entries: Directory.EnumerateFileSystemEntries(item.Path).Count());
+                case ShelfPreview.Image:
+                    using (var stream = File.OpenRead(item.Path).AsRandomAccessStream())
+                    {
+                        var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+                        return new ShelfPeek(Pixels: ((int)decoder.OrientedPixelWidth, (int)decoder.OrientedPixelHeight));
+                    }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException or ArgumentException)
+        {
+        }
+
+        return new ShelfPeek();
     }
 
     /// <summary>An action's line icon in its square.</summary>

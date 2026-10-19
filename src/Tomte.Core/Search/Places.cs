@@ -20,28 +20,29 @@ public static class Places
     // name has to match the window's own text, which a test checks. Shown name, header to open at, words.
     private static readonly (string Name, string Section, string Words)[] TomtePages =
     [
-        ("General", "General", "start with windows startup desktop peek track changes monitors island position"),
         ("Opening and closing", "Opening and closing", "edge push dwell reveal drag reveal retract delay open close"),
         ("Hotkeys", "Hotkeys", "shortcut keys keyboard shortcuts key bindings hotkey"),
         ("Search", "Search", "file search everything windows index whole disk files web search engine"),
         ("Shelf and shortcuts", "Shelf and shortcuts", "shelf tiles drag out"),
         ("Clipboard", "Clipboard", "clipboard history keep history memory privacy"),
         ("Voice", "Voice", "rambler speech dictation spoken replies microphone"),
-        ("AI", "AI", "provider api key model openai anthropic claude gemini ollama"),
-        ("AI tools", "AI tools", "tools permissions always allowed desktop automation"),
+        ("Provider and spend", "Provider and spend", "ai provider api key model openai anthropic claude gemini ollama spend cost daily cap"),
+        ("Tools and permissions", "Tools and permissions", "ai tools permissions always allowed desktop automation"),
+        ("Scheduled jobs", "Jobs", "ai jobs schedule recurring"),
+        ("MCP servers", "MCP servers", "ai mcp server"),
+        ("Skills", "Skills", "ai agent skills custom drop zone"),
         // Not "About": that is Windows' page, which "about" should list first.
         ("About Tomte", "About", "about donate donation support sponsor developer credits notices"),
+        ("General", "General", "start with windows startup desktop peek perched edge lip corner pill track changes monitors island position"),
+        ("Appearance", "Appearance", "accent colour color theme"),
         ("Per-app rules", "Per-app rules", "app rules fullscreen allow deny games"),
-        ("AI provider", "AI provider", "api key model provider"),
-        ("AI history", "AI history", "conversations answers keep history memory privacy"),
-        ("Scheduled jobs", "Scheduled jobs", "jobs schedule recurring"),
-        ("MCP servers", "MCP servers", "mcp server"),
-        ("Skills", "Skills", "agent skills"),
+        ("AI history", "AI history", "conversations answers undo keep history memory privacy"),
     ];
 
     // The island's tabs: the words for each.
     private static readonly (PanelId Tab, string Words)[] Tabs =
     [
+        (PanelId.Home, "home start overview"),
         (PanelId.Shelf, "files drop shelf"),
         (PanelId.Shortcuts, "tiles launcher"),
         (PanelId.Media, "music now playing player song"),

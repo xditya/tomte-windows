@@ -191,34 +191,45 @@ public sealed class TypingTests : IDisposable
     public void ThePaletteGrowsWithItsAnswerUpTo480()
     {
         ChipSpec[] chips = [new("Region", ChipIcon.Region, true), new("Selection", ChipIcon.Selection, false), new("Window", ChipIcon.Window, false), new("Screenshot", ChipIcon.Screenshot, false), new("Shelf", ChipIcon.Shelf, true), new("Note", ChipIcon.Note, false)];
-        var layout = new PaletteLayout(640, mascot: true, text: 0, chips);
-        // The prompt box sits after the tomte, whose art starts at the padding, one line tall; the chips that do not fit
-        // start a second row.
+        var layout = new PaletteLayout(720, mascot: true, text: 0, chips[..2], send: true);
+        // The prompt card sits after the tomte, whose art starts at the padding, one row tall with two chips first in it
+        // and the text box after them.
         Assert.Equal(PaletteLayout.Pad - MascotArt.ArtLeftDips + MascotArt.SizeDips + 10, layout.Prompt.X, 3);
-        Assert.Equal((12f, 36f), (layout.Prompt.Y, layout.Prompt.Height));
-        Assert.Equal(640 - PaletteLayout.Pad, layout.Prompt.Right, 3);
-        Assert.Equal(58, layout.ChipsTop);
-        Assert.Equal(58, layout.Chips[0].Box.Y);
-        Assert.True(layout.Chips[^1].Box.Y > layout.ChipsTop, "the last chip wraps");
-        Assert.All(layout.Chips, chip => Assert.True(chip.Box.Right <= 626.01f));
-        Assert.Equal(PaletteLayout.ChipOn, layout.Chips[4].Label.Style);
+        Assert.Equal((14f, 52f), (layout.Prompt.Y, layout.Prompt.Height));
+        Assert.Equal(720 - PaletteLayout.Pad, layout.Prompt.Right, 3);
+        Assert.Equal(layout.Prompt.X + PaletteLayout.PromptInsetLeft, layout.Chips[0].Box.X, 3);
+        Assert.Equal(layout.Prompt.Y + (layout.Prompt.Height / 2), layout.Chips[0].Box.Y + (layout.Chips[0].Box.Height / 2), 3);
+        Assert.Equal(layout.Chips[^1].Box.Right + PaletteLayout.ChipEditorGap, layout.Editor.X, 3);
+        Assert.Equal(PaletteLayout.ChipOn, layout.Chips[0].Label.Style);
 
-        // No answer: the smallest palette while the chips take one row; a second row makes it taller.
-        Assert.Equal(150, new PaletteLayout(640, mascot: true, text: 0, chips[1..]).Height(0));
-        Assert.Equal(layout.AnswerTop + PaletteLayout.FootHeight + PaletteLayout.Bottom, layout.Height(0), 1);
+        // Six chips leave the text box too little room: they take the card's rows and the text box goes under them.
+        var wrapped = new PaletteLayout(720, mascot: true, text: 0, chips, send: true);
+        Assert.True(wrapped.Chips[^1].Box.Y > wrapped.Chips[0].Box.Y, "the last chip wraps");
+        Assert.All(wrapped.Chips, chip => Assert.True(chip.Box.Right <= wrapped.Send.X - PaletteLayout.SendGap + 0.01f));
+        Assert.Equal(wrapped.Chips[0].Box.X, wrapped.Editor.X, 3);
+        Assert.True(wrapped.Editor.Y > wrapped.Chips[^1].Box.Bottom);
+        Assert.Equal(wrapped.Editor.Bottom + PaletteLayout.PromptInsetY, wrapped.Prompt.Bottom, 3);
+
+        // No answer: the smallest palette.
+        Assert.Equal(150, layout.Height(0));
         List<(string, TextStyle)> answer = [("Read notes.txt", PaletteLayout.StepText), ("", PaletteLayout.AnswerText), ("The dentist is on Monday at 10.", PaletteLayout.AnswerText)];
         var (runs, measured) = layout.Answer(answer);
-        // Laid out from the answer's top, one block under the other; an empty block takes no room.
-        Assert.Equal(18 + PaletteLayout.BlockGap + 20, measured, 1);
+        // Laid out from the answer's top in the column after the sparkle, one block under the other; an empty block takes
+        // no room; the model's first paragraph stands in the lead style.
+        Assert.Equal(18 + PaletteLayout.BlockGap + 27, measured, 1);
         Assert.Equal(2, runs.Count);
         Assert.Equal(0, runs[0].At.Y);
         Assert.Equal(18 + PaletteLayout.BlockGap, runs[1].At.Y, 1);
+        Assert.Equal(PaletteLayout.Lead, runs[1].Run.Style);
+        Assert.All(runs, r => Assert.Equal(layout.AnswerX, r.At.X, 1));
+        Assert.Equal(PaletteLayout.Pad + PaletteLayout.AnswerInset + PaletteLayout.Gutter, layout.AnswerX);
         float height = layout.Height(measured);
-        Assert.Equal(layout.AnswerTop + measured + PaletteLayout.Gap + PaletteLayout.FootHeight + PaletteLayout.Bottom, Math.Max(height, 150), 1);
-        // The band the answer shows in runs from under the chips to above the footer.
+        const float Foot = PaletteLayout.FootTop + PaletteLayout.FootHeight + PaletteLayout.Bottom;
+        Assert.Equal(layout.AnswerTop + measured + PaletteLayout.Gap + Foot, Math.Max(height, 150), 1);
+        // The band the answer shows in runs from under the card to above the footer.
         var band = layout.AnswerBand(height);
         Assert.Equal(layout.AnswerTop, band.Y);
-        Assert.Equal(height - PaletteLayout.Bottom - PaletteLayout.FootHeight - PaletteLayout.Gap, band.Bottom, 1);
+        Assert.Equal(height - Foot - PaletteLayout.Gap, band.Bottom, 1);
         Assert.Equal(0, layout.MaxScroll(measured, height));
 
         // A long answer stops the palette at 480 and is laid out whole: the band scrolls over it.
@@ -227,24 +238,24 @@ public sealed class TypingTests : IDisposable
         Assert.Equal(480, layout.Height(tall));
         using (var laid = TextLayout.Of(whole[0].Run))
         {
-            Assert.Equal(laid.LineCount * 20, tall, 1);
+            Assert.Equal(laid.LineCount * 27, tall, 1);
         }
 
         Assert.Equal(tall - layout.AnswerBand(480).Height, layout.MaxScroll(tall, 480), 1);
 
-        // The prompt grows with its lines up to about four, and everything under it moves down with it.
-        var grown = new PaletteLayout(640, mascot: true, text: 52, chips);
-        Assert.Equal(70, grown.Prompt.Height);
-        Assert.Equal(layout.AnswerTop + 34, grown.AnswerTop, 1);
-        Assert.Equal(90, new PaletteLayout(640, mascot: true, text: 200).Prompt.Height);
-        // Without the tomte the box starts at the padding.
-        Assert.Equal(14, new PaletteLayout(640, mascot: false).Prompt.X);
+        // The card grows with its lines up to four, and everything under it moves down with it.
+        var grown = new PaletteLayout(720, mascot: true, text: 52, chips[..2], send: true);
+        Assert.Equal(84, grown.Prompt.Height);
+        Assert.Equal(layout.AnswerTop + 32, grown.AnswerTop, 1);
+        Assert.Equal(112, new PaletteLayout(720, mascot: true, text: 200).Prompt.Height);
+        // Without the tomte the card starts at the padding.
+        Assert.Equal(16, new PaletteLayout(720, mascot: false).Prompt.X);
     }
 
     [Fact]
     public void TheModelsWordsAreReadAsMarkdownAndTheRestStaysPlain()
     {
-        var layout = new PaletteLayout(640, mascot: true);
+        var layout = new PaletteLayout(720, mascot: true);
         List<(string, TextStyle)> answer =
         [
             ("Read **notes.txt**", PaletteLayout.StepText),
@@ -256,10 +267,13 @@ public sealed class TypingTests : IDisposable
         Assert.Equal([(10, 6)], runs[1].Run.Bold);
         Assert.Equal([(20, 5)], runs[1].Run.Italic);
         Assert.Equal([(5, 6)], runs[3].Run.Code);
-        // From the palette's padding, the list's text hanging right of its bullet, the plain blocks 6 apart as before.
-        Assert.Equal([14, 14, 14, 14 + DropResultLayout.Indent], runs.Take(4).Select(r => r.At.X));
+        // From the answer's column, the list's text hanging right of its bullet, the plain blocks 8 apart; the first
+        // paragraph is the lead, the list after it in the answer's own style.
+        float x = layout.AnswerX;
+        Assert.Equal([x, x, x, x + DropResultLayout.Indent], runs.Take(4).Select(r => r.At.X));
         Assert.Equal(18 + PaletteLayout.BlockGap, runs[1].At.Y, 1);
-        Assert.Equal(runs[^1].At.Y + 20, measured, 1);
+        Assert.Equal((PaletteLayout.Lead, PaletteLayout.AnswerText), (runs[1].Run.Style, runs[3].Run.Style));
+        Assert.Equal(runs[^1].At.Y + 21, measured, 1);
         // The same answer again takes what was measured the first time and lays out the same.
         var (again, height) = layout.Answer(answer);
         Assert.Equal(runs, again);
@@ -278,7 +292,7 @@ public sealed class TypingTests : IDisposable
     [Fact]
     public void TheAnswerScrollsWithinItsLengthAndFollowsItsEndUntilScrolledUp()
     {
-        var layout = new PaletteLayout(640, mascot: true);
+        var layout = new PaletteLayout(720, mascot: true);
         const float height = 480;
         float band = layout.AnswerBand(height).Height;
         float answer = band + 300;
@@ -353,14 +367,55 @@ public sealed class TypingTests : IDisposable
     }
 
     [Fact]
-    public void TheFooterSaysWhatWasSpent()
+    public void TheFooterSaysWhereItWentWhatItCostAndWhatTodayCost()
     {
-        Assert.Equal("0 tool steps · $0.03 today of $2.00 cap", PaletteLayout.SpendLine(0, 0.03m, 2m));
-        Assert.Equal("1 tool step · $1.50 today", PaletteLayout.SpendLine(1, 1.5m, null));
-        var foot = new PaletteLayout(640, mascot: true).Foot("Nothing sent", 0, 0, 2m, 150);
-        Assert.Equal("Nothing sent", foot[0].Text);
-        Assert.Equal(150 - PaletteLayout.Bottom - PaletteLayout.FootHeight, foot[1].Slot.Y);
-        Assert.Equal(626, foot[1].Slot.Right, 0.01);
+        Assert.Equal("$0.12 / $10 today", PaletteLayout.SpendLine(0.12m, 10m));
+        Assert.Equal("$1.50 / $2.5 today", PaletteLayout.SpendLine(1.5m, 2.5m));
+        Assert.Equal("$1.50 today", PaletteLayout.SpendLine(1.5m, null));
+        Assert.Equal("· $0.002", PaletteLayout.CostLine(0.002m));
+        Assert.Equal("· $0.12", PaletteLayout.CostLine(0.12m));
+        Assert.Equal("", PaletteLayout.CostLine(0));
+
+        var foot = new PaletteLayout(720, mascot: true).Foot("Sent to Anthropic · claude-haiku-5-5", 2, 0.002m, 0.12m, 10m, 150);
+        Assert.Equal("Sent to Anthropic · claude-haiku-5-5 · 2 tool steps", foot.Provider.Text);
+        Assert.Equal(150 - PaletteLayout.Bottom - PaletteLayout.FootHeight, foot.Spend.Slot.Y);
+        Assert.Equal(foot.Spend.Slot.Y - PaletteLayout.FootTop, foot.Divider.Y);
+        // Left to right: the dot, the provider, the cost, then today's spend and the meter at the right end.
+        Assert.True(foot.Dot.Right < foot.Provider.Slot.X && foot.Provider.Slot.Right < foot.Cost.Slot.X && foot.Cost.Slot.Right < foot.Spend.Slot.X);
+        Assert.Equal(720 - PaletteLayout.Pad - PaletteLayout.AnswerInset, foot.Meter.Right, 0.01);
+        Assert.Equal((PaletteLayout.MeterWidth, PaletteLayout.MeterHeight), (foot.Meter.Width, foot.Meter.Height));
+        // A tiny spend still shows on the meter; the meter fills with the cap.
+        Assert.Equal(PaletteLayout.MeterMin, foot.Fill);
+        Assert.Equal(32, new PaletteLayout(720, mascot: true).Foot("", 0, 0, 5m, 10m, 150).Fill, 0.01);
+        Assert.Equal(PaletteLayout.MeterWidth, new PaletteLayout(720, mascot: true).Foot("", 0, 0, 12m, 10m, 150).Fill, 0.01);
+        Assert.True(new PaletteLayout(720, mascot: true).Foot("", 0, 0, 1m, null, 150).Meter.IsEmpty);
+        Assert.Equal((Theme.Ok, Theme.Warn, Theme.Ink3), (PaletteLayout.StatusDot("Sent to Anthropic · m", false), PaletteLayout.StatusDot("Sent to Anthropic · m", true), PaletteLayout.StatusDot("Nothing sent", false)));
+    }
+
+    [Fact]
+    public void AFinishedAnswersActionsLineUpWithItsWords()
+    {
+        string[] offered = [PaletteLayout.CopyId, PaletteLayout.NoteId, PaletteLayout.ShelfId, PaletteLayout.FollowId];
+        var plain = new PaletteLayout(720, mascot: true);
+        var layout = new PaletteLayout(720, mascot: true, actions: offered);
+        float height = layout.Height(27);
+        var actions = layout.Actions(height);
+        Assert.Equal(["Copy", "Add to note", "Keep on shelf", "Follow up"], actions.Select(a => a.Label.Text));
+        Assert.Equal(layout.AnswerX, actions[0].Box.X);
+        Assert.Equal([false, false, false, true], actions.Select(a => a.Outlined));
+        Assert.All(actions, a => Assert.Equal(PaletteLayout.ActionHeight, a.Box.Height));
+        for (int i = 1; i < actions.Count; i++)
+        {
+            Assert.Equal(actions[i - 1].Box.Right + PaletteLayout.ActionGap, actions[i].Box.X, 3);
+        }
+
+        // The row takes its room between the answer and the footer.
+        Assert.Equal(plain.Height(27) + PaletteLayout.ActionHeight + PaletteLayout.Gap, height, 1);
+        Assert.Equal(layout.AnswerBand(height).Bottom + PaletteLayout.Gap, actions[0].Box.Y, 1);
+        // Done, a pill says so in the same width.
+        var copied = layout.Actions(height, [PaletteLayout.CopyId]);
+        Assert.Equal(("Copied", actions[0].Box), (copied[0].Label.Text, copied[0].Box));
+        Assert.Empty(plain.Actions(height));
     }
 
     /// <summary>

@@ -48,6 +48,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly ContainerVisual live;
     private readonly Drawn pill;
     private readonly Drawn ghost;
+    private readonly CompositionColorBrush fill;
     private readonly ScalarKeyFrameAnimation fadeIn;
     private readonly ScalarKeyFrameAnimation fadeOut;
     private readonly UISettings uiSettings = new();
@@ -56,6 +57,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly Spring corner = new();
     private readonly Spring rampW = new();
     private readonly Spring rampH = new();
+
+    // Desktop peek's resting shapes: raised above the gap line, without the pill's fill, moved into a corner.
+    private readonly Spring lift = new(), bare = new(), shift = new();
     private readonly Spring[] springs;
 
     // The centre's place along the top edge, in DIPs from the middle (IslandPlace). Not one of the shape's springs: it
@@ -64,7 +68,7 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     // The tomte's offset from its place on the top row, toward the row it sits beside (Seat). Not shape springs either:
     // they take the morph's preset and wait out its lead, but move on their own when the seat changes at rest.
-    private readonly Spring seatX = new(), seatY = new();
+    private readonly Spring seatX = new(), seatY = new(), seatSize = new();
     private readonly List<OutlineSegment> segments = new(24);
     private readonly List<Vector2> flattened = new(128);
     private readonly List<System.Drawing.Point> regionPoints = new(128);
@@ -109,7 +113,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     public IslandWindow()
     {
         instance = this;
-        springs = [width, depth, corner, rampW, rampH];
+        springs = [width, depth, corner, rampW, rampH, lift, bare, shift];
         tickHandler = Tick;
         finishHandler = FinishWithoutClock;
         contentReadyHandler = RaiseContentReady;
@@ -178,12 +182,8 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         // Tree: root > [ghost (previous outline, only during a reduced-motion crossfade), live > [pill, Content]].
         // The pill is drawn outside the clip so its stroke keeps both halves; content is clipped by the same path.
-        var gradient = compositor.CreateLinearGradientBrush();
-        gradient.StartPoint = new Vector2(0, 0);
-        gradient.EndPoint = new Vector2(0, 1);
-        gradient.ColorStops.Add(compositor.CreateColorGradientStop(0, Color.FromArgb(255, 0x10, 0x10, 0x12)));
-        gradient.ColorStops.Add(compositor.CreateColorGradientStop(1, Color.FromArgb(255, 0, 0, 0)));
-        pill = new Drawn(compositor, gradient);
+        fill = compositor.CreateColorBrush(ShelfColors.Of(Theme.Island));
+        pill = new Drawn(compositor, fill);
 
         Content = compositor.CreateContainerVisual();
         Content.Clip = compositor.CreateGeometricClip(pill.Geometry);
@@ -217,12 +217,13 @@ internal sealed unsafe class IslandWindow : IDisposable
         live.Children.InsertAtBottom(pill.Visual);
         live.Children.InsertAtTop(Content);
 
-        ghost = new Drawn(compositor, gradient);
+        ghost = new Drawn(compositor, fill);
         ghost.Visual.Opacity = 0;
         ShadowLook();
 
         // The mascot sits above the content and outside its clip; it keeps inside the shape by being sized from its depth.
         Mascot = new Mascot(() => clock.Elapsed.TotalSeconds, () => ReduceMotion) { Changed = Wake };
+        seatSize.Jump(MascotArt.SizeDips);
         mascotVisual = new MascotVisual(compositor);
         live.Children.InsertAtTop(mascotVisual.Visual);
         wakeTimer = Queue.CreateTimer();
@@ -252,6 +253,8 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         new Thread(CompositorClockLoop) { IsBackground = true, Name = "tomte-compositor-clock" }.Start();
         Interaction = new InteractionHost(this);
+        Theme.Changed += Restyle;
+        Restyle();
     }
 
     public HWND Hwnd { get; }
@@ -293,6 +296,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>A morph to a visible shape came to rest: work held back while <see cref="Moving"/> can run now.</summary>
     public event Action? Settled;
 
+    /// <summary>The shape closed all the way and the window is hidden; not on a change that passes through Hidden.</summary>
+    public event Action? WentHidden;
+
     /// <summary>A morph or a retarget starts, before the springs move: what is placed from the shape as it is now should go.</summary>
     public event Action? Morphing;
 
@@ -330,7 +336,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     public Mascot Mascot { get; }
 
     /// <summary>Whether an island point is on the tomte's box where it is drawn now, while the tomte is on.</summary>
-    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(Current, SeatShift).Contains(at.X, at.Y);
+    public bool OnMascot(Vector2 at) => Mascot.Enabled && MascotArt.Box(Current, SeatShift, SeatGrow).Contains(at.X, at.Y);
 
     /// <summary>
     /// The row the tomte sits beside in what the island shows (<see cref="MascotSeat"/>), or null for its place on the
@@ -344,11 +350,13 @@ internal sealed unsafe class IslandWindow : IDisposable
         set
         {
             var shift = value?.Shift ?? Vector2.Zero;
-            (seatX.Target, seatY.Target) = (shift.X, shift.Y);
+            float size = value?.Size ?? MascotArt.SizeDips;
+            (seatX.Target, seatY.Target, seatSize.Target) = (shift.X, shift.Y, size);
             if (ReduceMotion)
             {
                 seatX.Jump(shift.X);
                 seatY.Jump(shift.Y);
+                seatSize.Jump(size);
                 PlaceMascot(Current);
             }
 
@@ -357,7 +365,29 @@ internal sealed unsafe class IslandWindow : IDisposable
         }
     }
 
+    /// <summary>The tomte goes to <paramref name="seat"/> at once, for a shape that shows with it there from its first frame.</summary>
+    public void JumpSeat(MascotSeat? seat)
+    {
+        Seat = seat;
+        seatX.Jump(seatX.Target);
+        seatY.Jump(seatY.Target);
+        seatSize.Jump(seatSize.Target);
+    }
+
+    /// <summary>
+    /// The <see cref="IslandGeometry.Shift"/> that puts <paramref name="shape"/> at the left or right end of the top edge
+    /// from the island's place, as far as the shape's window may go.
+    /// </summary>
+    public double ToCorner(in IslandGeometry shape, bool left)
+    {
+        Rescale(MonitorScale());
+        return IslandPlace.ToCorner(place.Target, attached ? shape.Attached() : shape, scale, screenWidth, attached, left);
+    }
+
     private Vector2 SeatShift => new((float)seatX.Value, (float)seatY.Value);
+
+    // The tomte's size in its seat against its size on the pill, sprung in DIPs so the spring settles as finely as the others.
+    private float SeatGrow => (float)seatSize.Value / MascotArt.SizeDips;
 
     /// <summary>The island is pinned (Ctrl+P): a small mark at the tomte's lower right says so.</summary>
     public bool Pinned
@@ -373,7 +403,7 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     public double Scale => scale;
 
-    public IslandGeometry Current => new(width.Value, depth.Value, corner.Value, rampW.Value, rampH.Value);
+    public IslandGeometry Current => new(width.Value, depth.Value, corner.Value, rampW.Value, rampH.Value, lift.Value, bare.Value, shift.Value);
 
     /// <summary>The shape the current morph is heading for, as drawn (the notch when attached), without the swell.</summary>
     public IslandGeometry Heading => targetGeometry;
@@ -484,6 +514,9 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>The scale, the screen's width or the island's place changed; anything measured in pixels needs recomputing.</summary>
     public event Action? LayoutChanged;
 
+    /// <summary>Windows announced a change to its colours (WM_SETTINGCHANGE "ImmersiveColorSet"), on this window's thread.</summary>
+    public Action? ColorsChanged { get; set; }
+
     /// <summary>
     /// Timers, WM_APP posts from the input thread, shell notifications, power broadcasts and clock changes land
     /// on this window. The handler returns true when it took the message, false to leave the answer to
@@ -539,6 +572,19 @@ internal sealed unsafe class IslandWindow : IDisposable
             to = to.Attached();
         }
 
+        if (to.Depth <= 0.5)
+        {
+            // A retract closes where the shape is: a raised, bare or cornered one does not drift back to the pill's place.
+            to = to with { Lift = lift.Target, Bare = bare.Target, Shift = shift.Target };
+        }
+        else if (!visible)
+        {
+            // A show opens where the shape rests: the perched tomte grows in on the edge, the corner pill in its corner.
+            lift.Jump(to.Lift);
+            bare.Jump(to.Bare);
+            shift.Jump(to.Shift);
+        }
+
         var from = Current;
         if (to.Depth != depth.Target)
         {
@@ -568,7 +614,9 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         seatX.Use(preset);
         seatY.Use(preset);
+        seatSize.Use(preset);
         (width.Target, depth.Target, corner.Target, rampW.Target, rampH.Target) = (to.Width, to.Depth, to.Corner, to.RampW, to.RampH);
+        (lift.Target, bare.Target, shift.Target) = (to.Lift, to.Bare, to.Shift);
 
         // The region goes before the resize; the other order leaves it clipping the enlarged window for a frame.
         ClearRegion();
@@ -708,18 +756,18 @@ internal sealed unsafe class IslandWindow : IDisposable
     {
         Rescale(MonitorScale());
         var shape = attached ? g.Attached() : g;
-        return IslandOutline.WindowBounds(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth, attached), attached);
+        return IslandOutline.WindowBounds(shape, scale, IslandPlace.Center(place.Target + shape.Shift, shape, scale, screenWidth, attached), attached);
     }
 
     /// <summary>Window rectangle for a geometry in physical pixels, at its place along the primary monitor's top edge.</summary>
     private System.Drawing.Rectangle Bounds(in IslandGeometry g) =>
-        IslandOutline.WindowBounds(g, scale, IslandPlace.Center(place.Value, g, scale, screenWidth, attached), attached);
+        IslandOutline.WindowBounds(g, scale, IslandPlace.Center(place.Value + g.Shift, g, scale, screenWidth, attached), attached);
 
     // The pointer is tracked against where the shape is heading, its place included: on a slide back to the middle,
     // a pointer left where the island was is outside at once, and the island retracts as it would for any pointer
     // that left it.
     private System.Drawing.Rectangle PointerTarget() =>
-        IslandOutline.PointerBounds(IslandOutline.WindowBounds(targetGeometry, scale, IslandPlace.Center(place.Target, targetGeometry, scale, screenWidth, attached), attached), scale, attached);
+        IslandOutline.PointerBounds(IslandOutline.WindowBounds(targetGeometry, scale, IslandPlace.Center(place.Target + targetGeometry.Shift, targetGeometry, scale, screenWidth, attached), attached), targetGeometry, scale, attached);
 
     /// <summary>The place moved: the window and the bounds the pointer is tracked against follow it.</summary>
     private void Follow()
@@ -766,14 +814,22 @@ internal sealed unsafe class IslandWindow : IDisposable
         return !done;
     }
 
-    /// <summary>Where the outline's origin sits in a window that is exactly its geometry's bounds.</summary>
-    private Vector3 Origin()
+    /// <summary>Where the outline's origin sits in a window that is exactly its geometry's bounds; a raised outline sits higher.</summary>
+    private Vector3 Origin(in IslandGeometry g)
     {
         var (side, top, _) = IslandOutline.Insets(scale, attached);
-        return new Vector3(side, top, 0);
+        return new Vector3(side, top - (attached ? 0 : IslandOutline.LiftPixels(g, scale)), 0);
     }
 
     /// <summary>The floating pill casts the shadow; the notch has none. Its offset and blur are DIPs times the scale.</summary>
+    // The theme's colours on what lives as long as the window.
+    private void Restyle()
+    {
+        fill.Color = ShelfColors.Of(Theme.Island);
+        pill.Restyle();
+        ghost.Restyle();
+    }
+
     private void ShadowLook()
     {
         pill.Shadow(!attached, scale);
@@ -883,15 +939,17 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>One step of the seat's springs; true while they still move.</summary>
     private bool StepSeat(double dt)
     {
-        if (seatX.Settled && seatY.Settled)
+        if (seatX.Settled && seatY.Settled && seatSize.Settled)
         {
             seatX.Jump(seatX.Target);
             seatY.Jump(seatY.Target);
+            seatSize.Jump(seatSize.Target);
             return false;
         }
 
         seatX.Step(dt);
         seatY.Step(dt);
+        seatSize.Step(dt);
         return true;
     }
 
@@ -916,6 +974,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         islandMoving = false;
         seatX.Jump(seatX.Target);
         seatY.Jump(seatY.Target);
+        seatSize.Jump(seatSize.Target);
         PlaceMascot(Current);
         if (place.Value != place.Target)
         {
@@ -972,14 +1031,16 @@ internal sealed unsafe class IslandWindow : IDisposable
             place.Jump(place.Target);
             seatX.Jump(seatX.Target);
             seatY.Jump(seatY.Target);
+            seatSize.Jump(seatSize.Target);
         }
 
         Apply(g);
         SizeWindow(Bounds(g));
-        root.Offset = Origin();
+        root.Offset = Origin(g);
         if (!visible)
         {
             PInvoke.ShowWindow(Hwnd, SHOW_WINDOW_CMD.SW_HIDE);
+            WentHidden?.Invoke();
         }
         else
         {
@@ -1001,7 +1062,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>A closed composition path from segments, scaled by <paramref name="s"/>.</summary>
-    internal static CompositionPath BuildPath(ReadOnlySpan<OutlineSegment> segments, float s)
+    internal static CompositionPath BuildPath(ReadOnlySpan<OutlineSegment> segments, float s, bool closed = true)
     {
         using var builder = new CanvasPathBuilder(null);
         foreach (var segment in segments)
@@ -1023,7 +1084,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             }
         }
 
-        builder.EndFigure(CanvasFigureLoop.Closed);
+        builder.EndFigure(closed ? CanvasFigureLoop.Closed : CanvasFigureLoop.Open);
         return new CompositionPath(CanvasGeometry.CreatePath(builder));
     }
 
@@ -1041,9 +1102,10 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         // Over its last 2 DIP of depth the pill fades with the depth the springs give each frame, so a retract does
         // not end as a thin line under the gap and a reveal does not start as one.
-        pill.Visual.Opacity = attached ? 1 : (float)Math.Clamp(g.Depth / 2, 0, 1);
+        // A bare shape (the perched tomte) draws none of the pill: no fill, hairline or shadow.
+        pill.Visual.Opacity = attached ? 1 : (float)(Math.Clamp(g.Depth / 2, 0, 1) * (1 - Math.Clamp(g.Bare, 0, 1)));
 
-        root.Offset = Origin() + new Vector3(Bounds(g).X - windowX, 0, 0);
+        root.Offset = Origin(g) + new Vector3(Bounds(g).X - windowX, 0, 0);
 
         // The outline's box and a pixel around it. Content anchors to this width, so the shadow's room stays out of it.
         var size = new Vector2((float)Math.Ceiling(g.OuterWidth * scale), (float)Math.Ceiling(Math.Max(0, g.Depth) * scale)) + new Vector2(2 * Margin);
@@ -1055,10 +1117,10 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>Put the tomte at the left edge of the live shape, beside its seat, at the size and opacity the shape's depth gives it.</summary>
     private void PlaceMascot(in IslandGeometry g)
     {
-        var box = MascotArt.Box(g, SeatShift);
+        var box = MascotArt.Box(g, SeatShift, SeatGrow);
         float s = (float)scale;
         mascotX = (float)(g.OuterWidth / 2 + box.X) * s;
-        mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s, (float)MascotArt.Ride(g));
+        mascotVisual.Apply(Mascot, new Vector2(mascotX, box.Y * s), s, (float)MascotArt.Ride(g), SeatGrow, (float)Math.Clamp(g.Bare, 0, 1));
     }
 
     private void ClearRegion()
@@ -1105,7 +1167,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         ghost.Geometry.Path = pill.Geometry.Path;
         ghost.Shape.StrokeThickness = pill.Shape.StrokeThickness;
         ghost.Size = pill.Size;
-        float oldOffset = root.Offset.X;
+        float oldOffset = root.Offset.X, oldTop = root.Offset.Y, oldOpacity = pill.Visual.Opacity;
         foreach (var spring in springs)
         {
             spring.Jump(spring.Target);
@@ -1113,9 +1175,10 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         seatX.Jump(seatX.Target);
         seatY.Jump(seatY.Target);
+        seatSize.Jump(seatSize.Target);
         Apply(to);
-        ghost.Visual.Offset = new Vector3(oldOffset - root.Offset.X - Margin, -Margin, 0);
-        ghost.Visual.Opacity = 1;
+        ghost.Visual.Offset = new Vector3(oldOffset - root.Offset.X - Margin, oldTop - root.Offset.Y - Margin, 0);
+        ghost.Visual.Opacity = oldOpacity;
         live.Opacity = 0;
 
         int generation = crossfadeGeneration;
@@ -1174,7 +1237,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             var g = Current;
             Apply(g);
             SizeWindow(Bounds(g));
-            root.Offset = Origin();
+            root.Offset = Origin(g);
             SetRegion(g);
         }
     }
@@ -1397,6 +1460,21 @@ internal sealed unsafe class IslandWindow : IDisposable
                 return Interact(message, wParam, lParam) ?? Typed(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_DPICHANGED:
                 return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
+            case PInvoke.WM_SETTINGCHANGE when lParam.Value != 0 && new string((char*)lParam.Value) == "ImmersiveColorSet":
+                // Windows' colours, light or dark, accent or transparency changed. The handler reads them again.
+                if (instance?.ColorsChanged is { } changed)
+                {
+                    try
+                    {
+                        changed();
+                    }
+                    catch (Exception e)
+                    {
+                        instance.Log?.Invoke($"colour change failed: {e}");
+                    }
+                }
+
+                return PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_DISPLAYCHANGE:
                 // A scaling change reaches a resting window here before its own WM_DPICHANGED does.
                 return GuardedRescale(instance?.MonitorScale());
@@ -1468,7 +1546,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>
-    /// One outline as drawn: the gradient fill with its hairline, and the floating pill's drop shadow, which the
+    /// One outline as drawn: the flat fill with its hairline, and the floating pill's drop shadow, which the
     /// compositor blurs from an off-screen copy of that fill. The live shape and the crossfade ghost are one each.
     /// </summary>
     private sealed class Drawn
@@ -1479,14 +1557,15 @@ internal sealed unsafe class IslandWindow : IDisposable
         private readonly CompositionVisualSurface copy;
         private readonly SpriteVisual shadowVisual;
         private readonly DropShadow shadow;
+        private readonly CompositionColorBrush stroke;
         private bool shadowOn;
 
-        public Drawn(Compositor compositor, CompositionBrush gradient)
+        public Drawn(Compositor compositor, CompositionBrush fillBrush)
         {
             Geometry = compositor.CreatePathGeometry();
             Shape = compositor.CreateSpriteShape(Geometry);
-            Shape.FillBrush = gradient;
-            Shape.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(26, 255, 255, 255));
+            Shape.FillBrush = fillBrush;
+            Shape.StrokeBrush = stroke = compositor.CreateColorBrush(ShelfColors.Of(Theme.LineOver));
             Shape.StrokeThickness = 0;
             Shape.Offset = new Vector2(Margin);
             fill = compositor.CreateShapeVisual();
@@ -1496,8 +1575,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             copy.SourceVisual = fill;
             shadow = compositor.CreateDropShadow();
             shadow.Mask = compositor.CreateSurfaceBrush(copy);
-            shadow.Color = Color.FromArgb(255, 0, 0, 0);
-            shadow.Opacity = 0.35f;
+            Restyle();
             shadowVisual = compositor.CreateSpriteVisual();
             shadowVisual.Shadow = shadow;
 
@@ -1529,6 +1607,14 @@ internal sealed unsafe class IslandWindow : IDisposable
                     copy.SourceSize = value;
                 }
             }
+        }
+
+        /// <summary>The theme's hairline and shadow.</summary>
+        public void Restyle()
+        {
+            stroke.Color = ShelfColors.Of(Theme.LineOver);
+            shadow.Color = ShelfColors.Of(Theme.Shadow);
+            shadow.Opacity = Theme.ShadowOpacity;
         }
 
         /// <summary>The compositor's blur radius is three sigma (fitted on screen: 10.5 px for 7 DIP at 150%).</summary>

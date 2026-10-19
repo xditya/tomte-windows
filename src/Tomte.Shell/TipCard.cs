@@ -22,14 +22,18 @@ internal sealed class TipCard
     public TipCard(Compositor compositor, CompositionColorBrush accent, CompositionGeometry mark)
     {
         this.accent = accent;
-        clear = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+        clear = compositor.CreateColorBrush(default(Windows.UI.Color));
         Visual = compositor.CreateShapeVisual();
         Visual.IsVisible = false;
         box = compositor.CreateRoundedRectangleGeometry();
         box.CornerRadius = new Vector2(StateLook.TipCorner);
         shape = compositor.CreateSpriteShape(box);
-        shape.FillBrush = compositor.CreateColorBrush(Argb(StateLook.TipFill));
-        shape.StrokeBrush = compositor.CreateColorBrush(Argb(StateLook.TipLine));
+        var fill = compositor.CreateColorBrush(Argb(StateLook.TipFill));
+        var line = compositor.CreateColorBrush(Argb(StateLook.TipLine));
+        shape.FillBrush = fill;
+        shape.StrokeBrush = line;
+        // One card for the island's life: it takes a new theme's colours as they come.
+        Tomte.Core.Theme.Changed += () => (fill.Color, line.Color) = (Argb(StateLook.TipFill), Argb(StateLook.TipLine));
         Visual.Shapes.Add(shape);
         tick = compositor.CreateSpriteShape(mark);
         tick.FillBrush = clear;

@@ -1,0 +1,32 @@
+using Tomte.Core.Text;
+
+namespace Tomte.Core;
+
+/// <summary>
+/// A round chip: an outlined capsule with an icon and a short word (an attachment, a filter). One that holds something is
+/// filled instead.
+/// </summary>
+public static class Chip
+{
+    public const float Height = 30, PadX = 10, Icon = 14, IconGap = 5, Border = 1;
+
+    public static TextStyle Style => TextStyle.Secondary;
+
+    public static float Width(string label, float max) => PadX + Icon + IconGap + MathF.Ceiling(TextSlot.Measure(label, Style, max)) + PadX;
+}
+
+/// <summary>A section inside a panel: a card with this corner and padding, this far from the next.</summary>
+public static class Section
+{
+    public const float Corner = 18, Pad = 14, Gap = 10, HeadHeight = 16, HeadGap = 10;
+
+    /// <summary>A panel body's padding at its sides and bottom.</summary>
+    public const float BodyPad = 16, BodyTop = 12;
+
+    /// <summary>A tile or row inside a section, and a rectangular button.</summary>
+    public const float TileCorner = 12, ButtonCorner = 10;
+
+    /// <summary>A section's name, and the count or note beside it.</summary>
+    public static TextStyle Title => TextStyle.Title;
+    public static TextStyle Note => new(12, Color: Theme.Ink3);
+}

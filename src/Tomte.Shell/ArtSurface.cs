@@ -21,7 +21,7 @@ internal sealed class ArtVisual : IDisposable
     public ArtVisual(Compositor compositor, RectangleF rect, float corner)
     {
         this.compositor = compositor;
-        empty = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(28, 255, 255, 255));
+        empty = compositor.CreateColorBrush(ShelfColors.Of(Tomte.Core.Theme.Raised));
         var round = compositor.CreateRoundedRectangleGeometry();
         round.Size = new Vector2(rect.Width, rect.Height);
         round.CornerRadius = new Vector2(corner);

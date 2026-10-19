@@ -29,7 +29,7 @@ namespace Tomte.Shell;
 internal sealed unsafe class CaptureOverlay : IDisposable
 {
     private const string ClassName = "TomteCapture";
-    private static readonly Color Dim = Color.FromArgb(89, 0, 0, 0);
+    private static Color Dim => ShelfColors.Of(Theme.Scrim);
     private static CaptureOverlay? current;
     private static bool registered;
 
@@ -125,12 +125,16 @@ internal sealed unsafe class CaptureOverlay : IDisposable
             dim.FillBrush = compositor.CreateColorBrush(Dim);
             strokeGeometry = compositor.CreatePathGeometry();
             var stroke = compositor.CreateSpriteShape(strokeGeometry);
-            stroke.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(255, 255, 255, 255));
-            stroke.StrokeThickness = (float)(2 * scale);
+            // The accent, dotted with round caps, over the dim.
+            stroke.StrokeBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.Accent));
+            stroke.StrokeThickness = (float)(Lasso.StrokeDips * scale);
             stroke.StrokeLineJoin = CompositionStrokeLineJoin.Round;
+            stroke.StrokeStartCap = stroke.StrokeEndCap = stroke.StrokeDashCap = CompositionStrokeCap.Round;
+            stroke.StrokeDashArray.Add(Lasso.Dashes.On);
+            stroke.StrokeDashArray.Add(Lasso.Dashes.Off);
             boxGeometry = compositor.CreateRectangleGeometry();
             box = compositor.CreateSpriteShape(boxGeometry);
-            box.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(128, 255, 255, 255));
+            box.StrokeBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.WithOpacity(Theme.Ink, 0.5f)));
             box.StrokeThickness = (float)scale;
             box.StrokeDashArray.Add(4);
             box.StrokeDashArray.Add(4);
@@ -212,9 +216,9 @@ internal sealed unsafe class CaptureOverlay : IDisposable
         shape.Size = new Vector2(card.Width, card.Height);
         shape.CornerRadius = new Vector2(card.Height / 2);
         var capsule = compositor.CreateSpriteShape(shape);
-        // The island's own dark and its 10% hairline.
-        capsule.FillBrush = compositor.CreateColorBrush(Color.FromArgb(255, 0x10, 0x10, 0x12));
-        capsule.StrokeBrush = compositor.CreateColorBrush(Color.FromArgb(26, 255, 255, 255));
+        // The island's own fill and hairline.
+        capsule.FillBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.Island));
+        capsule.StrokeBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.LineOver));
         capsule.StrokeThickness = 1 / scale;
         var back = compositor.CreateShapeVisual();
         back.Size = new Vector2(monitor, card.Bottom + 1);

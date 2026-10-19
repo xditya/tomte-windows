@@ -556,24 +556,33 @@ public sealed class ShortcutsTests : IDisposable
     }
 
     [Fact]
-    public void TheGridHoldsTwoRowsOfFourAtThePanelSizeAndKeepsClearOfTheCorners()
+    public void TheGridHoldsTwoRowsOfSixAtThePanelSizeAndKeepsClearOfTheCorners()
     {
         var (width, height) = PanelSize.Shortcuts;
-        var body = new System.Numerics.Vector2((float)width, (float)height - PanelSpace.TabStripHeight);
+        var body = new System.Numerics.Vector2((float)width, (float)height - PanelSpace.Head);
         Assert.Equal(2, ShortcutGrid.Rows(body));
+        Assert.Equal(6, ShortcutGrid.Columns(body));
+        // A panel the monitor cuts to 520 keeps four across.
+        Assert.Equal(4, ShortcutGrid.Columns(new(520, body.Y)));
 
-        Assert.Equal(new System.Drawing.RectangleF(14, 39, 127, 80), ShortcutGrid.Cell(0, body));
-        Assert.Equal(new System.Drawing.RectangleF(149, 127, 127, 80), ShortcutGrid.Cell(5, body));
+        // Under the 22 DIP title line and 14 more, 16 in from the sides, 8 apart.
+        float tile = (760 - 32 - (5 * 8)) / 6f;
+        var first = ShortcutGrid.Cell(0, body);
+        Assert.Equal((16f, 48f, 80f), (first.X, first.Y, first.Height));
+        Assert.Equal(tile, first.Width, 0.01);
+        var seventh = ShortcutGrid.Cell(7, body);
+        Assert.Equal(16 + tile + 8, seventh.X, 0.01);
+        Assert.Equal(136, seventh.Y);
         // The rounded corners reach 22 DIP in from every edge of the island; the last row ends well above them.
         float corner = (float)IslandGeometry.Panel(width, height).Corner;
-        Assert.True(ShortcutGrid.Cell(7, body).Bottom <= body.Y - corner);
-        Assert.True(ShortcutGrid.Cell(7, body).Right <= body.X - ShortcutGrid.Inset);
+        Assert.True(ShortcutGrid.Cell(11, body).Bottom <= body.Y - corner);
+        Assert.True(ShortcutGrid.Cell(11, body).Right <= body.X - ShortcutGrid.Inset + 0.01);
 
         // Three tiles and the add tile: a press finds its cell, and nothing in a gap, past the add tile or in the head.
         var targets = ShortcutGrid.Targets(Tiles(3), 0, body);
         Assert.Equal("add", HitId(targets, new(ShortcutGrid.Cell(3, body).X + 50, 60)));
         Assert.Equal("tile:2", HitId(targets, new(ShortcutGrid.Cell(1, body).X + 50, 60)));
-        Assert.Null(HitId(targets, new(145, 60)));
+        Assert.Null(HitId(targets, new(16 + tile + 4, 60)));
         Assert.Null(HitId(targets, new(150, 150)));
         Assert.Null(HitId(targets, new(10, 10)));
     }
@@ -637,8 +646,8 @@ public sealed class ShortcutsTests : IDisposable
     public void IconsSitOnWholePixels(double scale, int pixels)
     {
         Assert.Equal(pixels, ShortcutGrid.IconPixels(scale));
-        // The body starts under the 42 DIP tab strip, 52.5 pixels down at 125%; the icons snap to the island's pixels.
-        const float top = PanelSpace.TabStripHeight;
+        // The body starts under the 52 DIP tab row and its padding, 65 pixels down at 125%; the icons snap to the island's pixels.
+        const float top = PanelSpace.Head;
         var body = new System.Numerics.Vector2(520, 258);
         for (int i = 0; i < 8; i++)
         {

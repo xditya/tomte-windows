@@ -3,22 +3,50 @@ namespace Tomte.Core;
 /// <summary>
 /// The values the island outline is built from, in DIPs at 100% scale. Each one is driven by its own
 /// spring, so any change of state is one continuous morph of the same shape. The floating pill is
-/// width, depth and corner. The two ramps are the fillets of the attached silhouette and stay 0 otherwise.
+/// width, depth and corner. The two ramps are the fillets of the attached silhouette and stay 0 otherwise. The last three
+/// are 0 for every shape but desktop peek's resting ones: <paramref name="Lift"/> raises the outline above its place under
+/// the gap, so part of it can sit above the screen's top edge; <paramref name="Bare"/> (0 to 1) takes away the pill's fill,
+/// hairline and shadow, leaving the tomte alone with a shadow of its own; <paramref name="Shift"/> moves the centre right
+/// of the island's place, into a corner.
 /// </summary>
-public readonly record struct IslandGeometry(double Width, double Depth, double Corner, double RampW = 0, double RampH = 0)
+public readonly record struct IslandGeometry(double Width, double Depth, double Corner, double RampW = 0, double RampH = 0, double Lift = 0, double Bare = 0, double Shift = 0)
 {
     public static readonly IslandGeometry Hidden = new(120, 0, 0);
 
-    // Corner 19, half the depth, so Compact is a capsule. The notch's Compact corner is 16.
-    public static readonly IslandGeometry Compact = new(220, 38, 19);
+    // Corner 20, half the depth, so Compact is a capsule. The notch's Compact corner is 16.
+    public static readonly IslandGeometry Compact = new(220, 40, 20);
 
     /// <summary>Desktop peek: Compact's depth and corner around the tomte alone, its inset on both sides (37 wide).</summary>
-    public static readonly IslandGeometry Peek = new(2 * MascotArt.InsetX + MascotArt.SizeDips, 38, 19);
+    public static readonly IslandGeometry Peek = new(2 * MascotArt.InsetX + MascotArt.SizeDips, 40, 20);
 
-    public static readonly IslandGeometry ShelfDrop = new(420, 96, 20);
+    /// <summary>
+    /// The perched tomte: the peek pill raised until the tomte's box sits on the screen's top edge, with nothing of the pill
+    /// drawn. Only that 26 x 26 box takes the pointer.
+    /// </summary>
+    public static readonly IslandGeometry Perched = Peek with { Lift = IslandOutline.Gap + MascotArt.Box(Peek).Y, Bare = 1 };
+
+    /// <summary>How far the edge lip hangs down from the screen's top edge, which is also its bottom corners.</summary>
+    public const double LipDepth = 6;
+
+    /// <summary>
+    /// The edge lip: a 72 wide tab of the island hanging <see cref="LipDepth"/> from the top edge. It is a capsule twice as
+    /// deep raised until its top half is above the screen, so the edge cuts it square and only its rounded bottom shows.
+    /// </summary>
+    public static readonly IslandGeometry Lip = new(72, 2 * LipDepth, LipDepth, Lift: IslandOutline.Gap + LipDepth);
+
+    /// <summary>The corner pill's depth: shallower than Compact, with room for a smaller tomte and the time.</summary>
+    public const double CornerDepth = 34;
+
+    /// <summary>The pill desktop peek rests as in a top corner, as wide as its tomte and time need; its Shift puts it there.</summary>
+    public static IslandGeometry CornerPill(double width) => new(width, CornerDepth, CornerDepth / 2);
+
+    /// <summary>The pill a drag to the top edge opens: a capsule a little deeper than Compact, with room for its dashed ring.</summary>
+    public static readonly IslandGeometry ShelfDrop = new(360, 52, 26);
 
     /// <summary>Panels and the palette share one corner; only the size differs.</summary>
-    public static IslandGeometry Panel(double width, double height) => new(width, height, 22);
+    public static IslandGeometry Panel(double width, double height) => new(width, height, PanelCorner);
+
+    public const double PanelCorner = 28;
 
     /// <summary>The resting pill grown a little while the pointer rests on it: 6 wider, 2 deeper, and a corner that keeps a capsule a capsule.</summary>
     public IslandGeometry Swollen() => this with { Width = Width + 6, Depth = Depth + 2, Corner = Corner + 1 };
@@ -27,12 +55,13 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
     public double OuterWidth => Width + 2 * RampW;
 
     /// <summary>The same state drawn as the notch: the notch's own corner and fillet ramps for it.</summary>
-    // keyed by the corner, which no two states share; give the table a state column if two ever do.
+    // keyed by the corner, which no two states share; give the table a state column if two ever do. The notch keeps
+    // its own corners: 16 for Compact, 20 for Shelf-drop, 22 for the panels.
     public IslandGeometry Attached() => Corner switch
     {
-        19 => this with { Corner = 16, RampW = 10, RampH = 12 },
-        20 => this with { RampW = 16, RampH = 18 },
-        22 => this with { RampW = 24, RampH = 24 },
+        20 => this with { Corner = 16, RampW = 10, RampH = 12 },
+        26 => this with { Corner = 20, RampW = 16, RampH = 18 },
+        PanelCorner => this with { Corner = 22, RampW = 24, RampH = 24 },
         _ => this,
     };
 
@@ -50,15 +79,19 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
 public static class PanelSize
 {
     /// <summary>Every panel is this wide, so the tab strip and its labels stay where they are from tab to tab; only the height differs.</summary>
-    public const double Width = 560;
+    public const double Width = 760;
 
-    public static readonly (double W, double H) Media = (Width, 140);
-    public static readonly (double W, double H) Shortcuts = (Width, 300);
-    public static readonly (double W, double H) Scratchpad = (Width, 320);
-    public static readonly (double W, double H) Shelf = (Width, 260);
-    public static readonly (double W, double H) Clipboard = (Width, 360);
-    public static readonly (double W, double H) History = (Width, 400);
-    public const double PaletteWidth = 640;
+    public static readonly (double W, double H) Home = (Width, HomeLayout.Height);
+    public static readonly (double W, double H) Media = (Width, 172);
+    public static readonly (double W, double H) Shortcuts = (Width, 310);
+    public static readonly (double W, double H) Scratchpad = (Width, 330);
+    public static readonly (double W, double H) Shelf = (Width, 500);
+    public static readonly (double W, double H) Clipboard = (Width, 480);
+    public static readonly (double W, double H) History = (Width, 410);
+    public const double PaletteWidth = 720;
+
+    /// <summary>The search box and the voice card are narrower than the AI box.</summary>
+    public const double SearchWidth = 680, VoiceWidth = 620;
     public const double PaletteMinHeight = 150;
     public const double PaletteMaxHeight = 480;
 
@@ -68,6 +101,7 @@ public static class PanelSize
 
     public static (double W, double H) Of(PanelId id) => id switch
     {
+        PanelId.Home => Home,
         PanelId.Shelf => Shelf,
         PanelId.Shortcuts => Shortcuts,
         PanelId.Media => Media,
@@ -79,7 +113,7 @@ public static class PanelSize
 
     /// <summary>
     /// Palette height for an answer given as lines of text, until a text renderer measures the real
-    /// height: about 88 characters per line at 640 wide, 21 DIP per line, rounded up to 24 DIP
+    /// height: about 88 characters per line at the palette's width, 21 DIP per line, rounded up to 24 DIP
     /// steps so a streaming answer retargets the spring every few lines, not every token.
     /// </summary>
     public static double PaletteHeightFor(IEnumerable<string> lines)

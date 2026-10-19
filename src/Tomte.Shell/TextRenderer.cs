@@ -191,6 +191,19 @@ internal sealed unsafe class TextVisual : IDisposable
         Place();
     }
 
+    /// <summary>Show a run in a slot of the host, centred in its height (a line with matched letters or bold parts).</summary>
+    public void ShowIn(TextRun run, RectangleF slot)
+    {
+        if (block.Set(run, renderer.Island.Scale))
+        {
+            drawn = false;
+            Draw();
+        }
+
+        at = new Vector2(slot.X, slot.Y + (slot.Height - Size.Y) / 2);
+        Place();
+    }
+
     /// <summary>Show a line a layout handed out.</summary>
     public void Show(TextSlot line) => Show(line.Text, line.Style, line.Slot);
 

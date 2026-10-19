@@ -287,7 +287,7 @@ public class MediaTests
     {
         var size = PanelSize.Media;
         double originX = 1 + IslandGeometry.Panel(size.W, size.H).OuterWidth / 2 * scale;
-        return ((int)Math.Round(originX + (bodyX - size.W / 2) * scale), (int)Math.Round(1 + (bodyY + PanelSpace.TabStripHeight) * scale));
+        return ((int)Math.Round(originX + (bodyX - size.W / 2) * scale), (int)Math.Round(1 + (bodyY + PanelSpace.Head) * scale));
     }
 
     public static TheoryData<double> Scales => [1.0, 1.25, 1.5];
@@ -339,7 +339,7 @@ public class MediaTests
     [MemberData(nameof(Scales))]
     public void ARefusedCommandIsADisabledButtonAndTheArtIsNoTarget(double scale)
     {
-        var (artX, artY) = Pixel(MediaPanelLayout.Art.X + 30, MediaPanelLayout.Art.Y + 30, scale);
+        var (artX, artY) = Pixel(Layout.Art.X + 30, Layout.Art.Y + 30, scale);
         Assert.Null(HitId(Layout.Targets(Playing()), BodyPoint(artX, artY, scale)));
 
         var transport = Layout.Targets(Playing());
@@ -437,29 +437,32 @@ public class MediaTests
     }
 
     [Theory]
-    [InlineData(560)]
+    [InlineData(760)]
     // 60% of a 1280 x 800 screen at 150%, and of an 800 x 600 one at 100%.
     [InlineData(512)]
     [InlineData(480)]
-    public void MediaBodyLayoutFitsUnderTheTabStripAndClearOfTheCorners(float width)
+    public void MediaBodyLayoutIsOneCardUnderTheTabRow(float width)
     {
         var layout = new MediaPanelLayout(width);
-        float height = (float)PanelSize.Media.H - PanelSpace.TabStripHeight;
+        float height = (float)PanelSize.Media.H - PanelSpace.Head;
+        // The card: the body's padding round it, as tall as the art and the card's own padding.
+        Assert.Equal(new RectangleF(16, 12, width - 32, 92), layout.Card);
+        Assert.True(layout.Card.Bottom <= height - 16);
         RectangleF[] all =
         [
-            MediaPanelLayout.Art, layout.Title, layout.Artist, MediaPanelLayout.Elapsed, layout.Bar,
+            layout.Art, layout.OverlineSlot, layout.Title, layout.Artist, layout.Elapsed, layout.Bar,
             layout.Total, layout.Seek, layout.Previous, layout.PlayPause, layout.Next,
             layout.SeekLabel(layout.Bar.Left), layout.SeekLabel(layout.Bar.Right),
         ];
 
-        Assert.All(all, r => Assert.True(r.Left >= 0 && r.Top >= 0 && r.Right <= width - 14 && r.Bottom <= height, r.ToString()));
-        // The end clock keeps the right padding, the bar takes what the clocks leave, and the transport sits under its middle.
-        Assert.Equal(width - 14, layout.Total.Right);
-        Assert.Equal(layout.Total.Left - 2, layout.Bar.Right);
-        Assert.Equal(MediaPanelLayout.Elapsed.Right + 2, layout.Bar.Left);
-        Assert.Equal(layout.Bar.X + layout.Bar.Width / 2, layout.PlayPause.X + layout.PlayPause.Width / 2);
+        Assert.All(all, r => Assert.True(r.Left >= layout.Card.Left && r.Top >= layout.Card.Top && r.Right <= layout.Card.Right && r.Bottom <= layout.Card.Bottom, r.ToString()));
+        // The buttons end at the card's padding; the bar takes what the clocks leave, short of the buttons.
+        Assert.Equal(layout.Card.Right - 14, layout.Next.Right);
+        Assert.Equal(layout.Total.Left - MediaPanelLayout.ClockGap, layout.Bar.Right);
+        Assert.Equal(layout.Elapsed.Right + MediaPanelLayout.ClockGap, layout.Bar.Left);
+        Assert.True(layout.Total.Right <= layout.Previous.Left - MediaPanelLayout.ButtonGap);
         Assert.Equal(layout.Bar.Right, layout.BarX(S(190), new MediaTimeline(S(10), S(190), S(48), T0, 1, true)));
-        // No two targets overlap, so a press has one answer; the disc is drawn inside its button.
+        // No two targets overlap, so a press has one answer; the disc fills its button.
         RectangleF[] targets = [layout.Seek, layout.Previous, layout.PlayPause, layout.Next];
         for (int i = 0; i < targets.Length; i++)
         {
@@ -469,17 +472,38 @@ public class MediaTests
             }
         }
 
-        Assert.True(MediaPanelLayout.Disc <= layout.PlayPause.Width);
+        Assert.Equal(MediaPanelLayout.Disc, layout.PlayPause.Width);
     }
 
     [Fact]
-    public void TheBarIs360AtTheFullWidthAndShortensWithAPanelTheMonitorCaps()
+    public void TheBarTakesWhatTheClocksAndButtonsLeave()
     {
-        Assert.Equal(new RectangleF(140, 48, 360, 4), Layout.Bar);
-        Assert.Equal(new RectangleF(502, 43, 44, 14), Layout.Total);
+        // The words start after the 64 DIP art; the buttons take the right end: next, 18, the 44 disc, 18, previous.
+        Assert.Equal(new RectangleF(30, 26, 64, 64), Layout.Art);
+        Assert.Equal(new RectangleF(694, 40, 36, 36), Layout.Next);
+        Assert.Equal(new RectangleF(632, 36, 44, 44), Layout.PlayPause);
+        Assert.Equal(new RectangleF(578, 40, 36, 36), Layout.Previous);
+        Assert.Equal(new RectangleF(106, 76, MediaPanelLayout.ClockWidth, 14), Layout.Elapsed);
+        Assert.Equal(560 - 106, Layout.Title.Width);
+        Assert.Equal(560 - MediaPanelLayout.ClockWidth - 8 - (106 + MediaPanelLayout.ClockWidth + 8), Layout.Bar.Width, 0.01);
         var narrow = new MediaPanelLayout(512);
-        Assert.Equal(new RectangleF(140, 48, 312, 4), narrow.Bar);
-        Assert.Equal(new RectangleF(454, 43, 44, 14), narrow.Total);
-        Assert.Equal(404, narrow.Title.Width);
+        Assert.Equal(312 - 106, narrow.Title.Width);
+        Assert.True(narrow.Bar.Width > 0);
+    }
+
+    [Fact]
+    public void TheStackedCardPutsTheBarAndTheButtonsUnderTheArt()
+    {
+        // Home's Now playing card: 174 tall, the words beside the art, the row under it, the buttons centred under that.
+        var card = new RectangleF(462, 12, 282, 174);
+        var layout = new MediaPanelLayout(card, stacked: true);
+        Assert.Equal(new RectangleF(476, 26, 64, 64), layout.Art);
+        Assert.Equal(552, layout.Title.X);
+        Assert.Equal((102f, 14f), (layout.Elapsed.Y, layout.Elapsed.Height));
+        Assert.Equal(card.Right - 14, layout.Total.Right);
+        Assert.Equal(new RectangleF(card.X + 141 - 22, 128, 44, 44), layout.PlayPause);
+        Assert.Equal(layout.PlayPause.X - 18 - 36, layout.Previous.X);
+        Assert.Equal(layout.PlayPause.Right + 18, layout.Next.X);
+        Assert.Equal(card.Bottom - 14, layout.PlayPause.Bottom);
     }
 }

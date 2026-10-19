@@ -14,15 +14,16 @@ using Color = Windows.UI.Color;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The search box on the island, in the Palette state and the AI box's look: a one-line text box after the tomte, the
-/// results under it by group with a heading each, and a footer with the keys and where files come from. The box keeps
-/// every key: Up and Down move the selection through all rows and wrap, Tab and Shift+Tab jump to the next or previous
-/// section and wrap, Enter opens, Ctrl+Shift+Enter shows the row's file in its folder, Ctrl+Enter searches with AI, Page
-/// Up and Page Down move a page, Esc clears the box, then goes back or closes. Left, Right, Home and End stay the box's.
-/// The selected row always shows, filled and outlined; the pointer's hover is the interaction host's, and a click opens a
-/// row. A file or folder row, selected or under the pointer, shows a show in folder button at its right end. A card
-/// (getting Everything) can take the list's place: Tab moves between its buttons, Enter presses the focused one, which
-/// starts on the safe one. Icons come from the shell, read off this thread and kept for the session. Island thread only.
+/// The search box on the island, in the Palette state: a query field after the tomte with the magnifier, the text and where
+/// files come from; the results under it, the top hit first and raised with its full path, then each group under its
+/// heading, and the AI rows after a rule; and the key hints along the bottom. The box keeps every key: Up and Down move
+/// the selection through all rows and wrap, Tab and Shift+Tab jump to the next or previous section and wrap, Enter opens,
+/// Ctrl+Shift+Enter shows the row's file in its folder, Ctrl+Enter searches with AI, Page Up and Page Down move a page, Esc
+/// clears the box, then goes back or closes. Left, Right, Home and End stay the box's. The selected row always shows,
+/// raised; the pointer's hover is the interaction host's, and a click opens a row. A file or folder row under the pointer
+/// shows a show in folder button at its right end. A card (getting Everything) can take the list's place: Tab moves
+/// between its buttons, Enter presses the focused one, which starts on the safe one. Icons come from the shell, read off
+/// this thread and kept for the session. Island thread only.
 /// </summary>
 internal sealed class SearchView : IDisposable, IInteractive
 {
@@ -32,7 +33,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     private const string RowId = "row:", CardId = "card:";
     private const int MaxImages = 512;
     private const float WheelStep = 3 * SearchLayout.RowHeight;
-    private static readonly Color CardFill = Color.FromArgb(15, 255, 255, 255);
+    private static Color CardFill => ShelfColors.Of(Theme.Card);
 
     // Shell icons as pixels, by source and size, for the session: a new search shows them at once.
     // dropped all at once when full; an LRU if a session's searches ever need more.
@@ -46,15 +47,18 @@ internal sealed class SearchView : IDisposable, IInteractive
     private readonly ContainerVisual root, band, scrolled, cardLayer, foot;
     private readonly ExpressionAnimation footEdge;
     private readonly ShapeVisual shapes, selection, cardShapes;
-    private readonly CompositionRoundedRectangleGeometry cardBox;
-    private readonly CompositionColorBrush boxLine;
+    private readonly CompositionRoundedRectangleGeometry cardBox, selectionBox;
+    private readonly CompositionEllipseGeometry dot;
+    private readonly CompositionColorBrush dotInk;
+    private readonly SpriteVisual rule;
     private readonly EditorView editor;
-    private readonly TextVisual placeholder, footLeft, footRight, empty, cardTitle, cardBody;
+    private readonly TextVisual placeholder, status, empty, cardTitle, cardBody;
+    private readonly Keycaps rowKeys, footKeys;
     private readonly List<TextVisual> headings = [];
     private readonly List<RowParts> parts = [];
 
-    // The show in folder buttons: on the selected row and on the one under the pointer, when they are files or folders.
-    private readonly List<ShapeVisual> folders = [];
+    // The show in folder button, on the row under the pointer when it is a file or folder.
+    private readonly ShapeVisual folder;
     private readonly List<(CompositionRoundedRectangleGeometry Pill, CompositionColorBrush Fill, TextVisual Label)> buttons = [];
     private readonly Dictionary<string, CompositionSurfaceBrush?> brushes = [];
     private IReadOnlyList<SearchItem> rows = [];
@@ -65,6 +69,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     private PixelSurfaces? surfaces;
     private SearchLayout layout;
     private string typed = "", source = "", hint = "";
+    private string? placedFor;
 
     // AI search's results, or its progress or error, are showing; lead is its line on why above the rows.
     private bool ai;
@@ -94,10 +99,16 @@ internal sealed class SearchView : IDisposable, IInteractive
         root.Offset = new Vector3(-width / 2, 0, 0);
         root.Opacity = 0;
         shapes = Shapes(root, new Vector2(width, tallest));
-        Rounded(shapes, layout.Box, PaletteLayout.PromptCorner, c.CreateColorBrush(CardFill));
-        boxLine = c.CreateColorBrush(Argb(PaletteLayout.PromptFocusLine));
-        ((CompositionSpriteShape)shapes.Shapes[^1]).StrokeBrush = boxLine;
-        ((CompositionSpriteShape)shapes.Shapes[^1]).StrokeThickness = 1;
+        Rounded(shapes, layout.Box, SearchLayout.BoxCorner, c.CreateColorBrush(CardFill));
+        var glass = c.CreateContainerShape();
+        glass.Offset = new Vector2(layout.Glass.X, layout.Glass.Y);
+        PaletteView.DrawGlyph(glass, Glyphs.Search, c.CreateColorBrush(Argb(Theme.Ink2)), SearchLayout.GlassSize);
+        shapes.Shapes.Add(glass);
+        dot = c.CreateEllipseGeometry();
+        var dotShape = c.CreateSpriteShape(dot);
+        dotShape.FillBrush = dotInk = c.CreateColorBrush();
+        shapes.Shapes.Add(dotShape);
+        status = text.Create(root);
 
         // The list scrolls in a band clipped to its box; the selection is drawn under the rows' text.
         var area = layout.Band;
@@ -108,17 +119,27 @@ internal sealed class SearchView : IDisposable, IInteractive
         scrolled = c.CreateContainerVisual();
         band.Children.InsertAtTop(scrolled);
         root.Children.InsertAtTop(band);
-        selection = Shapes(scrolled, new Vector2(area.Width, SearchLayout.RowHeight));
-        Rounded(selection, new RectangleF(0.5f, 0.5f, area.Width - 1, SearchLayout.RowHeight - 1), SearchLayout.RowCorner, c.CreateColorBrush(Argb(SearchLayout.SelectedFill)));
-        ((CompositionSpriteShape)selection.Shapes[^1]).StrokeBrush = c.CreateColorBrush(Argb(SearchLayout.SelectedLine));
-        ((CompositionSpriteShape)selection.Shapes[^1]).StrokeThickness = 1;
+        selection = Shapes(scrolled, new Vector2(area.Width, SearchLayout.HitHeight));
+        selectionBox = Rounded(selection, new RectangleF(0, 0, area.Width, SearchLayout.RowHeight), SearchLayout.RowCorner, c.CreateColorBrush(Argb(SearchLayout.SelectedFill)));
         selection.IsVisible = false;
+        rule = c.CreateSpriteVisual();
+        rule.Brush = c.CreateColorBrush(Argb(SearchLayout.RuleColor));
+        rule.IsVisible = false;
+        scrolled.Children.InsertAtTop(rule);
+        rowKeys = new Keycaps(c, text, scrolled, new Vector2(width, 4096));
+        folder = Shapes(scrolled, new Vector2(SearchLayout.FolderSize));
+        Rounded(folder, new RectangleF(0, 0, SearchLayout.FolderSize, SearchLayout.FolderSize), SearchLayout.FolderCorner, c.CreateColorBrush(Argb(SearchLayout.FolderFill)));
+        var folderGlyph = c.CreateContainerShape();
+        folderGlyph.Offset = new Vector2((SearchLayout.FolderSize - SearchLayout.FolderGlyphSize) / 2);
+        PaletteView.DrawGlyph(folderGlyph, Glyphs.Folder, c.CreateColorBrush(Argb(SearchLayout.FolderInk)), SearchLayout.FolderGlyphSize);
+        folder.Shapes.Add(folderGlyph);
+        folder.IsVisible = false;
         empty = text.Create(root);
 
         cardLayer = c.CreateContainerVisual();
         root.Children.InsertAtTop(cardLayer);
         cardShapes = Shapes(cardLayer, new Vector2(width, tallest));
-        cardBox = Rounded(cardShapes, RectangleF.Empty, PaletteLayout.PromptCorner, c.CreateColorBrush(CardFill));
+        cardBox = Rounded(cardShapes, RectangleF.Empty, SearchLayout.BoxCorner, c.CreateColorBrush(CardFill));
         ((CompositionSpriteShape)cardShapes.Shapes[^1]).StrokeBrush = c.CreateColorBrush(Argb(PaletteLayout.AskOutline));
         ((CompositionSpriteShape)cardShapes.Shapes[^1]).StrokeThickness = 1;
         cardTitle = text.Create(cardLayer);
@@ -137,11 +158,10 @@ internal sealed class SearchView : IDisposable, IInteractive
         footEdge.SetReferenceParameter("dips", island.Dips);
         footEdge.SetScalarParameter("h", layout.Height);
         foot.StartAnimation("Offset", footEdge);
-        footLeft = text.Create(foot);
-        footRight = text.Create(foot);
-        editor = focus.Create(root, multiline: false, PaletteLayout.PromptSize);
+        footKeys = new Keycaps(c, text, foot, new Vector2(width, tallest));
+        editor = focus.Create(root, multiline: false, SearchLayout.BoxText, weight: 500);
+        editor.CaretInk = Theme.Accent;
         editor.KeepsKeys = true;
-        editor.Place(layout.Editor, island.Scale);
         editor.BeforeKey = OnKey;
         editor.Escape = OnEscape;
         // Read on the next turn: nothing may call back into the services inside their own notification.
@@ -271,11 +291,14 @@ internal sealed class SearchView : IDisposable, IInteractive
 
         shownFor = typed;
 
-        lines = SearchLayout.Lines(rows, lead);
+        lines = SearchLayout.Lines(rows, lead, Hit);
         content = lines.Count > 0 ? lines[^1].Top + lines[^1].Height : 0;
         Draw();
         _ = IconsAsync();
     }
+
+    // A search with text leads with its top hit.
+    private bool Hit => typed.Length > 0;
 
     /// <summary>A card in the list's place, its safe button focused, or null for the list again.</summary>
     public void ShowCard(SearchCard? shown)
@@ -354,8 +377,8 @@ internal sealed class SearchView : IDisposable, IInteractive
         island.LayoutChanged -= Relayout;
         machine.Changed -= OnState;
         editor.Dispose();
-        foreach (var visual in headings.Concat(parts.SelectMany(p => new[] { p.Name, p.Detail, p.Kind })).Concat(buttons.Select(b => b.Label))
-            .Append(placeholder).Append(footLeft).Append(footRight).Append(empty).Append(cardTitle).Append(cardBody))
+        foreach (var visual in headings.Concat(parts.SelectMany(p => p.Texts)).Concat(buttons.Select(b => b.Label))
+            .Append(placeholder).Append(status).Append(empty).Append(cardTitle).Append(cardBody))
         {
             visual.Dispose();
         }
@@ -363,12 +386,12 @@ internal sealed class SearchView : IDisposable, IInteractive
         foreach (var part in parts)
         {
             part.Icon.Dispose();
+            part.Badge.Dispose();
         }
 
-        foreach (var button in folders)
-        {
-            button.Dispose();
-        }
+        rowKeys.Dispose();
+        footKeys.Dispose();
+        folder.Dispose();
 
         surfaces?.Dispose();
         island.Dips.Children.Remove(root);
@@ -382,25 +405,6 @@ internal sealed class SearchView : IDisposable, IInteractive
     {
         string prefix = id.StartsWith(FolderId, StringComparison.Ordinal) ? FolderId : RowId;
         return id.StartsWith(prefix, StringComparison.Ordinal) && int.TryParse(id.AsSpan(prefix.Length), out int i) && i >= 0 && i < rows.Count ? i : null;
-    }
-
-    // A show in folder button: its card and folder, in a visual of its own that Draw moves to its row.
-    private ShapeVisual Folder(int i)
-    {
-        while (folders.Count <= i)
-        {
-            var c = island.Compositor;
-            var button = Shapes(scrolled, new Vector2(SearchLayout.FolderSize));
-            Rounded(button, new RectangleF(0, 0, SearchLayout.FolderSize, SearchLayout.FolderSize), SearchLayout.FolderCorner, c.CreateColorBrush(Argb(SearchLayout.FolderFill)));
-            var glyph = c.CreateContainerShape();
-            float inset = (SearchLayout.FolderSize - SearchLayout.FolderGlyphSize) / 2;
-            glyph.Offset = new Vector2(inset);
-            PaletteView.Draw(glyph, SearchLayout.FolderGlyph, c.CreateColorBrush(Argb(SearchLayout.FolderInk)));
-            button.Shapes.Add(glyph);
-            folders.Add(button);
-        }
-
-        return folders[i];
     }
 
     private ShapeVisual Shapes(ContainerVisual host, Vector2 size)
@@ -437,11 +441,32 @@ internal sealed class SearchView : IDisposable, IInteractive
         }
 
         Grow();
-        placeholder.Show(typed.Length == 0 ? SearchLayout.Placeholder : "", PaletteLayout.Placeholder, layout.Editor);
-        boxLine.Color = Argb(focus.Focused == editor ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine);
-        var (left, right) = layout.Footer(card is not null ? "" : ai ? SearchLayout.AiKeys : typed.Length > 0 ? SearchLayout.Keys : Leave is null ? SearchLayout.KeysEmpty : SearchLayout.KeysBack, card is null ? source : "");
-        footLeft.Show(left);
-        footRight.Show(right);
+        string shownSource = card is null ? source : "";
+        var (at, line) = layout.Source(shownSource);
+        dot.Center = new Vector2(at.X + (at.Width / 2), at.Y + (at.Height / 2));
+        dot.Radius = new Vector2(at.Width / 2);
+        dotInk.Color = Argb(SearchLayout.SourceDot(shownSource));
+        status.Show(line);
+        var box = layout.EditorFor(shownSource);
+        if (placedFor != shownSource)
+        {
+            // The text box ends short of where files come from, which is measured; it moves only when that changes.
+            placedFor = shownSource;
+            editor.Place(box, island.Scale);
+        }
+
+        placeholder.Show(typed.Length == 0 ? SearchLayout.PlaceholderText : "", SearchLayout.Placeholder, box);
+        footKeys.Begin();
+        if (card is null)
+        {
+            var (left, right) = SearchLayout.Keys(ai, typed.Length > 0, Leave is not null);
+            foreach (var (cap, keys, word) in layout.Footer(left, right))
+            {
+                footKeys.Add(cap, keys, word);
+            }
+        }
+
+        footKeys.End();
         band.IsVisible = card is null;
         cardLayer.IsVisible = card is not null;
         if (card is not null)
@@ -454,45 +479,49 @@ internal sealed class SearchView : IDisposable, IInteractive
 
         var area = layout.Band;
         empty.Show(new TextRun(rows.Count == 0 ? hint : "", TextStyle.Secondary, area.Width - (2 * SearchLayout.RowPadX), 3), new Vector2(area.X + SearchLayout.RowPadX, area.Y + 8));
-        int heading = 0, row = 0, folder = 0;
-        foreach (var line in lines)
+        int heading = 0, row = 0;
+        rule.IsVisible = false;
+        folder.IsVisible = false;
+        rowKeys.Begin();
+        foreach (var l in lines)
         {
-            if (line.Heading is { } label)
+            if (l.Rule)
             {
-                Heading(heading++).Show(label, SearchLayout.Heading, new RectangleF(SearchLayout.RowPadX, line.Top, area.Width - (2 * SearchLayout.RowPadX), line.Height));
+                rule.Offset = new Vector3(SearchLayout.RowPadX, l.Top + SearchLayout.RuleInset, 0);
+                rule.Size = new Vector2(area.Width - (2 * SearchLayout.RowPadX), 1);
+                rule.IsVisible = true;
                 continue;
             }
 
-            var item = rows[line.Row];
-            var (_, icon, name, detail, kind) = layout.Row(line.Top, item);
-            var p = Row(row++);
-            p.Source = item.Icon;
-            p.Icon.Offset = new Vector3(icon.X, icon.Y, 0);
-            p.Icon.Size = new Vector2(icon.Width, icon.Height);
-            p.Icon.Brush = item.Icon is { } iconSource ? brushes.GetValueOrDefault(iconSource) : null;
-            p.Icon.IsVisible = true;
-            p.Name.Show(name);
-            p.Detail.Show(detail);
-            // A file row, selected or under the pointer, shows its folder button in the kind's place.
-            bool button = SearchLayout.HasFolder(item) && (line.Row == select || line.Row == hovered);
-            p.Kind.Show(button ? kind with { Text = "" } : kind);
+            if (l.Heading is { } label)
+            {
+                var style = lead is not null && label == lead ? SearchLayout.Lead : SearchLayout.Heading;
+                Heading(heading++).Show(label, style, new RectangleF(SearchLayout.RowPadX, l.Top, area.Width - (2 * SearchLayout.RowPadX), l.Height));
+                continue;
+            }
+
+            var item = rows[l.Row];
+            // A file row under the pointer shows its folder button at its right end, over its detail and key hint.
+            bool button = SearchLayout.HasFolder(item) && l.Row == hovered;
+            var laid = layout.Row(l, item, l.Row == select);
+            DrawRow(Row(row++), laid, item, l.Hit, button);
+            if (laid.Key is { } key && !button)
+            {
+                rowKeys.Add(laid.KeyCap, key);
+            }
+
             if (button)
             {
-                var at = layout.Folder(line.Top).Card;
-                var shown = Folder(folder++);
-                shown.Offset = new Vector3(at.X, at.Y, 0);
-                shown.IsVisible = true;
+                var at2 = layout.Folder(l).Card;
+                folder.Offset = new Vector3(at2.X, at2.Y, 0);
+                folder.IsVisible = true;
             }
         }
 
+        rowKeys.End();
         for (int i = heading; i < headings.Count; i++)
         {
             headings[i].Show("", SearchLayout.Heading, RectangleF.Empty);
-        }
-
-        for (int i = folder; i < folders.Count; i++)
-        {
-            folders[i].IsVisible = false;
         }
 
         for (int i = row; i < parts.Count; i++)
@@ -503,12 +532,49 @@ internal sealed class SearchView : IDisposable, IInteractive
         Scrolled();
     }
 
+    // One row: its badge (a file's type on its colour, a shell icon, or a glyph), the name with the typed letters in the
+    // accent, and its detail.
+    private void DrawRow(RowParts p, SearchRow laid, SearchItem item, bool hit, bool button)
+    {
+        var b = laid.Badge;
+        p.Badge.Offset = new Vector3(b.X, b.Y, 0);
+        p.Badge.IsVisible = true;
+        p.BadgeBox.Size = new Vector2(b.Width, b.Height);
+        p.BadgeBox.CornerRadius = new Vector2(laid.BadgeCorner);
+        uint fill = SearchLayout.BadgeFill(item);
+        p.BadgeFill.Color = Argb(fill);
+        string? kind = SearchLayout.BadgeText(item);
+        bool icon = kind is null && item.Icon is not null && item.Kind is not (SearchKind.Folder or SearchKind.Ask or SearchKind.AiSearch);
+        p.BadgeText.Show(kind ?? "", hit ? SearchLayout.HitBadgeText : SearchLayout.RowBadgeText, b);
+        p.Source = icon ? item.Icon : null;
+        float inset = (b.Width - SearchLayout.IconSize) / 2;
+        p.Icon.Offset = new Vector3(b.X + inset, b.Y + inset, 0);
+        p.Icon.Size = new Vector2(SearchLayout.IconSize);
+        p.Icon.Brush = icon ? brushes.GetValueOrDefault(item.Icon!) : null;
+        p.Icon.IsVisible = icon;
+        var (glyph, ink) = kind is null && !icon ? SearchLayout.BadgeGlyph(item) : ([], 0u);
+        // The AI rows' glyph stands alone and a little larger; a badge's glyph sits in its middle.
+        float size = fill == 0 || hit ? 18 : 15;
+        if (!ReferenceEquals(glyph, p.Glyph) || size != p.GlyphSize)
+        {
+            (p.Glyph, p.GlyphSize) = (glyph, size);
+            PaletteView.DrawGlyph(p.GlyphShape, glyph, p.GlyphInk, size);
+        }
+
+        p.GlyphInk.Color = Argb(ink);
+        p.GlyphShape.Offset = new Vector2((b.Width - size) / 2);
+        var name = laid.Name;
+        IReadOnlyList<(int Start, int Length)> matched = ai ? [] : SearchLayout.Matched(item.Name, typed);
+        p.Name.ShowIn(new TextRun(name.Text, name.Style, name.Slot.Width) { Bold = matched, Tint = matched, TintColor = Theme.Accent }, name.Slot);
+        p.Detail.Show(button && !hit ? laid.Detail with { Text = "" } : laid.Detail);
+    }
+
     // The box grows to what it shows (the list, the hint or a card), up to its tallest; it never shrinks while there is
     // text, so a typed letter that shortens the list does not move the shape back and forth. Once the field is cleared and
     // the rows for the empty field are in, it settles back to their height, so an empty box is not left mostly blank.
     private void Grow()
     {
-        float next = SearchLayout.Fit(width, island.Mascot.Enabled, rows, card, tallest, lead);
+        float next = SearchLayout.Fit(width, island.Mascot.Enabled, rows, card, tallest, lead, Hit);
         if (next == layout.Height || (next < layout.Height && !SearchLayout.Settles(typed, shownFor)))
         {
             return;
@@ -526,24 +592,32 @@ internal sealed class SearchView : IDisposable, IInteractive
     // The selection's box, the scroll that keeps it in view, and the targets for the rows that show.
     private void Scrolled()
     {
-        var line = lines.FirstOrDefault(l => l.Heading is null && l.Row == select);
+        var line = lines.FirstOrDefault(l => l.Heading is null && !l.Rule && l.Row == select);
         selection.IsVisible = select >= 0 && line.Height > 0;
         if (selection.IsVisible)
         {
-            // The heading above the first row of a group comes into view with it.
-            float top = lines.LastOrDefault(l => l.Top < line.Top && l.Heading is not null && l.Top + l.Height == line.Top) is { Height: > 0 } above ? above.Top : line.Top;
+            // The heading or rule above the first row of a group comes into view with it.
+            float top = lines.LastOrDefault(l => l.Top < line.Top && (l.Heading is not null || l.Rule) && l.Top + l.Height + SearchLayout.LineGap >= line.Top - 0.01f) is { Height: > 0 } above ? above.Top : line.Top;
             scroll = layout.ScrollTo(scroll, top, line.Top + line.Height, content);
             selection.Offset = new Vector3(0, line.Top, 0);
+            selectionBox.Size = new Vector2(layout.Band.Width, line.Height);
+            selectionBox.CornerRadius = new Vector2(line.Hit ? SearchLayout.HitCorner : SearchLayout.RowCorner);
         }
 
         scroll = Math.Clamp(scroll, 0, Math.Max(0, content - layout.Band.Height));
         scrolled.Offset = new Vector3(0, -scroll, 0);
-        foreach (var visual in headings.Concat(parts.SelectMany(p => new[] { p.Name, p.Detail, p.Kind })))
+        RefreshRows();
+        Retarget();
+    }
+
+    private void RefreshRows()
+    {
+        foreach (var visual in headings.Concat(parts.SelectMany(p => p.Texts)))
         {
             visual.Refresh();
         }
 
-        Retarget();
+        rowKeys.Refresh();
     }
 
     private void Retarget()
@@ -559,18 +633,18 @@ internal sealed class SearchView : IDisposable, IInteractive
         }
         else
         {
-            foreach (var line in lines.Where(l => l.Heading is null))
+            foreach (var line in lines.Where(l => l.Heading is null && !l.Rule))
             {
                 // Only the part of a row inside the band takes the pointer.
                 var at = RectangleF.Intersect(new RectangleF(area.X, area.Y + line.Top - scroll, area.Width, line.Height), area);
                 if (at.Height > 0)
                 {
-                    list.Add(new Target(RowId + line.Row, at, SearchLayout.RowCorner, TargetKind.Row));
+                    list.Add(new Target(RowId + line.Row, at, line.Hit ? SearchLayout.HitCorner : SearchLayout.RowCorner, TargetKind.Row));
                 }
 
                 // A file row's folder button, after its row so it is on top. Always there, so the pointer reaching it
                 // shows it on a row that is not selected; Ctrl+Shift+Enter is the keyboard's way, not a Tab stop of its own.
-                var button = layout.Folder(line.Top).Card;
+                var button = layout.Folder(line).Card;
                 button = RectangleF.Intersect(new RectangleF(area.X + button.X, area.Y + button.Y - scroll, button.Width, button.Height), area);
                 if (button.Height > 0 && SearchLayout.HasFolder(rows[line.Row]))
                 {
@@ -605,7 +679,7 @@ internal sealed class SearchView : IDisposable, IInteractive
             var (pill, fill, label) = buttons[i];
             bool shownButton = i < laid.Count;
             Place(pill, shownButton ? laid[i].Box : RectangleF.Empty);
-            // The focused button is the white one: what Enter presses is what stands out.
+            // The focused button is the accent one: what Enter presses is what stands out.
             fill.Color = Argb(i == cardFocus ? PaletteLayout.RunFill : PaletteLayout.ButtonFill);
             label.Show(shownButton ? laid[i].Label : new TextSlot("", PaletteLayout.Button, RectangleF.Empty));
         }
@@ -625,15 +699,26 @@ internal sealed class SearchView : IDisposable, IInteractive
     {
         while (parts.Count <= i)
         {
-            var icon = island.Compositor.CreateSpriteVisual();
+            var c = island.Compositor;
+            var badge = c.CreateShapeVisual();
+            badge.Size = new Vector2(SearchLayout.HitBadge);
+            scrolled.Children.InsertAtTop(badge);
+            var box = c.CreateRoundedRectangleGeometry();
+            var fill = c.CreateColorBrush();
+            var shape = c.CreateSpriteShape(box);
+            shape.FillBrush = fill;
+            badge.Shapes.Add(shape);
+            var glyph = c.CreateContainerShape();
+            badge.Shapes.Add(glyph);
+            var icon = c.CreateSpriteVisual();
             scrolled.Children.InsertAtTop(icon);
-            parts.Add(new RowParts(icon, text.Create(scrolled), text.Create(scrolled), text.Create(scrolled)));
+            parts.Add(new RowParts(badge, box, fill, glyph, c.CreateColorBrush(), icon, text.Create(scrolled), text.Create(scrolled), text.Create(scrolled)));
         }
 
         return parts[i];
     }
 
-    // The folder button goes with the selection, so the rows are drawn again, not only the highlight moved.
+    // The selection goes with its row's key hint, so the rows are drawn again, not only the highlight moved.
     private void Select(int row)
     {
         select = row;
@@ -862,18 +947,14 @@ internal sealed class SearchView : IDisposable, IInteractive
 
         scroll = Math.Clamp(scroll - (delta / 120f * WheelStep), 0, Math.Max(0, content - layout.Band.Height));
         scrolled.Offset = new Vector3(0, -scroll, 0);
-        foreach (var visual in headings.Concat(parts.SelectMany(p => new[] { p.Name, p.Detail, p.Kind })))
-        {
-            visual.Refresh();
-        }
-
+        RefreshRows();
         Retarget();
     }
 
     // A new scale: the box lands on whole pixels again, and the icons are read at the new size.
     private void Relayout()
     {
-        editor.Place(layout.Editor, island.Scale);
+        editor.Place(layout.EditorFor(placedFor ?? ""), island.Scale);
         brushes.Clear();
         Draw();
         _ = IconsAsync();
@@ -898,17 +979,24 @@ internal sealed class SearchView : IDisposable, IInteractive
 
     private static bool Down(VIRTUAL_KEY key) => PInvoke.GetKeyState((int)key) < 0;
 
-    private sealed record RowParts(SpriteVisual Icon, TextVisual Name, TextVisual Detail, TextVisual Kind)
+    private sealed record RowParts(ShapeVisual Badge, CompositionRoundedRectangleGeometry BadgeBox, CompositionColorBrush BadgeFill, CompositionContainerShape GlyphShape, CompositionColorBrush GlyphInk, SpriteVisual Icon, TextVisual BadgeText, TextVisual Name, TextVisual Detail)
     {
         public string? Source { get; set; }
+
+        public GlyphFigure[]? Glyph { get; set; }
+
+        public float GlyphSize { get; set; }
+
+        public IEnumerable<TextVisual> Texts => [BadgeText, Name, Detail];
 
         public void Hide()
         {
             Source = null;
             Icon.IsVisible = false;
+            Badge.IsVisible = false;
+            BadgeText.Show("", SearchLayout.RowBadgeText, RectangleF.Empty);
             Name.Show("", SearchLayout.Name, RectangleF.Empty);
             Detail.Show("", SearchLayout.Detail, RectangleF.Empty);
-            Kind.Show("", SearchLayout.Kind, RectangleF.Empty);
         }
     }
 }

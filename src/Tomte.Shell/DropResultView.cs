@@ -145,8 +145,8 @@ internal sealed class DropResultView : IInteractive
     }
 
     /// <summary>
-    /// Buttons for the choices, a fill and a hairline, the last (cancel, the default) filled with the accent, and cards
-    /// for the tiles; built again only when they move.
+    /// Buttons for the choices, raised, the last (cancel, the default) filled with the accent, and cards for the tiles;
+    /// built again only when they move.
     /// </summary>
     private void Shapes(DropResultLayout next, DropResult result)
     {
@@ -166,13 +166,13 @@ internal sealed class DropResultView : IInteractive
         for (int i = 0; i < next.Choices.Count; i++)
         {
             bool cancel = i == next.Choices.Count - 1;
-            p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Rgb(StateLook.Accent & 0xFFFFFF) : ShelfColors.Card), cancel ? null : p.Brush(ShelfColors.Line), 1);
+            p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Accent : ShelfColors.CardSelected));
         }
 
         for (int i = 0; i < next.Tiles.Count; i++)
         {
-            p.Box(canvas, next.Tiles[i], DropResultLayout.Corner, p.Brush(ShelfColors.Card));
-            p.Box(canvas, DropResultLayout.Icon(next.Tiles[i]), 6, p.Brush(ShelfColors.Rgb(result.Tiles[i].Color)));
+            p.Box(canvas, next.Tiles[i], DropResultLayout.TileCorner, p.Brush(ShelfColors.Card));
+            p.Box(canvas, DropResultLayout.Icon(next.Tiles[i]), DropResultLayout.IconCorner, p.Brush(ShelfColors.Rgb(result.Tiles[i].Color)));
         }
     }
 

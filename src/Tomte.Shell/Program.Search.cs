@@ -57,7 +57,7 @@ internal static partial class Program
     /// <summary>
     /// --debug-strip with --debug-log=path and --debug-settings file: the tab strip's search button, with no input to the
     /// desktop. Opens the island as the tray's Open island does, pinned, and clicks the button by posting the island window
-    /// its own button messages at the button's centre, with Esc posted the moment the search opens, during its morph; then
+    /// its own button messages at the button's centre (after a look at the Shelf and Clipboard tabs), with Esc posted the moment the search opens, during its morph; then
     /// a click with Esc after the search settles, then Tab to the button and Enter, then Space, each with Esc. Keys are
     /// posted to the island window as the keyboard sends them. Then Tab from the Scratchpad tab's label into the note with
     /// Space and Enter, a hide with the working set five seconds later, and the search as the tray's Search opens it. Logs
@@ -72,6 +72,14 @@ internal static partial class Program
         // Pinned, so the island stays with nobody's pointer on it; the hide near the end unpins it.
         triggers.TogglePin();
         await Step("Open island");
+
+        // The Shelf and Clipboard tabs, each with a moment to look at, and back to Home.
+        island.Interaction.Key(NavKey.Tab2, false);
+        await Step("Ctrl+2");
+        island.Interaction.Key(NavKey.Tab6, false);
+        await Step("Ctrl+6");
+        island.Interaction.Key(NavKey.Tab1, false);
+        await Step("Ctrl+1");
 
         Click();
         var wait = Stopwatch.StartNew();
@@ -99,9 +107,9 @@ internal static partial class Program
             await Step("Esc");
         }
 
-        island.Interaction.Key(NavKey.Tab4, false);
-        await Step("Ctrl+4");
-        Walk("ask");
+        island.Interaction.Key(NavKey.Tab5, false);
+        await Step("Ctrl+5");
+        Walk("settings");
         // On into the note, which takes the keys: Space and Enter are the note's and open nothing.
         island.Interaction.Key(NavKey.Next, false);
         await Step("Tab into the note");
@@ -125,7 +133,7 @@ internal static partial class Program
 
         void Click()
         {
-            var card = TabStrip.SearchButton((float)island.Current.Width).Card;
+            var card = TabStrip.Layout(Enum.GetValues<PanelId>(), PanelId.Home, (float)island.Current.Width, island.Mascot.Enabled).Search;
             var at = island.IslandToScreen(new Vector2(card.X + (card.Width / 2) - ((float)island.Current.Width / 2), card.Y + (card.Height / 2)));
             Windows.Win32.PInvoke.ScreenToClient(island.Hwnd, ref at);
             nint point = (at.Y << 16) | (at.X & 0xFFFF);

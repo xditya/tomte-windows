@@ -420,13 +420,14 @@ public enum NavKey
     NextTab,
     PreviousTab,
 
-    /// <summary>Ctrl+1 to Ctrl+6: the tab in that place.</summary>
+    /// <summary>Ctrl+1 to Ctrl+7: the tab in that place.</summary>
     Tab1,
     Tab2,
     Tab3,
     Tab4,
     Tab5,
     Tab6,
+    Tab7,
     Remove,
     Copy,
     ShowInFolder,
@@ -474,7 +475,7 @@ public static class NavKeys
         {
             Tab when ctrl => shift ? NavKey.PreviousTab : NavKey.NextTab,
             Tab => shift ? NavKey.Previous : NavKey.Next,
-            >= '1' and <= '6' when ctrl && !shift => NavKey.Tab1 + (virtualKey - '1'),
+            >= '1' and <= '7' when ctrl && !shift => NavKey.Tab1 + (virtualKey - '1'),
             'K' when ctrl && !shift => NavKey.Ask,
             'H' when ctrl && !shift => NavKey.History,
             'P' when ctrl && !shift => NavKey.Pin,
@@ -517,11 +518,11 @@ public static class NavKeys
     };
 
     /// <summary>
-    /// A key down in a text box that the box gives up to the targets: Ctrl+Tab and Ctrl+1 to Ctrl+6 from any box, which
+    /// A key down in a text box that the box gives up to the targets: Ctrl+Tab and Ctrl+1 to Ctrl+7 from any box, which
     /// switch panel tabs, and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note indents.
     /// </summary>
     public static bool LeavesBox(NavKey key, bool tabLeaves) =>
-        key is NavKey.NextTab or NavKey.PreviousTab or (>= NavKey.Tab1 and <= NavKey.Tab6) || (tabLeaves && key is NavKey.Next or NavKey.Previous);
+        key is NavKey.NextTab or NavKey.PreviousTab or (>= NavKey.Tab1 and <= NavKey.Tab7) || (tabLeaves && key is NavKey.Next or NavKey.Previous);
 
     /// <summary>
     /// A key down in a text box that the island's views get first while the box keeps the keys, and the box gets when no
@@ -662,16 +663,20 @@ public sealed class PointerPress
 public static class StateLook
 {
     /// <summary>The state layer the host lays over a hovered target, on top of the target's own fill: white at about 8%.</summary>
-    public const uint Hover = 0x15FFFFFF;
+    public static uint Hover => Theme.HoverLayer;
 
     /// <summary>The same while the button is down on it: about 3%, lighter than hover as in Windows 11's dark theme.</summary>
-    public const uint Pressed = 0x08FFFFFF;
+    public static uint Pressed => Theme.PressedLayer;
 
     /// <summary>A disabled target's content is drawn at this opacity.</summary>
     public const float DisabledOpacity = 0.4f;
 
     /// <summary>The accent: the focus ring, and a checked target's fill with its text in <see cref="CheckedText"/>.</summary>
-    public const uint Accent = 0xFF6FA8FF, CheckedFill = Accent, CheckedText = 0xFF000000;
+    public static uint Accent => Theme.Accent;
+
+    public static uint CheckedFill => Theme.Accent;
+
+    public static uint CheckedText => Theme.OnAccent;
 
     /// <summary>The focus ring is a stroke this wide, this far outside the target's bounds.</summary>
     public const float FocusWidth = 2, FocusGap = 2;
@@ -690,13 +695,15 @@ public static class StateLook
 
     /// <summary>
     /// The tooltip's card: this tall, this much room either side of its line, this far off the target and the island's
-    /// edges, with these corners; a grey a step above the island's black, with a faint hairline.
+    /// edges, with these corners; a raised grey a step above the island, with a hairline.
     /// </summary>
-    public const float TipHeight = 24, TipPadX = 8, TipGap = 5, TipCorner = 6;
+    public const float TipHeight = 24, TipPadX = 8, TipGap = 5, TipCorner = 8;
 
-    public const uint TipFill = 0xFF2C2C30, TipLine = 0x1AFFFFFF;
+    public static uint TipFill => Theme.Raised;
 
-    public static readonly TextStyle TipText = new(12, Color: 0xEBFFFFFF);
+    public static uint TipLine => Theme.Line;
+
+    public static TextStyle TipText => new(12);
 
     /// <summary>An acknowledgement's tick: a filled check this square, this far before the word, in the accent.</summary>
     public const float TickSize = 10, TickGap = 5;

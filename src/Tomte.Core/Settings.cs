@@ -18,8 +18,14 @@ public sealed record TomteSettings
     /// <summary>Executable rules, matched by file name without the extension; see <see cref="AppRules"/>.</summary>
     public IReadOnlyList<AppRule> AppRules { get; init; } = [];
 
-    /// <summary>Show Compact with ambient content when no window covers the reveal zone.</summary>
+    /// <summary>Show desktop peek when no window covers the top of the screen where the island rests. Off draws nothing.</summary>
     public bool DesktopPeek { get; init; } = true;
+
+    /// <summary>What desktop peek looks like while it rests; see <see cref="Core.PeekStyle"/>. Read only while <see cref="DesktopPeek"/> is on.</summary>
+    public PeekStyle PeekStyle { get; init; }
+
+    /// <summary>The top corner the <see cref="PeekStyle.Corner"/> pill rests in.</summary>
+    public PeekCorner PeekCorner { get; init; }
 
     /// <summary>Script tiles may run, each once the user confirmed its command. Off until the user turns it on in the settings window.</summary>
     public bool ScriptShortcuts { get; init; }
@@ -111,6 +117,64 @@ public sealed record TomteSettings
     /// Read from the file only; the settings window does not show them.
     /// </summary>
     public IReadOnlyDictionary<string, ModelPrice> ModelPrices { get; init; } = new Dictionary<string, ModelPrice>();
+
+    /// <summary>
+    /// The one accent colour, as 0xRRGGBB: the selection, the AI, the recording dot. One of <see cref="AccentColors.Choices"/>;
+    /// read it through <see cref="AccentColors.Held"/>, since a hand-edited file can hold anything. Whoever draws with it
+    /// follows <see cref="SettingsStore.Changed"/>, as for every other setting.
+    /// </summary>
+    public uint AccentColor { get; init; } = AccentColors.Default;
+
+    /// <summary>The island's look: after the taskbar's theme by default, or always dark or light.</summary>
+    public ThemeChoice Theme { get; init; }
+}
+
+/// <summary>The island's look as chosen in Settings; see Theme.SchemeFor.</summary>
+public enum ThemeChoice
+{
+    FollowTaskbar,
+    Dark,
+    Light,
+}
+
+/// <summary>How desktop peek rests at the top of the screen. Each grows into the same peek pill and panels when pointed at or pushed.</summary>
+public enum PeekStyle
+{
+    /// <summary>Only the tomte, sitting on the very top edge with a soft shadow and no pill behind it.</summary>
+    Perched,
+
+    /// <summary>A short tab of the island hanging from the top edge, with an accent dot while something waits.</summary>
+    Lip,
+
+    /// <summary>The peek pill itself: the tomte, the time and one more thing, under the edge.</summary>
+    Pill,
+
+    /// <summary>A small pill with the tomte and the time in a top corner, clear of a clock or widget in the middle.</summary>
+    Corner,
+}
+
+public enum PeekCorner
+{
+    Right,
+    Left,
+}
+
+/// <summary>The accent colours the settings window offers, as 0xRRGGBB.</summary>
+public static class AccentColors
+{
+    public const uint Default = 0xFF6B4A;
+
+    /// <summary>Coral, amber, sky and green, in the order the settings window shows them.</summary>
+    public static IReadOnlyList<uint> Choices { get; } = [Default, 0xF2B84B, 0x7CC4FF, 0x9BE08F];
+
+    /// <summary>Not a colour: the accent Windows uses, whatever it is now.</summary>
+    public const uint Windows = 0x1000000;
+
+    /// <summary>The choice to keep: <paramref name="rgb"/> when it is one of the choices or <see cref="Windows"/>, the default otherwise.</summary>
+    public static uint Held(uint rgb) => rgb == Windows || Choices.Contains(rgb) ? rgb : Default;
+
+    /// <summary>The colour to draw with for a held choice, given the accent Windows uses now.</summary>
+    public static uint Resolve(uint held, uint system) => Held(held) == Windows ? system & 0xFFFFFF : Held(held);
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>

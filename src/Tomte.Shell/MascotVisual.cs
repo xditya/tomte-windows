@@ -20,6 +20,8 @@ internal sealed class MascotVisual
     private readonly ContainerVisual body;
     private readonly ContainerVisual cap;
     private readonly ShapeVisual tip, pin;
+    private readonly SpriteVisual shadow;
+    private readonly DropShadow drop;
     private readonly InsetClip edge;
     private readonly CompositionColorBrush capBrush;
     private readonly CompositionColorBrush shadeBrush;
@@ -43,9 +45,25 @@ internal sealed class MascotVisual
         body = Group(compositor, MascotArt.BodyPivot, face, cap);
         root = Group(compositor, MascotArt.RootPivot, body);
 
+        // Its own soft shadow, for the perched tomte that rests with no pill behind it, so it reads on any wallpaper. Under
+        // the body in the root, so it follows the sway and the hop; in viewBox units, like everything here.
+        var copy = compositor.CreateVisualSurface();
+        copy.SourceVisual = body;
+        copy.SourceSize = new Vector2(MascotArt.ViewBox);
+        drop = compositor.CreateDropShadow();
+        drop.Mask = compositor.CreateSurfaceBrush(copy);
+        drop.Color = Color.FromArgb(255, 0, 0, 0);
+        drop.Offset = new Vector3(0, ShadowDropDips * MascotArt.ViewBox / SizeDips, 0);
+        drop.BlurRadius = ShadowBlurDips * MascotArt.ViewBox / SizeDips;
+        shadow = compositor.CreateSpriteVisual();
+        shadow.Size = new Vector2(MascotArt.ViewBox);
+        shadow.Shadow = drop;
+        shadow.IsVisible = false;
+        root.Children.InsertAtBottom(shadow);
+
         // The pinned mark sits on the place, not the body, so it stays still while the tomte moves.
         var ink = compositor.CreateColorBrush(Rgb(0x000000));
-        pin = Shapes(compositor, [Circle(compositor, MascotArt.PinRing, ink), Circle(compositor, MascotArt.PinDisc, compositor.CreateColorBrush(Rgb(StateLook.Accent))),
+        pin = Shapes(compositor, [Circle(compositor, MascotArt.PinRing, ink), Circle(compositor, MascotArt.PinDisc, ShelfColors.Live(compositor, () => StateLook.Accent)),
             .. MascotArt.Pin.Select(part => Path(compositor, part, ink))]);
         pin.Size = new Vector2(MascotArt.PinRing.Center.X + MascotArt.PinRing.Radius);
         pin.IsVisible = false;
@@ -60,6 +78,9 @@ internal sealed class MascotVisual
         place.Clip = edge;
     }
 
+    // The perched tomte's shadow: a DIP down, blurred over 4, at most this dark.
+    private const float ShadowDropDips = 1, ShadowBlurDips = 4, ShadowOpacity = 0.6f;
+
     public Visual Visual => place;
 
     /// <summary>The island is pinned (Ctrl+P): the mark shows at the tomte's lower right.</summary>
@@ -70,11 +91,14 @@ internal sealed class MascotVisual
 
     /// <summary>
     /// Copy the pose onto the visuals, the box's top-left at <paramref name="offsetPx"/> from the island's, drawn at
-    /// <paramref name="ride"/> of its size and opacity (<see cref="MascotArt.Ride"/>). Property sets only; nothing is
+    /// <paramref name="ride"/> of its size and opacity (<see cref="MascotArt.Ride"/>) and <paramref name="grow"/> times larger again, with
+    /// <paramref name="shade"/> (0 to 1) of its own shadow. Property sets only; nothing is
     /// allocated per frame.
     /// </summary>
-    public void Apply(Mascot mascot, Vector2 offsetPx, float scale, float ride = 1)
+    public void Apply(Mascot mascot, Vector2 offsetPx, float scale, float ride = 1, float grow = 1, float shade = 0)
     {
+        shadow.IsVisible = shade > 0;
+        drop.Opacity = ShadowOpacity * shade;
         bool shown = mascot.Visible && ride > 0;
         place.IsVisible = shown;
         if (!shown)
@@ -82,7 +106,7 @@ internal sealed class MascotVisual
             return;
         }
 
-        float k = SizeDips / MascotArt.ViewBox * scale * ride;
+        float k = SizeDips / MascotArt.ViewBox * scale * ride * grow;
         place.Offset = new Vector3(offsetPx, 0);
         place.Scale = new Vector3(k, k, 1);
         // The box sits lower in a deeper row; the clip stays on the island's top edge, in viewBox units.
