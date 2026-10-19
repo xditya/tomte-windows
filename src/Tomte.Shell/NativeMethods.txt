@@ -310,3 +310,4 @@ GetACP
 SetLayeredWindowAttributes
 UnregisterClass
 SetProcessWorkingSetSize
+WM_SETTINGCHANGE

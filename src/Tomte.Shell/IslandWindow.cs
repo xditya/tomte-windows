@@ -48,6 +48,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly ContainerVisual live;
     private readonly Drawn pill;
     private readonly Drawn ghost;
+    private readonly CompositionColorBrush fill;
     private readonly ScalarKeyFrameAnimation fadeIn;
     private readonly ScalarKeyFrameAnimation fadeOut;
     private readonly UISettings uiSettings = new();
@@ -178,7 +179,7 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         // Tree: root > [ghost (previous outline, only during a reduced-motion crossfade), live > [pill, Content]].
         // The pill is drawn outside the clip so its stroke keeps both halves; content is clipped by the same path.
-        var fill = compositor.CreateColorBrush(ShelfColors.Of(Theme.Island));
+        fill = compositor.CreateColorBrush(ShelfColors.Of(Theme.Island));
         pill = new Drawn(compositor, fill);
 
         Content = compositor.CreateContainerVisual();
@@ -249,6 +250,8 @@ internal sealed unsafe class IslandWindow : IDisposable
 
         new Thread(CompositorClockLoop) { IsBackground = true, Name = "tomte-compositor-clock" }.Start();
         Interaction = new InteractionHost(this);
+        Theme.Changed += Restyle;
+        Restyle();
     }
 
     public HWND Hwnd { get; }
@@ -488,6 +491,9 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     /// <summary>The scale, the screen's width or the island's place changed; anything measured in pixels needs recomputing.</summary>
     public event Action? LayoutChanged;
+
+    /// <summary>Windows announced a change to its colours (WM_SETTINGCHANGE "ImmersiveColorSet"), on this window's thread.</summary>
+    public Action? ColorsChanged { get; set; }
 
     /// <summary>
     /// Timers, WM_APP posts from the input thread, shell notifications, power broadcasts and clock changes land
@@ -780,6 +786,14 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>The floating pill casts the shadow; the notch has none. Its offset and blur are DIPs times the scale.</summary>
+    // The theme's colours on what lives as long as the window.
+    private void Restyle()
+    {
+        fill.Color = ShelfColors.Of(Theme.Island);
+        pill.Restyle();
+        ghost.Restyle();
+    }
+
     private void ShadowLook()
     {
         pill.Shadow(!attached, scale);
@@ -1409,6 +1423,21 @@ internal sealed unsafe class IslandWindow : IDisposable
                 return Interact(message, wParam, lParam) ?? Typed(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_DPICHANGED:
                 return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
+            case PInvoke.WM_SETTINGCHANGE when lParam.Value != 0 && new string((char*)lParam.Value) == "ImmersiveColorSet":
+                // Windows' colours, light or dark, accent or transparency changed. The handler reads them again.
+                if (instance?.ColorsChanged is { } changed)
+                {
+                    try
+                    {
+                        changed();
+                    }
+                    catch (Exception e)
+                    {
+                        instance.Log?.Invoke($"colour change failed: {e}");
+                    }
+                }
+
+                return PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_DISPLAYCHANGE:
                 // A scaling change reaches a resting window here before its own WM_DPICHANGED does.
                 return GuardedRescale(instance?.MonitorScale());
@@ -1491,6 +1520,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         private readonly CompositionVisualSurface copy;
         private readonly SpriteVisual shadowVisual;
         private readonly DropShadow shadow;
+        private readonly CompositionColorBrush stroke;
         private bool shadowOn;
 
         public Drawn(Compositor compositor, CompositionBrush fillBrush)
@@ -1498,7 +1528,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             Geometry = compositor.CreatePathGeometry();
             Shape = compositor.CreateSpriteShape(Geometry);
             Shape.FillBrush = fillBrush;
-            Shape.StrokeBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.LineOver));
+            Shape.StrokeBrush = stroke = compositor.CreateColorBrush(ShelfColors.Of(Theme.LineOver));
             Shape.StrokeThickness = 0;
             Shape.Offset = new Vector2(Margin);
             fill = compositor.CreateShapeVisual();
@@ -1508,8 +1538,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             copy.SourceVisual = fill;
             shadow = compositor.CreateDropShadow();
             shadow.Mask = compositor.CreateSurfaceBrush(copy);
-            shadow.Color = ShelfColors.Of(Theme.Shadow);
-            shadow.Opacity = 0.35f;
+            Restyle();
             shadowVisual = compositor.CreateSpriteVisual();
             shadowVisual.Shadow = shadow;
 
@@ -1541,6 +1570,14 @@ internal sealed unsafe class IslandWindow : IDisposable
                     copy.SourceSize = value;
                 }
             }
+        }
+
+        /// <summary>The theme's hairline and shadow.</summary>
+        public void Restyle()
+        {
+            stroke.Color = ShelfColors.Of(Theme.LineOver);
+            shadow.Color = ShelfColors.Of(Theme.Shadow);
+            shadow.Opacity = Theme.ShadowOpacity;
         }
 
         /// <summary>The compositor's blur radius is three sigma (fitted on screen: 10.5 px for 7 DIP at 150%).</summary>

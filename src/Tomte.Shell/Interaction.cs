@@ -1052,7 +1052,7 @@ internal sealed class InteractionHost
         public Overlay(Compositor compositor)
         {
             root = compositor.CreateContainerVisual();
-            accent = compositor.CreateColorBrush(Argb(StateLook.Accent));
+            accent = ShelfColors.Live(compositor, () => StateLook.Accent);
             layerFill = compositor.CreateColorBrush();
             (layer, layerBox) = Box(compositor, out var layerShape);
             layerShape.FillBrush = layerFill;
