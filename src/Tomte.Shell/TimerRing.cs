@@ -6,15 +6,15 @@ using Windows.UI.Composition;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Compact pill's timer ring: an 18 DIP track with a green arc that fills clockwise from 12 o'clock. The
-/// compositor animates the arc from the progress at show time to full at the end time, so nothing in this
+/// The Compact pill's timer ring: a 22 DIP track with an accent arc, round-capped, that drains clockwise from 12 o'clock. The
+/// compositor animates the arc from what is left at show time to nothing at the end time, so nothing in this
 /// process ticks for it. The animation runs only while the ring is shown; hidden, it costs nothing.
 /// </summary>
 internal sealed class TimerRing
 {
     private const float Size = CompactLayout.RingSize, Stroke = CompactLayout.RingStroke;
 
-    // The ring's top, so it sits centred in the 38 DIP pill.
+    // The ring's top, so it sits centred in the pill.
     private static readonly float Top = (float)(IslandGeometry.Compact.Depth - Size) / 2;
 
     // The fill moves in this many steps over the time left, not on every frame. A linear fill made the compositor
@@ -29,10 +29,11 @@ internal sealed class TimerRing
 
     public TimerRing(Compositor compositor)
     {
-        var track = Circle(compositor, ShelfColors.Of(Theme.Track), out _);
-        // An ellipse's path starts at 12 o'clock and runs clockwise (checked on screen), so the arc fills like a
-        // conic gradient.
+        var track = Circle(compositor, ShelfColors.Of(Theme.LineStrong), out _);
+        // An ellipse's path starts at 12 o'clock and runs clockwise (checked on screen), so the arc is what is left,
+        // from 12 round, and it drains back towards 12 as the time runs out.
         var arcShape = Circle(compositor, ShelfColors.Of(Theme.Accent), out arc);
+        arcShape.StrokeStartCap = arcShape.StrokeEndCap = CompositionStrokeCap.Round;
         visual = compositor.CreateShapeVisual();
         visual.Size = new Vector2(Size);
         visual.Shapes.Add(track);
@@ -41,12 +42,12 @@ internal sealed class TimerRing
 
         // One fill for the ring's life; each show only gives it the time left.
         fill = compositor.CreateScalarKeyFrameAnimation();
-        fill.InsertKeyFrame(1, 1, compositor.CreateStepEasingFunction(FillSteps));
+        fill.InsertKeyFrame(1, 0, compositor.CreateStepEasingFunction(FillSteps));
     }
 
     /// <summary>
     /// Show the ring for a run, in DIPs in <paramref name="into"/> (the island's trailing frame, or its centre one) with
-    /// its left edge at <paramref name="x"/>: full when the run has ended, otherwise filling until its end time. It
+    /// its left edge at <paramref name="x"/>: full when the run has ended, otherwise draining until its end time. It
     /// goes a gap before the words it belongs to.
     /// </summary>
     public void Show(TimerRun run, DateTimeOffset now, ContainerVisual into, float x)
@@ -62,8 +63,9 @@ internal sealed class TimerRing
 
         // Stop first, so a fill left from the last show cannot override the value set here.
         arc.StopAnimation("TrimEnd");
-        arc.TrimEnd = (float)run.Progress(now);
         var remaining = run.Remaining(now);
+        // An ended run shows the whole ring, the mark of a timer that is done.
+        arc.TrimEnd = remaining > TimeSpan.Zero ? (float)(1 - run.Progress(now)) : 1;
         if (remaining > TimeSpan.Zero)
         {
             // A composition animation takes 1 ms to 24 days and throws outside that; a wrong arc is better than a

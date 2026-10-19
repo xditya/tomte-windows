@@ -95,7 +95,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
     private MascotState face = MascotState.Thinking;
 
     /// <summary>What the undo pill says after a drop zone's panel closed.</summary>
-    internal const string ResultClosed = "AI result closed";
+    internal const string ResultClosed = "Result closed";
 
     // The panel is up, or closed and kept for Undo: either way the run goes on.
     private bool Live => view.Open || parked;

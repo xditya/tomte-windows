@@ -47,7 +47,7 @@ public class RamblerTests
     }
 
     [Fact]
-    public void RmsMapsToSevenMirroredBarsBetweenRestAndFull()
+    public void RmsMapsToNineMirroredBarsBetweenRestAndFull()
     {
         Assert.Equal(0.5f, Waveform.Rms([0.5f, -0.5f, 0.5f, -0.5f]), 5);
         Assert.Equal(0, Waveform.Rms([]));
@@ -62,7 +62,7 @@ public class RamblerTests
         foreach (var h in quiet)
             Assert.Equal(Waveform.MinHeight, h);
 
-        float[] weights = [.35f, .62f, .85f, 1f, .85f, .62f, .35f];
+        float[] weights = [.35f, .55f, .75f, .9f, 1f, .9f, .75f, .55f, .35f];
         for (double t = 0; t < 3; t += 0.05)
         {
             Waveform.Heights(1, t, loud);
@@ -72,7 +72,20 @@ public class RamblerTests
 
         // Bars with the same weight move on different periods, so they are not one block.
         Waveform.Heights(1, 0.3, loud);
-        Assert.NotEqual(loud[2], loud[4]);
+        Assert.NotEqual(loud[2], loud[6]);
+        Assert.Equal(20, Waveform.MinHeight + Waveform.Swing);
+    }
+
+    [Fact]
+    public void TheBarsFillInOneASecond()
+    {
+        Assert.Equal(1, Waveform.Reached(0));
+        Assert.Equal(1, Waveform.Reached(0.99));
+        Assert.Equal(7, Waveform.Reached(6.2)); // in the seventh second
+        Assert.Equal(7, Waveform.Reached(7));
+        Assert.Equal(Waveform.Bars, Waveform.Reached(8.5));
+        Assert.Equal(Waveform.Bars, Waveform.Reached(600));
+        Assert.Equal(1, Waveform.Reached(-1));
     }
 
     [Fact]

@@ -1159,7 +1159,7 @@ internal sealed partial class PaletteHost
     }
 
     /// <summary>What the undo pill says after an AI answer closed.</summary>
-    internal const string AnswerClosed = "AI answer closed";
+    internal const string AnswerClosed = "Answer closed";
 
     // Undo: the AI box in the pill's place, as it closed. It opened from the pill, so it has no back arrow.
     private bool Reopened(PaletteSession session, Shut shut)
