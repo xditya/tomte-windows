@@ -854,7 +854,7 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal("c.txt", ShelfStore.Unique("c.txt", taken));
     }
 
-    private static readonly System.Numerics.Vector2 Body = new(560, 260 - PanelSpace.TabStripHeight);
+    private static readonly System.Numerics.Vector2 Body = new(560, 218);
 
     [Fact]
     public void TheGridFitsTheShelfPanelClearOfItsCorners()
@@ -1105,7 +1105,7 @@ public sealed class ShelfTests : IDisposable
                 var b = targets[i].Bounds;
                 foreach (var (x, y) in new[] { (b.Left + 1, b.Top + 1), (b.Right - 1, b.Bottom - 1) })
                 {
-                    int px = (int)Math.Round(originX + (x - size.W / 2) * scale), py = (int)Math.Round(1 + (y + PanelSpace.TabStripHeight) * scale);
+                    int px = (int)Math.Round(originX + (x - size.W / 2) * scale), py = (int)Math.Round(1 + (y + PanelSpace.Head) * scale);
                     Assert.Equal((0, i), Target.Hit(views, PanelSpace.FromPixels(px, py, originX, 1, scale)));
                 }
             }

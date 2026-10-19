@@ -101,7 +101,7 @@ internal static partial class Program
 
         island.Interaction.Key(NavKey.Tab4, false);
         await Step("Ctrl+4");
-        Walk("ask");
+        Walk("settings");
         // On into the note, which takes the keys: Space and Enter are the note's and open nothing.
         island.Interaction.Key(NavKey.Next, false);
         await Step("Tab into the note");
@@ -125,7 +125,7 @@ internal static partial class Program
 
         void Click()
         {
-            var card = TabStrip.SearchButton((float)island.Current.Width).Card;
+            var card = TabStrip.Layout(Enum.GetValues<PanelId>(), PanelId.Home, (float)island.Current.Width, island.Mascot.Enabled).Search;
             var at = island.IslandToScreen(new Vector2(card.X + (card.Width / 2) - ((float)island.Current.Width / 2), card.Y + (card.Height / 2)));
             Windows.Win32.PInvoke.ScreenToClient(island.Hwnd, ref at);
             nint point = (at.Y << 16) | (at.X & 0xFFFF);

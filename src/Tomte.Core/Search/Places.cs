@@ -42,6 +42,7 @@ public static class Places
     // The island's tabs: the words for each.
     private static readonly (PanelId Tab, string Words)[] Tabs =
     [
+        (PanelId.Home, "home start overview"),
         (PanelId.Shelf, "files drop shelf"),
         (PanelId.Shortcuts, "tiles launcher"),
         (PanelId.Media, "music now playing player song"),

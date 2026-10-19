@@ -70,10 +70,10 @@ internal sealed class MascotVisual
 
     /// <summary>
     /// Copy the pose onto the visuals, the box's top-left at <paramref name="offsetPx"/> from the island's, drawn at
-    /// <paramref name="ride"/> of its size and opacity (<see cref="MascotArt.Ride"/>). Property sets only; nothing is
+    /// <paramref name="ride"/> of its size and opacity (<see cref="MascotArt.Ride"/>) and <paramref name="grow"/> times larger again. Property sets only; nothing is
     /// allocated per frame.
     /// </summary>
-    public void Apply(Mascot mascot, Vector2 offsetPx, float scale, float ride = 1)
+    public void Apply(Mascot mascot, Vector2 offsetPx, float scale, float ride = 1, float grow = 1)
     {
         bool shown = mascot.Visible && ride > 0;
         place.IsVisible = shown;
@@ -82,7 +82,7 @@ internal sealed class MascotVisual
             return;
         }
 
-        float k = SizeDips / MascotArt.ViewBox * scale * ride;
+        float k = SizeDips / MascotArt.ViewBox * scale * ride * grow;
         place.Offset = new Vector3(offsetPx, 0);
         place.Scale = new Vector3(k, k, 1);
         // The box sits lower in a deeper row; the clip stays on the island's top edge, in viewBox units.

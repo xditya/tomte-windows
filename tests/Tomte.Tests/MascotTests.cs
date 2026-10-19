@@ -328,7 +328,7 @@ public class MascotTests
     }
 
     // At rest in every shape it shows in: all of the art inside the outline and clear of its corners, centred down the
-    // top row, and in the tab strip with as much room on its left as above it.
+    // top row. (On an open panel it sits in the tab row's seat, which the panel tests check.)
     [Fact]
     public void TheTomteSitsInsideEveryShapeWithRoomAroundIt()
     {
@@ -351,9 +351,6 @@ public class MascotTests
             Assert.Equal(row - art.Max(p => p.Y), art.Min(p => p.Y), 0.1);
         }
 
-        var strip = Art(IslandGeometry.Panel(560, 260));
-        Assert.Equal(strip.Min(p => p.Y), strip.Min(p => p.X), 0.1);
-
         // The peek pill holds the tomte alone, centred across it as well.
         var peek = Art(IslandGeometry.Peek);
         Assert.Equal(IslandGeometry.Peek.Width - peek.Max(p => p.X), peek.Min(p => p.X), 0.1);
@@ -368,8 +365,8 @@ public class MascotTests
         Assert.Equal(new System.Drawing.RectangleF(-110 + 5.5f, 19 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Compact));
         Assert.Equal(new System.Drawing.RectangleF(-18.5f + 5.5f, 19 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Peek));
         Assert.Equal(new System.Drawing.RectangleF(-113 + 5.5f, 20 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Compact.Swollen()));
-        Assert.Equal(new System.Drawing.RectangleF(-210 + 5.5f, 21 - Middle, 26, 26), MascotArt.Box(IslandGeometry.ShelfDrop));
-        Assert.Equal(new System.Drawing.RectangleF(-280 + 5.5f, 21 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Panel(560, 260)));
+        Assert.Equal(new System.Drawing.RectangleF(-210 + 5.5f, 20 - Middle, 26, 26), MascotArt.Box(IslandGeometry.ShelfDrop));
+        Assert.Equal(new System.Drawing.RectangleF(-280 + 5.5f, 20 - Middle, 26, 26), MascotArt.Box(IslandGeometry.Panel(560, 260)));
     }
 
     // Beside an open shape's field or first line the tomte is centred on it, its art starts where the content under it
@@ -629,13 +626,12 @@ public class MascotTests
         var peek = MascotArt.Box(IslandGeometry.Peek);
         Assert.Equal(0, peek.X + peek.Width / 2, 0.01);
 
-        // In the strip the box ends before the first label, so a press on it is never a tab's.
+        // In the tab row the box ends before the rail, so a press on it is never a tab's.
         PanelId[] tabs = [PanelId.Shelf, PanelId.Shortcuts, PanelId.Media];
-        var box = MascotArt.Box(IslandGeometry.Panel(380, 140));
+        var box = MascotArt.Box(IslandGeometry.Panel(380, 140), TabStrip.Seat.Shift, TabStrip.Seat.Grow);
         float left = box.X + 380 / 2f;
-        Assert.True(left + box.Width <= TabStrip.Labels(tabs, PanelId.Media, 380, mascot: true)[0].Slot.X);
-        Assert.Null(TabStrip.At(left + box.Width / 2, tabs, PanelId.Media, 380, mascot: true));
-        Assert.InRange(box.Y + box.Height / 2, 0, PanelSpace.TabStripHeight);
+        Assert.True(left + box.Width <= TabStrip.Layout(tabs, PanelId.Media, 380, mascot: true).Rail.X + 0.01);
+        Assert.InRange(box.Y + box.Height / 2, PanelSpace.TopPad, PanelSpace.Head);
     }
 
     // The art's flattened outline and the edge of its two circles, in DIPs from the shape's top-left corner.

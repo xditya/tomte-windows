@@ -420,13 +420,14 @@ public enum NavKey
     NextTab,
     PreviousTab,
 
-    /// <summary>Ctrl+1 to Ctrl+6: the tab in that place.</summary>
+    /// <summary>Ctrl+1 to Ctrl+7: the tab in that place.</summary>
     Tab1,
     Tab2,
     Tab3,
     Tab4,
     Tab5,
     Tab6,
+    Tab7,
     Remove,
     Copy,
     ShowInFolder,
@@ -474,7 +475,7 @@ public static class NavKeys
         {
             Tab when ctrl => shift ? NavKey.PreviousTab : NavKey.NextTab,
             Tab => shift ? NavKey.Previous : NavKey.Next,
-            >= '1' and <= '6' when ctrl && !shift => NavKey.Tab1 + (virtualKey - '1'),
+            >= '1' and <= '7' when ctrl && !shift => NavKey.Tab1 + (virtualKey - '1'),
             'K' when ctrl && !shift => NavKey.Ask,
             'H' when ctrl && !shift => NavKey.History,
             'P' when ctrl && !shift => NavKey.Pin,
@@ -517,11 +518,11 @@ public static class NavKeys
     };
 
     /// <summary>
-    /// A key down in a text box that the box gives up to the targets: Ctrl+Tab and Ctrl+1 to Ctrl+6 from any box, which
+    /// A key down in a text box that the box gives up to the targets: Ctrl+Tab and Ctrl+1 to Ctrl+7 from any box, which
     /// switch panel tabs, and Tab or Shift+Tab from one where Tab leaves (the palette's prompt). Tab in the note indents.
     /// </summary>
     public static bool LeavesBox(NavKey key, bool tabLeaves) =>
-        key is NavKey.NextTab or NavKey.PreviousTab or (>= NavKey.Tab1 and <= NavKey.Tab6) || (tabLeaves && key is NavKey.Next or NavKey.Previous);
+        key is NavKey.NextTab or NavKey.PreviousTab or (>= NavKey.Tab1 and <= NavKey.Tab7) || (tabLeaves && key is NavKey.Next or NavKey.Previous);
 
     /// <summary>
     /// A key down in a text box that the island's views get first while the box keeps the keys, and the box gets when no

@@ -50,14 +50,15 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
 public static class PanelSize
 {
     /// <summary>Every panel is this wide, so the tab strip and its labels stay where they are from tab to tab; only the height differs.</summary>
-    public const double Width = 560;
+    public const double Width = 760;
 
-    public static readonly (double W, double H) Media = (Width, 140);
-    public static readonly (double W, double H) Shortcuts = (Width, 300);
-    public static readonly (double W, double H) Scratchpad = (Width, 320);
-    public static readonly (double W, double H) Shelf = (Width, 260);
-    public static readonly (double W, double H) Clipboard = (Width, 360);
-    public static readonly (double W, double H) History = (Width, 400);
+    public static readonly (double W, double H) Home = (Width, 536);
+    public static readonly (double W, double H) Media = (Width, 172);
+    public static readonly (double W, double H) Shortcuts = (Width, 310);
+    public static readonly (double W, double H) Scratchpad = (Width, 330);
+    public static readonly (double W, double H) Shelf = (Width, 270);
+    public static readonly (double W, double H) Clipboard = (Width, 370);
+    public static readonly (double W, double H) History = (Width, 410);
     public const double PaletteWidth = 640;
     public const double PaletteMinHeight = 150;
     public const double PaletteMaxHeight = 480;
@@ -68,6 +69,7 @@ public static class PanelSize
 
     public static (double W, double H) Of(PanelId id) => id switch
     {
+        PanelId.Home => Home,
         PanelId.Shelf => Shelf,
         PanelId.Shortcuts => Shortcuts,
         PanelId.Media => Media,

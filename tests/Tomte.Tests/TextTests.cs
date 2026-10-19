@@ -115,14 +115,14 @@ public class TextTests
     public void TheClockSlotsHoldTheLongestClock()
     {
         // Two digits of hours is the longest a clock gets short of 100 hours; tabular, so any digits measure the same.
-        using var longest = Lay(NowPlaying.Clock(TimeSpan.FromHours(99) + TimeSpan.FromSeconds(3599)), MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed.Width);
+        using var longest = Lay(NowPlaying.Clock(TimeSpan.FromHours(99) + TimeSpan.FromSeconds(3599)), MediaPanelLayout.ElapsedStyle, MediaLayout.Elapsed.Width);
         using var natural = Lay("88:88:88", MediaPanelLayout.ElapsedStyle);
 
         Assert.Equal("99:59:59", longest.Run.Text);
         Assert.False(longest.Trimmed, $"needs {natural.Width} DIP");
-        Assert.Equal(MediaPanelLayout.Elapsed.Width, MediaLayout.Total.Width);
+        Assert.Equal(MediaLayout.Elapsed.Width, MediaLayout.Total.Width);
         // Both clear of the bar between them.
-        Assert.True(MediaPanelLayout.Elapsed.Right <= MediaLayout.Bar.Left);
+        Assert.True(MediaLayout.Elapsed.Right <= MediaLayout.Bar.Left);
         Assert.True(MediaLayout.Total.Left >= MediaLayout.Bar.Right);
     }
 

@@ -12,7 +12,7 @@ public class HistoryPanelTests
 
     private static AiExchange Talk(string key, DateTimeOffset at, string question = "What is this?") => AiHistoryTests.Talk(key, at, question);
 
-    private static readonly Vector2 Body = new((float)PanelSize.History.W, (float)PanelSize.History.H - PanelSpace.TabStripHeight);
+    private static readonly Vector2 Body = new((float)PanelSize.History.W, (float)PanelSize.History.H - PanelSpace.Head);
 
     private static List<AiExchange> Rows(int count) =>
         [.. Enumerable.Range(0, count).Select(i => Talk($"k{i}", Morning.AddMinutes(-i), $"Question {i}"))];

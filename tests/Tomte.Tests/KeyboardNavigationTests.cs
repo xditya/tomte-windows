@@ -14,19 +14,18 @@ namespace Tomte.Tests;
 /// </summary>
 public class KeyboardNavigationTests
 {
-    private const float Width = 560;
+    private const float Width = 760;
     private static readonly Vector2 Body = new(Width, 318);
 
-    // One label per tab in group 1 with the current one checked, then the search button and the Ask pill.
+    // One tab per panel in group 1 with the current one checked, then the search button and the settings button.
     private static Target[] Strip(PanelId current)
     {
-        var tabs = Enum.GetValues<PanelId>();
-        var labels = TabStrip.Labels(tabs, current, Width, mascot: true);
+        var row = TabStrip.Layout(Enum.GetValues<PanelId>(), current, Width, mascot: true, "Win+Alt+Space");
         return
         [
-            .. tabs.Zip(labels).Select(p => new Target(p.First.ToString(), p.Second.Slot, TabStrip.Corner, TargetKind.Tab, Group: 1, Checked: p.First == current)),
-            new("search", TabStrip.SearchButton(Width).Card, TabStrip.Corner, TargetKind.Button),
-            new("ask", TabStrip.AskPill(Width).Card, TabStrip.Corner, TargetKind.Button),
+            .. row.Tabs.Select(t => new Target(t.Id.ToString(), t.Bounds, TabStrip.TabHeight / 2, TargetKind.Tab, Group: 1, Checked: t.Id == current)),
+            new("search", row.Search, TabStrip.Button / 2, TargetKind.Button),
+            new("settings", row.Settings, TabStrip.Button / 2, TargetKind.Button),
         ];
     }
 
@@ -60,36 +59,36 @@ public class KeyboardNavigationTests
         var items = Enumerable.Range(1, 3).Select(Item).ToList();
         // The shelf with the band showing the first tile's actions: the tiles are one stop, the band another.
         var shelf = ShelfLayout.Targets(Body, 0, items, items[0], [items[0]], false);
-        Assert.Equal(["0:Shelf", "0:search", "0:ask", "1:tile:1", "1:act:Open"], Walk([Strip(PanelId.Shelf), shelf]));
-        Assert.Equal(["1:act:Open", "1:tile:1", "0:ask", "0:search", "0:Shelf"], Walk([Strip(PanelId.Shelf), shelf], -1));
+        Assert.Equal(["0:Shelf", "0:search", "0:settings", "1:tile:1", "1:act:Open"], Walk([Strip(PanelId.Shelf), shelf]));
+        Assert.Equal(["1:act:Open", "1:tile:1", "0:settings", "0:search", "0:Shelf"], Walk([Strip(PanelId.Shelf), shelf], -1));
 
         // Shortcuts: the tiles and the add tile are one stop.
         var shortcuts = ShortcutGrid.Targets([new Shortcut(1, "Notes", @"C:\notes.exe", null)], 0, Body);
-        Assert.Equal(["0:Shortcuts", "0:search", "0:ask", "1:tile:1"], Walk([Strip(PanelId.Shortcuts), shortcuts]));
+        Assert.Equal(["0:Shortcuts", "0:search", "0:settings", "1:tile:1"], Walk([Strip(PanelId.Shortcuts), shortcuts]));
 
         // Media: the seek bar, then each transport button on its own.
         var media = new MediaPanelLayout(Width).Targets(NowPlaying.For("Spotify.exe").WithPlayback(true, 1, MediaCommand.Play | MediaCommand.Pause
             | MediaCommand.Toggle | MediaCommand.Next | MediaCommand.Previous | MediaCommand.Seek, DateTimeOffset.UnixEpoch)
             .WithTimeline(TimeSpan.Zero, TimeSpan.FromSeconds(195), TimeSpan.FromSeconds(48), DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch));
-        Assert.Equal(["0:Media", "0:search", "0:ask", "1:seek", "1:previous", "1:playpause", "1:next"], Walk([Strip(PanelId.Media), media]));
+        Assert.Equal(["0:Media", "0:search", "0:settings", "1:seek", "1:previous", "1:playpause", "1:next"], Walk([Strip(PanelId.Media), media]));
 
         // Scratchpad: the note is a stop, after the strip, and Shift+Tab from the first stop reaches it.
         Target[] note = [new("note", new ScratchpadPanelLayout(Body).Note, 8, TargetKind.Box)];
-        Assert.Equal(["0:Scratchpad", "0:search", "0:ask", "1:note"], Walk([Strip(PanelId.Scratchpad), note]));
-        Assert.Equal(["1:note", "0:ask", "0:search", "0:Scratchpad"], Walk([Strip(PanelId.Scratchpad), note], -1));
+        Assert.Equal(["0:Scratchpad", "0:search", "0:settings", "1:note"], Walk([Strip(PanelId.Scratchpad), note]));
+        Assert.Equal(["1:note", "0:settings", "0:search", "0:Scratchpad"], Walk([Strip(PanelId.Scratchpad), note], -1));
 
         // Clipboard: the switch, the rows (one stop), the row's own remove button, Clear all.
         var clipboard = new ClipboardPanelLayout(Body).Targets(on: true, [7, 8, 9], 0, asking: false);
-        Assert.Equal(["0:Clipboard", "0:search", "0:ask", "1:switch", "1:row:7", "1:remove:7", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard]));
-        Assert.Equal(["1:clear", "1:remove:7", "1:row:7", "1:switch", "0:ask", "0:search", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1));
+        Assert.Equal(["0:Clipboard", "0:search", "0:settings", "1:switch", "1:row:7", "1:remove:7", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard]));
+        Assert.Equal(["1:clear", "1:remove:7", "1:row:7", "1:switch", "0:settings", "0:search", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1));
         // A remove button focused last: Tab comes back into the list at its row, Shift+Tab at the button.
-        Assert.Equal(["0:Clipboard", "0:search", "0:ask", "1:switch", "1:row:8", "1:remove:8", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard], 1, "remove:8"));
-        Assert.Equal(["1:clear", "1:remove:8", "1:row:8", "1:switch", "0:ask", "0:search", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1, "remove:8"));
+        Assert.Equal(["0:Clipboard", "0:search", "0:settings", "1:switch", "1:row:8", "1:remove:8", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard], 1, "remove:8"));
+        Assert.Equal(["1:clear", "1:remove:8", "1:row:8", "1:switch", "0:settings", "0:search", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1, "remove:8"));
 
         // History with a conversation open: the rows are one stop, entered at the open one, then Continue and Copy answer.
         var rows = Enumerable.Range(0, 4).Select(i => AiHistoryTests.Talk($"k{i}", DateTimeOffset.UnixEpoch.AddMinutes(-i))).ToList();
         var history = new HistoryPanelLayout(Body, rows, opened: "k2").Targets(0);
-        Assert.Equal(["0:History", "0:search", "0:ask", $"1:{HistoryPanelLayout.RowId(rows[2])}", $"1:{HistoryPanelLayout.ContinueId}", $"1:{HistoryPanelLayout.CopyId}"], Walk([Strip(PanelId.History), history]));
+        Assert.Equal(["0:History", "0:search", "0:settings", $"1:{HistoryPanelLayout.RowId(rows[2])}", $"1:{HistoryPanelLayout.ContinueId}", $"1:{HistoryPanelLayout.CopyId}"], Walk([Strip(PanelId.History), history]));
     }
 
     [Fact]
@@ -215,7 +214,7 @@ public class KeyboardNavigationTests
     public void LeftAndRightOffTheShelfPageScrollARow()
     {
         // Two rows of four on the page, twelve items: Right from the page's last tile scrolls a row, Left back.
-        var body = new Vector2(560, 260 - PanelSpace.TabStripHeight);
+        var body = new Vector2(560, 218);
         Assert.Equal(2, ShelfLayout.Rows(body));
         Assert.Equal(4, ShelfLayout.ScrollSideways(0, 7, 1, 12, body));
         Assert.Equal(0, ShelfLayout.ScrollSideways(4, 4, -1, 12, body));

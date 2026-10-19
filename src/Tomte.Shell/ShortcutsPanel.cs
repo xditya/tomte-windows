@@ -354,7 +354,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
                 var (holder, shapes) = Shapes(new Vector2(cell.Width, cell.Height), new Vector2(cell.X, cell.Y));
                 Rounded(shapes, new RectangleF(0, 0, cell.Width, cell.Height), ShortcutGrid.Corner, Brush(Card));
                 // A neutral square under the icon: what shows while the icon loads, for a missing target, or with no icon.
-                var icon = ShortcutGrid.Icon(cell, scale, PanelSpace.TabStripHeight);
+                var icon = ShortcutGrid.Icon(cell, scale, PanelSpace.Head);
                 Rounded(shapes, new RectangleF(icon.X - cell.X, icon.Y - cell.Y, icon.Width, icon.Height), 8, Brush(Placeholder));
                 foreach (var line in ShortcutGrid.TileText(cell, tile.Row.Name, ShortcutStore.Gate(tile.Row, tile.Target, scriptsOn)))
                 {
@@ -416,7 +416,7 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
             var (holder, shapes) = Shapes(new Vector2(cell.Width, cell.Height), new Vector2(cell.X, cell.Y));
             var outline = Rounded(shapes, new RectangleF(0.5f, 0.5f, cell.Width - 1, cell.Height - 1), ShortcutGrid.Corner, null);
             Dashed(outline, Faint);
-            var icon = ShortcutGrid.Icon(cell, scale, PanelSpace.TabStripHeight);
+            var icon = ShortcutGrid.Icon(cell, scale, PanelSpace.Head);
             float x = icon.X - cell.X, y = icon.Y - cell.Y;
             Dashed(Rounded(shapes, new RectangleF(x + 0.5f, y + 0.5f, icon.Width - 1, icon.Height - 1), 8, null), Faint);
             var plus = Brush(Glyph);

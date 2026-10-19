@@ -210,6 +210,7 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
         private static readonly Color Card = ShelfColors.Of(Theme.Card);
         private static readonly Color Lit = ShelfColors.Of(Theme.Raised);
         private static readonly Color IconFill = ShelfColors.Of(Theme.RaisedHi);
+        private static readonly Color ButtonFill = ShelfColors.Of(Theme.RaisedHi);
         private static readonly Color Line = ShelfColors.Of(Theme.LineStrong);
         private static readonly Color Glyph = ShelfColors.Of(Theme.Ink2);
 
@@ -343,18 +344,10 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
             rowsVisual.Children.InsertAtTop(shapes);
             Rounded(shapes, new RectangleF(0, 0, at.Width, at.Height), HistoryPanelLayout.Corner, i == layout.Opened ? Lit : Card);
             var icon = HistoryPanelLayout.IconIn;
-            Rounded(shapes, icon, 6, IconFill);
-            var ink = c.CreateColorBrush(Glyph);
+            Rounded(shapes, icon, HistoryPanelLayout.IconCorner, IconFill);
             var glyph = c.CreateContainerShape();
+            PaletteView.DrawGlyph(glyph, HistoryPanelLayout.Glyph(item.Source), c.CreateColorBrush(Glyph), HistoryPanelLayout.IconGlyph);
             glyph.Offset = new Vector2(icon.X + (icon.Width - HistoryPanelLayout.IconGlyph) / 2, icon.Y + (icon.Height - HistoryPanelLayout.IconGlyph) / 2);
-            glyph.Scale = new Vector2(HistoryPanelLayout.IconGlyph / 16);
-            foreach (var figure in HistoryPanelLayout.Glyph(item.Source))
-            {
-                var path = c.CreateSpriteShape(c.CreatePathGeometry(IslandWindow.BuildPath(figure, 1)));
-                path.FillBrush = ink;
-                glyph.Shapes.Add(path);
-            }
-
             shapes.Shapes.Add(glyph);
             var row = new Row(shapes);
             foreach (var line in HistoryPanelLayout.RowText(item, at.Width, opened: i == layout.Opened))
@@ -373,7 +366,7 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
 
                 foreach (var button in new[] { layout.ContinueButton, layout.CopyButton })
                 {
-                    Rounded(shapes, new RectangleF(button.X - at.X, button.Y - at.Y, button.Width, button.Height), HistoryPanelLayout.Corner, Lit);
+                    Rounded(shapes, new RectangleF(button.X - at.X, button.Y - at.Y, button.Width, button.Height), HistoryPanelLayout.ButtonCorner, ButtonFill);
                 }
 
                 foreach (var label in layout.ButtonLabels())

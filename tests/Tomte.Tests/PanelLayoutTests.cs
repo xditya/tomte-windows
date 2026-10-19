@@ -193,17 +193,18 @@ public sealed class PanelLayoutTests
         var size = PanelSize.Clipboard;
         double originX = 1 + IslandGeometry.Panel(size.W, size.H).OuterWidth / 2 * scale;
         int x = (int)Math.Round(originX + (bodyX - size.W / 2) * scale);
-        int y = (int)Math.Round(1 + (bodyY + PanelSpace.TabStripHeight) * scale);
+        int y = (int)Math.Round(1 + (bodyY + PanelSpace.Head) * scale);
         return PanelSpace.ToBody(PanelSpace.FromPixels(x, y, (float)originX, 1, scale), size.W);
     }
 
     [Fact]
     public void TheNoteIsTypedInsideItsCard()
     {
-        // 320 tall less the strip: a 202 DIP card, the text box 12 in from its sides and 10 from its ends.
+        // 330 tall less the tab row: under the title line a 190 DIP card, the text box 14 in from its sides and 12 from its ends.
         var layout = new ScratchpadPanelLayout(new Vector2(520, 278));
-        Assert.Equal(202, layout.Note.Height, 0.01);
-        Assert.Equal(RectangleF.FromLTRB(layout.Note.X + 12, layout.Note.Y + 10, layout.Note.Right - 12, layout.Note.Bottom - 10), layout.Editor);
+        Assert.Equal(190, layout.Note.Height, 0.01);
+        Assert.Equal(16, layout.Note.X);
+        Assert.Equal(RectangleF.FromLTRB(layout.Note.X + 14, layout.Note.Y + 12, layout.Note.Right - 14, layout.Note.Bottom - 12), layout.Editor);
     }
 
     [Fact]
@@ -312,7 +313,7 @@ public sealed class PanelLayoutTests
     {
         var layout = new ScratchpadPanelLayout(new Vector2(520, 278));
         var frame = layout.FrameText();
-        float title = TextSlot.Measure("Scratchpad", TextStyle.Title, 500);
+        float title = TextSlot.Measure("Scratchpad", TextStyle.PageTitle, 500);
 
         Assert.Equal(layout.Head.X + title + 10, frame[1].Slot.X, 0.01);
         Assert.Equal(layout.Foot.Right, frame[3].Slot.Right, 0.01);

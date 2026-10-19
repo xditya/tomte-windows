@@ -136,7 +136,7 @@ internal static unsafe partial class Program
         {
             ("Nightfall", MediaPanelLayout.TitleStyle, MediaLayout.Title),
             ("Lo-fi radio · lofi beats to study", MediaPanelLayout.ArtistStyle, MediaLayout.Artist),
-            ("00:48", MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed),
+            ("00:48", MediaPanelLayout.ElapsedStyle, MediaLayout.Elapsed),
             ("03:15", MediaPanelLayout.TotalStyle, MediaLayout.Total),
         })
         {
@@ -408,11 +408,11 @@ internal static unsafe partial class Program
     {
         var size = (W: width, PanelSize.Media.H);
         var layout = new MediaPanelLayout((float)width);
-        var body = new Vector2((float)(-size.W / 2), PanelSpace.TabStripHeight);
+        var body = new Vector2((float)(-size.W / 2), PanelSpace.Head);
         c.Pill();
         c.Mascot();
         Tabs(c, PanelId.Media, size);
-        var art = Offset(MediaPanelLayout.Art, body);
+        var art = Offset(layout.Art, body);
         if (track is null)
         {
             c.RoundRect(art, MediaPanelLayout.ArtCorner, 0x1CFFFFFF);
@@ -455,7 +455,7 @@ internal static unsafe partial class Program
         c.Text(failure ?? (track is null ? "" : track.Artist.Length > 0 ? track.Artist : track.App), failure is null ? MediaPanelLayout.ArtistStyle : MediaPanelLayout.FailedStyle, layout.Artist, body);
         if (track is { Timeline: true })
         {
-            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Position)), MediaPanelLayout.ElapsedStyle, MediaPanelLayout.Elapsed, body);
+            c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Position)), MediaPanelLayout.ElapsedStyle, layout.Elapsed, body);
             c.Text(NowPlaying.Clock(TimeSpan.FromSeconds(track.Length)), MediaPanelLayout.TotalStyle, layout.Total, body);
         }
 
@@ -590,28 +590,25 @@ internal static unsafe partial class Program
 
     private static IslandGeometry Panel((double W, double H) size) => IslandGeometry.Panel(size.W, size.H);
 
-    // The strip row as the panel host draws it: every tab on main, the current one white on a card, and the Ask pill.
-    private static void Tabs(Canvas c, PanelId current, (double W, double H) size)
+    // The tab row as the panel host draws it: the rail, the current tab's capsule and name, and the two round buttons.
+    // Simplification: the tab icons are left out here; the island draws them from the icon set.
+    private static TabStrip.Row Tabs(Canvas c, PanelId current, (double W, double H) size)
     {
         var strip = new Vector2((float)(-size.W / 2), 0);
-        var labels = TabStrip.Labels(Enum.GetValues<PanelId>(), current, (float)size.W, mascot: true);
-        foreach (var line in labels)
+        var row = TabStrip.Layout(Enum.GetValues<PanelId>(), current, (float)size.W, mascot: true);
+        c.RoundRect(Offset(row.Rail, strip), row.Rail.Height / 2, Theme.Card);
+        foreach (var tab in row.Tabs)
         {
-            if (line.Style == TabStrip.Current)
+            if (tab.Label is { } label)
             {
-                c.RoundRect(Offset(line.Slot, strip), TabStrip.Corner, 0x1CFFFFFF);
+                c.RoundRect(Offset(tab.Bounds, strip), tab.Bounds.Height / 2, Theme.RaisedHi);
+                c.Text(label, strip);
             }
-
-            c.Text(line, strip);
         }
 
-        var (search, lens) = TabStrip.SearchButton((float)size.W);
-        c.RoundRect(Offset(search, strip), TabStrip.Corner, TabStrip.AskCard);
-        c.Figures(TabStrip.SearchGlyph, new Vector2(lens.X, lens.Y) + strip, TabStrip.AskColor);
-        var (card, glyph, word) = TabStrip.AskPill((float)size.W);
-        c.RoundRect(Offset(card, strip), TabStrip.Corner, TabStrip.AskCard);
-        c.Sparkle(Offset(glyph, strip), TabStrip.AskColor);
-        c.Text(word, strip);
+        c.RoundRect(Offset(row.Search, strip), row.Search.Height / 2, Theme.Card);
+        c.RoundRect(Offset(row.Settings, strip), row.Settings.Height / 2, Theme.Card);
+        return row;
     }
 
     // The strip alone over a short pill, at a panel's width.
@@ -630,25 +627,26 @@ internal static unsafe partial class Program
     private static void StripLook(Canvas c, uint? layer = null, bool ring = false, string? tip = null, bool tick = false, bool search = false)
     {
         var size = PanelSize.Shelf;
-        Strip(c, PanelId.Shelf, size);
+        c.Pill();
+        c.Mascot();
+        var row = Tabs(c, PanelId.Shelf, size);
         var strip = new Vector2((float)(-size.W / 2), 0);
-        var labels = TabStrip.Labels(Enum.GetValues<PanelId>(), PanelId.Shelf, (float)size.W, mascot: true);
-        var shortcuts = Offset(labels[1].Slot, strip);
-        var button = Offset(TabStrip.SearchButton((float)size.W).Card, strip);
+        var shortcuts = Offset(row.Tabs[2].Bounds, strip);
+        var button = Offset(row.Search, strip);
         if (layer is { } fill)
         {
-            c.RoundRect(shortcuts, TabStrip.Corner, fill);
+            c.RoundRect(shortcuts, TabStrip.TabHeight / 2, fill);
         }
 
         if (ring)
         {
-            var (line, corner) = StateLook.FocusRing(search ? button : Offset(labels[0].Slot, strip), TabStrip.Corner);
+            var (line, corner) = StateLook.FocusRing(search ? button : Offset(row.Tabs[1].Bounds, strip), TabStrip.TabHeight / 2);
             c.Stroke(line, corner, StateLook.Accent, StateLook.FocusWidth);
         }
 
         if (tip is not null)
         {
-            var target = tick ? shortcuts : search ? button : Offset(TabStrip.AskPill((float)size.W).Card, strip);
+            var target = tick || !search ? shortcuts : button;
             var g = StripLooks;
             var (card, mark, label) = StateLook.Tip(tip, tick, target, new RectangleF((float)(-g.Width / 2), 0, (float)g.Width, (float)g.Depth));
             c.RoundRect(card, StateLook.TipCorner, StateLook.TipFill);
@@ -662,9 +660,9 @@ internal static unsafe partial class Program
         }
     }
 
-    private static Vector2 Body((double W, double H) size) => new((float)size.W, (float)size.H - PanelSpace.TabStripHeight);
+    private static Vector2 Body((double W, double H) size) => new((float)size.W, (float)size.H - PanelSpace.Head);
 
-    private static Vector2 BodyOrigin((double W, double H) size) => new((float)(-size.W / 2), PanelSpace.TabStripHeight);
+    private static Vector2 BodyOrigin((double W, double H) size) => new((float)(-size.W / 2), PanelSpace.Head);
 
     // The Shelf panel capped at 60% of a monitor 733 DIPs wide (1280 pixels at 175%), where the names no longer fit the band.
     private static readonly (double W, double H) NarrowShelf = (440, PanelSize.Shelf.H);
@@ -787,7 +785,7 @@ internal static unsafe partial class Program
         {
             var cell = ShortcutGrid.Cell(i, size);
             var holder = body + new Vector2(cell.X, cell.Y);
-            var icon = ShortcutGrid.Icon(cell, c.Scale, PanelSpace.TabStripHeight);
+            var icon = ShortcutGrid.Icon(cell, c.Scale, PanelSpace.Head);
             if (i == tiles.Length)
             {
                 c.StrokeRect(Offset(cell, body), ShortcutGrid.Corner, 0x40FFFFFF);
@@ -1412,15 +1410,6 @@ internal static unsafe partial class Program
             foreach (var t in triangles)
             {
                 Fill([OutlineSegment.Move(t[0]), OutlineSegment.Line(t[1]), OutlineSegment.Line(t[2])], at, k, argb);
-            }
-        }
-
-        /// <summary>The Ask pill's sparkle, scaled from its box to fill <paramref name="glyph"/>'s height.</summary>
-        public void Sparkle(RectangleF glyph, uint argb)
-        {
-            foreach (var star in TabStrip.Sparkle)
-            {
-                Fill(star, new Vector2(glyph.X, glyph.Y), glyph.Height / TabStrip.SparkleBox.Y, argb);
             }
         }
 

@@ -16,8 +16,8 @@ namespace Tomte.Core;
 /// </summary>
 public sealed class HistoryPanelLayout
 {
-    public const float Pad = 14, Top = 12, HeadHeight = 18, FootHeight = 14, Gap = 10, Corner = 8;
-    public const float RowHeight = 44, RowGap = 6, Icon = 24, IconGlyph = 14;
+    public const float Pad = Section.BodyPad, Top = Section.BodyTop, Bottom = Section.BodyPad, HeadHeight = 22, FootHeight = 14, Gap = 10, Corner = 14;
+    public const float RowHeight = 44, RowGap = 6, Icon = 24, IconCorner = 8, IconGlyph = 16, ButtonCorner = Section.ButtonCorner;
 
     /// <summary>The opened conversation's inset inside its card, and the room between two turns.</summary>
     public const float Inset = DropResultLayout.Pad, TurnGap = 14, PartGap = 4;
@@ -82,9 +82,9 @@ public sealed class HistoryPanelLayout
 
     public RectangleF Head => new(Pad, Top, Body.X - 2 * Pad, HeadHeight);
 
-    public RectangleF List => RectangleF.FromLTRB(Pad, Top + HeadHeight + Gap, Body.X - Pad, Body.Y - Top - FootHeight - Gap);
+    public RectangleF List => RectangleF.FromLTRB(Pad, Top + HeadHeight + Gap, Body.X - Pad, Body.Y - Bottom - FootHeight - Gap);
 
-    public RectangleF Foot => new(Pad, Body.Y - Top - FootHeight, Body.X - 2 * Pad, FootHeight);
+    public RectangleF Foot => new(Pad, Body.Y - Bottom - FootHeight, Body.X - 2 * Pad, FootHeight);
 
     /// <summary>Each row's card in list coordinates, before the scroll moves it; the opened one is as tall as its conversation.</summary>
     public IReadOnlyList<RectangleF> Rows => rows;
@@ -119,12 +119,12 @@ public sealed class HistoryPanelLayout
     public IReadOnlyList<TextSlot> HeadText(bool on)
     {
         const string title = "AI history";
-        float after = TextSlot.Measure(title, TextStyle.Title, Head.Width) + Gap;
+        float after = TextSlot.Measure(title, TextStyle.PageTitle, Head.Width) + Gap;
         return
         [
-            new(title, TextStyle.Title, Head),
+            new(title, TextStyle.PageTitle, Head),
             new(on ? $"the last {AiHistory.MaxItems} conversations, up to {AiHistory.MaxDays} days, on this PC only" : "off",
-                TextStyle.Secondary, new(Head.X + after, Top, Head.Width - after, HeadHeight)),
+                Section.Note with { Size = 13 }, new(Head.X + after, Top, Head.Width - after, HeadHeight)),
         ];
     }
 
@@ -186,8 +186,8 @@ public sealed class HistoryPanelLayout
         // The group of rows is one Tab stop; the opened row's buttons come after it.
         if (Opened >= 0)
         {
-            targets.Add(new Target(ContinueId, InList(ContinueButton, scroll), Corner, TargetKind.Button));
-            targets.Add(new Target(CopyId, InList(CopyButton, scroll), Corner, TargetKind.Button, Enabled: Items[Opened].LastAnswer.Length > 0, Key: "Ctrl+C"));
+            targets.Add(new Target(ContinueId, InList(ContinueButton, scroll), ButtonCorner, TargetKind.Button));
+            targets.Add(new Target(CopyId, InList(CopyButton, scroll), ButtonCorner, TargetKind.Button, Enabled: Items[Opened].LastAnswer.Length > 0, Key: "Ctrl+C"));
         }
 
         return targets;
@@ -274,43 +274,14 @@ public sealed class HistoryPanelLayout
 
     private static string OneLine(string text) => string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
-    /// <summary>The source's icon in a 16 DIP box, one closed figure each, drawn in the row's icon square.</summary>
-    public static OutlineSegment[][] Glyph(AiSource source) => source switch
+    /// <summary>The source's icon from the icon set, drawn in the row's icon square.</summary>
+    public static GlyphFigure[] Glyph(AiSource source) => source switch
     {
-        // A speech bubble: a question typed into the AI box.
-        AiSource.Palette => [Polygon(2, 3, 14, 3, 14, 11, 7.5f, 11, 4.5f, 14, 4.5f, 11, 2, 11)],
-        // A microphone on its stand.
-        AiSource.Voice =>
-        [
-            [
-                OutlineSegment.Move(new(5.5f, 3.5f)), OutlineSegment.Quadratic(new(5.5f, 1), new(8, 1)), OutlineSegment.Quadratic(new(10.5f, 1), new(10.5f, 3.5f)),
-                OutlineSegment.Line(new(10.5f, 7.5f)), OutlineSegment.Quadratic(new(10.5f, 10), new(8, 10)), OutlineSegment.Quadratic(new(5.5f, 10), new(5.5f, 7.5f)),
-            ],
-            Polygon(7.25f, 11, 8.75f, 11, 8.75f, 13.5f, 7.25f, 13.5f),
-            Polygon(5, 13.5f, 11, 13.5f, 11, 15, 5, 15),
-        ],
-        // The four corners of a circled region.
-        AiSource.CircleToAsk =>
-        [
-            Polygon(2, 2, 7, 2, 7, 3.75f, 3.75f, 3.75f, 3.75f, 7, 2, 7),
-            Polygon(14, 2, 14, 7, 12.25f, 7, 12.25f, 3.75f, 9, 3.75f, 9, 2),
-            Polygon(14, 14, 9, 14, 9, 12.25f, 12.25f, 12.25f, 12.25f, 9, 14, 9),
-            Polygon(2, 14, 2, 9, 3.75f, 9, 3.75f, 12.25f, 7, 12.25f, 7, 14),
-        ],
-        // A file with its corner folded: something dropped on a zone.
-        AiSource.DropZone => [Polygon(3.5f, 1.5f, 9.5f, 1.5f, 12.5f, 4.5f, 12.5f, 14.5f, 3.5f, 14.5f)],
-        // A magnifying glass: files picked by AI search.
-        AiSource.Search =>
-        [
-            [
-                OutlineSegment.Move(new(6.5f, 2)), OutlineSegment.Quadratic(new(11, 2), new(11, 6.5f)), OutlineSegment.Quadratic(new(11, 11), new(6.5f, 11)),
-                OutlineSegment.Quadratic(new(2, 11), new(2, 6.5f)), OutlineSegment.Quadratic(new(2, 2), new(6.5f, 2)),
-            ],
-            Polygon(9.5f, 10.75f, 10.75f, 9.5f, 14.5f, 13.25f, 13.25f, 14.5f),
-        ],
-        // A calendar page: a scheduled job.
-        _ => [Polygon(2, 4, 14, 4, 14, 14.5f, 2, 14.5f), Polygon(4.5f, 1.5f, 6, 1.5f, 6, 5, 4.5f, 5), Polygon(10, 1.5f, 11.5f, 1.5f, 11.5f, 5, 10, 5)],
+        AiSource.Palette => Glyphs.Ask,
+        AiSource.Voice => Glyphs.Mic,
+        AiSource.CircleToAsk => Glyphs.Region,
+        AiSource.DropZone => Glyphs.File,
+        AiSource.Search => Glyphs.Search,
+        _ => Glyphs.Timer,
     };
-
-    private static OutlineSegment[] Polygon(params float[] xy) => TabStrip.Polygon(xy);
 }

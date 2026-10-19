@@ -290,18 +290,18 @@ public class InteractionTests
         Assert.True(NavKeys.LeavesBox(NavKey.NextTab, tabLeaves: false));
         Assert.False(NavKeys.LeavesBox(NavKey.Activate, tabLeaves: true));
         Assert.False(NavKeys.LeavesBox(NavKey.Left, tabLeaves: true));
-        // Ctrl+1 to Ctrl+6 pick a tab from any box, the note included.
+        // Ctrl+1 to Ctrl+7 pick a tab from any box, the note included.
         Assert.True(NavKeys.LeavesBox(NavKey.Tab1, tabLeaves: false));
-        Assert.True(NavKeys.LeavesBox(NavKey.Tab6, tabLeaves: false));
+        Assert.True(NavKeys.LeavesBox(NavKey.Tab7, tabLeaves: false));
         Assert.False(NavKeys.LeavesBox(NavKey.Ask, tabLeaves: true));
     }
 
     // Every key the panels and the AI box take, by panel.
     [Theory]
-    // Panels: Ctrl+1 to Ctrl+6 pick a tab, Ctrl+K asks; a shifted or Alt one is nothing.
+    // Panels: Ctrl+1 to Ctrl+7 pick a tab, Ctrl+K asks; a shifted or Alt one is nothing.
     [InlineData((int)'1', false, true, false, NavKey.Tab1)]
-    [InlineData((int)'6', false, true, false, NavKey.Tab6)]
-    [InlineData((int)'7', false, true, false, NavKey.None)]
+    [InlineData((int)'7', false, true, false, NavKey.Tab7)]
+    [InlineData((int)'8', false, true, false, NavKey.None)]
     [InlineData((int)'1', true, true, false, NavKey.None)]
     [InlineData((int)'1', false, false, false, NavKey.None)]
     [InlineData((int)'K', false, true, false, NavKey.Ask)]

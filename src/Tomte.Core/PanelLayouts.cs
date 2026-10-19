@@ -169,29 +169,32 @@ public sealed class ClipboardPanelLayout(Vector2 body)
     }
 }
 
-/// <summary>Where the Scratchpad panel's parts sit, in DIPs from the body's top-left corner.</summary>
+/// <summary>
+/// Where the Scratchpad panel's parts sit, in DIPs from the body's top-left corner: the panel's title line, the card
+/// the note is typed into, and the footer.
+/// </summary>
 public sealed class ScratchpadPanelLayout(Vector2 body)
 {
-    public const float Pad = 14, Top = 12, HeadHeight = 18, FootHeight = 14, Gap = 10, Corner = 8;
-    public const float TextInset = 12;
+    public const float Pad = Section.BodyPad, Top = Section.BodyTop, Bottom = Section.BodyPad, HeadHeight = 22, FootHeight = 14, Gap = 12, Corner = Section.Corner;
+    public const float TextInset = Section.Pad;
 
     public Vector2 Body { get; } = body;
 
     public RectangleF Head => new(Pad, Top, Body.X - 2 * Pad, HeadHeight);
 
     /// <summary>The card the note is typed into.</summary>
-    public RectangleF Note => RectangleF.FromLTRB(Pad, Top + HeadHeight + Gap, Body.X - Pad, Body.Y - Top - FootHeight - Gap);
+    public RectangleF Note => RectangleF.FromLTRB(Pad, Top + HeadHeight + Gap, Body.X - Pad, Body.Y - Bottom - FootHeight - Gap);
 
-    public RectangleF Foot => new(Pad, Body.Y - Top - FootHeight, Body.X - 2 * Pad, FootHeight);
+    public RectangleF Foot => new(Pad, Body.Y - Bottom - FootHeight, Body.X - 2 * Pad, FootHeight);
 
     /// <summary>The note's text size in DIPs.</summary>
-    public const float NoteSize = 13;
+    public const float NoteSize = 14;
 
     /// <summary>Said in the card when the note cannot be read; what is typed then waits for it.</summary>
     public const string Unreadable = "The note could not be opened. What you type is kept and goes in once it opens.";
 
     /// <summary>The text box the note is typed in: the card less its insets. Its text scrolls inside it.</summary>
-    public RectangleF Editor => RectangleF.FromLTRB(Note.X + TextInset, Note.Y + 10, Note.Right - TextInset, Note.Bottom - 10);
+    public RectangleF Editor => RectangleF.FromLTRB(Note.X + TextInset, Note.Y + 12, Note.Right - TextInset, Note.Bottom - 12);
 
     /// <summary>The footer's keys: what Tab and Esc do in the note, and the pin.</summary>
     public const string Keys = "Tab indents, Esc leaves the note, Ctrl+P pins";
@@ -200,12 +203,12 @@ public sealed class ScratchpadPanelLayout(Vector2 body)
     public IReadOnlyList<TextSlot> FrameText()
     {
         const string title = "Scratchpad";
-        float after = TextSlot.Measure(title, TextStyle.Title, Head.Width) + 10;
+        float after = TextSlot.Measure(title, TextStyle.PageTitle, Head.Width) + 10;
         float keys = MathF.Ceiling(TextSlot.Measure(Keys, TextStyle.Small, Foot.Width - 150));
         return
         [
-            new(title, TextStyle.Title, Head),
-            new("one note, saved locally", TextStyle.Secondary, new(Head.X + after, Head.Y, Head.Width - after, HeadHeight)),
+            new(title, TextStyle.PageTitle, Head),
+            new("one note, saved locally", Section.Note with { Size = 13 }, new(Head.X + after, Head.Y, Head.Width - after, HeadHeight)),
             new("Saved on this PC", TextStyle.Small, new(Foot.X, Foot.Y, 140, FootHeight)),
             new(Keys, TextStyle.Small with { Align = TextAlign.Trailing }, new(Foot.Right - keys, Foot.Y, keys, FootHeight)),
         ];

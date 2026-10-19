@@ -463,10 +463,18 @@ internal static partial class Program
             Ask = triggers.AskClicked,
             Search = triggers.SearchClicked,
             SearchKey = () => store.Current.Hotkeys.Search,
+            // The island goes before the settings window comes up over where it was.
+            Settings = () =>
+            {
+                triggers.Hide();
+                OpenSettings(null);
+            },
         };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, text, log));
+        panels.ShelfCount = () => Jobs.Shelf?.Items.Count ?? 0;
+        Jobs.Shelf!.Changed += panels.ShelfChanged;
         // The island goes before the settings window comes up over where it was.
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, () =>
         {

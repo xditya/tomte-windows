@@ -250,20 +250,23 @@ public readonly record struct PendingSeek(TimeSpan To, MediaTimeline From, DateT
 }
 
 /// <summary>
-/// Where things sit in the Media panel's body, <paramref name="width"/> DIPs wide and 98 tall under the tab strip (560
-/// unless the monitor caps the panel): art on the left, then title, artist and the progress row out to the right
-/// padding, and the transport row centred under the bar. The bar takes what the clocks leave, 360 at the full width.
-/// The text slots are where the text is drawn, each run as wide as its slot; the clocks have room for "99:59:59" either
-/// side of the bar. The buttons (32 DIP square) and the seek area (24 DIP tall, as far past each end of the bar as the
-/// knob reaches) are what a press is tested against; they touch and do not overlap.
-/// a clock of 100 hours or more is cut with an ellipsis; measure it and move the bar if one shows up.
+/// Where things sit on a now-playing card, in DIPs of the body it is drawn in. On the Media panel (the width
+/// constructor) the card runs across the body: art on the left, then "NOW PLAYING", the title, the artist and the
+/// progress row, with previous, play or pause and next at the card's right end. On Home (the stacked one) the words sit
+/// beside the art, the progress row under both, and the three buttons centred under that. The bar takes what the clocks
+/// leave. The text slots are where the text is drawn, each run as wide as its slot. The buttons and the seek area (24
+/// DIP tall, as far past each end of the bar as the knob reaches) are what a press is tested against; they do not
+/// overlap. Simplification: a clock of 100 hours or more is cut with an ellipsis.
 /// </summary>
-public sealed class MediaPanelLayout(float width)
+public sealed class MediaPanelLayout
 {
-    public const float ArtCorner = 8;
+    public const float ArtSize = 64, ArtCorner = 12, ArtGap = 12, ClockWidth = 54, ClockGap = 8, BarHeight = 4;
 
-    /// <summary>The play or pause disc is drawn this wide in the middle of its button.</summary>
-    public const float Disc = 28;
+    /// <summary>The play or pause disc fills its button; previous and next are plain glyphs in theirs.</summary>
+    public const float Disc = 44, Button = 36, ButtonGap = 18, Glyph = 18;
+
+    /// <summary>The Media panel's card is this tall: the art and the card's padding.</summary>
+    public const float CardHeight = ArtSize + (2 * Section.Pad);
 
     /// <summary>The knob's radius: at the fill's end while the pointer is on the bar, under the pointer while it drags.</summary>
     public const float Knob = 6;
@@ -272,38 +275,84 @@ public sealed class MediaPanelLayout(float width)
     public static readonly TimeSpan SeekStep = TimeSpan.FromSeconds(5);
 
     // How each run looks: the title, the artist (or the app, or a command that just failed), the two clocks.
-    public static readonly TextStyle TitleStyle = new(14, 600);
+    public static readonly TextStyle TitleStyle = new(15, 600);
     public static readonly TextStyle ArtistStyle = TextStyle.Secondary;
     public static readonly TextStyle FailedStyle = ArtistStyle with { Color = Theme.Warn };
-    public static readonly TextStyle ElapsedStyle = TextStyle.Small with { Tabular = true };
+    public static readonly TextStyle ElapsedStyle = new(11, Color: Theme.Ink3, Tabular: true, Family: TextStyle.Mono);
     public static readonly TextStyle TotalStyle = ElapsedStyle with { Align = TextAlign.Trailing };
 
     /// <summary>The time a seek would go to, on its card above the bar.</summary>
     public static readonly TextStyle SeekStyle = ElapsedStyle with { Color = Theme.Ink, Align = TextAlign.Center };
 
-    // The room kept free on the right, and the gap between a clock and the bar.
-    private const float RightPad = 14, ClockGap = 2;
+    public const string Overline = "NOW PLAYING";
 
-    public static readonly RectangleF Art = new(14, 16, 66, 66);
-    public static readonly RectangleF Elapsed = new(94, 43, 44, 14);
+    /// <summary>The Media panel's card across a body this wide.</summary>
+    public MediaPanelLayout(float width)
+        : this(new RectangleF(Section.BodyPad, Section.BodyTop, width - (2 * Section.BodyPad), CardHeight), stacked: false)
+    {
+    }
 
-    public float Width => width;
+    /// <summary>A card at <paramref name="card"/>; <paramref name="stacked"/> puts the progress row and the buttons under the art.</summary>
+    public MediaPanelLayout(RectangleF card, bool stacked)
+    {
+        Card = card;
+        float x = card.X + Section.Pad, y = card.Y + Section.Pad, right = card.Right - Section.Pad;
+        Art = new(x, y, ArtSize, ArtSize);
+        float words = Art.Right + ArtGap;
+        if (stacked)
+        {
+            // Beside the art: the overline, the title and the artist, centred down it.
+            OverlineSlot = new(words, y + 5, right - words, 14);
+            Title = new(words, y + 23, right - words, 20);
+            Artist = new(words, y + 43, right - words, 16);
+            float row = Art.Bottom + 12;
+            Elapsed = new(x, row, ClockWidth, 14);
+            Total = new(right - ClockWidth, row, ClockWidth, 14);
+            float top = row + 14 + 12, mid = card.X + (card.Width / 2);
+            PlayPause = new(mid - (Disc / 2), top, Disc, Disc);
+        }
+        else
+        {
+            // The buttons at the card's right end, centred down the art; the words and the progress row up to them.
+            float mid = Art.Y + (ArtSize / 2);
+            var next = new RectangleF(right - Button, mid - (Button / 2), Button, Button);
+            PlayPause = new(next.X - ButtonGap - Disc, mid - (Disc / 2), Disc, Disc);
+            float end = PlayPause.X - ButtonGap - Button - ButtonGap;
+            OverlineSlot = new(words, y, end - words, 12);
+            Title = new(words, y + 14, end - words, 20);
+            Artist = new(words, y + 34, end - words, 16);
+            Elapsed = new(words, Art.Bottom - 14, ClockWidth, 14);
+            Total = new(end - ClockWidth, Elapsed.Y, ClockWidth, 14);
+        }
 
-    public RectangleF Title => new(Elapsed.X, 6, width - RightPad - Elapsed.X, 19);
+        Bar = RectangleF.FromLTRB(Elapsed.Right + ClockGap, Elapsed.Y + 5, Total.Left - ClockGap, Elapsed.Y + 5 + BarHeight);
+    }
 
-    public RectangleF Artist => new(Elapsed.X, 25, width - RightPad - Elapsed.X, 16);
+    public RectangleF Card { get; }
 
-    public RectangleF Total => new(width - RightPad - Elapsed.Width, Elapsed.Y, Elapsed.Width, Elapsed.Height);
+    public RectangleF Art { get; }
 
-    public RectangleF Bar => RectangleF.FromLTRB(Elapsed.Right + ClockGap, 48, Total.Left - ClockGap, 52);
+    public RectangleF OverlineSlot { get; }
+
+    public RectangleF Title { get; }
+
+    public RectangleF Artist { get; }
+
+    public RectangleF Elapsed { get; }
+
+    public RectangleF Total { get; }
+
+    public RectangleF Bar { get; }
+
+    public RectangleF PlayPause { get; }
+
+    public float Width => Card.Right + Section.BodyPad;
 
     public RectangleF Seek => new(Bar.X - Knob, Bar.Y + (Bar.Height / 2) - 12, Bar.Width + (2 * Knob), 24);
 
-    public RectangleF PlayPause => new(Bar.X + (Bar.Width / 2) - 16, 62, 32, 32);
+    public RectangleF Previous => new(PlayPause.X - ButtonGap - Button, PlayPause.Y + ((Disc - Button) / 2), Button, Button);
 
-    public RectangleF Previous => PlayPause with { X = PlayPause.X - 36 };
-
-    public RectangleF Next => PlayPause with { X = PlayPause.X + 36 };
+    public RectangleF Next => new(PlayPause.Right + ButtonGap, PlayPause.Y + ((Disc - Button) / 2), Button, Button);
 
     public const string SeekId = "seek", PreviousId = "previous", PlayPauseId = "playpause", NextId = "next";
 
@@ -364,5 +413,5 @@ public sealed class MediaPanelLayout(float width)
     }
 
     /// <summary>The seek time's card: centred on <paramref name="x"/> held to the bar, just above it, over the artist's line.</summary>
-    public RectangleF SeekLabel(float x) => new(Math.Clamp(x, Bar.Left, Bar.Right) - 22, Bar.Y - 20, 44, 16);
+    public RectangleF SeekLabel(float x) => new(Math.Clamp(x, Bar.Left, Bar.Right) - 28, Bar.Y - 20, 56, 16);
 }

@@ -73,7 +73,7 @@ public class IslandOutlineTests
         Assert.Equal(new IslandGeometry(120, 0, 0), IslandGeometry.Hidden);
         Assert.Equal(new IslandGeometry(220, 38, 19), IslandGeometry.Compact);
         Assert.Equal(new IslandGeometry(420, 96, 20), IslandGeometry.ShelfDrop);
-        Assert.Equal(new IslandGeometry(560, 260, 22), IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H));
+        Assert.Equal(new IslandGeometry(760, 270, 22), IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H));
         Assert.All(Resting, g => Assert.Equal((0.0, 0.0, g.Width), (g.RampW, g.RampH, g.OuterWidth)));
     }
 
@@ -168,7 +168,7 @@ public class IslandOutlineTests
         // With room to spare the curve starts 1.6 radii from the corner, and the ramp's first three points lie
         // on the edge: collinear control points are what zero curvature at the join means for a cubic.
         Assert.Equal(1.6f * 22, segments[0].End.X, 3);
-        Assert.Equal(560 - 1.6f * 22, segments[1].End.X, 3);
+        Assert.Equal(760 - 1.6f * 22, segments[1].End.X, 3);
         var ramp = segments[2];
         Assert.Equal(OutlineSegmentKind.Cubic, ramp.Kind);
         Assert.Equal((0f, 0f), (ramp.Control1.Y, ramp.Control2.Y));
@@ -361,9 +361,9 @@ public class IslandOutlineTests
     }
 
     [Theory]
-    [InlineData(1.0, 610, 262)]
-    [InlineData(1.25, 762, 327)]
-    [InlineData(1.5, 914, 392)]
+    [InlineData(1.0, 810, 272)]
+    [InlineData(1.25, 1012, 340)]
+    [InlineData(1.5, 1214, 407)]
     public void TheNotchsWindowIsItsOutlineAndOnePixelAround(double scale, int width, int height)
     {
         var g = IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H).Attached();
