@@ -1683,6 +1683,25 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
+    /// The drop zones in place of the Shelf-drop pill, this wide and deep within the monitor's cap, still in the
+    /// Shelf-drop state: the drag goes on over them, a drop on one is taken as on the pill, and the island retracts as
+    /// it would from the pill. The pointer is tracked against the new shape.
+    /// </summary>
+    internal void OpenZones(double width, double height)
+    {
+        if (machine.State != IslandState.ShelfDrop)
+        {
+            return;
+        }
+
+        var (w, h) = PanelSize.Fit((width, height), island.MonitorSize);
+        island.PanelLook = true;
+        _ = island.MorphTo(IslandGeometry.Panel(w, h), SpringPreset.Snappy);
+        InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+        log?.Invoke($"drag: held on the pill, drop zones open at {w:F0} x {h:F0}");
+    }
+
+    /// <summary>
     /// A drop zone's panel: the Palette state at this height, held open while its request runs, and once it is done
     /// held by its result, which was paid for, until the user dismisses it: Esc while the pointer is on the island, the
     /// palette hotkey, a press outside the island or another state. The pointer being away never retracts it. <paramref name="hold"/> false leaves a panel
