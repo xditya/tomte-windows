@@ -187,7 +187,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     internal bool Searching { get; private set; }
 
     /// <summary>The search box's size: the palette's width and its tallest, each capped by the monitor as every state is.</summary>
-    internal (double W, double H) SearchSize => PanelSize.Fit((PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight), island.MonitorSize);
+    internal (double W, double H) SearchSize => PanelSize.Fit((PanelSize.SearchWidth, PanelSize.PaletteMaxHeight), island.MonitorSize);
 
     /// <summary>
     /// The search box's Ask row: the search goes and the AI box opens in its place, as the palette hotkey opens it, for the
@@ -1014,6 +1014,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (id == InputThread.ConfirmHotkeyId)
         {
             rambler?.Answer(allow: true);
+            return;
+        }
+
+        if (id == InputThread.EditHotkeyId)
+        {
+            // E on the rambler's card: its words become editable.
+            rambler?.Edit();
             return;
         }
 

@@ -207,7 +207,7 @@ public sealed class SearchPlacesTests
         var rows = SearchRank.Order(items, "sound", None);
         Assert.Equal([SearchKind.App, SearchKind.Place, SearchKind.Shortcut, SearchKind.Shelf, SearchKind.File, SearchKind.GetEverything, SearchKind.Ask], rows.Select(r => r.Kind).Distinct());
         Assert.Equal(SearchRank.MaxPlaces, rows.Count(r => r.Kind == SearchKind.Place));
-        Assert.Equal(["Apps", "Settings and tools", "Shortcuts and shelf", "Files and folders"], SearchLayout.Lines(rows).Select(l => l.Heading).OfType<string>());
+        Assert.Equal(["APPS", "SETTINGS", "SHORTCUTS AND SHELF", "FILES"], SearchLayout.Lines(rows).Select(l => l.Heading).OfType<string>());
     }
 
     [Fact]

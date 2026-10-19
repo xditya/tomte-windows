@@ -206,10 +206,10 @@ public sealed class SearchTests
 
 public sealed class SearchLayoutTests
 {
-    private static readonly SearchLayout Layout = new(640, mascot: true, 480);
+    private static readonly SearchLayout Layout = new((float)PanelSize.SearchWidth, mascot: true, 480);
 
     [Fact]
-    public void EachGroupGetsItsHeadingAndAskNone()
+    public void EachGroupGetsItsHeadingAndTheAiRowsARule()
     {
         SearchItem[] rows =
         [
@@ -217,15 +217,32 @@ public sealed class SearchLayoutTests
             new(SearchKind.GetEverything, "Search every drive", ""), new(SearchKind.Ask, "Ask Tomte", "code"),
         ];
         var lines = SearchLayout.Lines(rows);
-        Assert.Equal(["Apps", null, null, "Files and folders", null, null, null], lines.Select(l => l.Heading));
-        Assert.Equal([-1, 0, 1, -1, 2, 3, 4], lines.Select(l => l.Row));
-        Assert.Equal((2 * SearchLayout.HeadingHeight) + (5 * SearchLayout.RowHeight), lines[^1].Top + lines[^1].Height);
+        Assert.Equal(["APPS", null, null, "FILES", null, null, null, null], lines.Select(l => l.Heading));
+        Assert.Equal([-1, 0, 1, -1, 2, 3, -1, 4], lines.Select(l => l.Row));
+        Assert.True(lines[6].Rule);
+        // Each line 2 apart, a heading after a row 4 more.
+        float expected = (2 * SearchLayout.HeadingHeight) + SearchLayout.HeadingAbove + SearchLayout.RuleHeight + (5 * SearchLayout.RowHeight) + (7 * SearchLayout.LineGap);
+        Assert.Equal(expected, lines[^1].Top + lines[^1].Height, 3);
+    }
+
+    [Fact]
+    public void ASearchWithTextLeadsWithItsTopHitThenItsGroupUnderItsHeading()
+    {
+        SearchItem[] rows = [new FileHit(@"D:\Work\Pricing review notes.docx", false).Item(), new FileHit(@"D:\pricing-2027.xlsx", false).Item()];
+        var lines = SearchLayout.Lines(rows, hit: true);
+        Assert.Equal([SearchLayout.TopHit, null, "FILES", null], lines.Select(l => l.Heading));
+        Assert.Equal([false, true, false, false], lines.Select(l => l.Hit));
+        Assert.Equal(SearchLayout.HitHeight, lines[1].Height);
+        Assert.Equal(SearchLayout.RowHeight, lines[3].Height);
+        // The AI rows never stand as the top hit.
+        Assert.DoesNotContain(SearchLayout.Lines([new(SearchKind.Ask, "Ask Tomte about \u201cx\u201d", "x")], hit: true), l => l.Hit);
     }
 
     [Fact]
     public void TheBandSitsBetweenTheBoxAndTheFooterInsideTheIsland()
     {
         var band = Layout.Band;
+        Assert.Equal(SearchLayout.BoxHeight, Layout.Box.Height);
         Assert.True(band.Top > Layout.Box.Bottom);
         Assert.True(band.Bottom + SearchLayout.FootHeight < Layout.Height);
         Assert.Equal(480, SearchLayout.HeightFor(1440));
@@ -236,22 +253,90 @@ public sealed class SearchLayoutTests
     public void TheBoxIsAsTallAsWhatItShows()
     {
         var app = new SearchItem(SearchKind.App, "Code", "a");
-        Assert.Equal((float)Tomte.Core.PanelSize.PaletteMinHeight, SearchLayout.Fit(640, true, [], null, 480));
-        float two = SearchLayout.Fit(640, true, [app, app with { Target = "b" }], null, 480);
-        var tall = new SearchLayout(640, true, two);
-        Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight), tall.Band.Height, 3);
-        Assert.Equal(480, SearchLayout.Fit(640, true, [.. Enumerable.Range(0, 20).Select(i => app with { Target = $"{i}" })], null, 480));
-        Assert.True(SearchLayout.Fit(640, true, [], new SearchCard("Title", "Body", [("ok", "OK")]), 480) > Tomte.Core.PanelSize.PaletteMinHeight);
+        float w = (float)PanelSize.SearchWidth;
+        // With no rows the hint's room shows under the field, and the footer under it.
+        float below = SearchLayout.Gap + SearchLayout.FootHeight + SearchLayout.Bottom;
+        Assert.Equal(new SearchLayout(w, true, 300).Band.Y + SearchLayout.EmptyRoom + below, SearchLayout.Fit(w, true, [], null, 480));
+        float two = SearchLayout.Fit(w, true, [app, app with { Target = "b" }], null, 480);
+        var tall = new SearchLayout(w, true, two);
+        Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight) + (2 * SearchLayout.LineGap), tall.Band.Height, 3);
+        Assert.Equal(480, SearchLayout.Fit(w, true, [.. Enumerable.Range(0, 20).Select(i => app with { Target = $"{i}" })], null, 480));
+        Assert.True(SearchLayout.Fit(w, true, [], new SearchCard("Title", "Body", [("ok", "OK")]), 480) > PanelSize.PaletteMinHeight);
     }
 
     [Fact]
     public void ARowKeepsItsPartsInsideTheBand()
     {
-        var item = new SearchItem(SearchKind.File, new string('x', 200), @"C:\x", new string('y', 300));
-        var (row, icon, name, detail, kind) = Layout.Row(36, item);
-        Assert.True(icon.Right < name.Slot.Left && name.Slot.Right <= detail.Slot.Left && detail.Slot.Right < kind.Slot.Left);
-        Assert.True(kind.Slot.Right <= row.Right);
-        Assert.Equal("File", kind.Text);
+        var item = new SearchItem(SearchKind.File, new string('x', 200) + ".pdf", @"C:\x", new string('y', 300), Location: @"C:\x");
+        var row = Layout.Row(new SearchLine(36, SearchLayout.RowHeight, null, 0), item, selected: false);
+        Assert.True(row.Badge.Right < row.Name.Slot.Left && row.Name.Slot.Right <= row.Detail.Slot.Left);
+        Assert.True(row.Detail.Slot.Right <= row.Row.Right - SearchLayout.RowPadX);
+        Assert.Equal(SearchLayout.RowBadge, row.Badge.Width);
+        Assert.Null(row.Key);
+        Assert.Equal("PDF", SearchLayout.BadgeText(item));
+        Assert.Equal(Theme.KindPdf, SearchLayout.BadgeFill(item));
+    }
+
+    [Fact]
+    public void TheTopHitShowsItsPathUnderItsNameAndEnterWhileSelected()
+    {
+        var item = new FileHit(@"D:\Work\Launch\Pricing review notes.docx", false).Item();
+        var line = new SearchLine(26, SearchLayout.HitHeight, null, 0, Hit: true);
+        var row = Layout.Row(line, item, selected: true);
+        Assert.Equal(SearchLayout.HitBadge, row.Badge.Width);
+        Assert.Equal(@"D:\Work\Launch\Pricing review notes.docx", row.Detail.Text);
+        Assert.True(row.Name.Slot.Bottom <= row.Detail.Slot.Top);
+        Assert.Equal("Enter", row.Key);
+        Assert.True(row.KeyCap.Right <= row.Row.Right && row.Name.Slot.Right < row.KeyCap.Left);
+        Assert.Null(Layout.Row(line, item, selected: false).Key);
+        Assert.Equal(("DOCX", Theme.KindDocument), (SearchLayout.BadgeText(item), SearchLayout.BadgeFill(item)));
+    }
+
+    [Fact]
+    public void OnlyKeysThatWorkAreHinted()
+    {
+        var ask = new SearchItem(SearchKind.Ask, "Ask Tomte about \u201cpri\u201d", "pri");
+        var ai = new SearchItem(SearchKind.AiSearch, SearchLayout.AiRow, "pri");
+        var app = new SearchItem(SearchKind.App, "Paint", "p");
+        Assert.Equal("Enter", SearchLayout.KeyFor(ask, hit: false, selected: true));
+        Assert.Null(SearchLayout.KeyFor(ask, hit: false, selected: false));
+        Assert.Equal("Ctrl Enter", SearchLayout.KeyFor(ai, hit: false, selected: false));
+        Assert.Null(SearchLayout.KeyFor(app, hit: false, selected: true));
+        var (left, right) = SearchLayout.Keys(ai: false, typed: true, back: false);
+        Assert.Equal(["↑ ↓", "Enter", "Ctrl Shift Enter", "Tab"], left.Select(k => k.Keys));
+        Assert.Equal(("Esc", "clear"), right);
+        Assert.Equal("close", SearchLayout.Keys(false, typed: false, back: false).Right.Word);
+        Assert.Equal("back", SearchLayout.Keys(false, typed: false, back: true).Right.Word);
+        Assert.DoesNotContain(SearchLayout.Keys(ai: true, typed: true, back: false).Left, k => k.Keys == "Tab");
+    }
+
+    [Theory]
+    [InlineData("Pricing review notes.docx", "pri", 0, 3)]
+    [InlineData("Printers & scanners", "PRI", 0, 3)]
+    [InlineData("deck pricing", "pri", 5, 3)]
+    [InlineData("open sprint", "open pri", 6, 3)]
+    public void TheTypedLettersAreMarkedWhereAWordStarts(string name, string typed, int start, int length) =>
+        Assert.Equal([(start, length)], SearchLayout.Matched(name, typed));
+
+    [Fact]
+    public void MatchedLettersMergeAndALooseMatchMarksNothing()
+    {
+        Assert.Equal([(0, 7)], SearchLayout.Matched("pricing", "pri pricing"));
+        Assert.Equal([(0, 4), (5, 6)], SearchLayout.Matched("code review", "review code"));
+        Assert.Empty(SearchLayout.Matched("Chrome", "crhome"));
+    }
+
+    [Fact]
+    public void TheSourceDotSaysWhetherFilesAreFound()
+    {
+        Assert.Equal(Theme.Ok, SearchLayout.SourceDot("Everything"));
+        Assert.Equal(Theme.Ok, SearchLayout.SourceDot("Windows index"));
+        Assert.Equal(Theme.Ok, SearchLayout.SourceDot("Sent to Anthropic · claude-haiku-5-5"));
+        Assert.Equal(Theme.Warn, SearchLayout.SourceDot(SearchLayout.IndexOff));
+        Assert.Equal(Theme.Ink3, SearchLayout.SourceDot("Starting Everything"));
+        var (dot, line) = Layout.Source("Everything");
+        Assert.True(dot.Right < line.Slot.Left && line.Slot.Right <= Layout.Box.Right - SearchLayout.BoxPadX + 0.01f);
+        Assert.True(Layout.EditorFor("Everything").Right < dot.Left && Layout.EditorFor("Everything").Left > Layout.Glass.Right);
     }
 
     [Fact]
@@ -279,13 +364,14 @@ public sealed class SearchLayoutTests
     }
 
     [Fact]
-    public void TheFolderButtonSitsInTheKindsPlaceInsideItsRow()
+    public void TheFolderButtonSitsAtTheRowsRightEndInsideIt()
     {
+        var line = new SearchLine(36, SearchLayout.RowHeight, null, 0);
         var item = new SearchItem(SearchKind.File, new string('x', 200), @"C:\x", new string('y', 300), Location: @"C:\x");
-        var (row, _, _, detail, kind) = Layout.Row(36, item);
-        var (card, glyph) = Layout.Folder(36);
-        Assert.True(card.Left >= kind.Slot.Left && card.Right <= row.Right && card.Left > detail.Slot.Right);
-        Assert.Equal((row.Top + row.Bottom) / 2, (card.Top + card.Bottom) / 2);
+        var row = Layout.Row(line, item, selected: false);
+        var (card, glyph) = Layout.Folder(line);
+        Assert.True(card.Right <= row.Row.Right && card.Left > row.Name.Slot.Right);
+        Assert.Equal((row.Row.Top + row.Row.Bottom) / 2, (card.Top + card.Bottom) / 2);
         Assert.True(card.Contains(glyph) && card.Height >= StateLook.MinTarget);
         Assert.Equal("Show in folder (Ctrl+Shift+Enter)", new Target("folder:0", card, SearchLayout.FolderCorner, TargetKind.Button, Tip: SearchLayout.FolderTip, Key: SearchLayout.FolderKey).TipWith(keys: true));
     }
@@ -612,9 +698,11 @@ public sealed class AiSearchRowTests
 
         Assert.Equal(["AI · Two files.", null, null], lines.Select(l => l.Heading));
         Assert.Equal([-1, 0, 1], lines.Select(l => l.Row));
-        Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight), lines[^1].Top + lines[^1].Height);
+        Assert.Equal(SearchLayout.HeadingHeight + (2 * SearchLayout.RowHeight) + (2 * SearchLayout.LineGap), lines[^1].Top + lines[^1].Height, 3);
+        // AI search's picks are no top hit: the line on why leads them.
+        Assert.DoesNotContain(SearchLayout.Lines(rows, "AI · Two files.", hit: true), l => l.Hit);
         Assert.Empty(SearchLayout.Lines([], "AI · nothing"));
-        Assert.Equal(("AI", "Ctrl+Enter"), (SearchLayout.KindLabel(Ask), SearchLayout.KindLabel(Ai)));
+        Assert.Equal(("AI", "AI"), (SearchLayout.KindLabel(Ask), SearchLayout.KindLabel(Ai)));
     }
 
     [Theory]
@@ -635,43 +723,45 @@ public sealed class AiSearchRowTests
     [InlineData("code", "cod", false)]
     public void OnlyAClearedBoxSettlesBack(string typed, string? shownFor, bool settles) => Assert.Equal(settles, SearchLayout.Settles(typed, shownFor));
 
-    // The search box's parts share their edges and centres: the field ends where the row highlight does, the footer runs
-    // between the highlight's edges, the icons start as far into a row as the kinds end from its right, and the text in
-    // the field, an icon and a row's words are centred on their field or row.
+    // The search box's parts share their edges and centres: the field ends where the rows do, the footer starts as far in
+    // as the rows' badges, a badge, a row's words and the text in the field are centred on their row or field.
     [Theory]
-    [InlineData(640)]
+    [InlineData((float)PanelSize.SearchWidth)]
     [InlineData(SearchLayout.NarrowestWidth)]
     public void TheSearchBoxSharesItsEdgesAndCentres(float width)
     {
         var layout = new SearchLayout(width, mascot: true, 300);
         var band = layout.Band;
-        var (row, icon, name, _, kind) = layout.Row(0, new SearchItem(SearchKind.App, "Notepad", "notepad", "", "notepad"));
+        var line = new SearchLine(0, SearchLayout.RowHeight, null, 0);
+        var row = layout.Row(line, new SearchItem(SearchKind.App, "Notepad", "notepad", "", "notepad"), selected: false);
         Assert.Equal(band.Right, layout.Box.Right, 3);
-        Assert.Equal(band.Width, row.Width, 3);
-        var (left, right) = layout.Footer(SearchLayout.Keys, "Files: Everything");
-        Assert.Equal(band.X, left.Slot.X, 3);
-        Assert.Equal(band.Right, right.Slot.Right, 3);
-        Assert.Equal(icon.X, band.Width - kind.Slot.Right, 3);
-        Assert.Equal(layout.Box.Y + (layout.Box.Height / 2), layout.Editor.Y + (layout.Editor.Height / 2), 3);
-        Assert.Equal(row.Y + (row.Height / 2), icon.Y + (icon.Height / 2), 3);
-        Assert.Equal(row.Y + (row.Height / 2), name.Slot.Y + (name.Slot.Height / 2), 3);
+        Assert.Equal(band.Width, row.Row.Width, 3);
+        var (left, right) = SearchLayout.Keys(ai: false, typed: true, back: false);
+        var foot = layout.Footer(left, right);
+        Assert.Equal(band.X + row.Badge.X, foot[0].Cap.X, 3);
+        Assert.Equal(band.Right - SearchLayout.FootInset, foot[^1].Word.Slot.Right, 3);
+        var editor = layout.EditorFor("Everything");
+        Assert.Equal(layout.Box.Y + (layout.Box.Height / 2), editor.Y + (editor.Height / 2), 3);
+        Assert.Equal(row.Row.Y + (row.Row.Height / 2), row.Badge.Y + (row.Badge.Height / 2), 3);
+        Assert.Equal(row.Row.Y + (row.Row.Height / 2), row.Name.Slot.Y + (row.Name.Slot.Height / 2), 3);
     }
 
     [Fact]
-    public void TheFooterFitsTheNarrowestBox()
+    public void TheFooterKeepsEscAndDropsHintsFromTheEndWhenNarrow()
     {
-        // Every file source the list shows beside the list's footers, and AI search's beside a provider line that fills
-        // its 40% (a long model name).
-        string[] sources = ["Files: Everything", "Files: Windows index", "Files: index is off", "Starting Everything"];
-        var pairs = new[] { SearchLayout.Keys, SearchLayout.KeysEmpty, SearchLayout.KeysBack }.SelectMany(keys => sources.Select(source => (keys, source)))
-            .Append((SearchLayout.AiKeys, "Sent to Anthropic · claude-haiku-5-5"))
-            .Append((SearchLayout.AiKeys, "Sent to OpenRouter · " + new string('m', 200)));
-        foreach (var (keys, source) in pairs)
+        foreach (bool ai in new[] { false, true })
         {
-            var (left, right) = new SearchLayout(SearchLayout.NarrowestWidth, mascot: true, 300).Footer(keys, source);
-            Assert.Contains("Ctrl+Shift+Enter in folder", keys, StringComparison.Ordinal);
-            Assert.True(Tomte.Core.Text.TextSlot.Measure(keys, SearchLayout.Foot, 1000) <= left.Slot.Width, $"{keys} beside {source}");
-            Assert.True(left.Slot.Right <= right.Slot.Left);
+            var (left, right) = SearchLayout.Keys(ai, typed: true, back: false);
+            var wide = new SearchLayout((float)PanelSize.SearchWidth, mascot: true, 300).Footer(left, right);
+            var narrow = new SearchLayout(SearchLayout.NarrowestWidth, mascot: true, 300).Footer(left, right);
+            // The full width shows the three the box is known by and Esc; the narrowest keeps Esc and the first ones.
+            Assert.True(wide.Count >= 4);
+            Assert.Equal("Esc", narrow[^1].Keys);
+            Assert.Equal(left.Take(narrow.Count - 1).Select(k => k.Keys), narrow.SkipLast(1).Select(k => k.Keys));
+            for (int i = 1; i < narrow.Count; i++)
+            {
+                Assert.True(narrow[i - 1].Word.Slot.Right <= narrow[i].Cap.Left);
+            }
         }
     }
 }

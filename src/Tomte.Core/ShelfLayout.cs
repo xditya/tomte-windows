@@ -42,15 +42,6 @@ public enum ShelfPreview
 /// </summary>
 public sealed record ShelfPeek(string? Text = null, int? Chars = null, Uri? Link = null, (int W, int H)? Pixels = null, int? Entries = null);
 
-/// <summary>A keycap: a key or a combination as one cap, in mono on a raised fill.</summary>
-public static class Keycap
-{
-    public const float Height = 20, PadX = 6, Corner = 6, LabelGap = 6;
-    public static readonly TextStyle Style = new(11, Color: Theme.Ink2, Align: TextAlign.Center, Family: TextStyle.Mono);
-
-    public static float Width(string keys) => MathF.Ceiling(TextSlot.Measure(keys, Style, 400)) + 2 * PadX;
-}
-
 /// <summary>
 /// Where the shelf's parts sit, in DIPs. The panel body's origin is its top-left corner under the
 /// tab strip; the drop surface is in island space (x = 0 on the island's centre line, y = 0 at its top edge). Also
@@ -509,14 +500,14 @@ public static class ShelfLayout
         foreach (var (key, does) in FootKeys)
         {
             float cap = Keycap.Width(key), word = Width(does, FootStyle);
-            if (x + cap + Keycap.LabelGap + word > stop)
+            if (x + cap + Keycap.WordGap + word > stop)
             {
                 break;
             }
 
             var capBox = new RectangleF(x, y + (FootHeight - Keycap.Height) / 2, cap, Keycap.Height);
-            keys.Add((capBox, new(key, Keycap.Style, capBox), new(does, FootStyle, new(capBox.Right + Keycap.LabelGap, y, word, FootHeight))));
-            x += cap + Keycap.LabelGap + word + FootApart;
+            keys.Add((capBox, new(key, Keycap.Style, capBox), new(does, FootStyle, new(capBox.Right + Keycap.WordGap, y, word, FootHeight))));
+            x += cap + Keycap.WordGap + word + FootApart;
         }
 
         return new(hintSlot, keys, clear, new(clearText, clearing ? ClearAskStyle : ClearStyle, clear));
