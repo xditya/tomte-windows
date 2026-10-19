@@ -69,8 +69,7 @@ public sealed partial class SettingsWindow : Window
         var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
         int width = Math.Min((int)(1200 * scale), work.Width), height = Math.Min((int)(800 * scale), work.Height);
         AppWindow.MoveAndResize(new RectInt32(work.X + (work.Width - width) / 2, work.Y + (work.Height - height) / 2, width, height));
-        Palette.UseAccent(Application.Current.Resources, AccentColors.Held(store.Current.AccentColor));
-        store.Changed += s => DispatcherQueue.TryEnqueue(() => Palette.UseAccent(Application.Current.Resources, AccentColors.Held(s.AccentColor)));
+        FollowAccent();
 
         var kept = new Tomte.Core.Clipboard.ClipboardRetention();
         // A page per group, listed on the left as in Windows Settings, under a header for each group of pages. Every control
@@ -102,7 +101,7 @@ public sealed partial class SettingsWindow : Window
                         Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors()),
                         Row("Island position", Note("Drag the island along the top edge to move it. Double-click an empty part of its tab row to put it back in the middle."), ResetPosition())),
                     Header("Appearance"),
-                    Card(Row("Accent colour", Note("The colour of the selection, the AI and the recording dot, on the island and here."), AccentPicker())),
+                    Appearance(),
                     Header("Per-app rules"),
                     Card(
                         Note("Allow: edge push and drag reveal work even when the app is fullscreen. Deny: only hotkeys open the island while the app is in front. Deny with hotkeys: the hotkeys go to the app as well."),
@@ -450,47 +449,6 @@ public sealed partial class SettingsWindow : Window
             }
         };
         return keep;
-    }
-
-    // A swatch per accent colour; the chosen one has a ring. The window and the island take a new one at once.
-    private StackPanel AccentPicker()
-    {
-        string[] names = ["Coral", "Amber", "Sky", "Green"];
-        var swatches = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        var rings = new List<(uint Rgb, Button Swatch, Border Ring)>();
-        void Show(TomteSettings s)
-        {
-            uint chosen = AccentColors.Held(s.AccentColor);
-            foreach (var (rgb, swatch, ring) in rings)
-            {
-                ring.BorderBrush = Palette.Brush(rgb == chosen ? Palette.Ink : Colors.Transparent);
-                AutomationProperties.SetItemStatus(swatch, rgb == chosen ? "Chosen" : "");
-            }
-        }
-
-        for (int i = 0; i < AccentColors.Choices.Count; i++)
-        {
-            uint rgb = AccentColors.Choices[i];
-            var ring = new Border
-            {
-                Width = 28,
-                Height = 28,
-                CornerRadius = new CornerRadius(14),
-                BorderThickness = new Thickness(2),
-                Padding = new Thickness(3),
-                Child = new Microsoft.UI.Xaml.Shapes.Ellipse { Fill = Palette.Brush(Palette.Rgb(rgb)) },
-            };
-            var swatch = new Button { Content = ring, Width = 34, Height = 34, MinWidth = 0, Padding = new Thickness(0), CornerRadius = new CornerRadius(17), BorderThickness = new Thickness(0), Background = Palette.Brush(Colors.Transparent) };
-            AutomationProperties.SetName(swatch, names[i]);
-            ToolTipService.SetToolTip(swatch, names[i]);
-            swatch.Click += (_, _) => Save(s => s with { AccentColor = rgb });
-            rings.Add((rgb, swatch, ring));
-            swatches.Children.Add(swatch);
-        }
-
-        Show(store.Current);
-        store.Changed += s => DispatcherQueue.TryEnqueue(() => Show(s));
-        return swatches;
     }
 
     private Button ClearHistory()

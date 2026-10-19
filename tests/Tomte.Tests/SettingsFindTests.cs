@@ -14,7 +14,8 @@ public sealed class SettingsFindTests
         new("Opening and closing", "General", "Start with Windows", "Open Tomte when you sign in. It stays hidden until you call it."),
         new("Opening and closing", "General", "Desktop peek", "Show the tomte at the top of the screen when no window is there. Point at it to open the island."),
         new("Opening and closing", "General", "Island position", "Drag the island along the top edge to move it."),
-        new("Opening and closing", "Appearance", "Accent colour", "The colour of the selection, the AI and the recording dot, on the island and here."),
+        new("Opening and closing", "Appearance", "Theme", "Follow the taskbar's light or dark look, or keep the island dark or light."),
+        new("Opening and closing", "Appearance", "Accent colour", "The colour of the selection, the AI and the recording dot, on the island and here. On an accent-coloured taskbar the island takes the Windows accent."),
         new("Hotkeys", "", "Summon island", ""),
         new("Hotkeys", "", "Scratchpad", ""),
         new("Hotkeys", "", "Search", ""),
@@ -48,6 +49,13 @@ public sealed class SettingsFindTests
         Assert.Contains("Desktop peek, Opening and closing", found.Skip(2));
         Assert.Equal("Undo after closing, Provider and spend", Find("undo")[0]);
     }
+
+    [Theory]
+    [InlineData("theme", "Theme")]
+    [InlineData("light", "Theme")]
+    [InlineData("dark", "Theme")]
+    public void TheIslandsLookIsFoundByTheWordsPeopleUse(string query, string title) =>
+        Assert.Equal($"{title}, Opening and closing", Find(query)[0]);
 
     [Fact]
     public void OneTypoInALongWordAndInitialsStillFind()
@@ -90,8 +98,8 @@ public sealed class SettingsFindTests
     {
         Assert.Equal("Daily spend cap, Provider and spend", Find("spend")[0]);
         Assert.Equal("Accent colour, Opening and closing", Find("colour")[0]);
-        // "theme" is only in the words for the Appearance section.
-        Assert.Equal(["Accent colour, Opening and closing"], Find("theme"));
+        // "theme" is a row's title now, which beats the words for the Appearance section.
+        Assert.Equal(["Theme, Opening and closing"], Find("theme"));
     }
 
     [Fact]
