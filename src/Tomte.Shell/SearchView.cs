@@ -32,7 +32,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     private const string RowId = "row:", CardId = "card:";
     private const int MaxImages = 512;
     private const float WheelStep = 3 * SearchLayout.RowHeight;
-    private static readonly Color CardFill = Color.FromArgb(15, 255, 255, 255);
+    private static readonly Color CardFill = ShelfColors.Of(Theme.Card);
 
     // Shell icons as pixels, by source and size, for the session: a new search shows them at once.
     // dropped all at once when full; an LRU if a session's searches ever need more.
@@ -605,7 +605,7 @@ internal sealed class SearchView : IDisposable, IInteractive
             var (pill, fill, label) = buttons[i];
             bool shownButton = i < laid.Count;
             Place(pill, shownButton ? laid[i].Box : RectangleF.Empty);
-            // The focused button is the white one: what Enter presses is what stands out.
+            // The focused button is the accent one: what Enter presses is what stands out.
             fill.Color = Argb(i == cardFocus ? PaletteLayout.RunFill : PaletteLayout.ButtonFill);
             label.Show(shownButton ? laid[i].Label : new TextSlot("", PaletteLayout.Button, RectangleF.Empty));
         }

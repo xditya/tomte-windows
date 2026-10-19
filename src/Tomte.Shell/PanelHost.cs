@@ -377,7 +377,7 @@ internal sealed class PanelHost
             pill = compositor.CreateRoundedRectangleGeometry();
             pill.CornerRadius = new Vector2(TabStrip.Corner);
             var shape = compositor.CreateSpriteShape(pill);
-            shape.FillBrush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(28, 255, 255, 255));
+            shape.FillBrush = compositor.CreateColorBrush(Argb(Theme.RaisedHi));
             Visual.Shapes.Add(shape);
 
             // The search button and the Ask pill in a visual of their own, "right" DIPs (their width and the right padding)

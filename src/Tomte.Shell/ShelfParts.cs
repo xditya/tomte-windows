@@ -8,24 +8,30 @@ using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
 
-/// <summary>The island's colours: cards, inks, the info blue and the warning amber.</summary>
+/// <summary>The <see cref="Theme"/>'s colours as composition colours, for the shelf and the drop zones.</summary>
 internal static class ShelfColors
 {
-    public static readonly Color Clear = Color.FromArgb(0, 0, 0, 0);
-    public static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
-    public static readonly Color CardSelected = Color.FromArgb(28, 255, 255, 255);
-    public static readonly Color Dash = Color.FromArgb(89, 255, 255, 255);
-    public static readonly Color Line = Color.FromArgb(26, 255, 255, 255);
-    public static readonly Color Info = Color.FromArgb(255, 0x6F, 0xA8, 0xFF);
-    public static readonly Color HotFill = Color.FromArgb(41, 0x6F, 0xA8, 0xFF);
-    public static readonly Color Ink = Color.FromArgb(230, 255, 255, 255);
-    public static readonly Color Ink2 = Color.FromArgb(153, 255, 255, 255);
-    public static readonly Color Ink3 = Color.FromArgb(97, 255, 255, 255);
-    public static readonly Color Warn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
-    public static readonly Color Disabled = Color.FromArgb((byte)(230 * Tomte.Core.Interaction.StateLook.DisabledOpacity), 255, 255, 255);
-    public static readonly Color Mark = Color.FromArgb(77, 255, 255, 255);
-    public static readonly Color WarnFill = Color.FromArgb(41, 0xF0, 0xB3, 0x5A);
+    public static readonly Color Clear = default;
+    public static readonly Color Card = Of(Theme.Card);
+    public static readonly Color CardSelected = Of(Theme.Raised);
+    public static readonly Color Dash = Of(Theme.Dash);
+    public static readonly Color Line = Of(Theme.Line);
+    public static readonly Color Ink = Of(Theme.Ink);
+    public static readonly Color Ink2 = Of(Theme.Ink2);
+    public static readonly Color Ink3 = Of(Theme.Ink3);
+    public static readonly Color Warn = Of(Theme.Warn);
+    public static readonly Color Disabled = Of(Theme.WithOpacity(Theme.Ink, Tomte.Core.Interaction.StateLook.DisabledOpacity));
+    public static readonly Color Mark = Of(Theme.LineStrong);
+    public static readonly Color WarnFill = Of(Theme.WarnSoft);
 
+    public static Color Accent => Of(Theme.Accent);
+
+    public static Color HotFill => Of(Theme.AccentSoft);
+
+    /// <summary>An 0xAARRGGBB colour as a composition colour.</summary>
+    public static Color Of(uint argb) => Color.FromArgb((byte)(argb >> 24), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);
+
+    /// <summary>A colour's red, green and blue (any alpha ignored), opaque.</summary>
     public static Color Rgb(uint rgb) => Color.FromArgb(255, (byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb);
 
     public static uint Argb(Color c) => (uint)(c.A << 24 | c.R << 16 | c.G << 8 | c.B);
@@ -273,7 +279,7 @@ internal sealed class ShelfDropSurface
         foreach (var (zone, (fill, stroke, normal)) in lit)
         {
             fill.Color = zone == hot ? ShelfColors.HotFill : ShelfColors.Clear;
-            stroke.Color = zone == hot ? ShelfColors.Info : normal;
+            stroke.Color = zone == hot ? ShelfColors.Accent : normal;
         }
 
         if (Layout is { } layout && line is not null)

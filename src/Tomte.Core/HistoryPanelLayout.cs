@@ -38,8 +38,8 @@ public sealed class HistoryPanelLayout
     public const float BoxLineHeight = 18;
 
     public static readonly TextStyle Asked = TextStyle.Primary with { Weight = 600, LineHeight = 19 };
-    public static readonly TextStyle StepStyle = new(12, Color: TextStyle.SecondaryColor, LineHeight: 18);
-    public static readonly TextStyle ErrorStyle = DropResultLayout.BodyStyle with { Color = TextStyle.WarnColor };
+    public static readonly TextStyle StepStyle = new(12, Color: Theme.Ink2, LineHeight: 18);
+    public static readonly TextStyle ErrorStyle = DropResultLayout.BodyStyle with { Color = Theme.Warn };
     public static readonly TextStyle ButtonText = new(12, 500, Align: TextAlign.Center);
 
     private readonly List<RectangleF> rows = [];

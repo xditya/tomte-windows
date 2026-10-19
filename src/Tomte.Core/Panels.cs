@@ -78,8 +78,10 @@ public static class TabStrip
     /// <summary>The sparkle before the Ask pill's word: this tall, this far before the word.</summary>
     public const float GlyphHeight = 11, GlyphGap = 5;
 
-    /// <summary>The Ask pill's word and sparkle are light blue, so it reads as an action and not a tab; its card is the same blue, faint.</summary>
-    public const uint AskColor = 0xFFBCD3FF, AskCard = 0x1FBCD3FF;
+    /// <summary>The Ask pill's word and sparkle take the accent, so it reads as an action and not a tab; its card is the soft accent.</summary>
+    public static uint AskColor => Theme.Accent;
+
+    public static uint AskCard => Theme.AccentSoft;
 
     public const string AskText = "Ask";
 
@@ -100,9 +102,9 @@ public static class TabStrip
         new(Polygon(8.93f, 7.87f, 13.13f, 12.07f, 12.07f, 13.13f, 7.87f, 8.93f)),
     ];
 
-    public static readonly TextStyle Label = new(12.5f, Color: TextStyle.SecondaryColor, Align: TextAlign.Center);
-    public static readonly TextStyle Current = Label with { Color = TextStyle.WhiteColor };
-    public static readonly TextStyle AskLabel = Label with { Color = AskColor };
+    public static readonly TextStyle Label = new(12.5f, Color: Theme.Ink2, Align: TextAlign.Center);
+    public static readonly TextStyle Current = Label with { Color = Theme.Ink };
+    public static TextStyle AskLabel => Label with { Color = AskColor };
 
     /// <summary>The sparkle's box, in the units of <see cref="Sparkle"/>.</summary>
     public static readonly Vector2 SparkleBox = new(17.5f, 19);

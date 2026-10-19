@@ -55,6 +55,7 @@ CreateHardLink
 DWriteCreateFactory
 IDWriteFactory
 IDWriteTextLayout
+IDWriteTextLayout1
 IDWriteTypography
 DWRITE_TEXT_METRICS
 DWRITE_LINE_METRICS

@@ -371,12 +371,14 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
         // The icons are drawn in a 24 unit box, 14 DIPs wide, centred in their button.
         private const float GlyphBox = 24, GlyphSize = 14;
 
-        private static readonly Color White = Color.FromArgb(255, 255, 255, 255);
+        private static readonly Color White = ShelfColors.Of(Theme.Ink);
         // A button the app does not take is drawn at the disabled opacity.
-        private static readonly Color Dim = Color.FromArgb((byte)(255 * StateLook.DisabledOpacity), 255, 255, 255);
-        private static readonly Color Black = Color.FromArgb(255, 0, 0, 0);
-        private static readonly Color Clear = Color.FromArgb(0, 0, 0, 0);
-        private static readonly Color Card = Color.FromArgb(255, 0x2A, 0x2A, 0x2F);
+        private static readonly Color Dim = ShelfColors.Of(Theme.WithOpacity(Theme.Ink, StateLook.DisabledOpacity));
+        // The play and pause glyphs are cut out of the light disc in the island's own colour.
+        private static readonly Color Black = ShelfColors.Of(Theme.Island);
+        private static readonly Color Clear = default;
+        private static readonly Color Card = ShelfColors.Of(Theme.RaisedHi);
+        private static readonly Color Track = ShelfColors.Of(Theme.Track);
 
         private readonly Compositor compositor;
         private readonly MediaPanelLayout layout;
@@ -512,7 +514,7 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
 
             // An app with no timeline gets no bar at all, rather than an empty one that never moves. A drag keeps the fill where it holds it.
             var bar = layout.Bar;
-            track.Color = playing.Timeline is null ? Clear : Color.FromArgb(41, 255, 255, 255);
+            track.Color = playing.Timeline is null ? Clear : Track;
             fill.Color = playing.Timeline is null ? Clear : White;
             shown = playing;
             ShowKnob();

@@ -22,7 +22,7 @@ internal sealed class TipCard
     public TipCard(Compositor compositor, CompositionColorBrush accent, CompositionGeometry mark)
     {
         this.accent = accent;
-        clear = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0));
+        clear = compositor.CreateColorBrush(default(Windows.UI.Color));
         Visual = compositor.CreateShapeVisual();
         Visual.IsVisible = false;
         box = compositor.CreateRoundedRectangleGeometry();

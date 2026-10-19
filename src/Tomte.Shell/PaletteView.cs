@@ -28,7 +28,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
 {
     internal const string SendId = "send";
     private const string ChipId = "chip:";
-    private static readonly Color Card = Color.FromArgb(15, 255, 255, 255), Clear = default;
+    private static readonly Color Card = ShelfColors.Of(Theme.Card), Clear = default;
 
     private readonly IslandWindow island;
     private readonly IslandStateMachine machine;
@@ -157,7 +157,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
             prompt.Services.Resized += Resize;
             if (typed)
             {
-                // Send: a white button in a visual of its own, which dims as one while there is nothing to send.
+                // Send: an accent button in a visual of its own, which dims as one while there is nothing to send.
                 sendVisual = Shapes(root);
                 sendButton = c.CreateRoundedRectangleGeometry();
                 sendButton.CornerRadius = new Vector2(PaletteLayout.SendCorner);
@@ -888,7 +888,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
         {
             var c = island.Compositor;
             clock = c.CreateContainerShape();
-            var ink = c.CreateColorBrush(Argb(TextStyle.SecondaryColor));
+            var ink = c.CreateColorBrush(Argb(Theme.Ink2));
             var ring = c.CreateEllipseGeometry();
             ring.Center = new Vector2(at.Width / 2);
             ring.Radius = new Vector2(PaletteLayout.ClockRadius);
@@ -922,7 +922,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
         if (backArrow is null)
         {
             backArrow = island.Compositor.CreateContainerShape();
-            Draw(backArrow, PaletteGlyphs.Back, island.Compositor.CreateColorBrush(Argb(TextStyle.SecondaryColor)));
+            Draw(backArrow, PaletteGlyphs.Back, island.Compositor.CreateColorBrush(Argb(Theme.Ink2)));
             shapes.Shapes.Add(backArrow);
         }
 

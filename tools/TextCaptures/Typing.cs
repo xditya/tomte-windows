@@ -263,7 +263,7 @@ internal static unsafe class Typing
         Check("*italic* is italic", Look(s, At("it*")).Italic && !Look(s, At("*it")).Italic, $"{Look(s, At("it*"))}");
         Check("~~strike~~ is struck", Look(s, At("old~~")).Struck && Look(s, At("~~old")).Fore == Dim, $"{Look(s, At("old~~"))}");
         var code = Look(s, At("code`"));
-        Check("`code` is monospace on a faint background", code.Font == "Consolas" && code.Back == CodeBack && code.Fore == CodeText, $"{code}");
+        Check("`code` is monospace on a faint background", code.Font == TextStyle.Mono && code.Back == CodeBack && code.Fore == CodeText, $"{code}");
         var done = Look(s, At("done"));
         var box1 = Look(s, At("- [x]"));
         Check("a checked task is dimmed and struck, its box dimmed only", done.Struck && done.Fore == Dim && box1.Fore == Dim && !box1.Struck, $"{done} / {box1}");
@@ -276,9 +276,9 @@ internal static unsafe class Typing
         Check("a link's text is a link, its address dimmed; a bare address is a link", link.Fore == LinkColor && address.Fore == Dim && bare.Fore == LinkColor, $"{link} / {address} / {bare}");
         var fenced = Look(s, At("fenced"));
         var fence = Look(s, At("```"));
-        Check("a fenced block is monospace, its fences dimmed", fenced.Font == "Consolas" && fence.Font == "Consolas" && fence.Fore == Dim, $"{fenced} / {fence}");
+        Check("a fenced block is monospace, its fences dimmed", fenced.Font == TextStyle.Mono && fence.Font == TextStyle.Mono && fence.Fore == Dim, $"{fenced} / {fence}");
         var plain = Look(s, At("after"));
-        Check("plain text is the box's own look", plain is { Font: TextStyle.Ui, Size: 13, Weight: 400, Italic: false, Struck: false, Fore: White, Hang: 0 }, $"{plain}");
+        Check("plain text is the box's own look", plain is { Font: TextStyle.Ui, Size: 13, Weight: 400, Italic: false, Struck: false, Hang: 0 } && plain.Fore == White, $"{plain}");
 
         // An edit restyles its lines as it is typed, a key and a paint at a time, and leaves the caret after it.
         var keys = new Keys(box);
@@ -360,7 +360,7 @@ internal static unsafe class Typing
         s.Selection = (At("after"), At("after"));
         keys.Type("```\n");
         Pump();
-        Check("a new fence makes the lines after it code", Look(s, s.Text.IndexOf("after", StringComparison.Ordinal)).Font == "Consolas", $"{Look(s, s.Text.IndexOf("after", StringComparison.Ordinal))}");
+        Check("a new fence makes the lines after it code", Look(s, s.Text.IndexOf("after", StringComparison.Ordinal)).Font == TextStyle.Mono, $"{Look(s, s.Text.IndexOf("after", StringComparison.Ordinal))}");
         keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
         Pump();
         Check("undoing it makes them plain again", s.Text == text && Look(s, At("after")) == plain, $"{Look(s, At("after"))}");
@@ -545,7 +545,7 @@ internal static unsafe class Typing
         StyledToTheEnd(binding);
         Log($"styling: a fence typed in the middle, which restyles the 1,000 lines after it: {Pieces(times).Replace("around the caret", "after it")}");
         int lastTask = box.Services.Text.LastIndexOf("task", StringComparison.Ordinal);
-        Check("after the fence the note's last line is code", Look(box.Services, lastTask).Font == "Consolas", $"{Look(box.Services, lastTask)}");
+        Check("after the fence the note's last line is code", Look(box.Services, lastTask).Font == TextStyle.Mono, $"{Look(box.Services, lastTask)}");
         Log(Memory("after typing in it"));
         binding.Dispose();
         box.Dispose();
@@ -557,7 +557,9 @@ internal static unsafe class Typing
     }
 
     // COLORREF, as the note's styling sets them.
-    private const int White = 0xFFFFFF, Dim = 0xA3A3A3, LinkColor = 0xFFA86F, CodeText = 0xDED6D6, CodeBack = 0x2C2A2A;
+    private static readonly int White = Ref(Theme.Ink), Dim = Ref(Theme.Ink2), LinkColor = Ref(Theme.Link), CodeText = Ref(Theme.Ink), CodeBack = Ref(Theme.Raised);
+
+    private static int Ref(uint argb) => (int)TextServices.ColorRef(argb).Value;
 
     private readonly record struct CharLook(string Font, float Size, int Weight, bool Italic, bool Struck, int Fore, int Back, float Hang);
 

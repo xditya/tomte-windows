@@ -941,7 +941,7 @@ internal static unsafe partial class Program
         if (back)
         {
             var arrow = Offset(layout.Back, origin);
-            c.Figures(PaletteGlyphs.Back, new Vector2(arrow.X + ((arrow.Width - PaletteGlyphs.SendSize) / 2), arrow.Y + ((arrow.Height - PaletteGlyphs.SendSize) / 2)), TextStyle.SecondaryColor);
+            c.Figures(PaletteGlyphs.Back, new Vector2(arrow.X + ((arrow.Width - PaletteGlyphs.SendSize) / 2), arrow.Y + ((arrow.Height - PaletteGlyphs.SendSize) / 2)), Theme.Ink2);
         }
 
         var card = layout.Prompt;
@@ -1051,10 +1051,10 @@ internal static unsafe partial class Program
         if (!voice && prompt is not null)
         {
             var button = Offset(layout.History(height), origin);
-            c.StrokeCircle(new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2), PaletteLayout.ClockRadius, PaletteLayout.ClockStroke, TextStyle.SecondaryColor);
+            c.StrokeCircle(new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2), PaletteLayout.ClockRadius, PaletteLayout.ClockStroke, Theme.Ink2);
             foreach (var hand in PaletteLayout.ClockHands)
             {
-                c.RoundRect(Offset(hand, new Vector2(button.X, button.Y)), 0.75f, TextStyle.SecondaryColor);
+                c.RoundRect(Offset(hand, new Vector2(button.X, button.Y)), 0.75f, Theme.Ink2);
             }
         }
     }
@@ -1147,7 +1147,7 @@ internal static unsafe partial class Program
 
         var foot = layout.FootText(asking);
         c.Text(foot[0], body);
-        c.StrokeRect(Offset(layout.ClearAll(asking), body), ClipboardPanelLayout.Corner, asking ? TextStyle.WarnColor : 0x40FFFFFFu);
+        c.StrokeRect(Offset(layout.ClearAll(asking), body), ClipboardPanelLayout.Corner, asking ? Theme.Warn : 0x40FFFFFFu);
         c.Text(foot[1], body);
 
         var list = layout.List;

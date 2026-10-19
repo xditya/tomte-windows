@@ -48,8 +48,8 @@ public sealed class DropResultLayout
     public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8, Corner = 8;
 
     /// <summary>A choice's words, and the default's on its button filled with <see cref="StateLook.Accent"/>.</summary>
-    public static readonly TextStyle ChoiceStyle = TextStyle.Secondary with { Color = TextStyle.WhiteColor, Align = TextAlign.Center };
-    public static readonly TextStyle DefaultChoiceStyle = ChoiceStyle with { Color = StateLook.CheckedText, Weight = 600 };
+    public static readonly TextStyle ChoiceStyle = TextStyle.Secondary with { Color = Theme.Ink, Align = TextAlign.Center };
+    public static TextStyle DefaultChoiceStyle => ChoiceStyle with { Color = StateLook.CheckedText, Weight = 600 };
 
     /// <summary>A list level's indent, which is also how far a bullet's text hangs right of the bullet.</summary>
     public const float Indent = 16;
@@ -58,7 +58,7 @@ public sealed class DropResultLayout
 
     public static readonly TextStyle IndicatorStyle = TextStyle.Secondary with { Align = TextAlign.Trailing };
     public static readonly TextStyle BodyStyle = TextStyle.Primary with { LineHeight = 19 };
-    public static readonly TextStyle CodeStyle = new(12, Color: 0xFFD6D6DE, Family: TextStyle.Mono, LineHeight: 17);
+    public static readonly TextStyle CodeStyle = new(12, Family: TextStyle.Mono, LineHeight: 17);
     public static readonly TextStyle TileName = new(12.5f, 600);
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
@@ -105,7 +105,7 @@ public sealed class DropResultLayout
         {
             // A cut never splits a character in two.
             int read = shown.Length <= MaxChars ? shown.Length : char.IsHighSurrogate(shown[MaxChars - 1]) ? MaxChars - 1 : MaxChars;
-            (Body, BodyHeight) = Lay(Markdown.Parse(shown[..read]), problem ? BodyStyle with { Color = TextStyle.WarnColor } : BodyStyle, inner, read < shown.Length);
+            (Body, BodyHeight) = Lay(Markdown.Parse(shown[..read]), problem ? BodyStyle with { Color = Theme.Warn } : BodyStyle, inner, read < shown.Length);
             // What fits above the choices and tiles; the rest scrolls.
             float room = Math.Max(BodyStyle.LineHeight, maxHeight - y - below - Pad - 4);
             Band = new RectangleF(0, y, width, Math.Min(MathF.Ceiling(BodyHeight), room));

@@ -101,22 +101,22 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>The prompt's own text: 13 DIP white, as the text box draws it.</summary>
     public const float PromptSize = 13;
 
-    public static readonly TextStyle Placeholder = new(PromptSize, Color: TextStyle.TertiaryColor);
-    public static readonly TextStyle AnswerText = new(13, Color: 0xFFE9E9EE, LineHeight: 20);
-    public static readonly TextStyle StepText = new(12, Color: TextStyle.SecondaryColor, LineHeight: 18);
-    public static readonly TextStyle ErrorText = AnswerText with { Color = TextStyle.WarnColor };
-    public static readonly TextStyle Chip = new(12, Color: TextStyle.SecondaryColor);
-    public static readonly TextStyle ChipOn = Chip with { Color = StateLook.CheckedText };
-    public static readonly TextStyle Provider = TextStyle.Small with { Color = 0xFFBCD3FF };
+    public static readonly TextStyle Placeholder = new(PromptSize, Color: Theme.Ink3);
+    public static readonly TextStyle AnswerText = new(13, LineHeight: 20);
+    public static readonly TextStyle StepText = new(12, Color: Theme.Ink2, LineHeight: 18);
+    public static readonly TextStyle ErrorText = AnswerText with { Color = Theme.Warn };
+    public static readonly TextStyle Chip = new(12, Color: Theme.Ink2);
+    public static TextStyle ChipOn => Chip with { Color = StateLook.CheckedText };
+    public static TextStyle Provider => TextStyle.Small with { Color = Theme.Accent };
     public static readonly TextStyle Spend = TextStyle.Small with { Align = TextAlign.Trailing };
 
     /// <summary>What was said, where a palette with no text box (the voice palette) shows its prompt.</summary>
     public static readonly TextStyle PromptText = new(PromptSize);
 
-    public static readonly TextStyle AskSummary = AnswerText with { Color = TextStyle.WhiteColor };
-    public static readonly TextStyle AskLine = new(11, Color: TextStyle.SecondaryColor);
+    public static readonly TextStyle AskSummary = AnswerText with { Color = Theme.Ink };
+    public static readonly TextStyle AskLine = new(11, Color: Theme.Ink2);
     public static readonly TextStyle Button = new(12, 500, Align: TextAlign.Center);
-    public static readonly TextStyle RunButton = Button with { Weight = 600, Color = 0xFF000000 };
+    public static TextStyle RunButton => Button with { Weight = 600, Color = Theme.OnAccent };
 
     public const string Hint = "Ask about what is in front of you…";
     public const string Off = "The AI layer is off";
@@ -128,10 +128,10 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     public const string Waiting = "Waiting for you";
 
     /// <summary>
-    /// An off chip: a faint fill, an outline at about 4.5:1 against the palette, and grey ink for its picture and "+".
-    /// An on chip takes the accent fill with black ink. Glyph ink is opaque, so a glyph fades as one.
+    /// An off chip: a card fill, a strong outline, and secondary ink for its picture and "+". An on chip takes the
+    /// accent fill with the accent's own ink. Glyph ink is opaque, so a glyph fades as one.
     /// </summary>
-    public const uint ChipFill = 0x0FFFFFFF, ChipOutline = 0x73FFFFFF, ChipInk = 0xFFA3A3A5;
+    public const uint ChipFill = Theme.Card, ChipOutline = Theme.LineStrong, ChipInk = Theme.Ink2;
 
     /// <summary>
     /// The path a chip's outline follows and the stroke's width in DIPs: one pixel wide, half a pixel inside the pill's
@@ -147,16 +147,24 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     }
 
     /// <summary>The prompt card's outline, which takes the accent while the box has the keys.</summary>
-    public const uint PromptLine = 0x1AFFFFFF, PromptFocusLine = 0x996FA8FF;
+    public const uint PromptLine = Theme.Line;
 
-    /// <summary>Send: a white button with a black arrow.</summary>
-    public const uint SendFill = 0xFFFFFFFF, SendInk = 0xFF000000;
+    public static uint PromptFocusLine => Theme.Accent;
+
+    /// <summary>Send: an accent button with the accent's ink for its arrow.</summary>
+    public static uint SendFill => Theme.Accent;
+
+    public static uint SendInk => Theme.OnAccent;
 
     /// <summary>
     /// The question's card carries the accent in its outline so it reads as waiting for the user. Its buttons are filled
-    /// and outlined as the chips are; Run is white, or the warning colour for what is asked every time.
+    /// raised and outlined as the chips are; Run takes the accent, or the warning colour for what is asked every time.
     /// </summary>
-    public const uint AskOutline = 0x666FA8FF, ButtonFill = 0x1AFFFFFF, ButtonOutline = ChipOutline, RunFill = 0xFFFFFFFF, RunWarn = 0xFFF0B35A;
+    public static uint AskOutline => Theme.WithOpacity(Theme.Accent, 0.4f);
+
+    public const uint ButtonFill = Theme.Raised, ButtonOutline = ChipOutline, RunWarn = Theme.Warn;
+
+    public static uint RunFill => Theme.Accent;
 
     private IReadOnlyList<LaidChip>? row;
     private float? askHeight, includeWidth;

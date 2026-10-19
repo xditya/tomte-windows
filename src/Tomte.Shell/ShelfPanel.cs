@@ -505,7 +505,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         {
             var empty = new RectangleF(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - 2 * ShelfLayout.PadX, size.Y - ShelfLayout.GridTop - ShelfLayout.PadBottom);
             var box = p.Shapes(body, empty);
-            p.Box(box, new RectangleF(0, 0, empty.Width, empty.Height), 8, null, p.Brush(Color.FromArgb(46, 255, 255, 255)), 1).StrokeDashArray.Add(3);
+            p.Box(box, new RectangleF(0, 0, empty.Width, empty.Height), 8, null, p.Brush(ShelfColors.Dash), 1).StrokeDashArray.Add(3);
             foreach (var line in ShelfLayout.EmptyText(empty.Size))
             {
                 p.Text(box, line);
@@ -578,7 +578,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var v = p.Shapes(body!, r);
         v.Opacity = item.Missing ? 0.55f : 1;
         var local = new RectangleF(0, 0, r.Width, r.Height);
-        p.Box(v, local, ShelfLayout.TileCorner, p.Brush(isSelected ? ShelfColors.CardSelected : ShelfColors.Card), isSelected ? p.Brush(ShelfColors.Info) : null, 1);
+        p.Box(v, local, ShelfLayout.TileCorner, p.Brush(isSelected ? ShelfColors.CardSelected : ShelfColors.Card), isSelected ? p.Brush(ShelfColors.Accent) : null, 1);
         const float pad = ShelfLayout.TilePad, icon = ShelfLayout.Icon;
         // a coloured square by kind stands in for the file's own icon and thumbnail, which go on image
         // surfaces through the panel host's art device once it merges.

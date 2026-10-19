@@ -166,7 +166,7 @@ internal sealed class DropResultView : IInteractive
         for (int i = 0; i < next.Choices.Count; i++)
         {
             bool cancel = i == next.Choices.Count - 1;
-            p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Rgb(StateLook.Accent & 0xFFFFFF) : ShelfColors.Card), cancel ? null : p.Brush(ShelfColors.Line), 1);
+            p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Of(StateLook.Accent) : ShelfColors.Card), cancel ? null : p.Brush(ShelfColors.Line), 1);
         }
 
         for (int i = 0; i < next.Tiles.Count; i++)

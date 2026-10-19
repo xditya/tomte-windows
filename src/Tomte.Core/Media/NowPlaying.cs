@@ -274,12 +274,12 @@ public sealed class MediaPanelLayout(float width)
     // How each run looks: the title, the artist (or the app, or a command that just failed), the two clocks.
     public static readonly TextStyle TitleStyle = new(14, 600);
     public static readonly TextStyle ArtistStyle = TextStyle.Secondary;
-    public static readonly TextStyle FailedStyle = ArtistStyle with { Color = TextStyle.WarnColor };
+    public static readonly TextStyle FailedStyle = ArtistStyle with { Color = Theme.Warn };
     public static readonly TextStyle ElapsedStyle = TextStyle.Small with { Tabular = true };
     public static readonly TextStyle TotalStyle = ElapsedStyle with { Align = TextAlign.Trailing };
 
     /// <summary>The time a seek would go to, on its card above the bar.</summary>
-    public static readonly TextStyle SeekStyle = ElapsedStyle with { Color = TextStyle.WhiteColor, Align = TextAlign.Center };
+    public static readonly TextStyle SeekStyle = ElapsedStyle with { Color = Theme.Ink, Align = TextAlign.Center };
 
     // The room kept free on the right, and the gap between a clock and the bar.
     private const float RightPad = 14, ClockGap = 2;

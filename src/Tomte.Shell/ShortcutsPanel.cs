@@ -308,10 +308,10 @@ internal sealed class ShortcutsPanel(IslandWindow island, ShortcutStore store, F
 
     private sealed class View(Compositor compositor, TextRenderer text, ContainerVisual body, Vector2 size, double scale) : IDisposable
     {
-        private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
-        private static readonly Color Placeholder = Color.FromArgb(28, 255, 255, 255);
-        private static readonly Color Faint = Color.FromArgb(64, 255, 255, 255);
-        private static readonly Color Glyph = Color.FromArgb(97, 255, 255, 255);
+        private static readonly Color Card = ShelfColors.Of(Theme.Card);
+        private static readonly Color Placeholder = ShelfColors.Of(Theme.Raised);
+        private static readonly Color Faint = ShelfColors.Of(Theme.Dash);
+        private static readonly Color Glyph = ShelfColors.Of(Theme.Ink3);
 
         // A missing target's tile is drawn at 55% opacity.
         private const float MissingOpacity = 0.55f;

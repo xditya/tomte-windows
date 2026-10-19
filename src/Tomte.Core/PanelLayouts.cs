@@ -24,7 +24,7 @@ public sealed class ClipboardPanelLayout(Vector2 body)
 
     /// <summary>Clear all's word at rest, and in the warn colour while it asks.</summary>
     public static readonly TextStyle ButtonStyle = TextStyle.Secondary with { Align = TextAlign.Center };
-    public static readonly TextStyle AskStyle = ButtonStyle with { Color = TextStyle.WarnColor };
+    public static readonly TextStyle AskStyle = ButtonStyle with { Color = Theme.Warn };
 
     public Vector2 Body { get; } = body;
 
