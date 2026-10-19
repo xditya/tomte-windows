@@ -373,16 +373,16 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
     private sealed class View : IDisposable
     {
         // The icons are drawn in a 24 unit box, 14 DIPs wide, centred in their button.
-        private static readonly Color White = ShelfColors.Of(Theme.Ink);
-        private static readonly Color Skip = ShelfColors.Of(Theme.Ink2);
+        private static Color White => ShelfColors.Of(Theme.Ink);
+        private static Color Skip => ShelfColors.Of(Theme.Ink2);
         // A button the app does not take is drawn at the disabled opacity.
-        private static readonly Color Dim = ShelfColors.Of(Theme.WithOpacity(Theme.Ink, StateLook.DisabledOpacity));
-        private static readonly Color Section = ShelfColors.Of(Theme.Card);
+        private static Color Dim => ShelfColors.Of(Theme.WithOpacity(Theme.Ink, StateLook.DisabledOpacity));
+        private static Color Section => ShelfColors.Of(Theme.Card);
         // The play and pause glyphs are cut out of the light disc in the island's own colour.
-        private static readonly Color Black = ShelfColors.Of(Theme.Island);
+        private static Color Black => ShelfColors.Of(Theme.Island);
         private static readonly Color Clear = default;
-        private static readonly Color Card = ShelfColors.Of(Theme.RaisedHi);
-        private static readonly Color Track = ShelfColors.Of(Theme.Track);
+        private static Color Card => ShelfColors.Of(Theme.RaisedHi);
+        private static Color Track => ShelfColors.Of(Theme.Track);
 
         private readonly Compositor compositor;
         private readonly MediaPanelLayout layout;

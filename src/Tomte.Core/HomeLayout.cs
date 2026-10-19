@@ -47,20 +47,20 @@ public sealed class HomeLayout(Vector2 body)
     public const string Placeholder = "Ask Tomte anything", SendsNothing = "Nothing is sent until you press Enter";
     public const string RegionChip = "Region", WindowChip = "Window", ShelfChip = "Shelf";
 
-    public static readonly TextStyle TileName = new(12, 500);
-    public static readonly TextStyle TileMeta = TextStyle.Small;
-    public static readonly TextStyle PreviewLabel = new(11, Align: TextAlign.Center, Family: TextStyle.Mono, Tracking: 0.06f);
-    public static readonly TextStyle MoreCount = new(20, 600, Align: TextAlign.Center);
-    public static readonly TextStyle MoreWords = new(12, Color: Theme.Ink2, Align: TextAlign.Center);
-    public static readonly TextStyle EmptyWords = new(12, Color: Theme.Ink3, Align: TextAlign.Center);
-    public static readonly TextStyle NoteHeading = new(16, 600);
-    public static readonly TextStyle NoteLine = TextStyle.Primary;
-    public static readonly TextStyle NoteDone = TextStyle.Primary with { Color = Theme.Ink3 };
-    public static readonly TextStyle ShortcutName = new(11, Color: Theme.Ink2, Align: TextAlign.Center);
-    public static readonly TextStyle PromptText = new(14);
-    public static readonly TextStyle PromptHint = new(14, Color: Theme.Ink3);
-    public static readonly TextStyle Foot = TextStyle.Small;
-    public static readonly TextStyle FootFigures = TextStyle.Small with { Family = TextStyle.Mono, Tabular = true };
+    public static TextStyle TileName => new(12, 500);
+    public static TextStyle TileMeta => TextStyle.Small;
+    public static TextStyle PreviewLabel => new(11, Align: TextAlign.Center, Family: TextStyle.Mono, Tracking: 0.06f);
+    public static TextStyle MoreCount => new(20, 600, Align: TextAlign.Center);
+    public static TextStyle MoreWords => new(12, Color: Theme.Ink2, Align: TextAlign.Center);
+    public static TextStyle EmptyWords => new(12, Color: Theme.Ink3, Align: TextAlign.Center);
+    public static TextStyle NoteHeading => new(16, 600);
+    public static TextStyle NoteLine => TextStyle.Primary;
+    public static TextStyle NoteDone => TextStyle.Primary with { Color = Theme.Ink3 };
+    public static TextStyle ShortcutName => new(11, Color: Theme.Ink2, Align: TextAlign.Center);
+    public static TextStyle PromptText => new(14);
+    public static TextStyle PromptHint => new(14, Color: Theme.Ink3);
+    public static TextStyle Foot => TextStyle.Small;
+    public static TextStyle FootFigures => TextStyle.Small with { Family = TextStyle.Mono, Tabular = true };
 
     public const string ShelfId = "shelf", MediaId = "media";
     public const string NoteId = "note", ShortcutsId = "shortcuts", AddId = "add", AskId = "ask", RegionId = "region", WindowId = "window", ShelfChipId = "shelfchip", MicId = "mic";

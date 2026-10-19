@@ -124,6 +124,17 @@ public sealed record TomteSettings
     /// follows <see cref="SettingsStore.Changed"/>, as for every other setting.
     /// </summary>
     public uint AccentColor { get; init; } = AccentColors.Default;
+
+    /// <summary>The island's look: after the taskbar's theme by default, or always dark or light.</summary>
+    public ThemeChoice Theme { get; init; }
+}
+
+/// <summary>The island's look as chosen in Settings; see Theme.SchemeFor.</summary>
+public enum ThemeChoice
+{
+    FollowTaskbar,
+    Dark,
+    Light,
 }
 
 /// <summary>How desktop peek rests at the top of the screen. Each grows into the same peek pill and panels when pointed at or pushed.</summary>
@@ -156,8 +167,14 @@ public static class AccentColors
     /// <summary>Coral, amber, sky and green, in the order the settings window shows them.</summary>
     public static IReadOnlyList<uint> Choices { get; } = [Default, 0xF2B84B, 0x7CC4FF, 0x9BE08F];
 
-    /// <summary>The colour to draw with: <paramref name="rgb"/> when it is one of the choices, the default otherwise.</summary>
-    public static uint Held(uint rgb) => Choices.Contains(rgb) ? rgb : Default;
+    /// <summary>Not a colour: the accent Windows uses, whatever it is now.</summary>
+    public const uint Windows = 0x1000000;
+
+    /// <summary>The choice to keep: <paramref name="rgb"/> when it is one of the choices or <see cref="Windows"/>, the default otherwise.</summary>
+    public static uint Held(uint rgb) => rgb == Windows || Choices.Contains(rgb) ? rgb : Default;
+
+    /// <summary>The colour to draw with for a held choice, given the accent Windows uses now.</summary>
+    public static uint Resolve(uint held, uint system) => Held(held) == Windows ? system & 0xFFFFFF : Held(held);
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>

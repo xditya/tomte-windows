@@ -29,10 +29,10 @@ internal sealed class TimerRing
 
     public TimerRing(Compositor compositor)
     {
-        var track = Circle(compositor, ShelfColors.Of(Theme.LineStrong), out _);
+        var track = Circle(compositor, () => Theme.LineStrong, out _);
         // An ellipse's path starts at 12 o'clock and runs clockwise (checked on screen), so the arc is what is left,
         // from 12 round, and it drains back towards 12 as the time runs out.
-        var arcShape = Circle(compositor, ShelfColors.Of(Theme.Accent), out arc);
+        var arcShape = Circle(compositor, () => Theme.Accent, out arc);
         arcShape.StrokeStartCap = arcShape.StrokeEndCap = CompositionStrokeCap.Round;
         visual = compositor.CreateShapeVisual();
         visual.Size = new Vector2(Size);
@@ -94,13 +94,13 @@ internal sealed class TimerRing
         frame = null;
     }
 
-    private static CompositionSpriteShape Circle(Compositor compositor, Color color, out CompositionEllipseGeometry geometry)
+    private static CompositionSpriteShape Circle(Compositor compositor, Func<uint> color, out CompositionEllipseGeometry geometry)
     {
         geometry = compositor.CreateEllipseGeometry();
         geometry.Center = new Vector2(Size / 2);
         geometry.Radius = new Vector2((Size - Stroke) / 2);
         var shape = compositor.CreateSpriteShape(geometry);
-        shape.StrokeBrush = compositor.CreateColorBrush(color);
+        shape.StrokeBrush = ShelfColors.Live(compositor, color);
         shape.StrokeThickness = Stroke;
         return shape;
     }

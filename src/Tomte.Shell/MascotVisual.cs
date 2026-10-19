@@ -63,7 +63,7 @@ internal sealed class MascotVisual
 
         // The pinned mark sits on the place, not the body, so it stays still while the tomte moves.
         var ink = compositor.CreateColorBrush(Rgb(0x000000));
-        pin = Shapes(compositor, [Circle(compositor, MascotArt.PinRing, ink), Circle(compositor, MascotArt.PinDisc, compositor.CreateColorBrush(Rgb(StateLook.Accent))),
+        pin = Shapes(compositor, [Circle(compositor, MascotArt.PinRing, ink), Circle(compositor, MascotArt.PinDisc, ShelfColors.Live(compositor, () => StateLook.Accent)),
             .. MascotArt.Pin.Select(part => Path(compositor, part, ink))]);
         pin.Size = new Vector2(MascotArt.PinRing.Center.X + MascotArt.PinRing.Radius);
         pin.IsVisible = false;

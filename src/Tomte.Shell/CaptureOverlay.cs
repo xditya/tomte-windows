@@ -29,7 +29,7 @@ namespace Tomte.Shell;
 internal sealed unsafe class CaptureOverlay : IDisposable
 {
     private const string ClassName = "TomteCapture";
-    private static readonly Color Dim = ShelfColors.Of(Theme.Scrim);
+    private static Color Dim => ShelfColors.Of(Theme.Scrim);
     private static CaptureOverlay? current;
     private static bool registered;
 

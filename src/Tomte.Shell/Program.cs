@@ -165,9 +165,9 @@ internal static partial class Program
         // --debug-settings <path>: a settings file of this run's own, so a test never edits the user's.
         using var store = new SettingsStore(Arg(args, "--debug-settings"));
         settingsFile = store.FilePath;
-        // Simplification: views that built their brushes before a change keep the old accent until the next start.
-        Theme.UseAccent(AccentColors.Held(store.Current.AccentColor));
-        store.Changed += s => island.Queue.TryEnqueue(() => Theme.UseAccent(AccentColors.Held(s.AccentColor)));
+        // Panels and cards build their brushes each time they show, so a change of look reaches them on the next show;
+        // what lives as long as the island restyles on Theme.Changed.
+        TaskbarTheme.Follow(island, store, log is null ? null : line => log.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}"));
         var pause = new PauseState();
         // Beside the settings file, so a run with its own settings keeps its timer, note and logs to itself too.
         string data = Path.GetDirectoryName(store.FilePath)!;

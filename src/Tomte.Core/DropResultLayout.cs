@@ -51,7 +51,7 @@ public sealed class DropResultLayout
     public const float Corner = 10, TileCorner = 12, IconCorner = 8;
 
     /// <summary>A choice's words, and the default's on its button filled with <see cref="StateLook.Accent"/>.</summary>
-    public static readonly TextStyle ChoiceStyle = TextStyle.Secondary with { Color = Theme.Ink, Align = TextAlign.Center };
+    public static TextStyle ChoiceStyle => TextStyle.Secondary with { Color = Theme.Ink, Align = TextAlign.Center };
     public static TextStyle DefaultChoiceStyle => ChoiceStyle with { Color = StateLook.CheckedText, Weight = 600 };
 
     /// <summary>A list level's indent, which is also how far a bullet's text hangs right of the bullet.</summary>
@@ -59,10 +59,10 @@ public sealed class DropResultLayout
 
     public const float BlockGap = 8, ItemGap = 3;
 
-    public static readonly TextStyle IndicatorStyle = TextStyle.Secondary with { Align = TextAlign.Trailing };
-    public static readonly TextStyle BodyStyle = TextStyle.Primary with { LineHeight = 19 };
-    public static readonly TextStyle CodeStyle = new(12, Family: TextStyle.Mono, LineHeight: 17);
-    public static readonly TextStyle TileName = TextStyle.Title;
+    public static TextStyle IndicatorStyle => TextStyle.Secondary with { Align = TextAlign.Trailing };
+    public static TextStyle BodyStyle => TextStyle.Primary with { LineHeight = 19 };
+    public static TextStyle CodeStyle => new(12, Family: TextStyle.Mono, LineHeight: 17);
+    public static TextStyle TileName => TextStyle.Title;
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
     public const float WheelStep = 3 * 19;
@@ -79,7 +79,7 @@ public sealed class DropResultLayout
     /// <summary>The line under an answer that was cut at <see cref="MaxLines"/> or <see cref="MaxChars"/>.</summary>
     public const string Rest = "The answer goes on. All of it is in its file on the shelf.";
 
-    public static readonly TextStyle RestStyle = TextStyle.Secondary with { LineHeight = 19 };
+    public static TextStyle RestStyle => TextStyle.Secondary with { LineHeight = 19 };
 
     private readonly List<RectangleF> tiles = [], choices = [];
     private readonly List<TextSlot> slots = [];

@@ -361,26 +361,26 @@ public static class ShelfLayout
 
 
     /// <summary>A tile's name and meta line, the head row's count, the empty box's two lines and the drop target's word.</summary>
-    public static readonly TextStyle NameStyle = TextStyle.Primary with { Weight = 500 };
-    public static readonly TextStyle MetaStyle = new(11, Color: Theme.Ink3, Family: TextStyle.Mono);
-    public static readonly TextStyle CountStyle = TextStyle.Primary with { Color = Theme.Ink3 };
-    public static readonly TextStyle EmptyStyle = new(13, Color: Theme.Ink3, Align: TextAlign.Center);
-    public static readonly TextStyle DropStyle = new(13, 600, Color: Theme.Ink2);
-    public static readonly TextStyle ActionStyle = new(12, 500);
+    public static TextStyle NameStyle => TextStyle.Primary with { Weight = 500 };
+    public static TextStyle MetaStyle => new(11, Color: Theme.Ink3, Family: TextStyle.Mono);
+    public static TextStyle CountStyle => TextStyle.Primary with { Color = Theme.Ink3 };
+    public static TextStyle EmptyStyle => new(13, Color: Theme.Ink3, Align: TextAlign.Center);
+    public static TextStyle DropStyle => new(13, 600, Color: Theme.Ink2);
+    public static TextStyle ActionStyle => new(12, 500);
 
     /// <summary>The filter's words: the current segment's, and the others'.</summary>
-    public static readonly TextStyle FilterOn = new(12, 500, Align: TextAlign.Center);
-    public static readonly TextStyle FilterOff = FilterOn with { Weight = 400, Color = Theme.Ink2 };
+    public static TextStyle FilterOn => new(12, 500, Align: TextAlign.Center);
+    public static TextStyle FilterOff => FilterOn with { Weight = 400, Color = Theme.Ink2 };
 
     /// <summary>A text item's first lines in its preview, the host under a link's glyph, and the dashed tile's words.</summary>
-    public static readonly TextStyle PeekStyle = new(12, Color: Theme.Ink2, LineHeight: 17.4f);
-    public static readonly TextStyle HostStyle = new(12, Color: Theme.Ink2);
-    public static readonly TextStyle DropSlotStyle = new(12, Color: Theme.Ink2, Align: TextAlign.Center);
+    public static TextStyle PeekStyle => new(12, Color: Theme.Ink2, LineHeight: 17.4f);
+    public static TextStyle HostStyle => new(12, Color: Theme.Ink2);
+    public static TextStyle DropSlotStyle => new(12, Color: Theme.Ink2, Align: TextAlign.Center);
 
     /// <summary>The footer's hint and the words after its keycaps; Clear shelf at rest and while it asks.</summary>
-    public static readonly TextStyle FootStyle = TextStyle.Secondary with { Color = Theme.Ink3 };
-    public static readonly TextStyle ClearStyle = TextStyle.Secondary with { Align = TextAlign.Center };
-    public static readonly TextStyle ClearAskStyle = ClearStyle with { Color = Theme.Warn };
+    public static TextStyle FootStyle => TextStyle.Secondary with { Color = Theme.Ink3 };
+    public static TextStyle ClearStyle => TextStyle.Secondary with { Align = TextAlign.Center };
+    public static TextStyle ClearAskStyle => ClearStyle with { Color = Theme.Warn };
 
     /// <summary>The head row in body DIPs: the title, and the count after it up to the band's end.</summary>
     public static IReadOnlyList<TextSlot> HeadText(Vector2 body, int count)

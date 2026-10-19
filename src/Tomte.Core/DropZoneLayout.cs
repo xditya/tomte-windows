@@ -42,12 +42,12 @@ public sealed class DropZoneLayout
     public const string Foot = "Results land on the shelf. Each one says which model ran it and what it cost.";
     public const string EmptySlot = "Add a skill", EmptySlotSub = "Pick one in Settings";
 
-    public static readonly TextStyle NameStyle = new(13, 500);
-    public static readonly TextStyle FactsStyle = new(12, Color: Theme.Ink3, Tabular: true, Family: TextStyle.Mono);
-    public static readonly TextStyle HintStyle = new(12, Color: Theme.Ink3, Align: TextAlign.Trailing);
-    public static readonly TextStyle LabelStyle = new(14, 600);
-    public static readonly TextStyle SubStyle = new(11, Color: Theme.Ink3);
-    public static readonly TextStyle FootStyle = new(12, Color: Theme.Ink3);
+    public static TextStyle NameStyle => new(13, 500);
+    public static TextStyle FactsStyle => new(12, Color: Theme.Ink3, Tabular: true, Family: TextStyle.Mono);
+    public static TextStyle HintStyle => new(12, Color: Theme.Ink3, Align: TextAlign.Trailing);
+    public static TextStyle LabelStyle => new(14, 600);
+    public static TextStyle SubStyle => new(11, Color: Theme.Ink3);
+    public static TextStyle FootStyle => new(12, Color: Theme.Ink3);
 
     /// <summary>The Shelf-drop pill's words: what a drop does, and, when there are zones to open, how to get them.</summary>
     public const string PillLabel = "Drop on the shelf", PillHint = "or hold for actions";
@@ -55,8 +55,8 @@ public sealed class DropZoneLayout
     /// <summary>The pill's tray glyph, and its dashed ring: this far inside the outline, this thick.</summary>
     public const float PillGlyph = 16, RingInset = 6, RingWidth = 2;
 
-    public static readonly TextStyle PillStyle = new(13, 500);
-    public static readonly TextStyle PillHintStyle = new(13, Color: Theme.Ink3);
+    public static TextStyle PillStyle => new(13, 500);
+    public static TextStyle PillHintStyle => new(13, Color: Theme.Ink3);
 
     /// <summary>The tomte on the head row, its art where the head's words would start.</summary>
     public static readonly MascotSeat Seat = new(PadTop + (HeadHeight / 2), PadSide + HeadInset);

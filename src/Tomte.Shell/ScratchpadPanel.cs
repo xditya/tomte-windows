@@ -21,7 +21,7 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
 {
     private const string NoteId = "note";
 
-    private static readonly Color Card = ShelfColors.Of(Theme.Card);
+    private static Color Card => ShelfColors.Of(Theme.Card);
 
     private readonly List<TextVisual> texts = [];
 

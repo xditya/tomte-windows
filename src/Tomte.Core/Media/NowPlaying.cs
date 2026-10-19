@@ -275,14 +275,14 @@ public sealed class MediaPanelLayout
     public static readonly TimeSpan SeekStep = TimeSpan.FromSeconds(5);
 
     // How each run looks: the title, the artist (or the app, or a command that just failed), the two clocks.
-    public static readonly TextStyle TitleStyle = new(15, 600);
-    public static readonly TextStyle ArtistStyle = TextStyle.Secondary;
-    public static readonly TextStyle FailedStyle = ArtistStyle with { Color = Theme.Warn };
-    public static readonly TextStyle ElapsedStyle = new(11, Color: Theme.Ink3, Tabular: true, Family: TextStyle.Mono);
-    public static readonly TextStyle TotalStyle = ElapsedStyle with { Align = TextAlign.Trailing };
+    public static TextStyle TitleStyle => new(15, 600);
+    public static TextStyle ArtistStyle => TextStyle.Secondary;
+    public static TextStyle FailedStyle => ArtistStyle with { Color = Theme.Warn };
+    public static TextStyle ElapsedStyle => new(11, Color: Theme.Ink3, Tabular: true, Family: TextStyle.Mono);
+    public static TextStyle TotalStyle => ElapsedStyle with { Align = TextAlign.Trailing };
 
     /// <summary>The time a seek would go to, on its card above the bar.</summary>
-    public static readonly TextStyle SeekStyle = ElapsedStyle with { Color = Theme.Ink, Align = TextAlign.Center };
+    public static TextStyle SeekStyle => ElapsedStyle with { Color = Theme.Ink, Align = TextAlign.Center };
 
     public const string Overline = "NOW PLAYING";
 

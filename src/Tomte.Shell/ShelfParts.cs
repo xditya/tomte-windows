@@ -12,22 +12,41 @@ namespace Tomte.Shell;
 internal static class ShelfColors
 {
     public static readonly Color Clear = default;
-    public static readonly Color Card = Of(Theme.Card);
-    public static readonly Color CardSelected = Of(Theme.Raised);
-    public static readonly Color Raised = Of(Theme.Raised);
-    public static readonly Color RaisedHi = Of(Theme.RaisedHi);
-    public static readonly Color Dash = Of(Theme.Dash);
-    public static readonly Color Line = Of(Theme.Line);
-    public static readonly Color Ink = Of(Theme.Ink);
-    public static readonly Color Ink2 = Of(Theme.Ink2);
-    public static readonly Color Ink3 = Of(Theme.Ink3);
-    public static readonly Color Warn = Of(Theme.Warn);
-    public static readonly Color Disabled = Of(Theme.WithOpacity(Theme.Ink, Tomte.Core.Interaction.StateLook.DisabledOpacity));
-    public static readonly Color Mark = Of(Theme.LineStrong);
-    public static readonly Color WarnFill = Of(Theme.WarnSoft);
+    public static Color Card => Of(Theme.Card);
+    public static Color CardSelected => Of(Theme.Raised);
+    public static Color Raised => Of(Theme.Raised);
+    public static Color RaisedHi => Of(Theme.RaisedHi);
+    public static Color Dash => Of(Theme.Dash);
+    public static Color Line => Of(Theme.Line);
+    public static Color Ink => Of(Theme.Ink);
+    public static Color Ink2 => Of(Theme.Ink2);
+    public static Color Ink3 => Of(Theme.Ink3);
+    public static Color Warn => Of(Theme.Warn);
+    public static Color Disabled => Of(Theme.WithOpacity(Theme.Ink, Tomte.Core.Interaction.StateLook.DisabledOpacity));
+    public static Color Mark => Of(Theme.LineStrong);
+    public static Color WarnFill => Of(Theme.WarnSoft);
 
     public static Color Accent => Of(Theme.Accent);
 
+
+    // Brushes that live as long as the island, each with the theme colour it shows.
+    private static readonly List<(CompositionColorBrush Brush, Func<uint> Argb)> Kept = [];
+
+    /// <summary>
+    /// A brush for a view that lives as long as the island: it takes <paramref name="argb"/>'s new value whenever the
+    /// theme changes. Views built on each show use plain brushes instead; this one is never released.
+    /// </summary>
+    public static CompositionColorBrush Live(Compositor compositor, Func<uint> argb)
+    {
+        if (Kept.Count == 0)
+        {
+            Theme.Changed += () => Kept.ForEach(k => k.Brush.Color = Of(k.Argb()));
+        }
+
+        var brush = compositor.CreateColorBrush(Of(argb()));
+        Kept.Add((brush, argb));
+        return brush;
+    }
 
     /// <summary>An 0xAARRGGBB colour as a composition colour.</summary>
     public static Color Of(uint argb) => Color.FromArgb((byte)(argb >> 24), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);

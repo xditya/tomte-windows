@@ -27,19 +27,19 @@ public sealed class VoiceCardLayout(float width, bool mascot, float words, strin
     public const float LineHeight = 16, FootHeight = Keycap.Height, FootGap = 14;
 
     /// <summary>The words as heard: 20/500, up to four lines before they are cut.</summary>
-    public static readonly TextStyle Words = TextStyle.Hero with { LineHeight = 29 };
+    public static TextStyle Words => TextStyle.Hero with { LineHeight = 29 };
 
     public const int WordLines = 4;
 
-    public static readonly TextStyle Heard = new(13, 500);
-    public static readonly TextStyle Duration = new TextStyle(12, Color: Theme.Ink3) with { Family = TextStyle.Mono };
-    public static readonly TextStyle Privacy = TextStyle.Secondary with { Color = Theme.Ink3, Align = TextAlign.Trailing };
-    public static readonly TextStyle Action = new(14, 500);
+    public static TextStyle Heard => new(13, 500);
+    public static TextStyle Duration => new TextStyle(12, Color: Theme.Ink3) with { Family = TextStyle.Mono };
+    public static TextStyle Privacy => TextStyle.Secondary with { Color = Theme.Ink3, Align = TextAlign.Trailing };
+    public static TextStyle Action => new(14, 500);
     public static TextStyle Primary => new(14, 600, Theme.OnAccent);
     public static TextStyle Into => new(11, Color: Theme.WithOpacity(Theme.OnAccent, 0.8f));
     public static TextStyle PrimaryKey => Keycap.Style with { Color = Theme.OnAccent };
-    public static readonly TextStyle Reason = TextStyle.Small;
-    public static readonly TextStyle Foot = TextStyle.Secondary with { Color = Theme.Ink3 };
+    public static TextStyle Reason => TextStyle.Small;
+    public static TextStyle Foot => TextStyle.Secondary with { Color = Theme.Ink3 };
 
     /// <summary>The highlighted action's keycap: the accent's own ink at 12%.</summary>
     public static uint PrimaryKeyFill => Theme.WithOpacity(Theme.OnAccent, 0.12f);

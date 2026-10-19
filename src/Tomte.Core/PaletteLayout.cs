@@ -130,29 +130,29 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
     public const float WheelStep = 3 * 21;
 
-    public static readonly TextStyle Placeholder = new(PromptSize, Color: Theme.Ink3);
+    public static TextStyle Placeholder => new(PromptSize, Color: Theme.Ink3);
 
     /// <summary>The model's words; the first paragraph of an answer stands larger, in <see cref="Lead"/>.</summary>
-    public static readonly TextStyle AnswerText = TextStyle.Body;
+    public static TextStyle AnswerText => TextStyle.Body;
 
-    public static readonly TextStyle Lead = new(18, 500, LineHeight: 27, Tracking: -0.01f);
-    public static readonly TextStyle StepText = new(12, Color: Theme.Ink2, LineHeight: 18);
-    public static readonly TextStyle ErrorText = AnswerText with { Color = Theme.Warn };
-    public static readonly TextStyle Chip = TextStyle.Secondary;
-    public static readonly TextStyle ChipOn = Chip with { Color = Theme.Ink };
-    public static readonly TextStyle ThumbLabel = Chip with { Family = TextStyle.Mono };
-    public static readonly TextStyle Provider = TextStyle.Secondary with { Color = Theme.Ink3 };
-    public static readonly TextStyle Cost = Provider with { Family = TextStyle.Mono };
-    public static readonly TextStyle Spend = Cost with { Align = TextAlign.Trailing };
-    public static readonly TextStyle Action = new(12, Align: TextAlign.Center);
-    public static readonly TextStyle OutlinedAction = Action with { Color = Theme.Ink2 };
+    public static TextStyle Lead => new(18, 500, LineHeight: 27, Tracking: -0.01f);
+    public static TextStyle StepText => new(12, Color: Theme.Ink2, LineHeight: 18);
+    public static TextStyle ErrorText => AnswerText with { Color = Theme.Warn };
+    public static TextStyle Chip => TextStyle.Secondary;
+    public static TextStyle ChipOn => Chip with { Color = Theme.Ink };
+    public static TextStyle ThumbLabel => Chip with { Family = TextStyle.Mono };
+    public static TextStyle Provider => TextStyle.Secondary with { Color = Theme.Ink3 };
+    public static TextStyle Cost => Provider with { Family = TextStyle.Mono };
+    public static TextStyle Spend => Cost with { Align = TextAlign.Trailing };
+    public static TextStyle Action => new(12, Align: TextAlign.Center);
+    public static TextStyle OutlinedAction => Action with { Color = Theme.Ink2 };
 
     /// <summary>What was said, where a palette with no text box (the voice palette) shows its prompt.</summary>
-    public static readonly TextStyle PromptText = new(PromptSize);
+    public static TextStyle PromptText => new(PromptSize);
 
-    public static readonly TextStyle AskSummary = AnswerText with { Color = Theme.Ink };
-    public static readonly TextStyle AskLine = new(11, Color: Theme.Ink2);
-    public static readonly TextStyle Button = new(12, 500, Align: TextAlign.Center);
+    public static TextStyle AskSummary => AnswerText with { Color = Theme.Ink };
+    public static TextStyle AskLine => new(11, Color: Theme.Ink2);
+    public static TextStyle Button => new(12, 500, Align: TextAlign.Center);
     public static TextStyle RunButton => Button with { Weight = 600, Color = Theme.OnAccent };
 
     public const string Hint = "Ask about what is in front of you…";
@@ -188,7 +188,13 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// An off chip: no fill, a strong outline, and secondary ink for its picture and "+". An on chip, which holds something
     /// for the send, is raised with the main ink and a close cross. Glyph ink is opaque, so a glyph fades as one.
     /// </summary>
-    public const uint ChipOutline = Theme.LineStrong, ChipInk = Theme.Ink2, ChipOnFill = Theme.Raised, ChipOnInk = Theme.Ink;
+    public static uint ChipOutline => Theme.LineStrong;
+
+    public static uint ChipInk => Theme.Ink2;
+
+    public static uint ChipOnFill => Theme.Raised;
+
+    public static uint ChipOnInk => Theme.Ink;
 
     /// <summary>
     /// The path a chip's outline follows and the stroke's width in DIPs: one pixel wide, half a pixel inside the pill's
@@ -215,12 +221,24 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     /// </summary>
     public static uint AskOutline => Theme.WithOpacity(Theme.Accent, 0.4f);
 
-    public const uint ButtonFill = Theme.Raised, ButtonOutline = ChipOutline, RunWarn = Theme.Warn;
+    public static uint ButtonFill => Theme.Raised;
+
+    public static uint ButtonOutline => ChipOutline;
+
+    public static uint RunWarn => Theme.Warn;
 
     public static uint RunFill => Theme.Accent;
 
     /// <summary>The filled actions are raised; Follow up is outlined as an off chip is. The divider over the footer, and the meter.</summary>
-    public const uint ActionFill = Theme.Raised, ActionOutline = Theme.LineStrong, Divider = Theme.Raised, MeterTrack = Theme.Track, MeterFill = Theme.Ink;
+    public static uint ActionFill => Theme.Raised;
+
+    public static uint ActionOutline => Theme.LineStrong;
+
+    public static uint Divider => Theme.Raised;
+
+    public static uint MeterTrack => Theme.Track;
+
+    public static uint MeterFill => Theme.Ink;
 
     private (IReadOnlyList<LaidChip> Chips, int Rows, bool Shared)? row;
     private float? askHeight;

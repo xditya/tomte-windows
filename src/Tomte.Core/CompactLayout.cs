@@ -32,18 +32,18 @@ public static class CompactLayout
     public const float ArtSize = 26, ArtCorner = 7;
 
     /// <summary>The pill's words: 13 DIP medium. A track's title is the same, its artist quieter beside it.</summary>
-    public static readonly TextStyle TitleStyle = new(13, 500);
-    public static readonly TextStyle ArtistStyle = new(13, Color: Theme.Ink3);
-    public static readonly TextStyle LineStyle = TitleStyle;
+    public static TextStyle TitleStyle => new(13, 500);
+    public static TextStyle ArtistStyle => new(13, Color: Theme.Ink3);
+    public static TextStyle LineStyle => TitleStyle;
 
     /// <summary>A running timer: the word, quiet, then the time left in mono so its digits keep still.</summary>
-    public static readonly TextStyle ClockStyle = new(14, 500, Tabular: true, Family: TextStyle.Mono);
-    public static readonly TextStyle TimerLabelStyle = new(13, Color: Theme.Ink2);
+    public static TextStyle ClockStyle => new(14, 500, Tabular: true, Family: TextStyle.Mono);
+    public static TextStyle TimerLabelStyle => new(13, Color: Theme.Ink2);
     public const string TimerLabel = "Timer";
 
     /// <summary>The push pill's glance: the time of day in mono, a short rule, then the one more thing it mentions.</summary>
-    public static readonly TextStyle TimeStyle = new(13, 500, Tabular: true, Family: TextStyle.Mono);
-    public static readonly TextStyle GlanceStyle = new(13, Color: Theme.Ink2);
+    public static TextStyle TimeStyle => new(13, 500, Tabular: true, Family: TextStyle.Mono);
+    public static TextStyle GlanceStyle => new(13, Color: Theme.Ink2);
     public const float RuleHeight = 14;
 
     /// <summary>What separates the time from the rest in a glance's line.</summary>
@@ -56,11 +56,11 @@ public static class CompactLayout
     public const float UndoInset = 6, UndoPadX = 12, UndoKeyGap = 6, UndoGlyph = 14;
 
     /// <summary>What closed, on the undo pill: quieter than the button that brings it back.</summary>
-    public static readonly TextStyle UndoLineStyle = new(13, Color: Theme.Ink2);
+    public static TextStyle UndoLineStyle => new(13, Color: Theme.Ink2);
 
     /// <summary>The listening pill's accent dot and how far its soft halo reaches past it; the time held is mono.</summary>
     public const float DotSize = 8, Halo = 4;
-    public static readonly TextStyle ElapsedStyle = new(13, Tabular: true, Family: TextStyle.Mono);
+    public static TextStyle ElapsedStyle => new(13, Tabular: true, Family: TextStyle.Mono);
 
     public const string PillId = "pill", TomteId = "tomte", AskTip = "Ask Tomte";
 
