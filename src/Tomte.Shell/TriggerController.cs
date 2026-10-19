@@ -49,6 +49,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private ArrivalFlight? arrival;
     private Task saving = Task.CompletedTask;
 
+    // How desktop peek rests while it shows, and whether the pointer has grown the perched tomte or the lip into the
+    // peek pill; and the lip's dot.
+    private PeekStyle peekStyle;
+    private bool peekOpen;
+    private Windows.UI.Composition.ShapeVisual? lipDot;
+
     // Something plays, as last heard while the pill kept while music plays is on, and when it last stopped (TickCount64);
     // the app that played last, and whether it has gone since.
     private bool mediaPlaying, playerGone;
@@ -274,7 +280,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         : firstRunShowing ? CompactReason.Hint
         : arrivalShowing ? CompactReason.Arrival
         : eventShowing ? CompactReason.Event
-        : activity.HasFlag(IslandActivity.Peek) ? CompactReason.Peek
+        : activity.HasFlag(IslandActivity.Peek) ? (PeekResting && peekStyle != PeekStyle.Pill ? CompactReason.Peek : CompactReason.Summary)
         : activity.HasFlag(IslandActivity.Playing) ? CompactReason.Playing
         : CompactReason.Summary;
 
@@ -291,10 +297,25 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public (string? Text, TimeSpan? TimerLeft) CompactLine(DateTimeOffset now, bool nowPlaying = false)
     {
+        if (PeekInCorner)
+        {
+            return (CompactRules.TimeOfDay(now), null);
+        }
+
         var left = (timer.Run ?? finished)?.Remaining(now);
         var text = CompactRules.Line(Compact, eventShowing ? showing : [], left, nowPlaying ? null : now);
         return (text, Compact == CompactReason.Summary ? left : null);
     }
+
+    /// <summary>
+    /// Desktop peek rests as it was set to look, not grown into the peek pill. The perched tomte, the lip and the corner
+    /// pill show none of the push pill's words; the peek pill itself (the pill style, or any of them grown) has the push
+    /// pill's look, the time and one more thing.
+    /// </summary>
+    internal bool PeekResting => machine.State == IslandState.Compact && activity.HasFlag(IslandActivity.Peek) && !peekOpen;
+
+    /// <summary>The corner pill rests: its words are the time alone, laid out on its own shape.</summary>
+    internal bool PeekInCorner => PeekResting && peekStyle == PeekStyle.Corner;
 
     /// <summary>
     /// What the Compact pill shows may have changed without a state change: the reason for the pill was
@@ -496,7 +517,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
         island.MoveTo(next.IslandOffset);
 
         watch.Refresh();
-        if (!settings.DesktopPeek && activity.HasFlag(IslandActivity.Peek))
+        // Peek turned off or restyled goes, and comes back as it is set now after the usual wait. The corner pill also
+        // follows the island's place, which "Reset position" changes.
+        if (activity.HasFlag(IslandActivity.Peek) && (WantedPeek != peekStyle || next.PeekCorner != previous.PeekCorner
+            || (peekStyle == PeekStyle.Corner && next.IslandOffset != previous.IslandOffset)))
         {
             Hide();
         }
@@ -721,7 +745,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
             }
         }
 
-        public bool TryDrag(string id, System.Numerics.Vector2 at) => owner.island.Drag(at);
+        // The corner pill stays in its corner; the island's place is where it opens.
+        public bool TryDrag(string id, System.Numerics.Vector2 at) => !owner.PeekInCorner && owner.island.Drag(at);
 
         public void Hovered(string? id)
         {
@@ -799,6 +824,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 if (RetractionRules.ShouldRetract(machine.State, activity))
                 {
                     Hide();
+                }
+                else if (peekOpen && RetractionRules.ShouldRetract(machine.State, activity & ~IslandActivity.Peek))
+                {
+                    // The pointer left the peek pill the perched tomte or the lip grew into: back to resting.
+                    OpenPeek(false);
                 }
 
                 break;
@@ -897,10 +927,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>The dwell that opens Panels from the pill starts, with the push pill's swell, or stops.</summary>
     private void Dwell(HoverStep step)
     {
+        // The perched tomte and the lip grow into the peek pill under the pointer; the dwell on that pill opens Panels.
+        if (step == HoverStep.Start && PeekResting && peekStyle is PeekStyle.Perched or PeekStyle.Lip)
+        {
+            OpenPeek(true);
+        }
+
         if (step == HoverStep.Start && RetractionRules.OpensPanels(machine.State, activity))
         {
             PInvoke.SetTimer(island.Hwnd, HoverTimer, (uint)settings.Reveal.ExpandDwellHeldMs, null);
-            island.Swell(Compact is CompactReason.Summary or CompactReason.Playing);
+            island.Swell(Compact is CompactReason.Summary or CompactReason.Playing || PeekInCorner);
         }
         else if (step == HoverStep.Cancel)
         {
@@ -1319,6 +1355,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             ring.Hide();
         }
 
+        UpdateLipDot();
         CompactChanged?.Invoke();
     }
 
@@ -1349,21 +1386,80 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
+    /// <summary>How peek is set to rest as it can be drawn now (<see cref="CompactLayout.Resting"/>), or null with peek off.</summary>
+    private PeekStyle? WantedPeek =>
+        settings.DesktopPeek ? CompactLayout.Resting(settings.PeekStyle, island.Mascot.Enabled, settings.AttachToTopEdge) : null;
+
+    /// <summary>The shape peek rests as in a style, the corner pill moved to its corner from the island's place.</summary>
+    private IslandGeometry PeekShape(PeekStyle style)
+    {
+        var shape = CompactLayout.PeekShape(style);
+        return style == PeekStyle.Corner ? shape with { Shift = island.ToCorner(shape, settings.PeekCorner == PeekCorner.Left) } : shape;
+    }
+
+    /// <summary>
+    /// The perched tomte or the lip grows into the peek pill at the island's place, or shrinks back, with no change of
+    /// state: the pill's line, ring and row follow <see cref="Compact"/>, which says Summary while it is grown.
+    /// </summary>
+    private void OpenPeek(bool open)
+    {
+        peekOpen = open;
+        island.Seat = open ? null : CompactLayout.PeekSeat(peekStyle);
+        island.MorphTo(open ? IslandGeometry.Compact : PeekShape(peekStyle), open ? SpringPreset.Snappy : SpringPreset.Gentle);
+        compact.Changed();
+        UpdateRing();
+        InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+    }
+
+    // The lip's accent dot, while something waits that the pill would show: a timer, a closed answer that can still come
+    // back, events held back.
+    private void UpdateLipDot()
+    {
+        bool waiting = timer.Run is not null || finished is not null || undo.Live(DateTimeOffset.Now) || events.Count > 0;
+        bool show = PeekResting && peekStyle == PeekStyle.Lip && waiting;
+        if (show && lipDot is null)
+        {
+            var at = CompactLayout.LipDot;
+            var shape = island.Compositor.CreateRoundedRectangleGeometry();
+            shape.Size = new System.Numerics.Vector2(at.Width, at.Height);
+            shape.CornerRadius = new System.Numerics.Vector2(at.Height / 2);
+            lipDot = island.Compositor.CreateShapeVisual();
+            lipDot.Size = shape.Size;
+            lipDot.Offset = new System.Numerics.Vector3(at.X, at.Y, 0);
+            lipDot.Shapes.Add(island.Compositor.CreateSpriteShape(shape));
+            island.Dips.Children.InsertAtTop(lipDot);
+        }
+
+        if (lipDot is not null)
+        {
+            // The accent can change while the dot is up.
+            ((Windows.UI.Composition.CompositionSpriteShape)lipDot.Shapes[0]).FillBrush = island.Compositor.CreateColorBrush(ShelfColors.Of(Theme.Accent));
+            lipDot.IsVisible = show;
+        }
+    }
+
     private void EvaluatePeek()
     {
-        // With the tomte off there is nothing for the small pill to hold: peek is the full pill with what plays.
-        bool tomte = island.Mascot.Enabled;
-        string? under = watch.WindowUnder(island.RestBounds(tomte ? IslandGeometry.Peek : IslandGeometry.Compact));
+        if (WantedPeek is not { } style)
+        {
+            return;
+        }
+
+        string? under = watch.WindowUnder(island.RestBounds(PeekShape(style)));
         log?.Invoke(under is null ? "peek: nothing under the zone" : $"peek: {under} under the zone");
         peekWanted = under is null;
         if (peekWanted)
         {
             // Not during the launch flight: peek shows once the flight's pill has retracted.
-            if (machine.State == IslandState.Hidden && arrival is null && Reveal(RevealTrigger.Peek, IslandState.Compact, peek: tomte))
+            if (machine.State == IslandState.Hidden && arrival is null)
             {
-                activity |= IslandActivity.Peek;
-                // Peek is settled only now, after Go; the peek pill carries no ring.
-                UpdateRing();
+                peekStyle = style;
+                if (Reveal(RevealTrigger.Peek, IslandState.Compact, resting: true))
+                {
+                    activity |= IslandActivity.Peek;
+                    // Peek is settled only now, after Go: its line, ring and the lip's dot follow.
+                    UpdateRing();
+                }
             }
         }
         else if (activity.HasFlag(IslandActivity.Peek))
@@ -1476,14 +1572,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>The pause, then the suppression check, then the morph. False when nothing was shown.</summary>
-    private bool Reveal(RevealTrigger trigger, IslandState state, (double W, double H) size = default, bool ignorePause = false, bool peek = false)
+    private bool Reveal(RevealTrigger trigger, IslandState state, (double W, double H) size = default, bool ignorePause = false, bool peek = false, bool resting = false)
     {
         if (!Allowed(trigger, ignorePause))
         {
             return false;
         }
 
-        Go(state, size, peek);
+        Go(state, size, peek, resting);
         return true;
     }
 
@@ -1561,10 +1657,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>
     /// One continuous morph to the state. A hop through Hidden keeps the state table honest for paths the
     /// interaction map adds (Compact to Shelf-drop, Panels to Palette); the shape still retargets directly and
-    /// the mascot follows the real transition. Desktop peek is Compact in the small pill that holds the tomte alone.
+    /// the mascot follows the real transition. The launch arrival's pill (<paramref name="peek"/>) is Compact in the small pill
+    /// that holds the tomte alone; desktop peek (<paramref name="resting"/>) is Compact in its style's resting shape.
     /// </summary>
-    private void Go(IslandState state, (double W, double H) size = default, bool peek = false)
+    private void Go(IslandState state, (double W, double H) size = default, bool peek = false, bool resting = false)
     {
+        // The corner pill opens the island at its place, away from the pointer, which has not left the island by that.
+        bool fromCorner = PeekInCorner;
+        peekOpen = false;
         EndArrival();
         // The undo pill goes with any change; what it brings back keeps its time, and the pill comes back when the island
         // is free again before that is up.
@@ -1617,8 +1717,14 @@ internal sealed unsafe partial class TriggerController : IDisposable
         island.Mascot.Follow(from, state);
         island.PanelLook = state is IslandState.Panels or IslandState.Palette;
         var (width, height) = PanelSize.Fit(size, island.MonitorSize);
-        // Compact is the 220 pill unless it is given a width: the undo pill is as wide as its words and button.
-        var geometry = peek ? IslandGeometry.Peek : state == IslandState.Compact && width > 0 ? IslandGeometry.Compact with { Width = width } : IslandGeometry.For(state, width, height);
+        // Compact is the 220 pill unless it is given a width: the undo pill is as wide as its words and button. Peek rests
+        // in its style's shape, with the tomte where that shape has it from the first frame.
+        if (resting)
+        {
+            island.JumpSeat(CompactLayout.PeekSeat(peekStyle));
+        }
+
+        var geometry = resting ? PeekShape(peekStyle) : peek ? IslandGeometry.Peek : state == IslandState.Compact && width > 0 ? IslandGeometry.Compact with { Width = width } : IslandGeometry.For(state, width, height);
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.
@@ -1636,6 +1742,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
 
         pointerInside = pointerOn = false;
+        if (fromCorner)
+        {
+            armed = false;
+        }
+
         InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
         // Esc as a global hotkey only for the states the user opened on purpose. Compact comes from a push, an event,
         // peek or the first-run hint, where swallowing the user's Esc in their own app would be a surprise. Once the

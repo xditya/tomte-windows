@@ -88,12 +88,14 @@ internal sealed class CompactLine
             return;
         }
 
-        bool mascot = island.Mascot.Enabled;
+        bool mascot = island.Mascot.Enabled, corner = triggers.PeekInCorner;
         if (view is null)
         {
             Release();
-            // Words the tomte leads end the pill, so they go with its trailing end; alone they keep to its centre.
-            view = new View(island.Compositor, text, mascot ? island.Trailing : island.Dips, fromEnd: mascot);
+            // Words the tomte leads end the pill, so they go with its trailing end; alone they keep to its centre. The
+            // corner pill has its own shape and lays its time out from its centre.
+            bool fromEnd = mascot && !corner;
+            view = new View(island.Compositor, text, fromEnd ? island.Trailing : island.Dips, fromEnd);
             view.Root.Opacity = 0;
             view.Root.StartAnimation("Opacity", fadeIn);
         }
@@ -131,6 +133,12 @@ internal sealed class CompactLine
             view.Second.Show(rest, CompactLayout.GlanceStyle, view.Place(restSlot));
             view.Rule(rest.Length == 0 ? null : view.At(rule));
         }
+        else if (corner)
+        {
+            view.Text.Show(line, CompactLayout.CornerTimeStyle, view.Place(CompactLayout.CornerClock((float)island.Heading.Width)));
+            view.Second.Show("", CompactLayout.LineStyle, default);
+            view.Rule(null);
+        }
         else
         {
             view.Text.Show(line, CompactLayout.Ending(CompactLayout.LineStyle, led: mascot), view.Place(CompactLayout.Line(mascot)));
@@ -145,7 +153,7 @@ internal sealed class CompactLine
             tick.Interval = TimeSpan.FromSeconds((fraction > 0 ? fraction : 1) + 0.01);
             tick.Start();
         }
-        else if (clock)
+        else if (clock || corner)
         {
             // The time of day changes on the minute.
             tick.Interval = TimeSpan.FromSeconds(60 - now.Second - now.Millisecond / 1000.0 + 0.05);
