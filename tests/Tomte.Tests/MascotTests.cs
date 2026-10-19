@@ -380,13 +380,13 @@ public class MascotTests
     {
         var palette = new PaletteLayout(640, mascot: true);
         var back = new PaletteLayout(640, mascot: true, back: true);
-        var search = new SearchLayout(640, mascot: true, 300);
+        var search = new SearchLayout(680, mascot: true, 300);
         var result = new DropResultLayout(new DropResult("Summarize · Q3-report.pdf", "Sent to ollama", "Kept on the shelf.", false, "Revenue went up.", [], []), 640, mascot: true);
         (string Name, MascotSeat Seat, IslandGeometry Shape, System.Drawing.RectangleF Field, float Under, float Next)[] cases =
         [
             ("AI box", PaletteLayout.Seat, IslandGeometry.Panel(640, 150), palette.Prompt, palette.IncludeLabel.Slot.X, palette.Prompt.X),
             ("AI box with back", PaletteLayout.Seat, IslandGeometry.Panel(640, 150), back.Prompt, back.IncludeLabel.Slot.X, back.Back.X),
-            ("search box", PaletteLayout.Seat, IslandGeometry.Panel(640, 300), search.Box, search.Band.X, search.Box.X),
+            ("search box", SearchLayout.Seat, IslandGeometry.Panel(680, 300), search.Box, search.Band.X, search.Box.X),
             ("drop result", DropResultLayout.Seat, IslandGeometry.Panel(640, result.Height), result.Slots[0].Slot, result.Band.X + result.Body[0].At.X, result.Slots[0].Slot.X),
         ];
         foreach (var (name, seat, shape, field, under, next) in cases)

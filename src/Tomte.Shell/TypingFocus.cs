@@ -89,9 +89,9 @@ internal sealed class TypingFocus
     /// <paramref name="owner"/> (the palette's prompt) hands Tab and Shift+Tab on to that view's targets
     /// (<see cref="InteractionHost.FromBox"/>), and takes the keys back when Tab comes round to it again.
     /// </summary>
-    public EditorView Create(ContainerVisual host, bool multiline, float fontDips, IInteractive? owner = null)
+    public EditorView Create(ContainerVisual host, bool multiline, float fontDips, IInteractive? owner = null, int weight = 400)
     {
-        var editor = new EditorView(island.Compositor, island.Queue, host, island.Dips, island.Hwnd, multiline, fontDips)
+        var editor = new EditorView(island.Compositor, island.Queue, host, island.Dips, island.Hwnd, multiline, fontDips, weight)
         {
             IslandToScreen = island.IslandToScreen,
             ScreenToIsland = p => island.ScreenToIsland(p.X, p.Y),

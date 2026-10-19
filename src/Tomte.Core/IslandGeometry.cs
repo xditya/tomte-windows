@@ -59,6 +59,9 @@ public static class PanelSize
     public static readonly (double W, double H) Clipboard = (Width, 360);
     public static readonly (double W, double H) History = (Width, 400);
     public const double PaletteWidth = 640;
+
+    /// <summary>The search box and the voice card are narrower than the AI box.</summary>
+    public const double SearchWidth = 680, VoiceWidth = 620;
     public const double PaletteMinHeight = 150;
     public const double PaletteMaxHeight = 480;
 
@@ -79,7 +82,7 @@ public static class PanelSize
 
     /// <summary>
     /// Palette height for an answer given as lines of text, until a text renderer measures the real
-    /// height: about 88 characters per line at 640 wide, 21 DIP per line, rounded up to 24 DIP
+    /// height: about 88 characters per line at the palette's width, 21 DIP per line, rounded up to 24 DIP
     /// steps so a streaming answer retargets the spring every few lines, not every token.
     /// </summary>
     public static double PaletteHeightFor(IEnumerable<string> lines)

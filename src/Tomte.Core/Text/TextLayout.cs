@@ -74,9 +74,15 @@ public sealed record TextRun(string Text, TextStyle Style, float MaxWidth, int L
 
     public IReadOnlyList<(int Start, int Length)> Code { get; init; } = [];
 
+    /// <summary>Parts of the text drawn in <see cref="TintColor"/> instead of the style's colour (the letters a search matched).</summary>
+    public IReadOnlyList<(int Start, int Length)> Tint { get; init; } = [];
+
+    public uint TintColor { get; init; }
+
     // By value, parts included, so a view draws a run again only when something in it changed.
     public bool Equals(TextRun? other) => other is not null && Text == other.Text && Style == other.Style && MaxWidth == other.MaxWidth
-        && Lines == other.Lines && Bold.SequenceEqual(other.Bold) && Italic.SequenceEqual(other.Italic) && Code.SequenceEqual(other.Code);
+        && Lines == other.Lines && Bold.SequenceEqual(other.Bold) && Italic.SequenceEqual(other.Italic) && Code.SequenceEqual(other.Code)
+        && Tint.SequenceEqual(other.Tint) && TintColor == other.TintColor;
 
     public override int GetHashCode() => HashCode.Combine(Text, Style, MaxWidth, Lines, Bold.Count);
 }
@@ -130,7 +136,8 @@ public sealed class TextLayout : IDisposable
                 made.SetTypography(Typesetter.Tabular, new DWRITE_TEXT_RANGE { startPosition = 0, length = (uint)text.Length });
             }
 
-            if (ReferenceEquals(text, run.Text))
+            KeepsParts = ReferenceEquals(text, run.Text);
+            if (KeepsParts)
             {
                 foreach (var (start, length) in run.Bold)
                 {
@@ -213,6 +220,9 @@ public sealed class TextLayout : IDisposable
 
     /// <summary>The run did not fit its width or its line count and was cut with an ellipsis.</summary>
     public bool Trimmed { get; }
+
+    /// <summary>The run's parts (bold, code, tint) apply: false for a one-line run whose line breaks were joined.</summary>
+    public bool KeepsParts { get; }
 
     /// <summary>The layout as an IDWriteTextLayout pointer for Direct2D's DrawTextLayout, valid until Dispose.</summary>
     public nint Native => native;

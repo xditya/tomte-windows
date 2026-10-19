@@ -1520,6 +1520,29 @@ internal static unsafe partial class Program
             }
         }
 
+        /// <summary>A <see cref="Glyphs"/> entry from its 24-unit box, <paramref name="size"/> DIPs square from <paramref name="at"/>.</summary>
+        public void Glyph(GlyphFigure[] figures, Vector2 at, float size, uint argb)
+        {
+            float k = size / Glyphs.Box;
+            foreach (var figure in figures)
+            {
+                if (!figure.Stroked)
+                {
+                    Fill(figure.Path, at, k, argb);
+                    continue;
+                }
+
+                var path = Path(figure.Path, at, k);
+                var brush = Brush(argb);
+                dc->DrawGeometry((ID2D1Geometry*)path, (ID2D1Brush*)brush, Glyphs.StrokeWidth * k, null);
+                brush->Release();
+                path->Release();
+            }
+        }
+
+        /// <summary>A run with its parts (bold, tinted letters) in a slot of a host, centred in its height.</summary>
+        public void Text(TextRun run, RectangleF slot, Vector2 host) => Text(run, slot, host, centred: true, 1);
+
         /// <summary>What is drawn from here to <see cref="EndLayer"/> fades as one, as the shapes of one shape visual do.</summary>
         public void Layer(float opacity)
         {
