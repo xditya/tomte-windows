@@ -1123,21 +1123,25 @@ internal static unsafe partial class Program
     {
         var layout = new ClipboardPanelLayout(Body(PanelSize.Clipboard));
         var body = BodyOrigin(PanelSize.Clipboard);
+        var now = new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero);
+        var kept = new ClipboardRetention();
         c.Pill();
         c.Mascot();
         Tabs(c, PanelId.Clipboard, PanelSize.Clipboard);
-        foreach (var line in layout.HeadText(on, new ClipboardRetention()))
+        c.Text(new TextSlot(ClipboardPanelLayout.KeepHistory, TextStyle.Secondary, RectangleF.FromLTRB(ClipboardPanelLayout.Pad, layout.Head.Y, layout.Switch.X, layout.Head.Bottom)), body);
+        var track = Offset(layout.Switch, body);
+        c.RoundRect(track, track.Height / 2, on ? Theme.Accent : Theme.LineStrong);
+        c.Circle(new Vector2(on ? track.Right - 10 : track.X + 10, track.Y + track.Height / 2), 7, Theme.Ink);
+        if (on)
         {
-            c.Text(line, body);
+            c.RoundRect(Offset(layout.Filter, body), layout.Filter.Height / 2, Theme.Card);
+            c.Text(new TextSlot(ClipboardPanelLayout.FilterHint, ClipboardPanelLayout.HintStyle, layout.FilterBox), body);
         }
 
-        var track = Offset(layout.Switch, body);
-        c.RoundRect(track, track.Height / 2, on ? 0xFF6FA8FFu : 0x33FFFFFFu);
-        c.Circle(new Vector2(on ? track.Right - 9 : track.X + 9, track.Y + track.Height / 2), 7, 0xFFFFFFFF);
         if (!on || rows.Length == 0)
         {
-            c.StrokeRect(Offset(layout.List, body), ClipboardPanelLayout.Corner, 0x2EFFFFFF);
-            foreach (var line in layout.BoxText(on, new ClipboardRetention()))
+            c.StrokeRect(Offset(layout.Box, body), ClipboardPanelLayout.PreviewCorner, Theme.LineStrong);
+            foreach (var line in layout.BoxText(on, kept))
             {
                 c.Text(line, body);
             }
@@ -1145,46 +1149,69 @@ internal static unsafe partial class Program
             return;
         }
 
-        var foot = layout.FootText(asking);
-        c.Text(foot[0], body);
-        c.StrokeRect(Offset(layout.ClearAll(asking), body), ClipboardPanelLayout.Corner, asking ? Theme.Warn : 0x40FFFFFFu);
-        c.Text(foot[1], body);
-
-        var list = layout.List;
-        for (int i = 0; i < rows.Length; i++)
+        foreach (var line in layout.FootText(asking, kept))
         {
-            var row = ClipboardPanelLayout.Row(i, list.Width);
-            if (row.Bottom > list.Height)
+            c.Text(line, body);
+        }
+
+        // The rows a few minutes apart from now, the first one selected.
+        var history = rows.Select((r, i) => new ClipboardRow(i + 1, r.Display, now.AddMinutes(-7 * i), r.Thumb) { Chars = r.Display.Length }).ToList();
+        var lines = ClipboardPanelLayout.Lines(history, now);
+        var list = layout.List;
+        foreach (var line in lines)
+        {
+            if (line.Y + line.Height > list.Height)
             {
                 break;
             }
 
-            var origin = body + new Vector2(list.X + row.X, list.Y + row.Y);
-            c.RoundRect(Offset(new RectangleF(0, 0, row.Width, row.Height), origin), ClipboardPanelLayout.Corner, 0x0FFFFFFF);
-            if (rows[i].Thumb is { } thumb)
+            var origin = body + new Vector2(list.X, list.Y + line.Y);
+            if (line.IsHeading)
+            {
+                c.Text(ClipboardPanelLayout.HeadingSlot(line, list.Width), body + new Vector2(list.X, list.Y));
+                continue;
+            }
+
+            var row = history[line.Row];
+            bool selected = line.Row == 0;
+            if (selected)
+            {
+                c.RoundRect(Offset(new RectangleF(0, 0, list.Width, line.Height), origin), ClipboardPanelLayout.Corner, Theme.Raised);
+                c.StrokeRect(Offset(new RectangleF(0, 0, list.Width, line.Height), origin), ClipboardPanelLayout.Corner, Theme.Dash);
+            }
+
+            if (row.Thumb is { } thumb)
             {
                 // Decoded to the slot's pixels at this scale, as the panel does when it shows.
                 int w = (int)Math.Round(ClipboardPanelLayout.ThumbWidth * c.Scale), h = (int)Math.Round(ClipboardPanelLayout.ThumbHeight * c.Scale);
-                c.Picture(Offset(ClipboardPanelLayout.ThumbIn, origin), 6, ClipboardImages.Thumbnail(thumb, w, h), w, h);
+                c.Picture(Offset(ClipboardPanelLayout.ThumbIn, origin), ClipboardPanelLayout.ThumbCorner, ClipboardImages.Thumbnail(thumb, w, h), w, h);
             }
             else
             {
-                c.RoundRect(Offset(ClipboardPanelLayout.IconIn, origin), 6, 0x1CFFFFFF);
+                c.RoundRect(Offset(ClipboardPanelLayout.IconIn, origin), 4, Theme.RaisedHi);
             }
 
-            var remove = Offset(ClipboardPanelLayout.RemoveIn(row.Width), origin);
-            var middle = new Vector2(remove.X + remove.Width / 2, remove.Y + remove.Height / 2);
-            c.Circle(middle, remove.Width / 2, 0x0FFFFFFF);
-            c.Cross(middle, 10, 1.5f, 0x61FFFFFF);
-            foreach (var line in ClipboardPanelLayout.RowText(rows[i].Display, rows[i].Ago, row.Width, rows[i].Thumb is not null))
+            var end = selected ? ClipboardPanelLayout.RowEnd.Enter : ClipboardPanelLayout.RowEnd.Age;
+            foreach (var slot in ClipboardPanelLayout.RowText(row, row.When(now), end, list.Width))
             {
-                c.Text(line, origin);
+                c.Text(slot, origin);
+            }
+        }
+
+        if (layout.HasPreview)
+        {
+            c.RoundRect(Offset(layout.Preview, body), ClipboardPanelLayout.PreviewCorner, Theme.Card);
+            c.Text(layout.PreviewMeta(history[0].Meta()), body);
+            foreach (var (action, box) in layout.Actions())
+            {
+                c.RoundRect(Offset(box, body), ClipboardPanelLayout.ButtonCorner, action == ClipboardPanelLayout.PreviewAction.Paste ? Theme.Ink : Theme.Raised);
+                c.Text(new TextSlot(ClipboardPanelLayout.ActionText(action, false), action == ClipboardPanelLayout.PreviewAction.Paste ? ClipboardPanelLayout.PasteStyle : ClipboardPanelLayout.SecondaryButtonStyle, box), body);
             }
         }
 
         if (targets)
         {
-            foreach (var target in layout.Targets(on, [.. Enumerable.Range(1, rows.Length).Select(i => (long)i)], 0, asking).Where(t => t.Bounds.Height > 0))
+            foreach (var target in layout.Targets(on, history, lines, 0, asking, history[0]).Where(t => t.Bounds.Height > 0))
             {
                 c.StrokeRect(Offset(target.Bounds, body), target.Corner, TargetLine);
             }

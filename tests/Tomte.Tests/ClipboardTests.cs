@@ -558,7 +558,7 @@ public sealed class ClipboardTests : IDisposable
         }
 
         var rows = history.Rows(Now.AddMinutes(4));
-        Assert.Equal(["Image · 30 x 5", "text 3", "Image · 20 x 5", "text 2"], rows.Select(r => r.Display));
+        Assert.Equal(["Image · 30 × 5", "text 3", "Image · 20 × 5", "text 2"], rows.Select(r => r.Display));
         Assert.True(rows[0].IsImage);
         Assert.False(rows[1].IsImage);
         Assert.Equal([3], rows[0].Thumb!);
@@ -580,7 +580,7 @@ public sealed class ClipboardTests : IDisposable
 
         var history = new ClipboardHistory(new TomteDb(DbPath));
         history.AddImage(new KeptImage([1], 4, 3, [2]), Now.AddSeconds(1));
-        Assert.Equal(["Image · 4 x 3", "from before"], history.Rows(Now.AddSeconds(2)).Select(r => r.Display));
+        Assert.Equal(["Image · 4 × 3", "from before"], history.Rows(Now.AddSeconds(2)).Select(r => r.Display));
     }
 
     [Fact]
@@ -589,12 +589,12 @@ public sealed class ClipboardTests : IDisposable
         var history = new ClipboardHistory(new TomteDb(DbPath));
         history.AddImage(new KeptImage([1, 1], 1, 1, [9]), Now);
         history.AddImage(new KeptImage([2, 2], 2, 2, [9]), Now.AddSeconds(1));
-        long first = history.Rows(Now).Single(r => r.Display == "Image · 1 x 1").Id;
+        long first = history.Rows(Now).Single(r => r.Display == "Image · 1 × 1").Id;
 
         history.AddImage(new KeptImage([1, 1], 1, 1, [9]), Now.AddSeconds(2));
 
         var rows = history.Rows(Now.AddSeconds(3));
-        Assert.Equal(["Image · 1 x 1", "Image · 2 x 2"], rows.Select(r => r.Display));
+        Assert.Equal(["Image · 1 × 1", "Image · 2 × 2"], rows.Select(r => r.Display));
         Assert.Equal(first, rows[0].Id);
     }
 
@@ -624,7 +624,7 @@ public sealed class ClipboardTests : IDisposable
             Assert.Throws<ObjectDisposedException>(() => replaced.ToArray());
         }
 
-        Assert.Equal(["Image · 7 x 2", "first"], (await watch.RowsAsync(Now.AddMinutes(1))).Select(r => r.Display));
+        Assert.Equal(["Image · 7 × 2", "first"], (await watch.RowsAsync(Now.AddMinutes(1))).Select(r => r.Display));
         Assert.Single(log, line => line.StartsWith("clipboard: store an image took", StringComparison.Ordinal));
         // And the stored one once its PNG was made.
         Assert.Throws<ObjectDisposedException>(() => stored.ToArray());
@@ -661,7 +661,7 @@ public sealed class ClipboardTests : IDisposable
         var history = new ClipboardHistory(new TomteDb(DbPath), new ClipboardRetention(MaxImageBytes: 8));
         history.AddImage(new KeptImage(Encoding.UTF8.GetBytes("12345678"), 1, 1, []), Now);
         history.AddImage(new KeptImage(Encoding.UTF8.GetBytes("123456789"), 2, 2, []), Now);
-        Assert.Equal(["Image · 1 x 1"], history.Rows(Now).Select(r => r.Display));
+        Assert.Equal(["Image · 1 × 1"], history.Rows(Now).Select(r => r.Display));
     }
 
     [Fact]
@@ -675,7 +675,7 @@ public sealed class ClipboardTests : IDisposable
         listeners[0].Copy(new CopiedImage([1, 2, 3], png: true));
 
         var row = Assert.Single(await watch.RowsAsync(Now));
-        Assert.Equal("Image · 5 x 3", row.Display);
+        Assert.Equal("Image · 5 × 3", row.Display);
         Assert.Contains(log, line => line.StartsWith("clipboard: an image could not be read", StringComparison.Ordinal));
         var png = new ClipboardHistory(new TomteDb(DbPath)).Image(row.Id)!;
         Assert.True(FileHolds(png) && FileHolds(row.Thumb!));

@@ -96,7 +96,7 @@ public class PanelTests
         Assert.Equal((560, 300), PanelSize.Of(PanelId.Shortcuts));
         Assert.Equal((560, 320), PanelSize.Of(PanelId.Scratchpad));
         Assert.Equal((560, 490), PanelSize.Of(PanelId.Shelf));
-        Assert.Equal((560, 360), PanelSize.Of(PanelId.Clipboard));
+        Assert.Equal((560, 470), PanelSize.Of(PanelId.Clipboard));
         Assert.Equal((560, 400), PanelSize.Of(PanelId.History));
     }
 
@@ -118,8 +118,8 @@ public class PanelTests
     public void PanelsAreCappedAtSixtyByFiftyPercentOfTheMonitor()
     {
         // 2560 x 1440 at 150% is 1706.7 x 960 DIPs: nothing is capped.
-        Assert.Equal((560, 360), PanelSize.Fit(PanelSize.Clipboard, (1706.7, 960)));
-        // 1366 x 768 at 125% is 1092.8 x 614.4 DIPs: 560 wide fits, 360 tall is cut to 307.2.
+        Assert.Equal((560, 470), PanelSize.Fit(PanelSize.Clipboard, (1706.7, 960)));
+        // 1366 x 768 at 125% is 1092.8 x 614.4 DIPs: 560 wide fits, 470 tall is cut to 307.2.
         var fitted = PanelSize.Fit(PanelSize.Clipboard, (1092.8, 614.4));
         Assert.Equal(560, fitted.W);
         Assert.Equal(307.2, fitted.H, 6);

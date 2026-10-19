@@ -35,8 +35,8 @@ public sealed record ClipboardRow(long Id, string Display, DateTimeOffset Copied
 
     public bool IsImage => Thumb is not null;
 
-    /// <summary>"Image · 1920 x 1080".</summary>
-    public static string ImageLabel(int width, int height) => $"Image · {width} x {height}";
+    /// <summary>"Image · 1920 × 1080".</summary>
+    public static string ImageLabel(int width, int height) => $"Image · {width} × {height}";
 
     /// <summary>The colour a row of only "#RGB" or "#RRGGBB" names, opaque; null for any other row.</summary>
     public uint? Colour

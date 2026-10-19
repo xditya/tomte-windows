@@ -15,6 +15,12 @@ public static unsafe class DesktopEffects
 {
     public static void CopyToClipboard(string text) => ClipboardSnapshot.SetText(text);
 
+    /// <summary>
+    /// Ctrl+V to the window that has the keys, as if the user pressed it; not while a modifier is still held, which would
+    /// make it another shortcut. False when it was not sent.
+    /// </summary>
+    public static bool Paste() => !ClipboardSnapshot.ModifierDown() && ClipboardSnapshot.SendChord(VIRTUAL_KEY.VK_CONTROL, VIRTUAL_KEY.VK_V);
+
     /// <summary>The URL is validated by the tool; the shell opens it in the default browser.</summary>
     public static void OpenUrl(string url) =>
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true })?.Dispose();
