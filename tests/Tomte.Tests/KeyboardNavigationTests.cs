@@ -17,6 +17,14 @@ public class KeyboardNavigationTests
     private const float Width = 560;
     private static readonly Vector2 Body = new(Width, 318);
 
+    // The Clipboard panel's targets with history on and these rows, all copied a moment ago.
+    private static IReadOnlyList<Target> Clip(long[] ids, long? selected = null)
+    {
+        var now = DateTimeOffset.UnixEpoch.AddDays(1);
+        var rows = ids.Select(id => new Tomte.Core.Clipboard.ClipboardRow(id, $"item {id}", now)).ToList();
+        return new ClipboardPanelLayout(Body).Targets(on: true, rows, ClipboardPanelLayout.Lines(rows, now), 0, asking: false, rows.FirstOrDefault(r => r.Id == selected));
+    }
+
     // One label per tab in group 1 with the current one checked, then the search button and the Ask pill.
     private static Target[] Strip(PanelId current)
     {
@@ -58,10 +66,10 @@ public class KeyboardNavigationTests
     {
         ShelfItem Item(int i) => new(i, $"file {i}.pdf", $@"C:\docs\file {i}.pdf", ShelfKind.Reference, default);
         var items = Enumerable.Range(1, 3).Select(Item).ToList();
-        // The shelf with the band showing the first tile's actions: the tiles are one stop, the band another.
+        // The shelf with the band showing the first tile's actions: the tiles are one stop, the band another, the filter a third.
         var shelf = ShelfLayout.Targets(Body, 0, items, items[0], [items[0]], false);
-        Assert.Equal(["0:Shelf", "0:search", "0:ask", "1:tile:1", "1:act:Open"], Walk([Strip(PanelId.Shelf), shelf]));
-        Assert.Equal(["1:act:Open", "1:tile:1", "0:ask", "0:search", "0:Shelf"], Walk([Strip(PanelId.Shelf), shelf], -1));
+        Assert.Equal(["0:Shelf", "0:search", "0:ask", "1:tile:1", "1:act:Open", "1:filter:All", "1:clear"], Walk([Strip(PanelId.Shelf), shelf]));
+        Assert.Equal(["1:clear", "1:filter:All", "1:act:Open", "1:tile:1", "0:ask", "0:search", "0:Shelf"], Walk([Strip(PanelId.Shelf), shelf], -1));
 
         // Shortcuts: the tiles and the add tile are one stop.
         var shortcuts = ShortcutGrid.Targets([new Shortcut(1, "Notes", @"C:\notes.exe", null)], 0, Body);
@@ -78,13 +86,14 @@ public class KeyboardNavigationTests
         Assert.Equal(["0:Scratchpad", "0:search", "0:ask", "1:note"], Walk([Strip(PanelId.Scratchpad), note]));
         Assert.Equal(["1:note", "0:ask", "0:search", "0:Scratchpad"], Walk([Strip(PanelId.Scratchpad), note], -1));
 
-        // Clipboard: the switch, the rows (one stop), the row's own remove button, Clear all.
-        var clipboard = new ClipboardPanelLayout(Body).Targets(on: true, [7, 8, 9], 0, asking: false);
-        Assert.Equal(["0:Clipboard", "0:search", "0:ask", "1:switch", "1:row:7", "1:remove:7", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard]));
-        Assert.Equal(["1:clear", "1:remove:7", "1:row:7", "1:switch", "0:ask", "0:search", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1));
-        // A remove button focused last: Tab comes back into the list at its row, Shift+Tab at the button.
-        Assert.Equal(["0:Clipboard", "0:search", "0:ask", "1:switch", "1:row:8", "1:remove:8", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard], 1, "remove:8"));
-        Assert.Equal(["1:clear", "1:remove:8", "1:row:8", "1:switch", "0:ask", "0:search", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1, "remove:8"));
+        // Clipboard: the switch, the filter box, the rows (one stop), Clear all.
+        var clipboard = Clip([7, 8, 9]);
+        Assert.Equal(["0:Clipboard", "0:search", "0:ask", "1:switch", "1:filter", "1:row:7", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard]));
+        Assert.Equal(["1:clear", "1:row:7", "1:filter", "1:switch", "0:ask", "0:search", "0:Clipboard"], Walk([Strip(PanelId.Clipboard), clipboard], -1));
+        // A row focused last: Tab comes back into the list at it.
+        Assert.Equal(["0:Clipboard", "0:search", "0:ask", "1:switch", "1:filter", "1:row:8", "1:clear"], Walk([Strip(PanelId.Clipboard), clipboard], 1, "row:8"));
+        // With a row selected, its preview's buttons are a stop of their own after the rows.
+        Assert.Equal(["0:Clipboard", "0:search", "0:ask", "1:switch", "1:filter", "1:row:7", "1:preview:Paste", "1:clear"], Walk([Strip(PanelId.Clipboard), Clip([7, 8, 9], selected: 7)]));
 
         // History with a conversation open: the rows are one stop, entered at the open one, then Continue and Copy answer.
         var rows = Enumerable.Range(0, 4).Select(i => AiHistoryTests.Talk($"k{i}", DateTimeOffset.UnixEpoch.AddMinutes(-i))).ToList();
@@ -157,18 +166,16 @@ public class KeyboardNavigationTests
     [Fact]
     public void FocusGoesToWhatTookThePlaceOfARemovedTarget()
     {
-        var clipboard = new ClipboardPanelLayout(Body);
-        var before = clipboard.Targets(on: true, [7, 8, 9], 0, asking: false);
-        // The middle row goes: the row now in its place; its remove button goes: the next remove button.
-        var after = clipboard.Targets(on: true, [7, 9], 0, asking: false);
+        var before = Clip([7, 8, 9]);
+        // The middle row goes: the row now in its place.
+        var after = Clip([7, 9]);
         Assert.Equal("row:9", after[Target.Refocus(after, 3, before[3], _ => null)].Id);
-        Assert.Equal("remove:9", after[Target.Refocus(after, 4, before[4], _ => null)].Id);
         // The last row goes: the row before it, not Clear all.
-        var last = clipboard.Targets(on: true, [7, 8], 0, asking: false);
-        Assert.Equal("row:8", last[Target.Refocus(last, 5, before[5], _ => null)].Id);
-        // The only row goes: the switch.
-        var none = clipboard.Targets(on: true, [], 0, asking: false);
-        Assert.Equal("switch", none[Target.Refocus(none, 1, before[1], _ => null)].Id);
+        var last = Clip([7, 8]);
+        Assert.Equal("row:8", last[Target.Refocus(last, 4, before[4], _ => null)].Id);
+        // The only row goes: the filter box before it.
+        var none = Clip([]);
+        Assert.Equal("filter", none[Target.Refocus(none, 2, before[2], _ => null)].Id);
 
         // A closed conversation's Continue: the rows, entered at the one that was open.
         var rows = Enumerable.Range(0, 4).Select(i => AiHistoryTests.Talk($"k{i}", DateTimeOffset.UnixEpoch.AddMinutes(-i))).ToList();
@@ -184,7 +191,7 @@ public class KeyboardNavigationTests
     public void LeftIntoATabLandsOnItsLastItemAndUpFromTheTopGoesToTheLabels()
     {
         // The last row of a list, not Clear all; the last tile of a grid (the add tile); a view with no group: its last stop.
-        var clipboard = new ClipboardPanelLayout(Body).Targets(on: true, [7, 8, 9], 0, asking: false);
+        var clipboard = Clip([7, 8, 9]);
         Assert.Equal("row:9", clipboard[Target.Last(clipboard)].Id);
         var shortcuts = ShortcutGrid.Targets([new Shortcut(1, "Notes", @"C:\notes.exe", null), new Shortcut(2, "Mail", @"C:\mail.exe", null)], 0, Body);
         Assert.Equal(ShortcutGrid.AddId, shortcuts[Target.Last(shortcuts)].Id);
@@ -193,7 +200,7 @@ public class KeyboardNavigationTests
         Assert.Equal(-1, Target.Last([]));
 
         // Up from the first row or the top row of a grid has nowhere to go; from lower down it has.
-        Assert.True(Target.AtTop(clipboard, 1));
+        Assert.True(Target.AtTop(clipboard, 2));
         Assert.False(Target.AtTop(clipboard, 3));
         Assert.True(Target.AtTop(shortcuts, 0));
         // In no group: the switch at the top, the seek bar over the buttons, but not a button under the seek bar.
@@ -215,7 +222,7 @@ public class KeyboardNavigationTests
     public void LeftAndRightOffTheShelfPageScrollARow()
     {
         // Two rows of four on the page, twelve items: Right from the page's last tile scrolls a row, Left back.
-        var body = new Vector2(560, 260 - PanelSpace.TabStripHeight);
+        var body = new Vector2(760, (float)PanelSize.Shelf.H - PanelSpace.TabStripHeight);
         Assert.Equal(2, ShelfLayout.Rows(body));
         Assert.Equal(4, ShelfLayout.ScrollSideways(0, 7, 1, 12, body));
         Assert.Equal(0, ShelfLayout.ScrollSideways(4, 4, -1, 12, body));

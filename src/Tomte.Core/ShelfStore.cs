@@ -431,7 +431,7 @@ public sealed class ShelfStore : IShelf
         return Directory.Exists(slot) && new DirectoryInfo(slot).Attributes.HasFlag(FileAttributes.ReparsePoint) ? null : slot;
     }
 
-    internal static string? ReadTextFile(string path)
+    public static string? ReadTextFile(string path)
     {
         try
         {

@@ -73,7 +73,7 @@ public class IslandOutlineTests
         Assert.Equal(new IslandGeometry(120, 0, 0), IslandGeometry.Hidden);
         Assert.Equal(new IslandGeometry(220, 40, 20), IslandGeometry.Compact);
         Assert.Equal(new IslandGeometry(360, 52, 26), IslandGeometry.ShelfDrop);
-        Assert.Equal(new IslandGeometry(560, 260, 28), IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H));
+        Assert.Equal(new IslandGeometry(560, 490, 28), IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H));
         Assert.All(Resting, g => Assert.Equal((0.0, 0.0, g.Width), (g.RampW, g.RampH, g.OuterWidth)));
     }
 
@@ -361,9 +361,9 @@ public class IslandOutlineTests
     }
 
     [Theory]
-    [InlineData(1.0, 610, 262)]
-    [InlineData(1.25, 762, 327)]
-    [InlineData(1.5, 914, 392)]
+    [InlineData(1.0, 610, 492)]
+    [InlineData(1.25, 762, 615)]
+    [InlineData(1.5, 914, 737)]
     public void TheNotchsWindowIsItsOutlineAndOnePixelAround(double scale, int width, int height)
     {
         var g = IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H).Attached();

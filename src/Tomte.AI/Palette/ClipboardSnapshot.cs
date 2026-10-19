@@ -294,12 +294,12 @@ internal static unsafe class ClipboardSnapshot
         }
     }
 
-    private static bool ModifierDown() =>
+    internal static bool ModifierDown() =>
         Down(VIRTUAL_KEY.VK_LWIN) || Down(VIRTUAL_KEY.VK_RWIN) || Down(VIRTUAL_KEY.VK_MENU) || Down(VIRTUAL_KEY.VK_SHIFT) || Down(VIRTUAL_KEY.VK_CONTROL);
 
     private static bool Down(VIRTUAL_KEY vk) => (PInvoke.GetAsyncKeyState((int)vk) & 0x8000) != 0;
 
-    private static bool SendChord(VIRTUAL_KEY modifier, VIRTUAL_KEY key)
+    internal static bool SendChord(VIRTUAL_KEY modifier, VIRTUAL_KEY key)
     {
         ReadOnlySpan<INPUT> inputs = [Key(modifier, false), Key(key, false), Key(key, true), Key(modifier, true)];
         return PInvoke.SendInput(inputs, sizeof(INPUT)) == inputs.Length;

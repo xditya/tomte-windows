@@ -49,9 +49,9 @@ public interface IClipboardSource
 
 /// <summary>
 /// What one clipboard update came to: the text or the image to keep, or neither; and a line for the log that never
-/// contains the text.
+/// contains the text. Source is the executable of the app that put it there, when Windows says.
 /// </summary>
-public readonly record struct ClipboardRead(string? Text, string Outcome, CopiedImage? Image = null);
+public readonly record struct ClipboardRead(string? Text, string Outcome, CopiedImage? Image = null, string? Source = null);
 
 /// <summary>
 /// Decides for one clipboard update whether history keeps it, reading as little as it can. Paused,
@@ -139,7 +139,7 @@ public static class ClipboardReader
                 return Skip($"{text.Length} characters, over the {maxChars} kept");
             }
 
-            return string.IsNullOrWhiteSpace(text) ? Skip("blank text") : new(text, $"kept {text.Length} characters");
+            return string.IsNullOrWhiteSpace(text) ? Skip("blank text") : new(text, $"kept {text.Length} characters", Source: clipboard.OwnerExe);
         }
         finally
         {
@@ -161,7 +161,7 @@ public static class ClipboardReader
         }
 
         var image = clipboard.ReadImage(png);
-        return new(null, $"kept an image of {image.Length} bytes ({(png ? "PNG" : "bitmap")})", image);
+        return new(null, $"kept an image of {image.Length} bytes ({(png ? "PNG" : "bitmap")})", image, clipboard.OwnerExe);
     }
 
     private static bool Open(IClipboardSource clipboard)

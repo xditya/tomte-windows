@@ -469,7 +469,7 @@ internal static partial class Program
         };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
-        panels.Register(StartShelf(island, triggers, store, db, text, log));
+        panels.Register(StartShelf(island, triggers, store, db, text, log, out var shelf));
         // The island goes before the settings window comes up over where it was.
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, () =>
         {
@@ -491,7 +491,16 @@ internal static partial class Program
             }
         };
         // The panel's switch saves the setting off the UI thread; the watch follows the settings file like every other change.
-        panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), text, log));
+        // Paste hides the island, which hands the keys back to the app that had them, then sends that app Ctrl+V. The
+        // pick is written on the listener's thread; the wait covers that and the hand back.
+        void PasteBack()
+        {
+            triggers.Hide();
+            _ = Task.Delay(150).ContinueWith(_ => Tomte.AI.Palette.DesktopEffects.Paste(), TaskScheduler.Default);
+        }
+
+        panels.Register(new ClipboardPanel(island, clipboard, on => Task.Run(() => store.Save(store.Current with { KeepClipboardHistory = on })), text, typing, PasteBack,
+            entry => shelf.Add([entry]), log));
         // Continue opens the AI box on the next turn, after the click that asked for it.
         panels.Register(new HistoryPanel(island, History!, text, item => island.Queue.TryEnqueue(() => ContinueInPalette(triggers, item)), answer => CopyAnswer(answer, log), log));
         triggers.Panels = panels;
@@ -548,10 +557,10 @@ internal static partial class Program
     /// The shelf takes what is dropped on the island and is the Shelf tab. Its database and its folder sit next to
     /// the settings file, and neither is opened before the first drop or the first time the shelf shows.
     /// </summary>
-    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, TextRenderer text, Action<string>? log)
+    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, TextRenderer text, Action<string>? log, out ShelfStore shelfStore)
     {
         string dir = Path.GetDirectoryName(store.FilePath)!;
-        var shelf = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log)
+        var shelf = shelfStore = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log)
         {
             RemoveAfterDragOut = () => store.Current.RemoveAfterDragOut,
         };

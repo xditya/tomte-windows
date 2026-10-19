@@ -11,14 +11,22 @@ public sealed record ShellImage(int Width, int Height, byte[] Pixels);
 
 /// <summary>
 /// The icon Explorer shows for a file, folder or link, drawn by the shell at the exact pixel size asked for, so
-/// a tile gets a sharp icon at 100%, 125% and 150% alike. Icon only: no thumbnail handler runs, so a photo shows
-/// its type's icon, not the photo. Extraction blocks for milliseconds to tens of milliseconds and can load the
+/// a tile gets a sharp icon at 100%, 125% and 150% alike. <see cref="For"/> runs no thumbnail handler, so a photo shows
+/// its type's icon; <see cref="Thumbnail"/> asks for the photo. Extraction blocks for milliseconds to tens of milliseconds and can load the
 /// shell's icon handlers, so call it from a worker thread, never the island's.
 /// </summary>
 public static class ShellIcon
 {
     /// <summary>Null when the shell has no icon for the path (gone, unreadable).</summary>
-    public static unsafe ShellImage? For(string path, int size)
+    public static ShellImage? For(string path, int size) => Image(path, size, SIIGBF.SIIGBF_ICONONLY);
+
+    /// <summary>
+    /// The picture the shell keeps for a file, fitted into a square of <paramref name="size"/> pixels: a photo shows
+    /// itself. A thumbnail the shell has to make can take a second or more. Null when it has none.
+    /// </summary>
+    public static ShellImage? Thumbnail(string path, int size) => Image(path, size, SIIGBF.SIIGBF_THUMBNAILONLY);
+
+    private static unsafe ShellImage? Image(string path, int size, SIIGBF flags)
     {
         IShellItemImageFactory? factory = null;
         try
@@ -28,7 +36,7 @@ public static class ShellIcon
                 return null;
             }
 
-            factory.GetImage(new SIZE(size, size), SIIGBF.SIIGBF_ICONONLY, out var bitmap);
+            factory.GetImage(new SIZE(size, size), flags, out var bitmap);
             using (bitmap)
             {
                 return Read(bitmap);

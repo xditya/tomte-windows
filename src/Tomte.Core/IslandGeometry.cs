@@ -59,8 +59,8 @@ public static class PanelSize
     public static readonly (double W, double H) Media = (Width, 140);
     public static readonly (double W, double H) Shortcuts = (Width, 300);
     public static readonly (double W, double H) Scratchpad = (Width, 320);
-    public static readonly (double W, double H) Shelf = (Width, 260);
-    public static readonly (double W, double H) Clipboard = (Width, 360);
+    public static readonly (double W, double H) Shelf = (Width, 490);
+    public static readonly (double W, double H) Clipboard = (Width, 470);
     public static readonly (double W, double H) History = (Width, 400);
     public const double PaletteWidth = 640;
     public const double PaletteMinHeight = 150;
