@@ -378,14 +378,14 @@ public class MascotTests
     [Fact]
     public void BesideAFieldTheTomteIsCentredOnItsRow()
     {
-        var palette = new PaletteLayout(640, mascot: true);
-        var back = new PaletteLayout(640, mascot: true, back: true);
+        var palette = new PaletteLayout(720, mascot: true);
+        var back = new PaletteLayout(720, mascot: true, back: true);
         var search = new SearchLayout(680, mascot: true, 300);
         var result = new DropResultLayout(new DropResult("Summarize · Q3-report.pdf", "Sent to ollama", "Kept on the shelf.", false, "Revenue went up.", [], []), 640, mascot: true);
         (string Name, MascotSeat Seat, IslandGeometry Shape, System.Drawing.RectangleF Field, float Under, float Next)[] cases =
         [
-            ("AI box", PaletteLayout.Seat, IslandGeometry.Panel(640, 150), palette.Prompt, palette.IncludeLabel.Slot.X, palette.Prompt.X),
-            ("AI box with back", PaletteLayout.Seat, IslandGeometry.Panel(640, 150), back.Prompt, back.IncludeLabel.Slot.X, back.Back.X),
+            ("AI box", PaletteLayout.Seat, IslandGeometry.Panel(720, 150), palette.Prompt, PaletteLayout.Pad, palette.Prompt.X),
+            ("AI box with back", PaletteLayout.Seat, IslandGeometry.Panel(720, 150), back.Prompt, PaletteLayout.Pad, back.Back.X),
             ("search box", SearchLayout.Seat, IslandGeometry.Panel(680, 300), search.Box, search.Band.X, search.Box.X),
             ("drop result", DropResultLayout.Seat, IslandGeometry.Panel(640, result.Height), result.Slots[0].Slot, result.Band.X + result.Body[0].At.X, result.Slots[0].Slot.X),
         ];
@@ -434,14 +434,14 @@ public class MascotTests
                 var (lastShape, lastShift) = (from, fromSeat);
                 foreach (var (shape, shift) in frames)
                 {
-                    // Against the outline's top-left corner, from one frame to the next: the seat's springs add under 0.6 DIP
+                    // Against the outline's top-left corner, from one frame to the next: the seat's springs add under 1 DIP
                     // across, nothing to the size, and down no more than that plus following the middle of a shape still
-                    // too shallow for the field's row. A seat taken at once would add its 5 to 9 DIPs in one frame.
+                    // too shallow for the field's row. A seat taken at once would add its 5 to 14 DIPs in one frame.
                     var bare = Delta(lastShape, default, shape, default);
                     var seated = Delta(lastShape, lastShift, shape, shift);
                     float deepened = (float)Math.Abs(shape.Depth - lastShape.Depth);
                     Assert.True(
-                        Math.Abs(seated.X - bare.X) < 0.6f && Math.Abs(seated.Y - bare.Y) < 0.6f + (deepened / 2) && seated.Z == bare.Z,
+                        Math.Abs(seated.X - bare.X) < 1f && Math.Abs(seated.Y - bare.Y) < 1f + (deepened / 2) && seated.Z == bare.Z,
                         $"{from} to {to}, {preset}: the tomte jumped {seated - bare} DIP at {shape}");
                     TomteIsInside(shape, shift);
                     (lastShape, lastShift) = (shape, shift);
