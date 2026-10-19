@@ -408,6 +408,14 @@ public class ProviderTests
     }
 
     [Fact]
+    public void ASavedKeyShowsOnlyItsLastFourAndAShortOneNothing()
+    {
+        Assert.Equal("\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u20223fQa", ProviderSetup.Masked("sk-ant-api03-abcdefgh3fQa"));
+        Assert.DoesNotContain("sk-", ProviderSetup.Masked("sk-ant-api03-abcdefgh3fQa"), StringComparison.Ordinal);
+        Assert.Equal("\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022", ProviderSetup.Masked("short-key-12"));
+    }
+
+    [Fact]
     public void CheckSaysWhatTheFormLacks()
     {
         var vault = new FakeVault();
