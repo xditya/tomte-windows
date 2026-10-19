@@ -280,16 +280,40 @@ public sealed class PanelLayoutTests
     [Fact]
     public void ShelfWordsFitTheirPlaces()
     {
-        var body = new Vector2(560, 260 - PanelSpace.TabStripHeight);
+        var body = new Vector2(760, (float)PanelSize.Shelf.H - PanelSpace.TabStripHeight);
         var head = ShelfLayout.HeadText(body, 12);
 
-        // The count runs up to the hint, which ends at the right padding; neither is cut.
-        Assert.True(head[1].Slot.Right <= head[2].Slot.Left);
-        Assert.Equal(body.X - ShelfLayout.PadX, head[2].Slot.Right, 0.01);
-        foreach (var line in head.Skip(1))
+        // The count follows the title and ends before the filter; neither is cut.
+        Assert.Equal(TextStyle.PageTitle, head[0].Style);
+        Assert.Equal("12 items · kept as references", head[1].Text);
+        var track = ShelfLayout.Filter(body, ShelfFilter.All).Track;
+        Assert.True(head[1].Slot.Right <= track.Left);
+        Assert.Equal(body.X - ShelfLayout.PadX, track.Right, 0.01);
+        foreach (var line in head)
         {
             using var laid = TextLayout.Of(new TextRun(line.Text, line.Style, line.Slot.Width));
             Assert.False(laid.Trimmed, line.Text);
+        }
+
+        // The footer's hint and its keys fit before Clear shelf at its widest; its word fits its button.
+        foreach (bool clearing in new[] { false, true })
+        {
+            var foot = ShelfLayout.Foot(body, clearing);
+            Assert.Equal(ShelfLayout.FootKeys.Length, foot.Keys.Count);
+            var asking = ShelfLayout.Foot(body, true).Clear;
+            Assert.True(foot.Keys[^1].Does.Slot.Right <= asking.Left);
+            Assert.True(foot.Hint.Slot.Right <= foot.Keys[0].Cap.Left);
+            Assert.Equal(body.X - ShelfLayout.PadX, foot.Clear.Right, 0.01);
+            Assert.Equal(clearing ? ShelfLayout.ClearAsk : ShelfLayout.ClearText, foot.ClearLabel.Text);
+            using var clear = TextLayout.Of(new TextRun(foot.ClearLabel.Text, foot.ClearLabel.Style, foot.ClearLabel.Slot.Width));
+            Assert.False(clear.Trimmed);
+        }
+
+        // The dashed tile's words fit it whole on at most two lines.
+        var (_, words, _) = ShelfLayout.DropSlotText(ShelfLayout.Tile(0, body).Size);
+        using (var laid = TextLayout.Of(words))
+        {
+            Assert.False(laid.Trimmed);
         }
 
         // The drop target's glyph and word are centred together, and the word is whole.

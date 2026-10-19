@@ -854,7 +854,7 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal("c.txt", ShelfStore.Unique("c.txt", taken));
     }
 
-    private static readonly System.Numerics.Vector2 Body = new(560, 260 - PanelSpace.TabStripHeight);
+    private static readonly System.Numerics.Vector2 Body = new(760, (float)PanelSize.Shelf.H - PanelSpace.TabStripHeight);
 
     [Fact]
     public void TheGridFitsTheShelfPanelClearOfItsCorners()
@@ -863,14 +863,15 @@ public sealed class ShelfTests : IDisposable
         for (int slot = 0; slot < 8; slot++)
         {
             var tile = ShelfLayout.Tile(slot, Body);
-            Assert.True(tile.Left >= ShelfLayout.PadX && tile.Right <= Body.X - ShelfLayout.PadX + 0.01f && tile.Bottom <= Body.Y - ShelfLayout.PadBottom + 0.01f, $"tile {slot} at {tile}");
-            // The panel's bottom corners have a radius of 22; a tile corner must sit inside the rounded shape.
-            Assert.True(InsideRoundedBottom(tile.Left, tile.Bottom, Body, 22) && InsideRoundedBottom(tile.Right, tile.Bottom, Body, 22), $"tile {slot}");
+            Assert.True(tile.Left >= ShelfLayout.PadX && tile.Right <= Body.X - ShelfLayout.PadX + 0.01f && tile.Bottom <= ShelfLayout.GridBottom(Body) + 0.01f, $"tile {slot} at {tile}");
+            // The panel's bottom corners have a radius of 28 at most; a tile corner must sit inside the rounded shape.
+            Assert.True(InsideRoundedBottom(tile.Left, tile.Bottom, Body, 28) && InsideRoundedBottom(tile.Right, tile.Bottom, Body, 28), $"tile {slot}");
         }
     }
 
-    // The Shelf's own width, where every name fits, and the 60% cap on monitors 1280 pixels wide at 150% and 175%, where they do not.
-    public static TheoryData<float, bool> BandWidths => new() { { 560, false }, { 560, true }, { 512, false }, { 512, true }, { 440, false }, { 440, true }, { 360, true } };
+    // The Shelf's own width, where every name fits, a narrower one with three columns, and the 60% cap on monitors 1280 pixels
+    // wide at 150% and 175%, where they do not.
+    public static TheoryData<float, bool> BandWidths => new() { { 760, false }, { 760, true }, { 600, false }, { 600, true }, { 512, false }, { 512, true }, { 440, false }, { 440, true } };
 
     [Theory]
     [MemberData(nameof(BandWidths))]
@@ -883,7 +884,8 @@ public sealed class ShelfTests : IDisposable
         {
             var box = actions[i].Box;
             Assert.True(box.Height >= StateLook.ActionHeight && box.Width >= StateLook.MinTarget, $"{actions[i].Action} is {box.Size}");
-            Assert.True(box.Left >= ShelfLayout.PadX && box.Right <= width - ShelfLayout.PadX + 0.01f && box.Top >= 0 && box.Bottom <= ShelfLayout.GridTop - ShelfLayout.Gap + 0.01f, $"{actions[i].Action} at {box}");
+            Assert.True(box.Left >= ShelfLayout.PadX && box.Right <= ShelfLayout.BandRow(body).Right + 0.01f && box.Top >= ShelfLayout.Top && box.Bottom <= ShelfLayout.GridTop - ShelfLayout.HeadGap + 0.01f, $"{actions[i].Action} at {box}");
+            Assert.False(box.IntersectsWith(ShelfLayout.Filter(body, ShelfFilter.All).Track), $"{actions[i].Action} over the filter");
             Assert.True(box.Contains(actions[i].Icon), $"{actions[i].Action}'s icon");
             if (actions[i].Label is { } label)
             {
@@ -891,7 +893,7 @@ public sealed class ShelfTests : IDisposable
             }
 
             Assert.All(actions.Skip(i + 1), other => Assert.False(box.IntersectsWith(other.Box), $"{actions[i].Action} and {other.Action}"));
-            for (int slot = 0; slot < ShelfLayout.Rows(body) * ShelfLayout.Columns; slot++)
+            for (int slot = 0; slot < ShelfLayout.Rows(body) * ShelfLayout.Columns(body); slot++)
             {
                 // Nothing of a tile is covered, so its icon and name always show.
                 Assert.False(box.IntersectsWith(ShelfLayout.Tile(slot, body)), $"{actions[i].Action} over tile {slot}");
@@ -901,8 +903,8 @@ public sealed class ShelfTests : IDisposable
         // Remove's question always says itself; the rest are named when every name fits, else icons with tips.
         var remove = actions[^1];
         Assert.Equal(confirming ? ShelfLayout.ConfirmRemove : "Remove", remove.Label?.Text ?? "Remove");
-        Assert.Equal(width >= 560 || confirming, remove.Label is not null);
-        bool named = width >= 560;
+        Assert.Equal(width >= 760 || confirming, remove.Label is not null);
+        bool named = width >= 760;
         Assert.All(actions.SkipLast(1), a => Assert.Equal(named, a.Label is not null));
     }
 
@@ -921,41 +923,51 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
-    public void TheTargetsAreTheTilesThenTheBandsActionsForTheTileTheyAreFor()
+    public void TheTargetsAreTheTilesThenTheBandsActionsThenTheFilterAndClearShelf()
     {
         ShelfItem At(int i, ShelfKind kind = ShelfKind.Reference, string folder = @"C:\docs") => new(i, $"file {i}.pdf", Path.Combine(folder, $"file {i}.pdf"), kind, default);
         var items = Enumerable.Range(1, 10).Select(i => At(i)).ToList();
         items[1] = items[1] with { Missing = true };
         items[2] = At(3, ShelfKind.Content, @"C:\shelf\0123456789ab");
+        static List<Target> In(IReadOnlyList<Target> all, int group) => [.. all.Where(t => t.Group == group)];
 
-        // Nothing hovered: the page's eight tiles, Tab and arrows in group 1, each dragged out by a press.
-        var tiles = ShelfLayout.Targets(Body, 0, items, null, [], false);
+        // Nothing hovered: the page's eight tiles, Tab and arrows in group 1, each dragged out by a press; then the
+        // filter's four segments in group 3 with the current one checked, and Clear shelf.
+        var all = ShelfLayout.Targets(Body, 0, items, null, [], false, ShelfFilter.Text);
+        var tiles = In(all, 1);
         Assert.Equal(Enumerable.Range(1, 8).Select(i => $"tile:{i}"), tiles.Select(t => t.Id));
         Assert.All(tiles, t => Assert.True(t is { Kind: TargetKind.Tile, Group: 1, Draggable: true, Enabled: true }));
         Assert.Equal(Enumerable.Range(0, 8).Select(s => ShelfLayout.Tile(s, Body)), tiles.Select(t => t.Bounds));
         Assert.Equal("file 1.pdf\nC:\\docs", tiles[0].Tip);
         Assert.Equal("file 3.pdf\nKept on the shelf", tiles[2].Tip);
+        Assert.Equal([.. tiles.Select(t => t.Id), "filter:All", "filter:Files", "filter:Text", "filter:Links", "clear"], all.Select(t => t.Id));
+        Assert.Equal([false, false, true, false], In(all, 3).Select(t => t.Checked));
+        Assert.Equal(ShelfLayout.Foot(Body, false).Clear, all[^1].Bounds);
+        // Clear shelf only while there is something to clear; asking, it is wider.
+        Assert.DoesNotContain(ShelfLayout.Targets(Body, 0, [], null, [], false), t => t.Id == ShelfLayout.ClearId);
+        Assert.Contains(ShelfLayout.Targets(Body, 0, [], null, [], false, any: true), t => t.Id == ShelfLayout.ClearId);
+        Assert.True(ShelfLayout.Targets(Body, 0, items, null, [], false, clearing: true)[^1].Bounds.Width > all[^1].Bounds.Width);
 
         // The second tile's actions follow the tiles in group 2; it is missing, so only Copy path and Remove work.
-        var band = ShelfLayout.Targets(Body, 0, items, items[1], [items[1]], false);
-        Assert.Equal(Enum.GetValues<ShelfAction>().Select(a => $"act:{a}"), band.Skip(8).Select(t => t.Id));
-        Assert.All(band.Skip(8), t => Assert.True(t is { Kind: TargetKind.Button, Group: 2, Draggable: false, Tip: null }));
+        var band = In(ShelfLayout.Targets(Body, 0, items, items[1], [items[1]], false), 2);
+        Assert.Equal(Enum.GetValues<ShelfAction>().Select(a => $"act:{a}"), band.Select(t => t.Id));
+        Assert.All(band, t => Assert.True(t is { Kind: TargetKind.Button, Group: 2, Draggable: false, Tip: null }));
         // Named on the band, so with the keys a tip only says the key; Share has none.
-        Assert.Equal(["Enter", "Ctrl+Shift+E", "Ctrl+C", null, "Delete"], band.Skip(8).Select(t => t.TipWith(keys: true)));
-        Assert.Equal([false, false, true, false, true], band.Skip(8).Select(t => t.Enabled));
-        Assert.Equal(ShelfLayout.Actions(Body, false).Select(a => a.Box), band.Skip(8).Select(t => t.Bounds));
+        Assert.Equal(["Enter", "Ctrl+Shift+E", "Ctrl+C", null, "Delete"], band.Select(t => t.TipWith(keys: true)));
+        Assert.Equal([false, false, true, false, true], band.Select(t => t.Enabled));
+        Assert.Equal(ShelfLayout.Actions(Body, false).Select(a => a.Box), band.Select(t => t.Bounds));
         // Acting on the selection: an action works when one of the items allows it.
-        Assert.All(ShelfLayout.Targets(Body, 0, items, items[1], [items[0], items[1]], false).Skip(8), t => Assert.True(t.Enabled));
+        Assert.All(In(ShelfLayout.Targets(Body, 0, items, items[1], [items[0], items[1]], false), 2), t => Assert.True(t.Enabled));
 
         // Icon only on a narrow band, each named in its tooltip, with its key while the island has the keys.
-        var narrow = ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [items[0]], false).Skip(8).ToList();
+        var narrow = In(ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [items[0]], false), 2);
         Assert.Equal(Enum.GetValues<ShelfAction>().Select(ShelfLayout.Name), narrow.Select(t => t.Tip));
         Assert.Equal(["Open (Enter)", "Show in folder (Ctrl+Shift+E)", "Copy path (Ctrl+C)", "Share", "Remove (Delete)"], narrow.Select(t => t.TipWith(keys: true)));
         Assert.Equal("Show in folder", ShelfLayout.Name(ShelfAction.Reveal));
 
         // Scrolled away from the tile the band was for: no band.
-        Assert.Equal(6, ShelfLayout.Targets(Body, 4, items, items[0], [items[0]], false).Count);
-        Assert.Equal(["tile:5", "tile:6", "tile:7", "tile:8", "tile:9", "tile:10"], ShelfLayout.Targets(Body, 4, items, null, [], false).Select(t => t.Id));
+        Assert.Empty(In(ShelfLayout.Targets(Body, 4, items, items[0], [items[0]], false), 2));
+        Assert.Equal(["tile:5", "tile:6", "tile:7", "tile:8", "tile:9", "tile:10"], In(ShelfLayout.Targets(Body, 4, items, null, [], false), 1).Select(t => t.Id));
     }
 
     [Fact]
@@ -995,7 +1007,8 @@ public sealed class ShelfTests : IDisposable
     public void ThePointerAimsAtTheBandInsideTheTriangleToItsRow()
     {
         var band = ShelfLayout.BandRow(Body);
-        Assert.Equal(new System.Drawing.RectangleF(14, 6, 532, 28), band);
+        // The head row's actions, from the left padding up to the filter.
+        Assert.Equal(System.Drawing.RectangleF.FromLTRB(16, 16, ShelfLayout.Filter(Body, ShelfFilter.All).Track.Left - ShelfLayout.FilterApart, 44), band);
         // Left the first tile at (60, 90): up and to the right, toward Remove at the far end, is on the way.
         var from = new System.Numerics.Vector2(60, 90);
         Assert.True(ShelfLayout.Aiming(from, new(300, 60), band));
@@ -1004,7 +1017,7 @@ public sealed class ShelfTests : IDisposable
         // Down, along the row of tiles, or past the band's row: not.
         Assert.False(ShelfLayout.Aiming(from, new(60, 120), band));
         Assert.False(ShelfLayout.Aiming(from, new(200, 90), band));
-        Assert.False(ShelfLayout.Aiming(from, new(300, 66), band));
+        Assert.False(ShelfLayout.Aiming(from, new(340, 66), band));
         Assert.False(ShelfLayout.Aiming(from, new(300, 2), band));
         // Last seen on a button: going back down into the grid is leaving the band.
         Assert.False(ShelfLayout.Aiming(new(300, 20), new(300, 50), band));
@@ -1115,18 +1128,88 @@ public sealed class ShelfTests : IDisposable
     [Fact]
     public void TheStringsThatWaitForTheRenderer()
     {
-        Assert.Equal("1 item · references by default", ShelfLayout.Head(1));
-        Assert.Equal("3 items · references by default", ShelfLayout.Head(3));
+        Assert.Equal("1 item · kept as references", ShelfLayout.Head(1));
+        Assert.Equal("3 items · kept as references", ShelfLayout.Head(3));
         Assert.Equal("4 KB", ShelfLayout.Size(4000));
         Assert.Equal("1 KB", ShelfLayout.Size(20));
         Assert.Equal("2.4 MB", ShelfLayout.Size(2_516_582));
         Assert.Equal("5.0 GB", ShelfLayout.Size(5L << 30));
         var item = Item(ShelfKind.Reference, @"C:\a\Q3-report.pdf") with { Size = 2_516_582 };
-        Assert.Equal("2.4 MB", ShelfLayout.Meta(item));
+        Assert.Equal("PDF · 2.4 MB", ShelfLayout.Meta(item));
         Assert.Equal("File moved or deleted", ShelfLayout.Meta(item with { Missing = true }));
         Assert.Equal("Folder", ShelfLayout.Meta(item with { IsFolder = true, Size = null }));
+        Assert.Equal("Folder · 14 items", ShelfLayout.Meta(item with { IsFolder = true, Size = null }, new ShelfPeek(Entries: 14)));
+        Assert.Equal("Sheet · 18 KB", ShelfLayout.Meta(Item(ShelfKind.Reference, @"C:\a\budget.xlsx") with { Size = 18_000 }));
+        Assert.Equal("ZIP · 1 KB", ShelfLayout.Meta(Item(ShelfKind.Reference, @"C:\a\kit.zip") with { Size = 900 }));
+        Assert.Equal("2400 × 1200 · 224 KB", ShelfLayout.Meta(Item(ShelfKind.Reference, @"C:\a\hero.png") with { Size = 229_000 }, new ShelfPeek(Pixels: (2400, 1200))));
         Assert.Equal(Theme.KindPdf, ShelfLayout.KindColor(item));
         Assert.Equal("Show in folder", ShelfLayout.Name(ShelfAction.Reveal));
+
+        // Text the shelf keeps is "Text" with its length; a link is its path, or its host when it has none.
+        var text = Item(ShelfKind.Content, @"C:\shelf\1\Thanks Lea.txt");
+        Assert.Equal(("Text", "84 characters"), (ShelfLayout.DisplayName(text), ShelfLayout.Meta(text, new ShelfPeek("Thanks", 84))));
+        var link = Item(ShelfKind.Content, @"C:\shelf\2\example.com.url");
+        Assert.Equal(("/onboarding/v2", "Link"), (ShelfLayout.DisplayName(link, new ShelfPeek(Link: new Uri("https://example.com/onboarding/v2"))), ShelfLayout.Meta(link)));
+        Assert.Equal("example.com", ShelfLayout.DisplayName(link, new ShelfPeek(Link: new Uri("https://example.com/"))));
+        Assert.Equal("example.com", ShelfLayout.DisplayName(link));
+    }
+
+    [Fact]
+    public void TheFilterAndThePreviewTellItemsApartByWhatTheyAre()
+    {
+        var pdf = Item(ShelfKind.Reference, @"C:\a\plan.pdf");
+        var photo = Item(ShelfKind.Copy, @"C:\shelf\1\hero.PNG");
+        var folder = Item(ShelfKind.Reference, @"C:\a\Brand kit") with { IsFolder = true };
+        var text = Item(ShelfKind.Content, @"C:\shelf\2\note.txt");
+        var link = Item(ShelfKind.Content, @"C:\shelf\3\example.com.url");
+        // A .txt of the user's own is a file, not text the shelf keeps.
+        var own = Item(ShelfKind.Reference, @"C:\a\notes.txt");
+        ShelfItem[] all = [pdf, photo, folder, text, link, own];
+
+        Assert.All(all, i => Assert.True(ShelfLayout.Matches(i, ShelfFilter.All)));
+        Assert.Equal([pdf, photo, folder, own], all.Where(i => ShelfLayout.Matches(i, ShelfFilter.Files)));
+        Assert.Equal([text], all.Where(i => ShelfLayout.Matches(i, ShelfFilter.Text)));
+        Assert.Equal([link], all.Where(i => ShelfLayout.Matches(i, ShelfFilter.Links)));
+        Assert.Equal([ShelfPreview.Document, ShelfPreview.Image, ShelfPreview.Folder, ShelfPreview.Text, ShelfPreview.Link, ShelfPreview.Document], all.Select(ShelfLayout.PreviewOf));
+        Assert.Equal(ShelfPreview.Sheet, ShelfLayout.PreviewOf(Item(ShelfKind.Reference, @"C:\a\budget.csv")));
+
+        // The segments sit in their track, in order, apart, as wide whichever is current.
+        var (track, segments) = ShelfLayout.Filter(Body, ShelfFilter.All);
+        Assert.Equal(Enum.GetValues<ShelfFilter>(), segments.Select(s => s.Filter));
+        Assert.All(segments, s => Assert.True(track.Contains(s.Box) && s.Box.Height == ShelfLayout.SegmentHeight));
+        for (int i = 1; i < segments.Count; i++)
+        {
+            Assert.Equal(segments[i - 1].Box.Right + ShelfLayout.SegmentGap, segments[i].Box.Left, 2);
+        }
+
+        Assert.Equal(segments.Select(s => s.Box), ShelfLayout.Filters(Body, ShelfFilter.Links).Select(s => s.Box));
+        Assert.Equal([500, 400, 400, 400], segments.Select(s => s.Label.Style.Weight));
+    }
+
+    [Fact]
+    public void TheGridReflowsAndKeepsAPlaceForDrops()
+    {
+        // Four columns at the Shelf's width, three below 640, each tile's preview inside it.
+        Assert.Equal(4, ShelfLayout.Columns(Body));
+        var narrow = new System.Numerics.Vector2(600, Body.Y);
+        Assert.Equal(3, ShelfLayout.Columns(narrow));
+        Assert.Equal(narrow.X - ShelfLayout.PadX, ShelfLayout.Tile(2, narrow).Right, 2);
+        var tile = ShelfLayout.Tile(0, Body);
+        var preview = ShelfLayout.PreviewIn(tile.Size);
+        Assert.Equal((ShelfLayout.TilePad, 92f, tile.Width - 16), (preview.X, preview.Height, preview.Width));
+        Assert.All(ShelfLayout.TileText(Item(ShelfKind.Reference, @"C:\a\plan.pdf"), tile.Size), line => Assert.True(line.Slot.Top >= preview.Bottom && line.Slot.Bottom <= tile.Height - ShelfLayout.TilePad));
+
+        // The dashed tile follows the last item while the page has room, and is gone once it is full or empty.
+        Assert.Equal(3, ShelfLayout.DropSlotAt(Body, 0, 3));
+        Assert.Equal(7, ShelfLayout.DropSlotAt(Body, 0, 7));
+        Assert.Null(ShelfLayout.DropSlotAt(Body, 0, 8));
+        Assert.Equal(1, ShelfLayout.DropSlotAt(Body, 8, 9));
+        Assert.Null(ShelfLayout.DropSlotAt(Body, 0, 0));
+
+        // The sketches stay inside the preview.
+        Assert.All(ShelfLayout.PageSketch(preview.Size), bar => Assert.True(new System.Drawing.RectangleF(default, preview.Size).Contains(bar.Bar)));
+        Assert.All(ShelfLayout.SheetSketch(preview.Size), cell => Assert.True(new System.Drawing.RectangleF(default, preview.Size).Contains(cell.Cell)));
+        Assert.Equal(3, ShelfLayout.SheetSketch(preview.Size).Count(c => c.Header));
     }
 
     private static bool InsideRoundedBottom(float x, float y, System.Numerics.Vector2 body, float radius)

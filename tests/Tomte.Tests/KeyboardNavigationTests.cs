@@ -58,10 +58,10 @@ public class KeyboardNavigationTests
     {
         ShelfItem Item(int i) => new(i, $"file {i}.pdf", $@"C:\docs\file {i}.pdf", ShelfKind.Reference, default);
         var items = Enumerable.Range(1, 3).Select(Item).ToList();
-        // The shelf with the band showing the first tile's actions: the tiles are one stop, the band another.
+        // The shelf with the band showing the first tile's actions: the tiles are one stop, the band another, the filter a third.
         var shelf = ShelfLayout.Targets(Body, 0, items, items[0], [items[0]], false);
-        Assert.Equal(["0:Shelf", "0:search", "0:ask", "1:tile:1", "1:act:Open"], Walk([Strip(PanelId.Shelf), shelf]));
-        Assert.Equal(["1:act:Open", "1:tile:1", "0:ask", "0:search", "0:Shelf"], Walk([Strip(PanelId.Shelf), shelf], -1));
+        Assert.Equal(["0:Shelf", "0:search", "0:ask", "1:tile:1", "1:act:Open", "1:filter:All", "1:clear"], Walk([Strip(PanelId.Shelf), shelf]));
+        Assert.Equal(["1:clear", "1:filter:All", "1:act:Open", "1:tile:1", "0:ask", "0:search", "0:Shelf"], Walk([Strip(PanelId.Shelf), shelf], -1));
 
         // Shortcuts: the tiles and the add tile are one stop.
         var shortcuts = ShortcutGrid.Targets([new Shortcut(1, "Notes", @"C:\notes.exe", null)], 0, Body);
@@ -215,7 +215,7 @@ public class KeyboardNavigationTests
     public void LeftAndRightOffTheShelfPageScrollARow()
     {
         // Two rows of four on the page, twelve items: Right from the page's last tile scrolls a row, Left back.
-        var body = new Vector2(560, 260 - PanelSpace.TabStripHeight);
+        var body = new Vector2(760, (float)PanelSize.Shelf.H - PanelSpace.TabStripHeight);
         Assert.Equal(2, ShelfLayout.Rows(body));
         Assert.Equal(4, ShelfLayout.ScrollSideways(0, 7, 1, 12, body));
         Assert.Equal(0, ShelfLayout.ScrollSideways(4, 4, -1, 12, body));

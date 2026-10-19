@@ -14,6 +14,8 @@ internal static class ShelfColors
     public static readonly Color Clear = default;
     public static readonly Color Card = Of(Theme.Card);
     public static readonly Color CardSelected = Of(Theme.Raised);
+    public static readonly Color Raised = Of(Theme.Raised);
+    public static readonly Color RaisedHi = Of(Theme.RaisedHi);
     public static readonly Color Dash = Of(Theme.Dash);
     public static readonly Color Line = Of(Theme.Line);
     public static readonly Color Ink = Of(Theme.Ink);
@@ -104,7 +106,54 @@ internal sealed class Parts(Compositor compositor, TextRenderer text) : IDisposa
     }
 
     /// <summary>A line of text in a slot of <paramref name="host"/>, which goes with the part.</summary>
-    public void Text(ContainerVisual host, TextSlot line) => Keep(text.Create(host)).Show(line);
+    public TextVisual Text(ContainerVisual host, TextSlot line)
+    {
+        var visual = Keep(text.Create(host));
+        Texts.Add(visual);
+        visual.Show(line);
+        return visual;
+    }
+
+    /// <summary>A run of one or more lines from <paramref name="at"/> in <paramref name="host"/>, which goes with the part.</summary>
+    public void Text(ContainerVisual host, TextRun run, Vector2 at)
+    {
+        var visual = Keep(text.Create(host));
+        Texts.Add(visual);
+        visual.Show(run, at);
+    }
+
+    /// <summary>The part's text visuals, for a list that scrolls them to land them on whole pixels again.</summary>
+    public List<TextVisual> Texts { get; } = [];
+
+    /// <summary>One of the <see cref="Glyphs"/> in <paramref name="ink"/>, drawn to fill the square <paramref name="at"/>.</summary>
+    public void Glyph(ShapeVisual into, GlyphFigure[] figures, Color ink, RectangleF at)
+    {
+        var holder = Keep(compositor.CreateContainerShape());
+        holder.Offset = new Vector2(at.X, at.Y);
+        into.Shapes.Add(holder);
+        PaletteView.DrawGlyph(holder, figures, Brush(ink), at.Width);
+    }
+
+    /// <summary>A sprite in <paramref name="parent"/> at <paramref name="at"/>, cut to a rounded rectangle, filled with <paramref name="brush"/>.</summary>
+    public SpriteVisual Sprite(ContainerVisual parent, RectangleF at, float radius, CompositionBrush brush)
+    {
+        var sprite = Attach(parent, compositor.CreateSpriteVisual());
+        sprite.Offset = new Vector3(at.X, at.Y, 0);
+        sprite.Size = new Vector2(at.Width, at.Height);
+        var round = Keep(compositor.CreateRoundedRectangleGeometry());
+        round.Size = sprite.Size;
+        round.CornerRadius = new Vector2(radius);
+        sprite.Clip = Keep(compositor.CreateGeometricClip(round));
+        sprite.Brush = brush;
+        return sprite;
+    }
+
+    /// <summary>A keycap: the raised cap with its border and the keys in it, in <paramref name="into"/>'s own DIPs.</summary>
+    public void Keycap(ShapeVisual into, RectangleF cap, string keys)
+    {
+        Box(into, cap, Tomte.Core.Keycap.Corner, Brush(ShelfColors.Raised), Brush(ShelfColors.Mark), 1);
+        Text(into, new TextSlot(keys, Tomte.Core.Keycap.Style, cap));
+    }
 
     public void Dispose()
     {
@@ -120,6 +169,7 @@ internal sealed class Parts(Compositor compositor, TextRenderer text) : IDisposa
         }
 
         made.Clear();
+        Texts.Clear();
     }
 }
 

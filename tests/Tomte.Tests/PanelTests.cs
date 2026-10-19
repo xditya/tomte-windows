@@ -95,7 +95,7 @@ public class PanelTests
         Assert.Equal((560, 140), PanelSize.Of(PanelId.Media));
         Assert.Equal((560, 300), PanelSize.Of(PanelId.Shortcuts));
         Assert.Equal((560, 320), PanelSize.Of(PanelId.Scratchpad));
-        Assert.Equal((560, 260), PanelSize.Of(PanelId.Shelf));
+        Assert.Equal((560, 490), PanelSize.Of(PanelId.Shelf));
         Assert.Equal((560, 360), PanelSize.Of(PanelId.Clipboard));
         Assert.Equal((560, 400), PanelSize.Of(PanelId.History));
     }

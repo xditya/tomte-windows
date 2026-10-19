@@ -707,7 +707,7 @@ internal static unsafe partial class Program
             var local = new RectangleF(0, 0, tile.Width, tile.Height);
             float dim = item.Missing ? 0.55f : 1;
             c.RoundRect(Offset(local, origin), ShelfLayout.TileCorner, slot == selectedSlot ? 0x1CFFFFFFu : 0x0FFFFFFFu, dim);
-            c.RoundRect(Offset(new RectangleF(ShelfLayout.TilePad, ShelfLayout.TilePad, ShelfLayout.Icon, ShelfLayout.Icon), origin), 7, 0xFF000000 | ShelfLayout.KindColor(item), dim);
+            c.RoundRect(Offset(ShelfLayout.PreviewIn(tile.Size), origin), ShelfLayout.PreviewCorner, ShelfLayout.PreviewOf(item) == ShelfPreview.Document ? Theme.Paper : Theme.Raised, dim);
             if (slot == owner)
             {
                 c.RoundRect(Offset(local, origin), ShelfLayout.TileCorner, StateLook.Hover);
