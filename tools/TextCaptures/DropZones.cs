@@ -152,15 +152,14 @@ internal static partial class Program
                 }
                 else
                 {
-                    c.RoundRect(r, DropResultLayout.Corner, 0x0FFFFFFF);
-                    c.StrokeRect(r, DropResultLayout.Corner, 0x1AFFFFFF);
+                    c.RoundRect(r, DropResultLayout.Corner, Theme.Raised);
                 }
             }
 
             for (int i = 0; i < layout.Tiles.Count; i++)
             {
-                c.RoundRect(Offset(layout.Tiles[i], host), DropResultLayout.Corner, 0x0FFFFFFF);
-                c.RoundRect(Offset(DropResultLayout.Icon(layout.Tiles[i]), host), 6, 0xFF000000 | result.Tiles[i].Color);
+                c.RoundRect(Offset(layout.Tiles[i], host), DropResultLayout.TileCorner, Theme.Card);
+                c.RoundRect(Offset(DropResultLayout.Icon(layout.Tiles[i]), host), DropResultLayout.IconCorner, 0xFF000000 | result.Tiles[i].Color);
             }
 
             foreach (var line in layout.Slots)

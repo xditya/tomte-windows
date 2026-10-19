@@ -45,7 +45,10 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 public sealed class DropResultLayout
 {
     public const float Pad = 16, HeadTop = 12, HeadHeight = 18, LineTop = 34, LineHeight = 14, BodyTop = 58;
-    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8, Corner = 8;
+    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8;
+
+    /// <summary>A choice is a rectangular button; a result file is a small tile with its kind's square.</summary>
+    public const float Corner = 10, TileCorner = 12, IconCorner = 8;
 
     /// <summary>A choice's words, and the default's on its button filled with <see cref="StateLook.Accent"/>.</summary>
     public static readonly TextStyle ChoiceStyle = TextStyle.Secondary with { Color = Theme.Ink, Align = TextAlign.Center };
@@ -59,7 +62,7 @@ public sealed class DropResultLayout
     public static readonly TextStyle IndicatorStyle = TextStyle.Secondary with { Align = TextAlign.Trailing };
     public static readonly TextStyle BodyStyle = TextStyle.Primary with { LineHeight = 19 };
     public static readonly TextStyle CodeStyle = new(12, Family: TextStyle.Mono, LineHeight: 17);
-    public static readonly TextStyle TileName = new(12.5f, 600);
+    public static readonly TextStyle TileName = TextStyle.Title;
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
     public const float WheelStep = 3 * 19;
