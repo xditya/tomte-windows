@@ -207,12 +207,12 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
 
     private sealed class View : IDisposable
     {
-        private static readonly Color Card = ShelfColors.Of(Theme.Card);
-        private static readonly Color Lit = ShelfColors.Of(Theme.Raised);
-        private static readonly Color IconFill = ShelfColors.Of(Theme.RaisedHi);
-        private static readonly Color ButtonFill = ShelfColors.Of(Theme.RaisedHi);
-        private static readonly Color Line = ShelfColors.Of(Theme.LineStrong);
-        private static readonly Color Glyph = ShelfColors.Of(Theme.Ink2);
+        private static Color Card => ShelfColors.Of(Theme.Card);
+        private static Color Lit => ShelfColors.Of(Theme.Raised);
+        private static Color IconFill => ShelfColors.Of(Theme.RaisedHi);
+        private static Color ButtonFill => ShelfColors.Of(Theme.RaisedHi);
+        private static Color Line => ShelfColors.Of(Theme.LineStrong);
+        private static Color Glyph => ShelfColors.Of(Theme.Ink2);
 
         // Rows this far above and below the list's view keep their visuals, so a notch of the wheel rarely builds one.
         private const float Margin = 300;

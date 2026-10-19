@@ -88,9 +88,9 @@ public static class TabStrip
     public const string SearchText = "Search", SettingsText = "Settings";
 
     /// <summary>The current tab's name.</summary>
-    public static readonly TextStyle Label = new(13, 500);
+    public static TextStyle Label => new(13, 500);
 
-    public static readonly TextStyle SearchLabel = new(13, Color: Theme.Ink2);
+    public static TextStyle SearchLabel => new(13, Color: Theme.Ink2);
 
     /// <summary>The Shelf tab's count, on the accent.</summary>
     public static TextStyle BadgeLabel => new(10, 700, Theme.OnAccent, TextAlign.Center);

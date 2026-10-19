@@ -13,7 +13,7 @@ namespace Tomte.Shell;
 internal sealed class ClipboardThumbs(Compositor compositor, double scale, Action<string>? log) : IDisposable
 {
     private const float Corner = ClipboardPanelLayout.ThumbCorner;
-    private static readonly Windows.UI.Color Placeholder = ShelfColors.Of(Theme.Raised);
+    private static Windows.UI.Color Placeholder => ShelfColors.Of(Theme.Raised);
 
     private readonly List<(SpriteVisual Slot, byte[] Thumb)> slots = [];
     private PixelSurfaces? surfaces;

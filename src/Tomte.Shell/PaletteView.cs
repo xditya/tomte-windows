@@ -28,7 +28,9 @@ internal sealed class PaletteView : IDisposable, IInteractive
 {
     internal const string SendId = "send";
     private const string ChipId = "chip:";
-    private static readonly Color Card = ShelfColors.Of(Theme.Card), Clear = default;
+    private static Color Card => ShelfColors.Of(Theme.Card);
+
+    private static Color Clear => default;
 
     private readonly IslandWindow island;
     private readonly IslandStateMachine machine;

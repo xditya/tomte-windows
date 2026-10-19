@@ -16,8 +16,15 @@ internal sealed unsafe class NoteStyle : IDisposable
 {
     // As COLORREFs over the note's card: secondary ink for markers and done tasks, the link colour for links, and code
     // on a raised fill.
-    private static readonly int White = (int)TextServices.ColorRef(Theme.Ink).Value, Dim = (int)TextServices.ColorRef(Theme.Ink2).Value,
-        LinkColor = (int)TextServices.ColorRef(Theme.Link).Value, CodeColor = (int)TextServices.ColorRef(Theme.Ink).Value, CodeBack = (int)TextServices.ColorRef(Theme.Raised).Value;
+    private static int White => (int)TextServices.ColorRef(Theme.Ink).Value;
+
+    private static int Dim => (int)TextServices.ColorRef(Theme.Ink2).Value;
+
+    private static int LinkColor => (int)TextServices.ColorRef(Theme.Link).Value;
+
+    private static int CodeColor => (int)TextServices.ColorRef(Theme.Ink).Value;
+
+    private static int CodeBack => (int)TextServices.ColorRef(Theme.Raised).Value;
 
     // The box's paragraphs stop a tab every half inch.
     private const float TabDips = 48;

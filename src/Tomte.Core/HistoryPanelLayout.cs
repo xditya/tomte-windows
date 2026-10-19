@@ -37,10 +37,10 @@ public sealed class HistoryPanelLayout
 
     public const float BoxLineHeight = 18;
 
-    public static readonly TextStyle Asked = TextStyle.Primary with { Weight = 600, LineHeight = 19 };
-    public static readonly TextStyle StepStyle = new(12, Color: Theme.Ink2, LineHeight: 18);
-    public static readonly TextStyle ErrorStyle = DropResultLayout.BodyStyle with { Color = Theme.Warn };
-    public static readonly TextStyle ButtonText = new(12, 500, Align: TextAlign.Center);
+    public static TextStyle Asked => TextStyle.Primary with { Weight = 600, LineHeight = 19 };
+    public static TextStyle StepStyle => new(12, Color: Theme.Ink2, LineHeight: 18);
+    public static TextStyle ErrorStyle => DropResultLayout.BodyStyle with { Color = Theme.Warn };
+    public static TextStyle ButtonText => new(12, 500, Align: TextAlign.Center);
 
     private readonly List<RectangleF> rows = [];
     private readonly List<TextAt> conversation = [];

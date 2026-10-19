@@ -42,7 +42,7 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
     private bool acquired, disposed;
 
     /// <param name="window">The window that gets keyboard focus while the user types here: the island, or a message-only window offscreen.</param>
-    public TextServices(HWND window, bool multiline, float fontDips, uint textColor = Theme.Ink, int weight = 400)
+    public TextServices(HWND window, bool multiline, float fontDips, uint textColor = 0, int weight = 400)
     {
         this.window = window;
         // No beep (Backspace at the start rings otherwise), no drag of the selection (the island has its own drag and
@@ -55,7 +55,7 @@ internal sealed unsafe class TextServices : ITextHost2.Interface, IDisposable
         charFormat->Base.dwMask = CFM_MASK.CFM_FACE | CFM_MASK.CFM_SIZE | CFM_MASK.CFM_COLOR | CFM_MASK.CFM_BOLD | CFM_MASK.CFM_ITALIC
             | CFM_MASK.CFM_UNDERLINE | CFM_MASK.CFM_STRIKEOUT | CFM_MASK.CFM_OFFSET | CFM_MASK.CFM_CHARSET | CFM_MASK.CFM_WEIGHT;
         charFormat->Base.yHeight = EditorScale.Twips(fontDips);
-        charFormat->Base.crTextColor = ColorRef(textColor);
+        charFormat->Base.crTextColor = ColorRef(textColor == 0 ? Theme.Ink : textColor);
         charFormat->Base.bCharSet = FONT_CHARSET.DEFAULT_CHARSET;
         charFormat->wWeight = (ushort)weight;
         TextStyle.Ui.AsSpan().CopyTo(charFormat->Base.szFaceName.AsSpan());

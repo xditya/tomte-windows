@@ -495,15 +495,15 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
     private sealed class View : IDisposable
     {
         private static readonly Color Clear = default;
-        private static readonly Color Card = ShelfColors.Of(Theme.Card);
-        private static readonly Color Raised = ShelfColors.Of(Theme.Raised);
-        private static readonly Color Edge = ShelfColors.Of(Theme.Dash);
-        private static readonly Color Glyph = ShelfColors.Of(Theme.Ink2);
-        private static readonly Color Faint = ShelfColors.Of(Theme.Ink3);
-        private static readonly Color Off = ShelfColors.Of(Theme.LineStrong);
-        private static readonly Color Knob = ShelfColors.Of(Theme.Ink);
-        private static readonly Color Ink = ShelfColors.Of(Theme.Ink);
-        private static readonly Color Link = ShelfColors.Of(Theme.Link);
+        private static Color Card => ShelfColors.Of(Theme.Card);
+        private static Color Raised => ShelfColors.Of(Theme.Raised);
+        private static Color Edge => ShelfColors.Of(Theme.Dash);
+        private static Color Glyph => ShelfColors.Of(Theme.Ink2);
+        private static Color Faint => ShelfColors.Of(Theme.Ink3);
+        private static Color Off => ShelfColors.Of(Theme.LineStrong);
+        private static Color Knob => ShelfColors.Of(Theme.Ink);
+        private static Color Ink => ShelfColors.Of(Theme.Ink);
+        private static Color Link => ShelfColors.Of(Theme.Link);
 
         private readonly Compositor c;
         private readonly TextRenderer text;

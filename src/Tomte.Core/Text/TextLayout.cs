@@ -18,8 +18,11 @@ public enum TextAlign
 /// height for text of several lines (0 keeps the font's own), and tracking, the extra room after each character as a
 /// fraction of the size (negative tightens).
 /// </summary>
-public sealed record TextStyle(float Size, int Weight = 400, uint Color = Theme.Ink, TextAlign Align = TextAlign.Leading, bool Tabular = false, string Family = TextStyle.Ui, float LineHeight = 0, float Tracking = 0)
+public sealed record TextStyle(float Size, int Weight = 400, uint Color = 0, TextAlign Align = TextAlign.Leading, bool Tabular = false, string Family = TextStyle.Ui, float LineHeight = 0, float Tracking = 0)
 {
+    /// <summary>The colour as 0xAARRGGBB; left out (0), the scheme's <see cref="Theme.Ink"/> when the style is made.</summary>
+    public uint Color { get; init; } = Color == 0 ? Theme.Ink : Color;
+
     /// <summary>The interface font. From <see cref="DisplayFrom"/> DIPs up its display cut is used instead.</summary>
     public const string Ui = "Segoe UI Variable Text";
 
@@ -31,31 +34,31 @@ public sealed record TextStyle(float Size, int Weight = 400, uint Color = Theme.
     public static readonly string Mono = TextLayout.Installed("Cascadia Mono") ? "Cascadia Mono" : "Consolas";
 
     /// <summary>A voice transcript, an answer's first line: 20 DIP medium, a little tight.</summary>
-    public static readonly TextStyle Hero = new(20, 500, Tracking: -0.01f);
+    public static TextStyle Hero => new(20, 500, Tracking: -0.01f);
 
     /// <summary>A panel's own title: 18 DIP semibold, a little tight.</summary>
-    public static readonly TextStyle PageTitle = new(18, 600, Tracking: -0.01f);
+    public static TextStyle PageTitle => new(18, 600, Tracking: -0.01f);
 
     /// <summary>A section's heading inside a panel: 13 DIP semibold.</summary>
-    public static readonly TextStyle Title = new(13, 600);
+    public static TextStyle Title => new(13, 600);
 
     /// <summary>A row's own text, a tile's name, a button's word: 13 DIP.</summary>
-    public static readonly TextStyle Primary = new(13);
+    public static TextStyle Primary => new(13);
 
     /// <summary>Note and preview text: 14 DIP on lines half as tall again.</summary>
-    public static readonly TextStyle Body = new(14, LineHeight: 21);
+    public static TextStyle Body => new(14, LineHeight: 21);
 
     /// <summary>What goes beside a heading, a hint, a tab's label at rest: 12 DIP, secondary ink.</summary>
-    public static readonly TextStyle Secondary = new(12, Color: Theme.Ink2);
+    public static TextStyle Secondary => new(12, Color: Theme.Ink2);
 
     /// <summary>Sizes, ages and footers: 11 DIP, tertiary ink.</summary>
-    public static readonly TextStyle Small = new(11, Color: Theme.Ink3);
+    public static TextStyle Small => new(11, Color: Theme.Ink3);
 
     /// <summary>A group's heading, its words written in capitals: 11 DIP medium, tertiary ink, spaced out.</summary>
-    public static readonly TextStyle Overline = new(11, 500, Theme.Ink3, Tracking: 0.08f);
+    public static TextStyle Overline => new(11, 500, Theme.Ink3, Tracking: 0.08f);
 
     /// <summary>Numbers a user compares (times, costs, sizes) and ids, paths and keys: 12 DIP mono, tabular.</summary>
-    public static readonly TextStyle Figures = new(12, Tabular: true, Family: Mono);
+    public static TextStyle Figures => new(12, Tabular: true, Family: Mono);
 }
 
 /// <summary>

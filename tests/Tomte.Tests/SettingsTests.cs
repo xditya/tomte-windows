@@ -58,6 +58,19 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void TheIslandFollowsTheTaskbarUntilToldOtherwise()
+    {
+        Assert.Equal(ThemeChoice.FollowTaskbar, new TomteSettings().Theme);
+        using (var store = new SettingsStore(File))
+        {
+            store.Save(store.Current with { Theme = ThemeChoice.Light, AccentColor = AccentColors.Windows });
+        }
+
+        var loaded = SettingsStore.Load(File);
+        Assert.Equal((ThemeChoice.Light, AccentColors.Windows), (loaded.Theme, AccentColors.Held(loaded.AccentColor)));
+    }
+
+    [Fact]
     public void DesktopAutomationIsOffUntilTurnedOnAndKeepsItsLists()
     {
         Assert.False(new TomteSettings().UiAutomation.Enabled);

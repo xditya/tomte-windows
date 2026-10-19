@@ -33,7 +33,7 @@ internal sealed class SearchView : IDisposable, IInteractive
     private const string RowId = "row:", CardId = "card:";
     private const int MaxImages = 512;
     private const float WheelStep = 3 * SearchLayout.RowHeight;
-    private static readonly Color CardFill = ShelfColors.Of(Theme.Card);
+    private static Color CardFill => ShelfColors.Of(Theme.Card);
 
     // Shell icons as pixels, by source and size, for the session: a new search shows them at once.
     // dropped all at once when full; an LRU if a session's searches ever need more.

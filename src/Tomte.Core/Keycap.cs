@@ -11,9 +11,11 @@ public static class Keycap
 {
     public const float Height = 20, PadX = 6, Corner = 6, WordGap = 6;
 
-    public const uint Fill = Theme.Raised, Border = Theme.LineStrong;
+    public static uint Fill => Theme.Raised;
 
-    public static readonly TextStyle Style = new TextStyle(11, Color: Theme.Ink2, Align: TextAlign.Center) with { Family = TextStyle.Mono };
+    public static uint Border => Theme.LineStrong;
+
+    public static TextStyle Style => new TextStyle(11, Color: Theme.Ink2, Align: TextAlign.Center) with { Family = TextStyle.Mono };
 
     /// <summary>A shortcut as its cap shows it ("Win+Alt+Space" as "Win Alt Space"), or null when none is set.</summary>
     public static string? Words(string chord) => Hotkey.TryParse(chord, out var key, out _) ? key.ToString().Replace('+', ' ') : null;

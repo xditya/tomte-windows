@@ -663,10 +663,10 @@ public sealed class PointerPress
 public static class StateLook
 {
     /// <summary>The state layer the host lays over a hovered target, on top of the target's own fill: white at about 8%.</summary>
-    public const uint Hover = Theme.HoverLayer;
+    public static uint Hover => Theme.HoverLayer;
 
     /// <summary>The same while the button is down on it: about 3%, lighter than hover as in Windows 11's dark theme.</summary>
-    public const uint Pressed = Theme.PressedLayer;
+    public static uint Pressed => Theme.PressedLayer;
 
     /// <summary>A disabled target's content is drawn at this opacity.</summary>
     public const float DisabledOpacity = 0.4f;
@@ -699,9 +699,11 @@ public static class StateLook
     /// </summary>
     public const float TipHeight = 24, TipPadX = 8, TipGap = 5, TipCorner = 8;
 
-    public const uint TipFill = Theme.Raised, TipLine = Theme.Line;
+    public static uint TipFill => Theme.Raised;
 
-    public static readonly TextStyle TipText = new(12);
+    public static uint TipLine => Theme.Line;
+
+    public static TextStyle TipText => new(12);
 
     /// <summary>An acknowledgement's tick: a filled check this square, this far before the word, in the accent.</summary>
     public const float TickSize = 10, TickGap = 5;

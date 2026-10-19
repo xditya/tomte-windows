@@ -54,27 +54,27 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     /// <summary>The key hints along the bottom, inset as the rows' text is, 14 apart.</summary>
     public const float FootHeight = Keycap.Height, FootInset = 12, FootGap = 14, CardPad = 14;
 
-    public static readonly TextStyle Query = new(BoxText, 500);
-    public static readonly TextStyle Placeholder = Query with { Color = Theme.Ink3 };
-    public static readonly TextStyle Status = TextStyle.Small with { Align = TextAlign.Trailing };
-    public static readonly TextStyle HitName = new(14, 500);
-    public static readonly TextStyle HitPath = new TextStyle(12, Color: Theme.Ink3) with { Family = TextStyle.Mono };
-    public static readonly TextStyle Name = TextStyle.Primary;
-    public static readonly TextStyle Detail = TextStyle.Secondary with { Color = Theme.Ink3, Align = TextAlign.Trailing };
-    public static readonly TextStyle Heading = TextStyle.Overline;
-    public static readonly TextStyle Lead = TextStyle.Small;
-    public static readonly TextStyle Foot = TextStyle.Secondary with { Color = Theme.Ink3 };
-    public static readonly TextStyle HitBadgeText = new TextStyle(10, 500, Align: TextAlign.Center) with { Family = TextStyle.Mono };
-    public static readonly TextStyle RowBadgeText = HitBadgeText with { Size = 9 };
+    public static TextStyle Query => new(BoxText, 500);
+    public static TextStyle Placeholder => Query with { Color = Theme.Ink3 };
+    public static TextStyle Status => TextStyle.Small with { Align = TextAlign.Trailing };
+    public static TextStyle HitName => new(14, 500);
+    public static TextStyle HitPath => new TextStyle(12, Color: Theme.Ink3) with { Family = TextStyle.Mono };
+    public static TextStyle Name => TextStyle.Primary;
+    public static TextStyle Detail => TextStyle.Secondary with { Color = Theme.Ink3, Align = TextAlign.Trailing };
+    public static TextStyle Heading => TextStyle.Overline;
+    public static TextStyle Lead => TextStyle.Small;
+    public static TextStyle Foot => TextStyle.Secondary with { Color = Theme.Ink3 };
+    public static TextStyle HitBadgeText => new TextStyle(10, 500, Align: TextAlign.Center) with { Family = TextStyle.Mono };
+    public static TextStyle RowBadgeText => HitBadgeText with { Size = 9 };
 
     /// <summary>The selected row's fill. The pointer's hover is a state layer of its own over it.</summary>
-    public const uint SelectedFill = Theme.Raised;
+    public static uint SelectedFill => Theme.Raised;
 
     /// <summary>The rule before the AI rows.</summary>
-    public const uint RuleColor = Theme.Raised;
+    public static uint RuleColor => Theme.Raised;
 
     /// <summary>A badge that shows a glyph or an icon rather than a file's type.</summary>
-    public const uint PlainBadge = Theme.RaisedHi;
+    public static uint PlainBadge => Theme.RaisedHi;
 
     public const string PlaceholderText = "Search apps, settings, files and folders";
     public const string NothingYet = "Type to search your apps, settings, files and folders. What you open from here is listed first next time.";
@@ -431,7 +431,9 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public const float FolderSize = 28, FolderGlyphSize = 16, FolderInset = 8, FolderCorner = 8;
 
     /// <summary>The button's card is raised a step above the row; its folder is drawn in the name's ink.</summary>
-    public const uint FolderFill = Theme.RaisedHi, FolderInk = Theme.Ink;
+    public static uint FolderFill => Theme.RaisedHi;
+
+    public static uint FolderInk => Theme.Ink;
 
     public const string FolderTip = "Show in folder", FolderKey = "Ctrl+Shift+Enter", FolderCap = "Ctrl Shift Enter";
 

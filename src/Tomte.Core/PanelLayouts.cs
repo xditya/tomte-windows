@@ -44,19 +44,19 @@ public sealed class ClipboardPanelLayout(Vector2 body)
     public const string NeverKept = "Items a password manager marks private are never kept";
 
     /// <summary>Clear all's word at rest, and in the warn colour while it asks.</summary>
-    public static readonly TextStyle ButtonStyle = TextStyle.Secondary with { Align = TextAlign.Center };
-    public static readonly TextStyle AskStyle = ButtonStyle with { Color = Theme.Warn };
+    public static TextStyle ButtonStyle => TextStyle.Secondary with { Align = TextAlign.Center };
+    public static TextStyle AskStyle => ButtonStyle with { Color = Theme.Warn };
 
     /// <summary>The preview's meta line, its text, and its buttons' words: Paste on the ink fill, the others on raised.</summary>
-    public static readonly TextStyle MetaStyle = new(11, Color: Theme.Ink3, Family: TextStyle.Mono);
-    public static readonly TextStyle PreviewStyle = new(14, Color: Theme.Ink, LineHeight: 22.4f);
-    public static readonly TextStyle PasteStyle = new(13, 600, Theme.Island, TextAlign.Center);
-    public static readonly TextStyle SecondaryButtonStyle = TextStyle.Primary with { Align = TextAlign.Center };
+    public static TextStyle MetaStyle => new(11, Color: Theme.Ink3, Family: TextStyle.Mono);
+    public static TextStyle PreviewStyle => new(14, Color: Theme.Ink, LineHeight: 22.4f);
+    public static TextStyle PasteStyle => new(13, 600, Theme.Island, TextAlign.Center);
+    public static TextStyle SecondaryButtonStyle => TextStyle.Primary with { Align = TextAlign.Center };
 
     /// <summary>The filter's hint while it is empty, the footer's words, and a colour row's value in mono.</summary>
-    public static readonly TextStyle HintStyle = TextStyle.Primary with { Color = Theme.Ink3 };
-    public static readonly TextStyle FootStyle = TextStyle.Secondary with { Color = Theme.Ink3 };
-    public static readonly TextStyle ColourStyle = TextStyle.Primary with { Family = TextStyle.Mono };
+    public static TextStyle HintStyle => TextStyle.Primary with { Color = Theme.Ink3 };
+    public static TextStyle FootStyle => TextStyle.Secondary with { Color = Theme.Ink3 };
+    public static TextStyle ColourStyle => TextStyle.Primary with { Family = TextStyle.Mono };
 
     public Vector2 Body { get; } = body;
 

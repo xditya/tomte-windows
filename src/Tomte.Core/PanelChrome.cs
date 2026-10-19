@@ -10,7 +10,7 @@ public static class Chip
 {
     public const float Height = 30, PadX = 10, Icon = 14, IconGap = 5, Border = 1;
 
-    public static readonly TextStyle Style = TextStyle.Secondary;
+    public static TextStyle Style => TextStyle.Secondary;
 
     public static float Width(string label, float max) => PadX + Icon + IconGap + MathF.Ceiling(TextSlot.Measure(label, Style, max)) + PadX;
 }
@@ -27,6 +27,6 @@ public static class Section
     public const float TileCorner = 12, ButtonCorner = 10;
 
     /// <summary>A section's name, and the count or note beside it.</summary>
-    public static readonly TextStyle Title = TextStyle.Title;
-    public static readonly TextStyle Note = new(12, Color: Theme.Ink3);
+    public static TextStyle Title => TextStyle.Title;
+    public static TextStyle Note => new(12, Color: Theme.Ink3);
 }
