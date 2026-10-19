@@ -1001,7 +1001,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>A closed composition path from segments, scaled by <paramref name="s"/>.</summary>
-    internal static CompositionPath BuildPath(ReadOnlySpan<OutlineSegment> segments, float s)
+    internal static CompositionPath BuildPath(ReadOnlySpan<OutlineSegment> segments, float s, bool closed = true)
     {
         using var builder = new CanvasPathBuilder(null);
         foreach (var segment in segments)
@@ -1023,7 +1023,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             }
         }
 
-        builder.EndFigure(CanvasFigureLoop.Closed);
+        builder.EndFigure(closed ? CanvasFigureLoop.Closed : CanvasFigureLoop.Open);
         return new CompositionPath(CanvasGeometry.CreatePath(builder));
     }
 

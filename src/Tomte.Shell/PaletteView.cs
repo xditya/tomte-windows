@@ -541,6 +541,33 @@ internal sealed class PaletteView : IDisposable, IInteractive
         }
     }
 
+    /// <summary>
+    /// A <see cref="Glyphs"/> entry in a container shape, <paramref name="size"/> DIPs square from the container's
+    /// origin, in one ink: stroked figures at 1.75/24 of the size with round caps and joins, filled figures filled.
+    /// </summary>
+    internal static void DrawGlyph(CompositionContainerShape into, GlyphFigure[] figures, CompositionColorBrush ink, float size)
+    {
+        float scale = size / Glyphs.Box;
+        into.Shapes.Clear();
+        foreach (var figure in figures)
+        {
+            var shape = ink.Compositor.CreateSpriteShape(ink.Compositor.CreatePathGeometry(IslandWindow.BuildPath(figure.Path, scale, !figure.Open)));
+            if (figure.Stroked)
+            {
+                shape.StrokeBrush = ink;
+                shape.StrokeThickness = Glyphs.StrokeWidth * scale;
+                shape.StrokeStartCap = shape.StrokeEndCap = CompositionStrokeCap.Round;
+                shape.StrokeLineJoin = CompositionStrokeLineJoin.Round;
+            }
+            else
+            {
+                shape.FillBrush = ink;
+            }
+
+            into.Shapes.Add(shape);
+        }
+    }
+
     // One drawn chip: its pill with a fill and an outline, its picture and mark in one ink, its name, and which picture
     // and mark are drawn now. A slot past the chips shown is drawn empty.
     private sealed record ChipSlot(CompositionRoundedRectangleGeometry Pill, CompositionSpriteShape Stroke, CompositionColorBrush Fill, CompositionColorBrush Outline, CompositionColorBrush Ink, CompositionContainerShape Icon, CompositionContainerShape Mark, TextVisual Label)

@@ -457,8 +457,8 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
     }
 }
 
-/// <summary>One closed figure of a glyph: filled, or stroked <see cref="PaletteGlyphs.Stroke"/> wide along its outline.</summary>
-public readonly record struct GlyphFigure(OutlineSegment[] Path, bool Stroked = false);
+/// <summary>One figure of a glyph: filled, or stroked <see cref="PaletteGlyphs.Stroke"/> wide along its outline. Closed unless <paramref name="Open"/>.</summary>
+public readonly record struct GlyphFigure(OutlineSegment[] Path, bool Stroked = false, bool Open = false);
 
 /// <summary>
 /// The palette's glyphs in DIPs from their box's top-left corner: a chip's picture in a 16 box, its "+" and tick in a
