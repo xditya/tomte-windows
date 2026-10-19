@@ -279,10 +279,18 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
             return;
         }
 
+        var pictures = new List<(ShelfItem Item, RectangleF Preview)>();
         for (int i = 0; i < shown; i++)
         {
-            Tile(p, v, items[i], layout.ShelfTile(i));
+            var tile = layout.ShelfTile(i);
+            Tile(p, v, items[i], tile);
+            if (ShelfLayout.PreviewOf(items[i]) == ShelfPreview.Image)
+            {
+                pictures.Add((items[i], Moved(HomeLayout.Preview(tile), tile)));
+            }
         }
+
+        _ = PicturesAsync(p, pictures, showing);
 
         if (more > 0)
         {
@@ -304,7 +312,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         if (glyph is not null)
         {
             const float size = 24;
-            p.Glyph(v, glyph, new RectangleF(preview.X + ((preview.Width - size) / 2), preview.Y + ((preview.Height - size) / 2), size, size), p.Brush(item.IsFolder ? Theme.Folder : Theme.Link));
+            p.Glyph(v, glyph, ShelfColors.Of(item.IsFolder ? Theme.Folder : Theme.Link), new RectangleF(preview.X + ((preview.Width - size) / 2), preview.Y + ((preview.Height - size) / 2), size, size));
         }
         else
         {
@@ -314,6 +322,47 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         foreach (var line in HomeLayout.TileText(tile, item.Name, ShelfLayout.Meta(item)))
         {
             p.Text(v, line with { Slot = Moved(line.Slot, tile) });
+        }
+    }
+
+    // The pictures' thumbnails, read off the island's thread, over their previews, cut to the preview's corners. They go
+    // with the build that asked for them.
+    private async Task PicturesAsync(Parts built, List<(ShelfItem Item, RectangleF Preview)> pictures, int generation)
+    {
+        if (pictures.Count == 0 || body is not { } host)
+        {
+            return;
+        }
+
+        int px = (int)Math.Ceiling(pictures.Max(x => x.Preview.Width) * island.Scale);
+        var compositor = island.Compositor;
+        try
+        {
+            var (made, brushes) = await Task.Run(() =>
+            {
+                var s = new PixelSurfaces(compositor);
+                var list = pictures.Select(x => ShellIcon.Thumbnail(x.Item.Path, px) is { } i ? s.Brush(i.Width, i.Height, i.Pixels) : null).ToList();
+                return (s, list);
+            });
+            if (generation != showing || built != shelfParts)
+            {
+                made.Dispose();
+                return;
+            }
+
+            built.Keep(made);
+            for (int i = 0; i < brushes.Count; i++)
+            {
+                if (brushes[i] is { } brush)
+                {
+                    brush.Stretch = CompositionStretch.UniformToFill;
+                    built.Sprite(host, pictures[i].Preview, HomeLayout.PreviewCorner, brush);
+                }
+            }
+        }
+        catch (COMException e)
+        {
+            log?.Invoke($"home: no surfaces for the shelf's pictures: {e.Message}");
         }
     }
 
@@ -352,7 +401,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         var section = layout.Scratchpad;
         p.SectionCard(v, section);
         string? key = Keycap.Words(actions.NoteKey());
-        float capWidth = key is null ? 0 : Keycap.Width(key, section.Width);
+        float capWidth = key is null ? 0 : Keycap.Width(key);
         foreach (var line in HomeLayout.HeadText(section, HomeLayout.NoteTitle, HomeLayout.NoteHint, rightInset: key is null ? 0 : capWidth + 8))
         {
             p.Text(v, line);
@@ -380,7 +429,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
             {
                 p.Box(v, square, HomeLayout.BoxCorner, p.Brush(Theme.Accent));
                 const float tick = HomeLayout.Tick;
-                p.Glyph(v, Glyphs.Check, new RectangleF(square.X + ((square.Width - tick) / 2), square.Y + ((square.Height - tick) / 2), tick, tick), p.Brush(Theme.OnAccent));
+                p.Glyph(v, Glyphs.Check, ShelfColors.Of(Theme.OnAccent), new RectangleF(square.X + ((square.Width - tick) / 2), square.Y + ((square.Height - tick) / 2), tick, tick));
             }
             else if (done == false)
             {
@@ -545,7 +594,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         var p = askParts = new Parts(island.Compositor, text);
         var v = p.Shapes(body, new RectangleF(0, 0, layout.Body.X, layout.Body.Y));
         p.Box(v, layout.Ask, HomeLayout.AskCorner, p.Brush(Theme.Card), p.Brush(Theme.Line));
-        p.Glyph(v, Glyphs.Sparkle, layout.SparkleBox, p.Brush(Theme.Accent));
+        p.Glyph(v, Glyphs.Sparkle, ShelfColors.Of(Theme.Accent), layout.SparkleBox);
         foreach (var (id, label, box) in layout.Chips())
         {
             var icon = id switch

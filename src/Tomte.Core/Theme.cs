@@ -50,6 +50,9 @@ public static class Theme
     /// <summary>Text: primary, secondary and tertiary. Tertiary is legible on <see cref="Raised"/> and darker only.</summary>
     public const uint Ink = 0xFFF2F0EB, Ink2 = 0xFFB1AFA9, Ink3 = 0xFF8E8C86;
 
+    /// <summary>A shelf tile's sketch of a document: the page, its heading bar and its lines.</summary>
+    public const uint Paper = 0xFFF4F1EA, PaperInk = 0xFF2A2825, PaperLine = 0xFFC9C4BA;
+
     /// <summary>A shelf tile's icon square by kind of file.</summary>
     public const uint KindPdf = 0xFFC0392B, KindPicture = 0xFF3E8E6A, KindDocument = 0xFF3A6EA5, KindLink = 0xFF8C5BD6, KindOther = 0xFF5D6D7E;
 

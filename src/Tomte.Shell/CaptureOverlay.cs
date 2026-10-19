@@ -125,9 +125,13 @@ internal sealed unsafe class CaptureOverlay : IDisposable
             dim.FillBrush = compositor.CreateColorBrush(Dim);
             strokeGeometry = compositor.CreatePathGeometry();
             var stroke = compositor.CreateSpriteShape(strokeGeometry);
-            stroke.StrokeBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.Ink));
-            stroke.StrokeThickness = (float)(2 * scale);
+            // The accent, dotted with round caps, over the dim.
+            stroke.StrokeBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.Accent));
+            stroke.StrokeThickness = (float)(Lasso.StrokeDips * scale);
             stroke.StrokeLineJoin = CompositionStrokeLineJoin.Round;
+            stroke.StrokeStartCap = stroke.StrokeEndCap = stroke.StrokeDashCap = CompositionStrokeCap.Round;
+            stroke.StrokeDashArray.Add(Lasso.Dashes.On);
+            stroke.StrokeDashArray.Add(Lasso.Dashes.Off);
             boxGeometry = compositor.CreateRectangleGeometry();
             box = compositor.CreateSpriteShape(boxGeometry);
             box.StrokeBrush = compositor.CreateColorBrush(ShelfColors.Of(Theme.WithOpacity(Theme.Ink, 0.5f)));

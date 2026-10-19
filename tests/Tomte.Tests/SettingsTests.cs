@@ -44,6 +44,20 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void TheAccentIsCoralUntilChangedAndAnUnknownColourShowsAsCoral()
+    {
+        Assert.Equal(0xFF6B4Au, new TomteSettings().AccentColor);
+        using (var store = new SettingsStore(File))
+        {
+            store.Save(store.Current with { AccentColor = 0x7CC4FF });
+        }
+
+        Assert.Equal(0x7CC4FFu, AccentColors.Held(SettingsStore.Load(File).AccentColor));
+        Assert.Equal(AccentColors.Default, AccentColors.Held(0x123456));
+        Assert.Equal(4, AccentColors.Choices.Count);
+    }
+
+    [Fact]
     public void DesktopAutomationIsOffUntilTurnedOnAndKeepsItsLists()
     {
         Assert.False(new TomteSettings().UiAutomation.Enabled);

@@ -7,34 +7,17 @@ using Windows.UI.Composition;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The pieces every panel draws the same way, on a <see cref="Parts"/> so they go with it: a glyph from the icon set, a
-/// keycap, a chip, a section card and a round icon button. All in DIPs, laid out by the numbers in Tomte.Core
-/// (<see cref="Keycap"/>, <see cref="Chip"/>, <see cref="Section"/>).
+/// The pieces every panel draws the same way, on a <see cref="Parts"/> so they go with it, besides its own glyph and
+/// keycap: a capsule, a chip, a section card and a round icon button. All in DIPs, laid out by the numbers in Tomte.Core
+/// (<see cref="Chip"/>, <see cref="Section"/>).
 /// </summary>
 internal static class PanelChrome
 {
     public static CompositionColorBrush Brush(this Parts p, uint argb) => p.Brush(ShelfColors.Of(argb));
 
-    /// <summary>A glyph from <see cref="Glyphs"/> drawn to fill <paramref name="at"/>, which is square.</summary>
-    public static CompositionContainerShape Glyph(this Parts p, ShapeVisual into, GlyphFigure[] figures, RectangleF at, CompositionColorBrush ink)
-    {
-        var shape = p.Keep(p.Compositor.CreateContainerShape());
-        PaletteView.DrawGlyph(shape, figures, ink, at.Width);
-        shape.Offset = new Vector2(at.X, at.Y);
-        into.Shapes.Add(shape);
-        return shape;
-    }
-
     /// <summary>A capsule: a box rounded by half its height.</summary>
     public static CompositionSpriteShape Capsule(this Parts p, ShapeVisual into, RectangleF at, CompositionBrush? fill, CompositionBrush? stroke = null) =>
         p.Box(into, at, at.Height / 2, fill, stroke);
-
-    /// <summary>A shortcut on its cap: the raised fill, the stronger hairline and the chord in mono.</summary>
-    public static void Keycap(this Parts p, ShapeVisual into, RectangleF at, string words)
-    {
-        p.Box(into, at, Core.Keycap.Corner, p.Brush(Theme.Raised), p.Brush(Theme.LineStrong), Core.Keycap.Border);
-        p.Text(into, new TextSlot(words, Core.Keycap.Style, at));
-    }
 
     /// <summary>A chip: an outlined capsule with its icon and word, or filled while it holds something.</summary>
     public static void Chip(this Parts p, ShapeVisual into, RectangleF at, GlyphFigure[] icon, string label, bool filled)
@@ -42,7 +25,7 @@ internal static class PanelChrome
         p.Capsule(into, at, filled ? p.Brush(Theme.Raised) : null, filled ? null : p.Brush(Theme.LineStrong));
         float mid = at.Y + (at.Height / 2);
         var glyph = new RectangleF(at.X + Core.Chip.PadX, mid - (Core.Chip.Icon / 2), Core.Chip.Icon, Core.Chip.Icon);
-        p.Glyph(into, icon, glyph, p.Brush(filled ? Theme.Ink : Theme.Ink2));
+        p.Glyph(into, icon, ShelfColors.Of(filled ? Theme.Ink : Theme.Ink2), glyph);
         float x = glyph.Right + Core.Chip.IconGap;
         p.Text(into, new TextSlot(label, filled ? Core.Chip.Style with { Color = Theme.Ink } : Core.Chip.Style, new(x, at.Y, at.Right - Core.Chip.PadX - x, at.Height)));
     }
@@ -58,6 +41,6 @@ internal static class PanelChrome
             p.Box(into, at, at.Height / 2, p.Brush(f));
         }
 
-        p.Glyph(into, icon, new RectangleF(at.X + ((at.Width - iconSize) / 2), at.Y + ((at.Height - iconSize) / 2), iconSize, iconSize), p.Brush(ink));
+        p.Glyph(into, icon, ShelfColors.Of(ink), new RectangleF(at.X + ((at.Width - iconSize) / 2), at.Y + ((at.Height - iconSize) / 2), iconSize, iconSize));
     }
 }

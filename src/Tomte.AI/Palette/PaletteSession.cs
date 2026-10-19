@@ -88,6 +88,9 @@ public interface IPaletteSession
 
     decimal? DailyCapUsd { get; }
 
+    /// <summary>What the last send cost, as the send log prices it; 0 before one, or for one that sent nothing.</summary>
+    decimal LastCostUsd => 0;
+
     /// <summary>Palette commands from the skills the user turned on. Picking one puts its Text in Prompt.</summary>
     IReadOnlyList<SkillCommand> Commands { get; }
 
@@ -272,6 +275,8 @@ public sealed partial class PaletteSession : IPaletteSession
 
     public decimal? DailyCapUsd => _options.DailyCapUsd;
 
+    public decimal LastCostUsd { get; private set; }
+
     public event Action? Changed;
 
     /// <summary>
@@ -415,6 +420,7 @@ public sealed partial class PaletteSession : IPaletteSession
             _userCancel.Dispose();
             _userCancel = null;
             var cost = sent ? SendLog.Estimate(_options, ModelId, inputTokens, outputTokens) : 0;
+            LastCostUsd = cost;
             if (FileSearch is { Found.Count: > 0 } finder)
                 attached.Add($"names, sizes and dates of {finder.Found.Count} files");
             if (sent)

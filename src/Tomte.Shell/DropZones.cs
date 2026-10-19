@@ -9,11 +9,12 @@ using Tomte.Core.Storage;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The AI drop zones: whether the Shelf-drop surface has them (only with a provider set up in settings), and the drop
-/// that lands on one. Such a drop is read inside Drop exactly as the shelf reads it and the item goes on the shelf;
-/// everything after that (loading the AI layer, the panel, reading the file, sending it, the result files) runs in a
-/// <see cref="ZoneRun"/> once Drop has returned to the source. Holds only shell and Core types and reads only the
-/// settings, so making it at start, and a drag over it, loads nothing of the AI layer and reads no key, and the kept
+/// The AI drop zones: whether the Shelf-drop pill offers them (only with a provider set up in settings), which a drag
+/// held still on the pill opens, and the drop that lands on one. Such a drop is read inside Drop exactly as the shelf
+/// reads it and the item goes on the shelf; everything after that (the panel, reading the file, sending it, the result
+/// files) runs in a <see cref="ZoneRun"/> once Drop has returned to the source. Making it at start, and a drag over the
+/// pill, loads nothing of the AI layer and reads no key; the zones opening reads the dragged file's first bytes (an
+/// image's header) for the head row's estimate, by the counting rules of the AI layer, and sends nothing. The kept
 /// results are not opened until a drop on a zone.
 /// </summary>
 internal sealed class DropZones
@@ -31,14 +32,18 @@ internal sealed class DropZones
         (this.island, this.triggers, this.shelf, this.text, this.store, this.log) = (island, triggers, shelf, text, store, log);
         // Part of the AI history: its writes queue with the history's own, and with it off a result is neither kept nor shown again.
         results = new KeptResults(db, log, Program.History);
-        Surface = new ShelfDropSurface(island, triggers.Machine, triggers.Drops, text, Layout);
+        Surface = new ShelfDropSurface(island, triggers.Machine, triggers.Drops, text, Layout, triggers.OpenZones, Estimate);
         triggers.DropOnZone = Take;
     }
 
     public ShelfDropSurface Surface { get; }
 
-    /// <summary>The zones for the surface about to show: none without a provider that has a model.</summary>
-    private DropZoneLayout? Layout() => DropZoneLayout.For(store.Current, IslandGeometry.ShelfDrop.Width, IslandGeometry.ShelfDrop.Depth);
+    /// <summary>The zones for a panel this wide: none without a provider that has a model.</summary>
+    private DropZoneLayout? Layout(double width) => DropZoneLayout.For(store.Current, width);
+
+    /// <summary>The head row's estimate for what the drag carries, on the pool; null without a provider or for a file it cannot count.</summary>
+    private Task<int?> Estimate(DragItem item) =>
+        store.Current.Provider is { } config ? Task.Run(() => DragEstimate.TokensAsync(item, config)) : Task.FromResult<int?>(null);
 
     private bool Take(DroppedItems drop)
     {
@@ -95,7 +100,7 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
     private MascotState face = MascotState.Thinking;
 
     /// <summary>What the undo pill says after a drop zone's panel closed.</summary>
-    internal const string ResultClosed = "AI result closed";
+    internal const string ResultClosed = "Result closed";
 
     // The panel is up, or closed and kept for Undo: either way the run goes on.
     private bool Live => view.Open || parked;
@@ -425,6 +430,52 @@ internal sealed class ZoneRun(IslandWindow island, TriggerController triggers, S
         if (view.Open)
         {
             island.Mascot.Set(face);
+        }
+    }
+}
+
+/// <summary>
+/// What sending a dragged file would cost in tokens, for the drop zones' head row, by the rules the provider in settings
+/// counts with: an image by its pixels once fitted to what the provider takes, plain text and code by its length. Only
+/// the file's first kilobyte and an image's header are read; no key is read and nothing is sent. A PDF, a Word file or
+/// anything else gives null, since its count needs the whole file read.
+/// </summary>
+internal static class DragEstimate
+{
+    public static async Task<int?> TokensAsync(DragItem item, ProviderConfig config)
+    {
+        var facts = new ModelFacts(config.Kind, config.DefaultModel ?? "", 0, Vision: true, NativePdf: false);
+        if (item.Path is not { } path)
+        {
+            return item.Name == DragItem.TextName && item.Bytes is { } chars ? (int)Math.Ceiling(chars / facts.CharsPerToken) : null;
+        }
+
+        try
+        {
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096);
+            var head = new byte[1024];
+            int n = await file.ReadAsync(head);
+            switch (TextExtraction.Sniff(head.AsSpan(0, n), item.Name))
+            {
+                case FileKind.Text when head.AsSpan(0, n).IndexOf((byte)0) < 0:
+                    return (int)Math.Ceiling(file.Length / facts.CharsPerToken);
+                case FileKind.Image:
+                    file.Position = 0;
+                    using (var stream = file.AsRandomAccessStream())
+                    {
+                        var decoder = await Windows.Graphics.Imaging.BitmapDecoder.CreateAsync(stream);
+                        var (w, h) = ImageFit.Fit((int)decoder.OrientedPixelWidth, (int)decoder.OrientedPixelHeight, facts.ImageBox);
+                        return facts.ImageTokens(w, h);
+                    }
+
+                default:
+                    return null;
+            }
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // A file that went, or that Windows cannot decode: the row shows its size alone.
+            return null;
         }
     }
 }

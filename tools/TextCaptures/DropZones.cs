@@ -4,7 +4,7 @@ using Tomte.Core;
 
 namespace TextCaptures;
 
-/// <summary>The AI drop zones on the drop surface and a zone's panel in the Palette state, from the island's own layouts.</summary>
+/// <summary>The Shelf-drop pill, the drop zones a hold on it opens, and a zone's panel in the Palette state, from the island's own layouts.</summary>
 internal static partial class Program
 {
     private static List<Scene> DropZoneScenes()
@@ -30,10 +30,12 @@ internal static partial class Program
         var ask = new DropResult("Ask about it · Q3-report.pdf", "Nothing sent", "File · Q3-report.pdf is attached. Nothing is sent until you ask.", false, "Ask about Q3-report.pdf", [], []);
         return
         [
-            new("shelf-drop-zones", IslandGeometry.ShelfDrop, c => Zones(c, null, DropZone.Summarize)),
-            new("shelf-drop-zones-ask", IslandGeometry.ShelfDrop, c => Zones(c, null, DropZone.Ask)),
-            new("shelf-drop-zones-skill", IslandGeometry.ShelfDrop, c => Zones(c, "invoice-parser", DropZone.Skill)),
-            new("shelf-drop-zones-shelf-hot", IslandGeometry.ShelfDrop, c => Zones(c, "invoice-parser", DropZone.Shelf)),
+            new("shelf-drop-pill", IslandGeometry.ShelfDrop, c => DropPill(c, hint: true)),
+            new("shelf-drop-pill-no-provider", IslandGeometry.ShelfDrop, c => DropPill(c, hint: false)),
+            Zones("shelf-drop-zones", null, DropZone.Summarize, DropZoneLayout.Width),
+            Zones("shelf-drop-zones-ask", null, DropZone.Ask, DropZoneLayout.Width),
+            Zones("shelf-drop-zones-skill", "invoice-parser", DropZone.Skill, DropZoneLayout.Width),
+            Zones("shelf-drop-zones-narrow", null, DropZone.Shelf, 820),
             Result("zone-result-summary", summary),
             Result("zone-result-long", longOne),
             Result("zone-result-long-scrolled", longOne, scrolled: 1),
@@ -46,40 +48,55 @@ internal static partial class Program
         ];
     }
 
-    // The surface as ShelfDropSurface builds it: the target and the zones, the one under the cursor lit, and its line.
-    private static void Zones(Canvas c, string? skill, DropZone hot)
+    // The pill as ShelfDropSurface builds it: the accent ring inside the outline, the tray glyph, the label and the hint.
+    private static void DropPill(Canvas c, bool hint)
     {
         var g = IslandGeometry.ShelfDrop;
-        var layout = DropZoneLayout.For("ollama", skill, g.Width, g.Depth)!;
+        float inset = DropZoneLayout.RingInset;
         c.Pill();
         c.Mascot();
-        Card(c, layout.Target, hot == DropZone.Shelf, 0x59FFFFFF);
-        var (word, glyph) = layout.TargetText();
-        if (glyph is { } at)
-        {
-            c.StrokeRect(new RectangleF(at.X, at.Y, 7, 4), 1.5f, 0x99FFFFFF);
-            c.StrokeRect(new RectangleF(at.X, at.Y + 2, 16, 12), 2, 0x99FFFFFF);
-        }
-
-        c.Text(word.Run, word.At, Vector2.Zero);
-        foreach (var (zone, rect) in layout.Zones)
-        {
-            Card(c, rect, zone == hot, zone == DropZone.Skill ? 0x59FFFFFFu : 0x1AFFFFFFu);
-            var words = layout.ZoneText(zone, rect);
-            c.Text(words.Run, words.At, Vector2.Zero);
-        }
-
-        c.Text(layout.LineText(hot), Vector2.Zero);
+        c.Stroke(new RectangleF((float)(-g.Width / 2) + inset, inset, (float)g.Width - (2 * inset), (float)g.Depth - (2 * inset)), ((float)g.Depth / 2) - inset, Theme.Accent, DropZoneLayout.RingWidth);
+        var (glyph, label, more) = DropZoneLayout.Pill(hint);
+        c.Figures(Glyphs.Shelf, new Vector2(glyph.X, glyph.Y), Theme.Accent);
+        c.Text(label, Vector2.Zero);
+        c.Text(more, Vector2.Zero);
     }
 
-    private static void Card(Canvas c, RectangleF r, bool hot, uint stroke)
+    // The zones as ShelfDropSurface builds them, the one under the cursor lifted and filled with the accent.
+    private static Scene Zones(string name, string? skill, DropZone hot, float width)
     {
-        if (hot)
+        var layout = DropZoneLayout.For("Anthropic", skill, width)!;
+        return new(name, IslandGeometry.Panel(width, layout.Height), c =>
         {
-            c.RoundRect(r, 8, 0x296FA8FF);
-        }
+            c.Pill();
+            c.Mascot(shift: DropZoneLayout.Seat.Shift);
+            foreach (var line in layout.Head("cover.png", DropZoneLayout.Facts(1_258_291, 1090), mascot: true))
+            {
+                c.Text(line, Vector2.Zero);
+            }
 
-        c.StrokeRect(r, 8, hot ? 0xFF6FA8FF : stroke);
+            foreach (var (zone, rect) in layout.Zones)
+            {
+                bool lit = zone == hot, empty = zone == DropZone.Skill && layout.SlotEmpty;
+                var r = lit ? rect with { Y = rect.Y - DropZoneLayout.Lift } : rect;
+                if (empty)
+                {
+                    c.StrokeRect(r, DropZoneLayout.TileCorner, Theme.Dash);
+                }
+                else
+                {
+                    c.RoundRect(r, DropZoneLayout.TileCorner, lit ? Theme.Accent : Theme.Card);
+                }
+
+                var host = new Vector2(r.X, r.Y);
+                var (glyph, label, sub) = layout.TileText(zone, r.Size);
+                c.Figures(empty ? Glyphs.Plus : zone == DropZone.Shelf ? Glyphs.Shelf : Glyphs.Summarize, host + new Vector2(glyph.X, glyph.Y), lit ? Theme.OnAccent : Theme.Ink);
+                c.Text(lit ? label with { Style = label.Style with { Color = Theme.OnAccent } } : label, host);
+                c.Text(lit ? sub with { Style = sub.Style with { Color = Theme.OnAccent } } : sub, host, lit ? 0.8f : 1);
+            }
+
+            c.Text(layout.FootSlot, Vector2.Zero);
+        });
     }
 
     // What a model sends back: a heading, bold, nested bullets, a list past nine, a word longer than the panel, code.
@@ -135,15 +152,14 @@ internal static partial class Program
                 }
                 else
                 {
-                    c.RoundRect(r, DropResultLayout.Corner, 0x0FFFFFFF);
-                    c.StrokeRect(r, DropResultLayout.Corner, 0x1AFFFFFF);
+                    c.RoundRect(r, DropResultLayout.Corner, Theme.Raised);
                 }
             }
 
             for (int i = 0; i < layout.Tiles.Count; i++)
             {
-                c.RoundRect(Offset(layout.Tiles[i], host), DropResultLayout.Corner, 0x0FFFFFFF);
-                c.RoundRect(Offset(DropResultLayout.Icon(layout.Tiles[i]), host), 6, 0xFF000000 | result.Tiles[i].Color);
+                c.RoundRect(Offset(layout.Tiles[i], host), DropResultLayout.TileCorner, Theme.Card);
+                c.RoundRect(Offset(DropResultLayout.Icon(layout.Tiles[i]), host), DropResultLayout.IconCorner, 0xFF000000 | result.Tiles[i].Color);
             }
 
             foreach (var line in layout.Slots)

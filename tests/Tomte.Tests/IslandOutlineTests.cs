@@ -71,9 +71,9 @@ public class IslandOutlineTests
     public void TheStateTableKeepsItsSizesAndHasNoRamps()
     {
         Assert.Equal(new IslandGeometry(120, 0, 0), IslandGeometry.Hidden);
-        Assert.Equal(new IslandGeometry(220, 38, 19), IslandGeometry.Compact);
-        Assert.Equal(new IslandGeometry(420, 96, 20), IslandGeometry.ShelfDrop);
-        Assert.Equal(new IslandGeometry(760, 270, 22), IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H));
+        Assert.Equal(new IslandGeometry(220, 40, 20), IslandGeometry.Compact);
+        Assert.Equal(new IslandGeometry(360, 52, 26), IslandGeometry.ShelfDrop);
+        Assert.Equal(new IslandGeometry(760, 500, 28), IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H));
         Assert.All(Resting, g => Assert.Equal((0.0, 0.0, g.Width), (g.RampW, g.RampH, g.OuterWidth)));
     }
 
@@ -100,11 +100,11 @@ public class IslandOutlineTests
     }
 
     [Theory]
-    [InlineData(220, 38, 19, 19)] // Compact
-    [InlineData(220, 38, 16, 16)] // the notch's Compact corner, with room to spare
-    [InlineData(420, 96, 20, 20)] // Shelf-drop
-    [InlineData(380, 140, 22, 22)] // Media panel
-    [InlineData(640, 480, 22, 22)] // Palette, grown
+    [InlineData(220, 40, 20, 20)] // Compact
+    [InlineData(220, 40, 16, 16)] // the notch's Compact corner, with room to spare
+    [InlineData(360, 52, 26, 26)] // Shelf-drop
+    [InlineData(380, 140, 28, 28)] // Media panel
+    [InlineData(640, 480, 28, 28)] // Palette, grown
     [InlineData(200, 30, 16, 15)] // clamped: half the depth
     [InlineData(160, 20, 16, 10)]
     [InlineData(140, 6, 2, 2)]
@@ -139,25 +139,25 @@ public class IslandOutlineTests
     {
         var segments = Segments(IslandGeometry.Compact, attached: false);
 
-        // Corner 19 in a depth of 38: each end is a half circle of radius 19, with no ramps and no straight run.
-        Assert.Equal(new Vector2(19, 0), segments[0].End);
+        // Corner 20 in a depth of 40: each end is a half circle of radius 20, with no ramps and no straight run.
+        Assert.Equal(new Vector2(20, 0), segments[0].End);
         Assert.Equal(2, segments.Count(s => s.Kind == OutlineSegmentKind.Line));
         Assert.Equal(4, segments.Count(s => s.Kind == OutlineSegmentKind.Cubic));
-        Assert.All(segments.Where(s => s.Kind == OutlineSegmentKind.Line), s => Assert.True(s.End.Y is 0 or 38));
-        var ends = Flat(IslandGeometry.Compact, attached: false).Where(p => p.X < 19 || p.X > 201).ToList();
-        Assert.All(ends, p => Assert.Equal(19f, Vector2.Distance(p, new(p.X < 19 ? 19 : 201, 19)), 2));
+        Assert.All(segments.Where(s => s.Kind == OutlineSegmentKind.Line), s => Assert.True(s.End.Y is 0 or 40));
+        var ends = Flat(IslandGeometry.Compact, attached: false).Where(p => p.X < 20 || p.X > 200).ToList();
+        Assert.All(ends, p => Assert.Equal(20f, Vector2.Distance(p, new(p.X < 20 ? 20 : 200, 20)), 1));
     }
 
     [Fact]
     public void ACornerOf16OnCompactLeavesNoStraightRunOnTheEnds()
     {
-        var segments = Segments(new IslandGeometry(220, 38, 16), attached: false);
+        var segments = Segments(new IslandGeometry(220, 40, 16), attached: false);
 
-        // Radius 16 in a depth of 38: the two curves of each end meet at mid-height, 19 from either corner.
-        Assert.Equal(new Vector2(19, 0), segments[0].End);
+        // Radius 16 in a depth of 40: the two curves of each end meet at mid-height, 20 from either corner.
+        Assert.Equal(new Vector2(20, 0), segments[0].End);
         Assert.Equal(2, segments.Count(s => s.Kind == OutlineSegmentKind.Line));
-        Assert.Contains(segments, s => s.End == new Vector2(220, 19));
-        Assert.Contains(segments, s => s.End == new Vector2(0, 19));
+        Assert.Contains(segments, s => s.End == new Vector2(220, 20));
+        Assert.Contains(segments, s => s.End == new Vector2(0, 20));
     }
 
     [Fact]
@@ -167,8 +167,8 @@ public class IslandOutlineTests
 
         // With room to spare the curve starts 1.6 radii from the corner, and the ramp's first three points lie
         // on the edge: collinear control points are what zero curvature at the join means for a cubic.
-        Assert.Equal(1.6f * 22, segments[0].End.X, 3);
-        Assert.Equal(760 - 1.6f * 22, segments[1].End.X, 3);
+        Assert.Equal(1.6f * 28, segments[0].End.X, 3);
+        Assert.Equal(760 - 1.6f * 28, segments[1].End.X, 3);
         var ramp = segments[2];
         Assert.Equal(OutlineSegmentKind.Cubic, ramp.Kind);
         Assert.Equal((0f, 0f), (ramp.Control1.Y, ramp.Control2.Y));
@@ -201,9 +201,9 @@ public class IslandOutlineTests
     }
 
     [Theory]
-    [InlineData(1.0, 10, 80, 110)]
-    [InlineData(1.25, 13, 100, 138)]
-    [InlineData(1.5, 15, 120, 165)]
+    [InlineData(1.0, 10, 36, 50)]
+    [InlineData(1.25, 13, 45, 63)]
+    [InlineData(1.5, 15, 54, 75)]
     public void TheWindowIsTheGapAndTheDepthWithRoomForTheShadow(double scale, int gap, int side, int below)
     {
         const int centerX = 1280;
@@ -244,7 +244,7 @@ public class IslandOutlineTests
             Assert.False(Holds(region, midX, top - 1.5));
             Assert.False(Holds(region, midX, 0.5));
 
-            // The shadow falls 30 DIPs down and is 80 DIPs soft, so it reaches 110 below the pill and 80 beside it.
+            // The shadow falls 14 DIPs down and is 36 DIPs soft, so it reaches 50 below the pill and 36 beside it.
             double below = (g.Depth + IslandOutline.ShadowOffsetY + IslandOutline.ShadowReach) * scale + top;
             double middle = (g.Depth / 2 + IslandOutline.ShadowOffsetY) * scale + top;
             Assert.True(Holds(region, midX, below - 0.5));
@@ -267,7 +267,7 @@ public class IslandOutlineTests
         var strip = IslandOutline.DropStrip(IslandGeometry.ShelfDrop, scale, attached: false);
 
         // From the screen's top row to the region's first row, over the surface's width.
-        Assert.Equal(new System.Drawing.Rectangle(side, 0, (int)Math.Ceiling(420 * scale), top), strip);
+        Assert.Equal(new System.Drawing.Rectangle(side, 0, (int)Math.Ceiling(360 * scale), top), strip);
         Assert.Equal(top - 1, Region(IslandGeometry.ShelfDrop, scale, attached: false).Min(p => p.Y));
         Assert.True(strip.Bottom > top - 1);
 
@@ -281,11 +281,11 @@ public class IslandOutlineTests
     [Fact]
     public void AttachedPutsTheNotchsCornerAndRampsBack()
     {
-        Assert.Equal(new IslandGeometry(220, 38, 16, 10, 12), IslandGeometry.Compact.Attached());
-        Assert.Equal(new IslandGeometry(420, 96, 20, 16, 18), IslandGeometry.ShelfDrop.Attached());
+        Assert.Equal(new IslandGeometry(220, 40, 16, 10, 12), IslandGeometry.Compact.Attached());
+        Assert.Equal(new IslandGeometry(360, 52, 20, 16, 18), IslandGeometry.ShelfDrop.Attached());
         Assert.Equal(new IslandGeometry(380, 140, 22, 24, 24), IslandGeometry.Panel(380, 140).Attached());
-        Assert.Equal(new IslandGeometry(262, 38, 16, 10, 12), (IslandGeometry.Compact with { Width = 262 }).Attached()); // the rambler's pill
-        Assert.Equal(19, IslandGeometry.Compact.Corner); // the notch's Compact corner is 16; the pill is a capsule
+        Assert.Equal(new IslandGeometry(262, 40, 16, 10, 12), (IslandGeometry.Compact with { Width = 262 }).Attached()); // the undo pill, wider
+        Assert.Equal(20, IslandGeometry.Compact.Corner); // the notch's Compact corner is 16; the pill is a capsule
         Assert.Equal(IslandGeometry.Hidden, IslandGeometry.Hidden.Attached());
     }
 
@@ -333,8 +333,8 @@ public class IslandOutlineTests
     public void TheNotchsBottomCornersAreQuadraticsWithTheSharpCornerAsControl()
     {
         var corner = Segments(IslandGeometry.Compact.Attached(), attached: true).First(s => s.Kind == OutlineSegmentKind.Quadratic);
-        Assert.Equal(new Vector2(10, 38), corner.Control1);
-        Assert.Equal(new Vector2(10 + 16, 38), corner.End);
+        Assert.Equal(new Vector2(10, 40), corner.Control1);
+        Assert.Equal(new Vector2(10 + 16, 40), corner.End);
     }
 
     [Theory]
@@ -361,9 +361,9 @@ public class IslandOutlineTests
     }
 
     [Theory]
-    [InlineData(1.0, 810, 272)]
-    [InlineData(1.25, 1012, 340)]
-    [InlineData(1.5, 1214, 407)]
+    [InlineData(1.0, 810, 502)]
+    [InlineData(1.25, 1012, 627)]
+    [InlineData(1.5, 1214, 752)]
     public void TheNotchsWindowIsItsOutlineAndOnePixelAround(double scale, int width, int height)
     {
         var g = IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H).Attached();

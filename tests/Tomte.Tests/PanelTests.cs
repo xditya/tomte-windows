@@ -96,8 +96,8 @@ public class PanelTests
         Assert.Equal((760, 172), PanelSize.Of(PanelId.Media));
         Assert.Equal((760, 310), PanelSize.Of(PanelId.Shortcuts));
         Assert.Equal((760, 330), PanelSize.Of(PanelId.Scratchpad));
-        Assert.Equal((760, 270), PanelSize.Of(PanelId.Shelf));
-        Assert.Equal((760, 370), PanelSize.Of(PanelId.Clipboard));
+        Assert.Equal((760, 500), PanelSize.Of(PanelId.Shelf));
+        Assert.Equal((760, 480), PanelSize.Of(PanelId.Clipboard));
         Assert.Equal((760, 410), PanelSize.Of(PanelId.History));
     }
 
@@ -123,8 +123,8 @@ public class PanelTests
     public void PanelsAreCappedAtSixtyByFiftyPercentOfTheMonitor()
     {
         // 2560 x 1440 at 150% is 1706.7 x 960 DIPs: nothing is capped.
-        Assert.Equal((760, 370), PanelSize.Fit(PanelSize.Clipboard, (1706.7, 960)));
-        // 1366 x 768 at 125% is 1092.8 x 614.4 DIPs: 760 wide is cut to 655.68, 370 tall to 307.2.
+        Assert.Equal((760, 480), PanelSize.Fit(PanelSize.Clipboard, (1706.7, 960)));
+        // 1366 x 768 at 125% is 1092.8 x 614.4 DIPs: 760 wide is cut to 655.68, 480 tall to 307.2.
         var fitted = PanelSize.Fit(PanelSize.Clipboard, (1092.8, 614.4));
         Assert.Equal(655.68, fitted.W, 6);
         Assert.Equal(307.2, fitted.H, 6);
@@ -288,7 +288,7 @@ public class PanelTests
         Assert.Equal(row.SearchIcon.Right + 8, row.SearchLabel!.Value.Slot.X, 0.01);
         Assert.Equal(row.SearchLabel!.Value.Slot.Right + 8, row.Keycap!.Value.X, 0.01);
         Assert.Equal(row.Search.Right - 8, row.Keycap!.Value.Right, 0.01);
-        Assert.Equal(21, row.Keycap!.Value.Height);
+        Assert.Equal(Keycap.Height, row.Keycap!.Value.Height);
 
         // With no shortcut set there is no cap.
         var none = TabStrip.Layout(all, PanelId.Home, 760, mascot: true);

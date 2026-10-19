@@ -350,6 +350,7 @@ internal static unsafe partial class Program
             new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), Streaming, sends: SelectionOn)), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m, sending: true, sends: SelectionOn)),
             new("palette-ai-off", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0)),
             new("palette-long-answer-scrolled", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMaxHeight), c => Palette(c, "How do I fix a stuck Windows update?", Chips(false), "Sent to ollama · llama3.2:3b", Long, 2, 0.04m, scrolled: 0.5f)),
+            new("palette-answer", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("does this add up? one line", RegionChips(), Invoice, sends: RegionOn, actions: AnswerActions)), c => Palette(c, "does this add up? one line", RegionChips(), "Sent to Anthropic · claude-haiku-5-5", Invoice, 0, 0.12m, sends: RegionOn, actions: AnswerActions, cost: 0.002m)),
             new("palette-markdown", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Where did my money go in March?", Chips(false), Marked)), c => Palette(c, "Where did my money go in March?", Chips(false), "Sent to ollama · llama3.2:3b", Marked, 1, 0.03m)),
             // A question opens during a send: Run dim while its read guard runs, then ready.
             new("palette-confirm-waiting", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Open the Tomte repository", Chips(false), Asked, Asking)), c => Palette(c, "Open the Tomte repository", Chips(false), PaletteLayout.Waiting, Asked, 0, 0.03m, confirm: Asking, sending: true, run: StateLook.DisabledOpacity)),
@@ -369,6 +370,7 @@ internal static unsafe partial class Program
             .. DropZoneScenes(),
             .. HistoryScenes(),
             .. SearchScenes(),
+            .. VoiceScenes(),
             CaptureHint(),
         ];
     }
@@ -552,7 +554,7 @@ internal static unsafe partial class Program
         const float group = 6 + 8 + (Waveform.Bars * Waveform.BarWidth) + ((Waveform.Bars - 1) * Waveform.Gap), height = Waveform.MinHeight + Waveform.Swing;
         float shift = mascot ? (MascotArt.InsetX + MascotArt.SizeDips) / 2 : 0, x = shift - (group / 2), y = (float)(IslandGeometry.Compact.Depth - height) / 2;
         c.RoundRect(new RectangleF(x, y + ((height - 11) / 2), 6, 11), 3, 0xFFFF6B6B);
-        float[] reach = [.35f, .62f, .85f, 1f, .85f, .62f, .35f];
+        float[] reach = [.35f, .55f, .75f, .9f, 1f, .9f, .75f, .55f, .35f];
         for (int i = 0; i < Waveform.Bars; i++)
         {
             float h = Waveform.MinHeight + (Waveform.Swing * reach[i] * 0.7f);
@@ -705,7 +707,7 @@ internal static unsafe partial class Program
             var local = new RectangleF(0, 0, tile.Width, tile.Height);
             float dim = item.Missing ? 0.55f : 1;
             c.RoundRect(Offset(local, origin), ShelfLayout.TileCorner, slot == selectedSlot ? 0x1CFFFFFFu : 0x0FFFFFFFu, dim);
-            c.RoundRect(Offset(new RectangleF(ShelfLayout.TilePad, ShelfLayout.TilePad, ShelfLayout.Icon, ShelfLayout.Icon), origin), 7, 0xFF000000 | ShelfLayout.KindColor(item), dim);
+            c.RoundRect(Offset(ShelfLayout.PreviewIn(tile.Size), origin), ShelfLayout.PreviewCorner, ShelfLayout.PreviewOf(item) == ShelfPreview.Document ? Theme.Paper : Theme.Raised, dim);
             if (slot == owner)
             {
                 c.RoundRect(Offset(local, origin), ShelfLayout.TileCorner, StateLook.Hover);
@@ -842,7 +844,7 @@ internal static unsafe partial class Program
         [.. ChipNames.Skip(selection ? 0 : 1).Select(chip => new ChipSpec(chip.Name, chip.Icon, on.Contains(chip.Icon)))];
 
     // Circle-to-ask's: the region first and on, then the others.
-    private static ChipSpec[] RegionChips() => [new("Region", ChipIcon.Region, true), .. Chips(true)];
+    private static ChipSpec[] RegionChips() => [new("Region", ChipIcon.Region, true, Thumb: true), .. Chips(true)];
 
     // The line under the chips for those scenes, as the chips word it.
     private const string SomeOn = "Sends your question, the text selected in Notepad and a screenshot of Notepad";
@@ -882,13 +884,17 @@ internal static unsafe partial class Program
 
     private static readonly (string, TextStyle)[] Asked = [("I can open it in your browser.", PaletteLayout.AnswerText)];
 
+    private static readonly (string, TextStyle)[] Invoice = [("No. The line items add up to `$3,720`, but the total says `$3,820`: it's $100 over.", PaletteLayout.AnswerText)];
+
+    private static readonly string[] AnswerActions = [PaletteLayout.CopyId, PaletteLayout.NoteId, PaletteLayout.ShelfId, PaletteLayout.FollowId];
+
     private static readonly Confirmation Asking = new("Open https://example.com/tomte/releases", Confirmation.LineFor(Tomte.Core.Device.ActionTier.ExternalEffect, ConfirmKeys.Prompt), AlwaysAllow: true, Destructive: false);
 
     private static readonly Confirmation PowerAsking = new("Shut down the PC", Confirmation.LineFor(Tomte.Core.Device.ActionTier.Destructive, ConfirmKeys.Voice), AlwaysAllow: false, Destructive: true);
 
     // The palette's height for a scene, from the prompt's own height (the text box's at 150%, or what was said by voice),
     // the chips, the question and the answer, as the view lays it out.
-    private static double PaletteHeight(string prompt, ChipSpec[] chips, (string Text, TextStyle Style)[] answer, Confirmation? confirm = null, bool voice = false, string sends = "")
+    private static double PaletteHeight(string prompt, ChipSpec[] chips, (string Text, TextStyle Style)[] answer, Confirmation? confirm = null, bool voice = false, string sends = "", IReadOnlyList<string>? actions = null)
     {
         var first = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, send: !voice);
         float text;
@@ -903,7 +909,7 @@ internal static unsafe partial class Program
             text = (float)(probe.ContentHeight / 1.5);
         }
 
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: !voice, sends);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: !voice, sends, actions: actions);
         return layout.Height(layout.Answer(answer).Height);
     }
 
@@ -913,7 +919,7 @@ internal static unsafe partial class Program
     // streaming answer stays). In a typed palette the box has the keys. While <paramref name="sending"/> the chips and
     // Send are dimmed; <paramref name="run"/> is Run's opacity, dim while its read guard runs. Opened from the panels it
     // has the back arrow (<paramref name="back"/>); <paramref name="pinned"/> puts the pinned mark on the tomte.
-    private static void Palette(Canvas c, string? prompt, ChipSpec[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false, bool sending = false, float run = 1, string sends = "", bool back = false, bool pinned = false)
+    private static void Palette(Canvas c, string? prompt, ChipSpec[] chips, string provider, (string Text, TextStyle Style)[] answer, int steps, decimal spent, float scrolled = 1, Confirmation? confirm = null, bool voice = false, bool sending = false, float run = 1, string sends = "", bool back = false, bool pinned = false, IReadOnlyList<string>? actions = null, decimal cost = 0)
     {
         var origin = new Vector2((float)(-PanelSize.PaletteWidth / 2), 0);
         c.Pill();
@@ -935,7 +941,7 @@ internal static unsafe partial class Program
         }
 
         // As the view does it: the prompt's height first, then the box grows to it and the rest follows.
-        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: typed, sends, back);
+        var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true, text, chips, confirm, send: typed, sends, back, actions);
         if (back)
         {
             var arrow = Offset(layout.Back, origin);
@@ -943,13 +949,12 @@ internal static unsafe partial class Program
         }
 
         var card = layout.Prompt;
-        c.RoundRect(Offset(card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
-        c.Stroke(Offset(card, origin), PaletteLayout.PromptCorner, typed ? PaletteLayout.PromptFocusLine : PaletteLayout.PromptLine, 1);
+        c.RoundRect(Offset(card, origin), PaletteLayout.PromptCorner, Theme.Card);
         var box = layout.Editor;
         if (prompt is null)
         {
             c.Text(PaletteLayout.Off, PaletteLayout.Placeholder, new RectangleF(box.X, card.Y, box.Width, card.Height), origin);
-            c.Text(new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad, layout.ChipsTop + 4), origin);
+            c.Text(new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad + PaletteLayout.AnswerInset, layout.AnswerTop), origin);
             return;
         }
 
@@ -971,27 +976,41 @@ internal static unsafe partial class Program
             var send = Offset(layout.Send, origin);
             c.Layer(PaletteLayout.CanSend(prompt, sending) ? 1 : StateLook.DisabledOpacity);
             c.RoundRect(send, PaletteLayout.SendCorner, PaletteLayout.SendFill);
-            c.Figures(PaletteGlyphs.Send, new Vector2(send.X + (send.Width - PaletteGlyphs.SendSize) / 2, send.Y + (send.Height - PaletteGlyphs.SendSize) / 2), PaletteLayout.SendInk);
+            c.Glyph(Glyphs.Send, new Vector2(send.X + (send.Width - PaletteLayout.SendGlyph) / 2, send.Y + (send.Height - PaletteLayout.SendGlyph) / 2), PaletteLayout.SendGlyph, PaletteLayout.SendInk);
             c.EndLayer();
         }
 
         // The chips' shapes in one layer and their names on top, all dimmed while sending, as the view's chip layer is.
         float dim = sending ? StateLook.DisabledOpacity : 1;
-        c.Text(layout.IncludeLabel, origin, dim);
         c.Text(layout.SendsLine, origin, dim);
         c.Layer(dim);
         for (int i = 0; i < layout.Chips.Count; i++)
         {
             var chip = layout.Chips[i];
             // The view fills and strokes one path, a pixel-wide stroke inside the pill's edges on whole pixels.
-            var (path, corner, stroke) = PaletteLayout.ChipStroke(chip.Box, origin, c.Scale);
-            c.RoundRect(Offset(path, origin), corner, chip.On ? StateLook.CheckedFill : PaletteLayout.ChipFill);
-            c.Stroke(Offset(path, origin), corner, chip.On ? StateLook.CheckedFill : PaletteLayout.ChipOutline, stroke);
-            uint ink = chip.On ? StateLook.CheckedText : PaletteLayout.ChipInk;
+            var (path, corner, stroke) = PaletteLayout.ChipStroke(chip, origin, c.Scale);
+            if (chip.On)
+            {
+                c.RoundRect(Offset(path, origin), corner, PaletteLayout.ChipOnFill);
+            }
+            else
+            {
+                c.Stroke(Offset(path, origin), corner, PaletteLayout.ChipOutline, stroke);
+            }
+
+            uint ink = chip.On ? PaletteLayout.ChipOnInk : PaletteLayout.ChipInk;
             var icon = Offset(chip.Icon, origin);
             var mark = Offset(chip.Mark, origin);
-            c.Figures(PaletteGlyphs.Icon(chips[i].Icon), new Vector2(icon.X, icon.Y), ink);
-            c.Figures(chip.On ? PaletteGlyphs.Tick : PaletteGlyphs.Plus, new Vector2(mark.X, mark.Y), ink);
+            if (chip.Thumb)
+            {
+                c.RoundRect(icon, PaletteLayout.ThumbCorner, Theme.Ink);
+            }
+            else
+            {
+                c.Glyph(ChipGlyph(chips[i].Icon), new Vector2(icon.X, icon.Y), PaletteLayout.IconSize, ink);
+            }
+
+            c.Glyph(chip.On ? Glyphs.Close : Glyphs.Plus, new Vector2(mark.X, mark.Y), PaletteLayout.MarkSize, ink);
         }
 
         c.EndLayer();
@@ -1011,12 +1030,32 @@ internal static unsafe partial class Program
         }
 
         c.Clip = null;
+        if (runs.Count > 0 && layout.Sparkle.Y + band.Y - scroll >= band.Y)
+        {
+            var spark = layout.Sparkle;
+            c.Glyph(Glyphs.Sparkle, new Vector2(spark.X, band.Y + spark.Y - scroll) + origin, PaletteLayout.SparkleSize, Theme.Accent);
+        }
+
+        foreach (var action in layout.Actions(height))
+        {
+            var rect = Offset(action.Box, origin);
+            if (action.Outlined)
+            {
+                c.Stroke(new RectangleF(rect.X + 0.5f, rect.Y + 0.5f, rect.Width - 1, rect.Height - 1), rect.Height / 2, PaletteLayout.ActionOutline, 1);
+            }
+            else
+            {
+                c.RoundRect(rect, rect.Height / 2, PaletteLayout.ActionFill);
+            }
+
+            c.Text(action.Label, origin);
+        }
 
         // The question, with the view's colours: the accent round the card, Run white or amber for what asks every time,
         // the others filled and outlined; each button in a layer of its own, the yes buttons at their read guard's opacity.
         if (layout.Ask(height) is { } ask)
         {
-            c.RoundRect(Offset(ask.Card, origin), PaletteLayout.PromptCorner, 0x0FFFFFFF);
+            c.RoundRect(Offset(ask.Card, origin), PaletteLayout.PromptCorner, Theme.Card);
             c.Stroke(Offset(ask.Card, origin), PaletteLayout.PromptCorner, PaletteLayout.AskOutline, 1);
             c.Text(ask.Summary, ask.SummaryAt, origin);
             c.Text(ask.Line, origin);
@@ -1040,13 +1079,18 @@ internal static unsafe partial class Program
             }
         }
 
-        foreach (var line in layout.Foot(provider, steps, spent, 2m, height))
-        {
-            c.Text(line, origin);
-        }
+        bool history = !voice && prompt is not null;
+        var foot = layout.Foot(provider, steps, cost, spent, 2m, height, history);
+        c.RoundRect(Offset(foot.Divider, origin), 0, PaletteLayout.Divider);
+        c.Circle(new Vector2(foot.Dot.X + (foot.Dot.Width / 2), foot.Dot.Y + (foot.Dot.Height / 2)) + origin, foot.Dot.Width / 2, PaletteLayout.StatusDot(provider, failed: false));
+        c.Text(foot.Provider, origin);
+        c.Text(foot.Cost, origin);
+        c.Text(foot.Spend, origin);
+        c.RoundRect(Offset(foot.Meter, origin), PaletteLayout.MeterHeight / 2, PaletteLayout.MeterTrack);
+        c.RoundRect(Offset(foot.Meter with { Width = foot.Fill }, origin), PaletteLayout.MeterHeight / 2, PaletteLayout.MeterFill);
 
         // The AI history button's clock, as the view draws it; the voice palette has none.
-        if (!voice && prompt is not null)
+        if (history)
         {
             var button = Offset(layout.History(height), origin);
             c.StrokeCircle(new Vector2(button.X + button.Width / 2, button.Y + button.Height / 2), PaletteLayout.ClockRadius, PaletteLayout.ClockStroke, Theme.Ink2);
@@ -1056,6 +1100,17 @@ internal static unsafe partial class Program
             }
         }
     }
+
+    // A chip's picture from the icon set, as the view picks it.
+    private static GlyphFigure[] ChipGlyph(ChipIcon icon) => icon switch
+    {
+        ChipIcon.Selection => Glyphs.Text,
+        ChipIcon.Window => Glyphs.Window,
+        ChipIcon.Screenshot => Glyphs.Region,
+        ChipIcon.Shelf => Glyphs.Shelf,
+        ChipIcon.Note => Glyphs.Pencil,
+        _ => Glyphs.Region,
+    };
 
     // A conversation from the History tab, loaded and not sent yet: the box says what going on with it sends.
     private static readonly (string, TextStyle)[] Continuing = [(PaletteLayout.ContinueLine("Remind me what the dentist said"), PaletteLayout.StepText)];
@@ -1121,21 +1176,25 @@ internal static unsafe partial class Program
     {
         var layout = new ClipboardPanelLayout(Body(PanelSize.Clipboard));
         var body = BodyOrigin(PanelSize.Clipboard);
+        var now = new DateTimeOffset(2026, 10, 20, 15, 0, 0, TimeSpan.Zero);
+        var kept = new ClipboardRetention();
         c.Pill();
         c.Mascot();
         Tabs(c, PanelId.Clipboard, PanelSize.Clipboard);
-        foreach (var line in layout.HeadText(on, new ClipboardRetention()))
+        c.Text(new TextSlot(ClipboardPanelLayout.KeepHistory, TextStyle.Secondary, RectangleF.FromLTRB(ClipboardPanelLayout.Pad, layout.Head.Y, layout.Switch.X, layout.Head.Bottom)), body);
+        var track = Offset(layout.Switch, body);
+        c.RoundRect(track, track.Height / 2, on ? Theme.Accent : Theme.LineStrong);
+        c.Circle(new Vector2(on ? track.Right - 10 : track.X + 10, track.Y + track.Height / 2), 7, Theme.Ink);
+        if (on)
         {
-            c.Text(line, body);
+            c.RoundRect(Offset(layout.Filter, body), layout.Filter.Height / 2, Theme.Card);
+            c.Text(new TextSlot(ClipboardPanelLayout.FilterHint, ClipboardPanelLayout.HintStyle, layout.FilterBox), body);
         }
 
-        var track = Offset(layout.Switch, body);
-        c.RoundRect(track, track.Height / 2, on ? 0xFF6FA8FFu : 0x33FFFFFFu);
-        c.Circle(new Vector2(on ? track.Right - 9 : track.X + 9, track.Y + track.Height / 2), 7, 0xFFFFFFFF);
         if (!on || rows.Length == 0)
         {
-            c.StrokeRect(Offset(layout.List, body), ClipboardPanelLayout.Corner, 0x2EFFFFFF);
-            foreach (var line in layout.BoxText(on, new ClipboardRetention()))
+            c.StrokeRect(Offset(layout.Box, body), ClipboardPanelLayout.PreviewCorner, Theme.LineStrong);
+            foreach (var line in layout.BoxText(on, kept))
             {
                 c.Text(line, body);
             }
@@ -1143,46 +1202,69 @@ internal static unsafe partial class Program
             return;
         }
 
-        var foot = layout.FootText(asking);
-        c.Text(foot[0], body);
-        c.StrokeRect(Offset(layout.ClearAll(asking), body), ClipboardPanelLayout.Corner, asking ? Theme.Warn : 0x40FFFFFFu);
-        c.Text(foot[1], body);
-
-        var list = layout.List;
-        for (int i = 0; i < rows.Length; i++)
+        foreach (var line in layout.FootText(asking, kept))
         {
-            var row = ClipboardPanelLayout.Row(i, list.Width);
-            if (row.Bottom > list.Height)
+            c.Text(line, body);
+        }
+
+        // The rows a few minutes apart from now, the first one selected.
+        var history = rows.Select((r, i) => new ClipboardRow(i + 1, r.Display, now.AddMinutes(-7 * i), r.Thumb) { Chars = r.Display.Length }).ToList();
+        var lines = ClipboardPanelLayout.Lines(history, now);
+        var list = layout.List;
+        foreach (var line in lines)
+        {
+            if (line.Y + line.Height > list.Height)
             {
                 break;
             }
 
-            var origin = body + new Vector2(list.X + row.X, list.Y + row.Y);
-            c.RoundRect(Offset(new RectangleF(0, 0, row.Width, row.Height), origin), ClipboardPanelLayout.Corner, 0x0FFFFFFF);
-            if (rows[i].Thumb is { } thumb)
+            var origin = body + new Vector2(list.X, list.Y + line.Y);
+            if (line.IsHeading)
+            {
+                c.Text(ClipboardPanelLayout.HeadingSlot(line, list.Width), body + new Vector2(list.X, list.Y));
+                continue;
+            }
+
+            var row = history[line.Row];
+            bool selected = line.Row == 0;
+            if (selected)
+            {
+                c.RoundRect(Offset(new RectangleF(0, 0, list.Width, line.Height), origin), ClipboardPanelLayout.Corner, Theme.Raised);
+                c.StrokeRect(Offset(new RectangleF(0, 0, list.Width, line.Height), origin), ClipboardPanelLayout.Corner, Theme.Dash);
+            }
+
+            if (row.Thumb is { } thumb)
             {
                 // Decoded to the slot's pixels at this scale, as the panel does when it shows.
                 int w = (int)Math.Round(ClipboardPanelLayout.ThumbWidth * c.Scale), h = (int)Math.Round(ClipboardPanelLayout.ThumbHeight * c.Scale);
-                c.Picture(Offset(ClipboardPanelLayout.ThumbIn, origin), 6, ClipboardImages.Thumbnail(thumb, w, h), w, h);
+                c.Picture(Offset(ClipboardPanelLayout.ThumbIn, origin), ClipboardPanelLayout.ThumbCorner, ClipboardImages.Thumbnail(thumb, w, h), w, h);
             }
             else
             {
-                c.RoundRect(Offset(ClipboardPanelLayout.IconIn, origin), 6, 0x1CFFFFFF);
+                c.RoundRect(Offset(ClipboardPanelLayout.IconIn, origin), 4, Theme.RaisedHi);
             }
 
-            var remove = Offset(ClipboardPanelLayout.RemoveIn(row.Width), origin);
-            var middle = new Vector2(remove.X + remove.Width / 2, remove.Y + remove.Height / 2);
-            c.Circle(middle, remove.Width / 2, 0x0FFFFFFF);
-            c.Cross(middle, 10, 1.5f, 0x61FFFFFF);
-            foreach (var line in ClipboardPanelLayout.RowText(rows[i].Display, rows[i].Ago, row.Width, rows[i].Thumb is not null))
+            var end = selected ? ClipboardPanelLayout.RowEnd.Enter : ClipboardPanelLayout.RowEnd.Age;
+            foreach (var slot in ClipboardPanelLayout.RowText(row, row.When(now), end, list.Width))
             {
-                c.Text(line, origin);
+                c.Text(slot, origin);
+            }
+        }
+
+        if (layout.HasPreview)
+        {
+            c.RoundRect(Offset(layout.Preview, body), ClipboardPanelLayout.PreviewCorner, Theme.Card);
+            c.Text(layout.PreviewMeta(history[0].Meta()), body);
+            foreach (var (action, box) in layout.Actions())
+            {
+                c.RoundRect(Offset(box, body), ClipboardPanelLayout.ButtonCorner, action == ClipboardPanelLayout.PreviewAction.Paste ? Theme.Ink : Theme.Raised);
+                c.Text(new TextSlot(ClipboardPanelLayout.ActionText(action, false), action == ClipboardPanelLayout.PreviewAction.Paste ? ClipboardPanelLayout.PasteStyle : ClipboardPanelLayout.SecondaryButtonStyle, box), body);
             }
         }
 
         if (targets)
         {
-            foreach (var target in layout.Targets(on, [.. Enumerable.Range(1, rows.Length).Select(i => (long)i)], 0, asking).Where(t => t.Bounds.Height > 0))
+            foreach (var target in layout.Targets(on, history, lines, 0, asking, history[0]).Where(t => t.Bounds.Height > 0))
             {
                 c.StrokeRect(Offset(target.Bounds, body), target.Corner, TargetLine);
             }
@@ -1508,6 +1590,29 @@ internal static unsafe partial class Program
                 path->Release();
             }
         }
+
+        /// <summary>A <see cref="Glyphs"/> entry from its 24-unit box, <paramref name="size"/> DIPs square from <paramref name="at"/>.</summary>
+        public void Glyph(GlyphFigure[] figures, Vector2 at, float size, uint argb)
+        {
+            float k = size / Glyphs.Box;
+            foreach (var figure in figures)
+            {
+                if (!figure.Stroked)
+                {
+                    Fill(figure.Path, at, k, argb);
+                    continue;
+                }
+
+                var path = Path(figure.Path, at, k);
+                var brush = Brush(argb);
+                dc->DrawGeometry((ID2D1Geometry*)path, (ID2D1Brush*)brush, Glyphs.StrokeWidth * k, null);
+                brush->Release();
+                path->Release();
+            }
+        }
+
+        /// <summary>A run with its parts (bold, tinted letters) in a slot of a host, centred in its height.</summary>
+        public void Text(TextRun run, RectangleF slot, Vector2 host) => Text(run, slot, host, centred: true, 1);
 
         /// <summary>What is drawn from here to <see cref="EndLayer"/> fades as one, as the shapes of one shape visual do.</summary>
         public void Layer(float opacity)

@@ -490,7 +490,7 @@ internal sealed class PanelHost
                     p.Capsule(Visual, tab.Bounds, p.Brush(Theme.RaisedHi));
                 }
 
-                p.Glyph(Visual, TabStrip.Glyph(tab.Id), tab.Icon, p.Brush(on ? Theme.Ink : Theme.Ink2));
+                p.Glyph(Visual, TabStrip.Glyph(tab.Id), ShelfColors.Of(on ? Theme.Ink : Theme.Ink2), tab.Icon);
                 if (tab.Label is { } label)
                 {
                     p.Text(Visual, label);
@@ -511,7 +511,7 @@ internal sealed class PanelHost
             rightEdge.SetScalarParameter("right", width - origin);
             right.StartAnimation("Offset", rightEdge);
             p.Capsule(right, Moved(r.Search, -origin), card);
-            p.Glyph(right, Glyphs.Search, Moved(r.SearchIcon, -origin), p.Brush(Theme.Ink2));
+            p.Glyph(right, Glyphs.Search, ShelfColors.Of(Theme.Ink2), Moved(r.SearchIcon, -origin));
             if (r.SearchLabel is { } word)
             {
                 p.Text(right, word with { Slot = Moved(word.Slot, -origin) });
@@ -523,7 +523,7 @@ internal sealed class PanelHost
             }
 
             p.Capsule(right, Moved(r.Settings, -origin), card);
-            p.Glyph(right, Glyphs.Settings, Moved(r.SettingsIcon, -origin), p.Brush(Theme.Ink2));
+            p.Glyph(right, Glyphs.Settings, ShelfColors.Of(Theme.Ink2), Moved(r.SettingsIcon, -origin));
 
             (laidFor, liveFor) = (width, (float)island.Current.Width);
             list.Add(new(SearchId, Shift(r.Search, liveFor), TabStrip.Button / 2, TargetKind.Button, Tip: TabStrip.SearchTip(searchKey)));

@@ -326,6 +326,9 @@ internal static partial class Program
                 triggers.OpenPanel(PanelId.History);
                 KeysToPanels(island);
             }),
+            AddToNote = words => _ = Scratchpad.AppendAsync(words, DateTime.Now),
+            // Named for when it was kept, to the second, so a second answer never replaces the first.
+            KeepOnShelf = words => Jobs.Shelf?.CreateFile(string.Create(System.Globalization.CultureInfo.InvariantCulture, $"Answer {DateTime.Now:yyyy-MM-dd HH.mm.ss}.md"), words),
         };
 
     private static (IChatProvider Provider, ProviderConfig Config, PaletteOptions Options) DebugProvider()

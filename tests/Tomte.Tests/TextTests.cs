@@ -129,8 +129,8 @@ public class TextTests
     [Fact]
     public void TheCompactLinesFitThe220Pill()
     {
-        // The pill is 220 wide; the tomte and its gap take 5.5 + 26 + 9 on the left, as much stays free on the right as
-        // the tomte's art leaves on the left (8.8), and the timer's ring takes 18 + 9 before its words on its done pill.
+        // The pill is 220 wide; the tomte and its gap take 5.5 + 26 + 10 on the left, as much stays free on the right as
+        // the tomte's art leaves on the left (8.8), and the timer's ring takes 22 + 10 before its words on its done pill.
         var free = CompactLayout.Line(mascot: true);
         using var hint = Lay("Push your cursor up here", CompactLayout.LineStyle, free.Width);
         float doneWidth = TextSlot.Measure("Timer done · 25:00", CompactLayout.LineStyle, 4096);
@@ -138,7 +138,7 @@ public class TextTests
         using var done = Lay("Timer done · 25:00", CompactLayout.LineStyle, room);
 
         Assert.Equal(8.79, CompactLayout.EndInset, 2);
-        Assert.Equal((-69.5f, 0f, 38f), (free.X, free.Y, free.Height));
+        Assert.Equal((-68.5f, 0f, 40f), (free.X, free.Y, free.Height));
         Assert.Equal(110 - CompactLayout.EndInset, free.Right, 3);
         Assert.Equal(doneWidth, room);
         var alone = CompactLayout.Line(mascot: false);
@@ -175,9 +175,74 @@ public class TextTests
         var alone = CompactLayout.Line(mascot: false);
         Assert.Equal(0, alone.X + (alone.Width / 2), 3);
 
-        // The push pill's row keeps its title after the art and up to the bars, as it was.
-        Assert.Equal(new RectangleF(-69.5f, 8, 22, 22), CompactLayout.Art(mascot: true));
-        Assert.Equal(new RectangleF(-38.5f, 9, 109.5f, 20), CompactLayout.Title(mascot: true));
+        // The push pill's row: 26 DIP art centred down the pill, then the words up to a gap before the bars, which end
+        // 14 in from the pill's right end.
+        Assert.Equal(new RectangleF(-68.5f, 7, 26, 26), CompactLayout.Art(mascot: true));
+        Assert.Equal(new RectangleF(-32.5f, 0, 100.5f, 40), CompactLayout.Title(mascot: true));
+        Assert.Equal(110 - 14, CompactLayout.BarsLeft + (4 * Tomte.Core.Rambler.Waveform.BarWidth) + (3 * Tomte.Core.Rambler.Waveform.Gap));
+        Assert.Equal(40, CompactLayout.BarsTop + CompactLayout.BarsHeight + CompactLayout.BarsTop);
+    }
+
+    // The title takes what it needs first; the artist follows a gap after it in what is left, and drops out rather than
+    // show a sliver.
+    [Fact]
+    public void TheArtistFollowsTheTitleInWhatIsLeft()
+    {
+        var room = CompactLayout.Title(mascot: true);
+        var (title, artist) = CompactLayout.Track(room, 40, 30);
+        Assert.Equal((room.X, 40f), (title.X, title.Width));
+        Assert.Equal((title.Right + CompactLayout.Gap, 30f), (artist.X, artist.Width));
+
+        var (cutTitle, cutArtist) = CompactLayout.Track(room, 40, 200);
+        Assert.Equal(room.Right, cutArtist.Right, 3);
+        Assert.Equal(40, cutTitle.Width);
+
+        var (longTitle, gone) = CompactLayout.Track(room, 90, 60);
+        Assert.Equal((90f, 0f), (longTitle.Width, gone.Width));
+        Assert.Equal(room.Width, CompactLayout.Track(room, 500, 60).Title.Width);
+        Assert.Equal(0, CompactLayout.Track(room, 20, 0).Artist.Width);
+        Assert.Equal(40 + CompactLayout.Gap + 30, CompactLayout.TrackWidth(40, 30));
+        Assert.Equal(40, CompactLayout.TrackWidth(40, 0));
+    }
+
+    // The push pill's glance is the time, a rule and the rest, ending the pill like any words the tomte leads.
+    [Fact]
+    public void TheGlanceIsTheTimeARuleAndTheRest()
+    {
+        Assert.Equal(("22:02", "8 on the shelf"), CompactLayout.SplitGlance("22:02 · 8 on the shelf"));
+        Assert.Equal(("22:02", ""), CompactLayout.SplitGlance("22:02"));
+        var (time, rule, rest) = CompactLayout.Glance(mascot: true, 40, 80);
+        Assert.Equal(time.X + 40 + CompactLayout.Gap, rule, 3);
+        Assert.Equal(rule + 1 + CompactLayout.Gap, rest.X, 3);
+        Assert.Equal(CompactLayout.Line(mascot: true).Right, rest.X + 80, 3);
+        var (alone, _, aloneRest) = CompactLayout.Glance(mascot: false, 40, 80);
+        Assert.Equal(0, (alone.X + aloneRest.X + 80) / 2, 3);
+        float drawn = CompactLayout.GlanceWidth("22:02 · 8 on the shelf");
+        Assert.Equal(TextSlot.Measure("22:02", CompactLayout.TimeStyle, 4096) + 21 + TextSlot.Measure("8 on the shelf", CompactLayout.GlanceStyle, 4096), drawn, 3);
+    }
+
+    // The listening pill's dot, nine bars and time held are one group in the room right of the tomte.
+    [Fact]
+    public void TheListeningPillIsOneCentredGroup()
+    {
+        foreach (bool mascot in new[] { true, false })
+        {
+            var slot = CompactLayout.Line(mascot);
+            var (dot, bars, elapsed) = CompactLayout.Listening(mascot, 30);
+            Assert.Equal(dot + CompactLayout.DotSize + CompactLayout.Gap, bars, 3);
+            Assert.Equal(bars + (9 * 3) + (8 * 2) + CompactLayout.Gap, elapsed.X, 3);
+            Assert.Equal(slot.X + (slot.Width / 2), (dot + elapsed.X + 30) / 2, 3);
+            Assert.True(dot - CompactLayout.Halo >= slot.X - CompactLayout.Gap);
+        }
+    }
+
+    [Fact]
+    public void TheUndoButtonCountsTheSecondsDown()
+    {
+        Assert.Equal("Undo · 8s", CompactLayout.UndoLabel(TimeSpan.FromSeconds(7.2)));
+        Assert.Equal("Undo · 10s", CompactLayout.UndoLabel(TimeSpan.FromSeconds(10)));
+        Assert.Equal("Undo · 1s", CompactLayout.UndoLabel(TimeSpan.FromSeconds(0.3)));
+        Assert.Equal("Undo · 1s", CompactLayout.UndoLabel(TimeSpan.Zero));
     }
 
     // On the pills with no bars (kept while music plays, peek with the tomte off) the art and its title are one group,
@@ -187,7 +252,7 @@ public class TextTests
     {
         float title = TextSlot.Measure("Nightfall", CompactLayout.TitleStyle, 4096);
         var (art, x, width) = CompactLayout.Group(mascot: true, CompactLayout.Art(true).Width, title);
-        Assert.Equal(art + 22 + CompactLayout.Gap, x, 3);
+        Assert.Equal(art + 26 + CompactLayout.Gap, x, 3);
         Assert.Equal(110 - CompactLayout.EndInset, x + width, 3);
         var (alone, aloneX, aloneWidth) = CompactLayout.Group(mascot: false, CompactLayout.Art(false).Width, title);
         Assert.Equal(0, (alone + aloneX + aloneWidth) / 2, 3);
@@ -199,7 +264,8 @@ public class TextTests
     [Fact]
     public void TheRingAndItsWordsAreOneGroup()
     {
-        float Width(string words) => TextSlot.Measure(words, CompactLayout.ClockStyle, 4096);
+        // A countdown goes with the timer's word before it; the done pill's line is words of its own.
+        float Width(string words) => CompactLayout.RingWords(words, countdown: !words.StartsWith("Timer done", StringComparison.Ordinal));
         string hour = CompactRules.Countdown(TimeSpan.FromHours(1)), under = CompactRules.Countdown(TimeSpan.FromSeconds(3599));
         Assert.Equal(("1:00:00", "59:59"), (hour, under));
         foreach (bool mascot in new[] { true, false })

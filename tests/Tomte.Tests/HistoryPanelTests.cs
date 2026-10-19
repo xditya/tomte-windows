@@ -119,11 +119,11 @@ public class HistoryPanelTests
         var layout = new PaletteLayout((float)PanelSize.PaletteWidth, mascot: true);
         float height = layout.Height(0);
         var button = layout.History(height);
-        var foot = layout.Foot("Nothing sent", 0, 0, 2m, height);
+        var foot = layout.Foot("Nothing sent", 0, 0, 0, 2m, height, history: true);
 
         Assert.True(button.Width >= StateLook.MinTarget && button.Height >= StateLook.MinTarget);
         Assert.True(button.X >= 0 && button.Bottom <= height);
-        Assert.True(foot[0].Slot.X >= button.Right);
+        Assert.True(foot.Dot.X >= button.Right && foot.Provider.Slot.X > foot.Dot.Right);
         Assert.Equal(PaletteLayout.HistoryTip, layout.HistoryTarget(height).Tip);
         Assert.Contains("costs more", PaletteLayout.ContinueLine(null), StringComparison.Ordinal);
         Assert.StartsWith("Continuing \"Remind me", PaletteLayout.ContinueLine("Remind me what the dentist said"), StringComparison.Ordinal);

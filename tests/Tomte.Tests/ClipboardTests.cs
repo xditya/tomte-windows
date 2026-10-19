@@ -558,7 +558,7 @@ public sealed class ClipboardTests : IDisposable
         }
 
         var rows = history.Rows(Now.AddMinutes(4));
-        Assert.Equal(["Image · 30 x 5", "text 3", "Image · 20 x 5", "text 2"], rows.Select(r => r.Display));
+        Assert.Equal(["Image · 30 × 5", "text 3", "Image · 20 × 5", "text 2"], rows.Select(r => r.Display));
         Assert.True(rows[0].IsImage);
         Assert.False(rows[1].IsImage);
         Assert.Equal([3], rows[0].Thumb!);
@@ -580,7 +580,7 @@ public sealed class ClipboardTests : IDisposable
 
         var history = new ClipboardHistory(new TomteDb(DbPath));
         history.AddImage(new KeptImage([1], 4, 3, [2]), Now.AddSeconds(1));
-        Assert.Equal(["Image · 4 x 3", "from before"], history.Rows(Now.AddSeconds(2)).Select(r => r.Display));
+        Assert.Equal(["Image · 4 × 3", "from before"], history.Rows(Now.AddSeconds(2)).Select(r => r.Display));
     }
 
     [Fact]
@@ -589,12 +589,12 @@ public sealed class ClipboardTests : IDisposable
         var history = new ClipboardHistory(new TomteDb(DbPath));
         history.AddImage(new KeptImage([1, 1], 1, 1, [9]), Now);
         history.AddImage(new KeptImage([2, 2], 2, 2, [9]), Now.AddSeconds(1));
-        long first = history.Rows(Now).Single(r => r.Display == "Image · 1 x 1").Id;
+        long first = history.Rows(Now).Single(r => r.Display == "Image · 1 × 1").Id;
 
         history.AddImage(new KeptImage([1, 1], 1, 1, [9]), Now.AddSeconds(2));
 
         var rows = history.Rows(Now.AddSeconds(3));
-        Assert.Equal(["Image · 1 x 1", "Image · 2 x 2"], rows.Select(r => r.Display));
+        Assert.Equal(["Image · 1 × 1", "Image · 2 × 2"], rows.Select(r => r.Display));
         Assert.Equal(first, rows[0].Id);
     }
 
@@ -624,7 +624,7 @@ public sealed class ClipboardTests : IDisposable
             Assert.Throws<ObjectDisposedException>(() => replaced.ToArray());
         }
 
-        Assert.Equal(["Image · 7 x 2", "first"], (await watch.RowsAsync(Now.AddMinutes(1))).Select(r => r.Display));
+        Assert.Equal(["Image · 7 × 2", "first"], (await watch.RowsAsync(Now.AddMinutes(1))).Select(r => r.Display));
         Assert.Single(log, line => line.StartsWith("clipboard: store an image took", StringComparison.Ordinal));
         // And the stored one once its PNG was made.
         Assert.Throws<ObjectDisposedException>(() => stored.ToArray());
@@ -661,7 +661,7 @@ public sealed class ClipboardTests : IDisposable
         var history = new ClipboardHistory(new TomteDb(DbPath), new ClipboardRetention(MaxImageBytes: 8));
         history.AddImage(new KeptImage(Encoding.UTF8.GetBytes("12345678"), 1, 1, []), Now);
         history.AddImage(new KeptImage(Encoding.UTF8.GetBytes("123456789"), 2, 2, []), Now);
-        Assert.Equal(["Image · 1 x 1"], history.Rows(Now).Select(r => r.Display));
+        Assert.Equal(["Image · 1 × 1"], history.Rows(Now).Select(r => r.Display));
     }
 
     [Fact]
@@ -675,7 +675,7 @@ public sealed class ClipboardTests : IDisposable
         listeners[0].Copy(new CopiedImage([1, 2, 3], png: true));
 
         var row = Assert.Single(await watch.RowsAsync(Now));
-        Assert.Equal("Image · 5 x 3", row.Display);
+        Assert.Equal("Image · 5 × 3", row.Display);
         Assert.Contains(log, line => line.StartsWith("clipboard: an image could not be read", StringComparison.Ordinal));
         var png = new ClipboardHistory(new TomteDb(DbPath)).Image(row.Id)!;
         Assert.True(FileHolds(png) && FileHolds(row.Thumb!));
@@ -746,6 +746,77 @@ public sealed class ClipboardTests : IDisposable
         int at = 40 + ((height - 1 - y) * width + x) * 4;
         return ((dib[at], dib[at + 1], dib[at + 2]), dib[at + 3]);
     }
+
+    [Fact]
+    public void APinnedItemStaysThroughClearAllTheCountAndTheAge()
+    {
+        var history = new ClipboardHistory(new TomteDb(DbPath), new ClipboardRetention(MaxItems: 2));
+        history.Add("pinned", Now);
+        history.Pin(history.Rows(Now).Single().Id, pinned: true);
+        for (int i = 1; i <= 3; i++)
+        {
+            history.Add($"text {i}", Now.AddMinutes(i));
+        }
+
+        // The pin does not count toward the two kept; it stays below them, still pinned.
+        var rows = history.Rows(Now.AddMinutes(4));
+        Assert.Equal(["text 3", "text 2", "pinned"], rows.Select(r => r.Display));
+        Assert.Equal([false, false, true], rows.Select(r => r.Pinned));
+
+        // Copied again it moves up and keeps its pin; a week later it is the only one left.
+        history.Add("pinned", Now.AddMinutes(5));
+        Assert.True(history.Rows(Now.AddMinutes(5))[0] is { Display: "pinned", Pinned: true });
+        Assert.Equal(["pinned"], history.Rows(Now.AddDays(30)).Select(r => r.Display));
+
+        // Clear all keeps it; turning history off clears it with the rest; an unpinned item goes with Clear all.
+        history.Add("loose", Now.AddDays(30));
+        history.Clear(keepPinned: true);
+        Assert.Equal(["pinned"], history.Rows(Now.AddDays(30)).Select(r => r.Display));
+        history.Pin(history.Rows(Now.AddDays(30)).Single().Id, pinned: false);
+        history.Clear(keepPinned: true);
+        Assert.Empty(history.Rows(Now.AddDays(30)));
+        history.Add("again", Now.AddDays(30));
+        history.Pin(history.Rows(Now.AddDays(30)).Single().Id, pinned: true);
+        history.Clear();
+        Assert.Empty(history.Rows(Now.AddDays(30)));
+    }
+
+    [Fact]
+    public void AnItemKeepsTheAppItCameFromAndItsLength()
+    {
+        // The reader names the app that owns the clipboard; history keeps it with the item.
+        var read = Read(new FakeClipboard { Text = "Thanks Lea", OwnerExe = "OUTLOOK.EXE" });
+        Assert.Equal("OUTLOOK.EXE", read.Source);
+        var history = new ClipboardHistory(new TomteDb(DbPath));
+        history.Add(read.Text!, Now, read.Source);
+        history.Add("https://example.com/onboarding/v2", Now.AddMinutes(1));
+        history.Add("#3D7A5A", Now.AddMinutes(2), "Figma.exe");
+        var rows = history.Rows(Now.AddMinutes(3));
+        Assert.Equal(["Colour · 7 chars · from Figma", "Link · 33 chars", "Text · 10 chars · from Outlook"], rows.Select(r => r.Meta()));
+        Assert.Equal(0xFF3D7A5Au, rows[0].Colour);
+        Assert.Null(rows[1].Colour);
+
+        // The filter looks at the text and the app, ignoring case.
+        Assert.Equal([rows[2]], rows.Where(r => r.Matches("outlook")));
+        Assert.Equal([rows[1]], rows.Where(r => r.Matches(" ONBOARDING ")));
+        Assert.Equal(rows, rows.Where(r => r.Matches("")));
+    }
+
+    [Theory]
+    [InlineData("#fff", 0xFFFFFFFFu)]
+    [InlineData("#1a2B3c", 0xFF1A2B3Cu)]
+    [InlineData("#12345", null)]
+    [InlineData("1a2b3c", null)]
+    [InlineData("#gg0000", null)]
+    public void AColourRowNamesItsColour(string text, uint? colour) => Assert.Equal(colour, new ClipboardRow(1, text, Now).Colour);
+
+    [Theory]
+    [InlineData("OUTLOOK.EXE", "Outlook")]
+    [InlineData("msedge.exe", "Msedge")]
+    [InlineData(@"C:\Apps\WindowsTerminal.exe", "WindowsTerminal")]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    public void AnAppsNameComesFromItsExecutable(string? exe, string? name) => Assert.Equal(name, ClipboardRow.AppName(exe));
 
     private static ClipboardRead Read(FakeClipboard clipboard) => ClipboardReader.Read(clipboard, paused: false, [], Limits);
 

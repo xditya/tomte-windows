@@ -42,6 +42,9 @@ public sealed class ContextChip(
 
     public bool Available { get; private set; } = available;
 
+    /// <summary>The picture the chip holds (the circled region, as PNG), shown as its thumbnail; null for none.</summary>
+    public byte[]? Picture { get; init; }
+
     public bool On
     {
         get => _on;
@@ -66,7 +69,7 @@ public sealed class ContextChip(
         ContextKind.ShelfItem => ChipIcon.Shelf,
         ContextKind.Scratchpad => ChipIcon.Note,
         _ => ChipIcon.Region,
-    }, On && Available);
+    }, On && Available, Picture is not null);
 
     internal Task<IReadOnlyList<ContentPart>> ReadAsync(CancellationToken ct) => read(ct);
 }
@@ -182,7 +185,10 @@ public static class ContextChips
         _ => Task.FromResult<IReadOnlyList<ContentPart>>([new ImagePart("image/png", png)]),
         on: true,
         tip: () => $"The region you circled, {widthDips:F0} × {heightDips:F0}, sent as an image",
-        sends: () => "the region you circled");
+        sends: () => "the region you circled")
+    {
+        Picture = png,
+    };
 
     /// <summary>
     /// The newest shelf item, and the shelf: with this chip on, the model may read the other items with read_shelf_item,

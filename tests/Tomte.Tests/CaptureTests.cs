@@ -27,6 +27,15 @@ public class CaptureTests
     }
 
     [Fact]
+    public void TheStrokeIsDottedInStrokeWidths()
+    {
+        // 1 on and 9 off in DIPs, as the dash array counts them in widths of the 3 DIP stroke: a dot every 10 DIPs.
+        var (on, off) = Lasso.Dashes;
+        Assert.Equal(10, (on + off) * Lasso.StrokeDips, 3);
+        Assert.Equal(1, on * Lasso.StrokeDips, 3);
+    }
+
+    [Fact]
     public void SameMovementIsTheSameBoxInPixelsButNotInDipsOnMixedScales()
     {
         // A 100% primary and a 150% secondary: client coordinates are each monitor's own pixels, so only the DIPs differ.

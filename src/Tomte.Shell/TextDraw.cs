@@ -8,6 +8,7 @@ using Windows.Win32.Graphics.Direct3D;
 using Windows.Win32.Graphics.Direct3D11;
 using Windows.Win32.Graphics.DirectWrite;
 using Windows.Win32.Graphics.Dxgi;
+using Windows.Win32.System.Com;
 
 namespace Tomte.Shell;
 
@@ -68,13 +69,37 @@ internal static unsafe class TextDraw
     /// </summary>
     public static void Run(ID2D1DeviceContext* dc, TextLayout layout, Vector2 at)
     {
-        uint c = layout.Run.Style.Color;
+        var brush = Brush(dc, layout.Run.Style.Color);
+        var text = (IDWriteTextLayout*)layout.Native;
+        ID2D1SolidColorBrush* tint = null;
+        if (layout.Run.Tint.Count > 0 && layout.KeepsParts)
+        {
+            // Direct2D draws a range with the brush set as its drawing effect instead of the default one.
+            tint = Brush(dc, layout.Run.TintColor);
+            foreach (var (start, length) in layout.Run.Tint)
+            {
+                text->SetDrawingEffect((IUnknown*)tint, new DWRITE_TEXT_RANGE { startPosition = (uint)start, length = (uint)length });
+            }
+        }
+
+        dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE.D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        // Colour fonts so an emoji in a song title keeps its colours.
+        dc->DrawTextLayout(new D2D_POINT_2F { x = at.X, y = at.Y }, text, (ID2D1Brush*)brush, D2D1_DRAW_TEXT_OPTIONS.D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
+        if (tint is not null)
+        {
+            // The layout outlives this device context: it must not keep a brush of it.
+            text->SetDrawingEffect(null, new DWRITE_TEXT_RANGE { startPosition = 0, length = (uint)layout.Run.Text.Length });
+            tint->Release();
+        }
+
+        brush->Release();
+    }
+
+    private static ID2D1SolidColorBrush* Brush(ID2D1DeviceContext* dc, uint c)
+    {
         var color = new D2D1_COLOR_F { r = ((c >> 16) & 0xFF) / 255f, g = ((c >> 8) & 0xFF) / 255f, b = (c & 0xFF) / 255f, a = (c >> 24) / 255f };
         ID2D1SolidColorBrush* brush;
         dc->CreateSolidColorBrush(&color, null, &brush);
-        dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE.D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-        // Colour fonts so an emoji in a song title keeps its colours.
-        dc->DrawTextLayout(new D2D_POINT_2F { x = at.X, y = at.Y }, (IDWriteTextLayout*)layout.Native, (ID2D1Brush*)brush, D2D1_DRAW_TEXT_OPTIONS.D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT);
-        brush->Release();
+        return brush;
     }
 }

@@ -10,7 +10,7 @@ namespace Tomte.Core;
 public static class LassoHint
 {
     public const string Text = "Drag around what you want to ask about · Esc cancels";
-    public const float Height = 38, Side = 18;
+    public const float Height = 40, Side = 18;
     public static readonly TextStyle Style = TextStyle.Primary;
 
     /// <summary>The capsule for a line <paramref name="textWidth"/> wide on a monitor <paramref name="monitorWidth"/> wide.</summary>
@@ -37,6 +37,15 @@ public sealed class Lasso(int monitorWidth, int monitorHeight, double scale)
 {
     /// <summary>Smaller than this in either direction is a slip, not a lasso.</summary>
     public const double MinSizeDips = 20;
+
+    /// <summary>The stroke as it is drawn: the accent, this wide in DIPs, as round dots this long and this far apart.</summary>
+    public const float StrokeDips = 3, DotDips = 1, DotGapDips = 9;
+
+    /// <summary>
+    /// The dots and gaps as a composition dash array, which counts in stroke widths. Round caps add half a width at each
+    /// end of every dash, as a dotted line on the web does, so the dots stand 10 DIPs apart, centre to centre.
+    /// </summary>
+    public static (float On, float Off) Dashes => (DotDips / StrokeDips, DotGapDips / StrokeDips);
 
     private readonly List<(int X, int Y)> points = [];
     private int left, top, right, bottom;

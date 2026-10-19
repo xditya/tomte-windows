@@ -13,16 +13,101 @@ public sealed record ClipboardRetention(int MaxItems = 50, int MaxDays = 7, int 
 
 /// <summary>
 /// One history row as the panel shows it: never the whole item, only its start, on one line. An image row has its
-/// size for the text and its stored thumbnail.
+/// size for the text and its stored thumbnail. A pinned row stays through Clear all, the age limit and the count
+/// limits. Source is the app it was copied from, when the listener knew it; Chars the whole text's length.
 /// </summary>
 public sealed record ClipboardRow(long Id, string Display, DateTimeOffset CopiedAt, byte[]? Thumb = null)
 {
     public const int DisplayChars = 120;
 
+    /// <summary>Rows newer than this are "Just now".</summary>
+    public static readonly TimeSpan JustNow = TimeSpan.FromMinutes(10);
+
+    public bool Pinned { get; init; }
+
+    public string? Source { get; init; }
+
+    public int Chars { get; init; }
+
+    public int Width { get; init; }
+
+    public int Height { get; init; }
+
     public bool IsImage => Thumb is not null;
 
-    /// <summary>"Image · 1920 x 1080".</summary>
-    public static string ImageLabel(int width, int height) => $"Image · {width} x {height}";
+    /// <summary>"Image · 1920 × 1080".</summary>
+    public static string ImageLabel(int width, int height) => $"Image · {width} × {height}";
+
+    /// <summary>The colour a row of only "#RGB" or "#RRGGBB" names, opaque; null for any other row.</summary>
+    public uint? Colour
+    {
+        get
+        {
+            var hex = Display.AsSpan();
+            if (IsImage || hex is not ['#', .. var digits] || digits.Length is not (3 or 6) || !uint.TryParse(digits, System.Globalization.NumberStyles.AllowHexSpecifier, null, out uint rgb))
+            {
+                return null;
+            }
+
+            if (digits.Length == 3)
+            {
+                rgb = (rgb >> 8 & 0xF) * 0x110000 | (rgb >> 4 & 0xF) * 0x1100 | (rgb & 0xF) * 0x11;
+            }
+
+            return 0xFF000000 | rgb;
+        }
+    }
+
+    /// <summary>
+    /// The heading of the group the row is in, in capitals: "JUST NOW", "EARLIER TODAY", "YESTERDAY", then the weekday
+    /// within a week and the date before that. Days are <paramref name="now"/>'s own, in its offset.
+    /// </summary>
+    public string Group(DateTimeOffset now)
+    {
+        if (now - CopiedAt < JustNow)
+        {
+            return "JUST NOW";
+        }
+
+        var day = CopiedAt.ToOffset(now.Offset).Date;
+        int days = (now.Date - day).Days;
+        return days <= 0 ? "EARLIER TODAY" : days == 1 ? "YESTERDAY"
+            : (days < 7 ? day.ToString("dddd", System.Globalization.CultureInfo.InvariantCulture) : day.ToString("d MMM", System.Globalization.CultureInfo.InvariantCulture)).ToUpperInvariant();
+    }
+
+    /// <summary>The row's age at its right end: minutes while it is just now, the clock time it was copied after that.</summary>
+    public string When(DateTimeOffset now) => now - CopiedAt < JustNow ? Ago(now) : CopiedAt.ToOffset(now.Offset).ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>The preview's line about the item: "Text · 84 chars · from Outlook", "Link · 33 chars", "Image · 1600 × 900".</summary>
+    public string Meta()
+    {
+        if (IsImage)
+        {
+            return Display;
+        }
+
+        string kind = Colour is not null ? "Colour" : IsLink ? "Link" : "Text";
+        string meta = $"{kind} · {Chars} char{(Chars == 1 ? "" : "s")}";
+        return AppName(Source) is { } app ? $"{meta} · from {app}" : meta;
+    }
+
+    /// <summary>An executable's name as an app's: "OUTLOOK.EXE" as "Outlook"; a name in mixed case stays as it is. Null for none.</summary>
+    public static string? AppName(string? exe)
+    {
+        string name = Path.GetFileNameWithoutExtension(exe ?? "");
+        if (name.Length == 0)
+        {
+            return null;
+        }
+
+        bool oneCase = name.Equals(name.ToUpperInvariant(), StringComparison.Ordinal) || name.Equals(name.ToLowerInvariant(), StringComparison.Ordinal);
+        return oneCase ? char.ToUpperInvariant(name[0]) + name[1..].ToLowerInvariant() : name;
+    }
+
+    /// <summary>Whether the filter's words are in the row's text or its source app, ignoring case. An empty filter keeps every row.</summary>
+    public bool Matches(string filter) => string.IsNullOrWhiteSpace(filter)
+        || Display.Contains(filter.Trim(), StringComparison.CurrentCultureIgnoreCase)
+        || (AppName(Source)?.Contains(filter.Trim(), StringComparison.CurrentCultureIgnoreCase) ?? false);
 
     /// <summary>A web address gets the link icon.</summary>
     public bool IsLink => Display.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
@@ -65,12 +150,20 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
         ALTER TABLE clipboard_entries ADD COLUMN sha BLOB;
         ALTER TABLE clipboard_entries ADD COLUMN png BLOB;
         """,
+        // A pin, and the executable the item was copied from.
+        """
+        ALTER TABLE clipboard_entries ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE clipboard_entries ADD COLUMN source TEXT;
+        """,
     ];
 
     public ClipboardRetention Retention { get; } = retention ?? new();
 
-    /// <summary>Keeps the text as the newest item; the same text copied again moves up instead of showing twice.</summary>
-    public void Add(string text, DateTimeOffset at)
+    /// <summary>
+    /// Keeps the text as the newest item, with the executable it came from; the same text copied again moves up instead
+    /// of showing twice, and keeps its pin.
+    /// </summary>
+    public void Add(string text, DateTimeOffset at, string? source = null)
     {
         if (string.IsNullOrWhiteSpace(text) || text.Length > Retention.MaxChars)
         {
@@ -79,8 +172,14 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
 
         using var connection = db.Open("clipboard", Schema);
         using var transaction = connection.BeginTransaction();
-        Run(connection, "DELETE FROM clipboard_entries WHERE text = $text", ("$text", text));
-        Run(connection, "INSERT INTO clipboard_entries(text, copied_at) VALUES ($text, $at)", ("$text", text), ("$at", at.ToUnixTimeMilliseconds()));
+        using (var moved = Command(connection, "UPDATE clipboard_entries SET copied_at = $at, source = $source WHERE width IS NULL AND text = $text", ("$at", at.ToUnixTimeMilliseconds()), ("$source", Nullable(source)), ("$text", text)))
+        {
+            if (moved.ExecuteNonQuery() == 0)
+            {
+                Run(connection, "INSERT INTO clipboard_entries(text, copied_at, source) VALUES ($text, $at, $source)", ("$text", text), ("$at", at.ToUnixTimeMilliseconds()), ("$source", Nullable(source)));
+            }
+        }
+
         Prune(connection, at);
         transaction.Commit();
     }
@@ -89,7 +188,7 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
     /// Keeps the image as the newest image; the same PNG copied again moves its row up instead, without writing the
     /// PNG twice. One over the size is not kept.
     /// </summary>
-    public void AddImage(KeptImage image, DateTimeOffset at)
+    public void AddImage(KeptImage image, DateTimeOffset at, string? source = null)
     {
         if (image.Png.Length > Retention.MaxImageBytes)
         {
@@ -99,12 +198,12 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
         byte[] sha = SHA256.HashData(image.Png);
         using var connection = db.Open("clipboard", Schema);
         using var transaction = connection.BeginTransaction();
-        using (var moved = Command(connection, "UPDATE clipboard_entries SET copied_at = $at WHERE sha = $sha", ("$at", at.ToUnixTimeMilliseconds()), ("$sha", sha)))
+        using (var moved = Command(connection, "UPDATE clipboard_entries SET copied_at = $at, source = $source WHERE sha = $sha", ("$at", at.ToUnixTimeMilliseconds()), ("$source", Nullable(source)), ("$sha", sha)))
         {
             if (moved.ExecuteNonQuery() == 0)
             {
-                Run(connection, "INSERT INTO clipboard_entries(text, copied_at, width, height, thumb, sha, png) VALUES ('', $at, $width, $height, $thumb, $sha, $png)",
-                    ("$at", at.ToUnixTimeMilliseconds()), ("$width", image.Width), ("$height", image.Height), ("$thumb", image.Thumb), ("$sha", sha), ("$png", image.Png));
+                Run(connection, "INSERT INTO clipboard_entries(text, copied_at, width, height, thumb, sha, png, source) VALUES ('', $at, $width, $height, $thumb, $sha, $png, $source)",
+                    ("$at", at.ToUnixTimeMilliseconds()), ("$width", image.Width), ("$height", image.Height), ("$thumb", image.Thumb), ("$sha", sha), ("$png", image.Png), ("$source", Nullable(source)));
             }
         }
 
@@ -117,15 +216,16 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
     {
         using var connection = db.Open("clipboard", Schema);
         Prune(connection, now);
-        using var command = Command(connection, "SELECT id, substr(text, 1, 400), copied_at, width, height, thumb FROM clipboard_entries ORDER BY copied_at DESC, id DESC");
+        using var command = Command(connection, "SELECT id, substr(text, 1, 400), copied_at, width, height, thumb, pinned, source, length(text) FROM clipboard_entries ORDER BY copied_at DESC, id DESC");
         using var reader = command.ExecuteReader();
         var rows = new List<ClipboardRow>();
         while (reader.Read())
         {
             var at = DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(2));
-            rows.Add(reader.IsDBNull(3)
+            var row = reader.IsDBNull(3)
                 ? new ClipboardRow(reader.GetInt64(0), ClipboardRow.Shorten(reader.GetString(1)), at)
-                : new ClipboardRow(reader.GetInt64(0), ClipboardRow.ImageLabel(reader.GetInt32(3), reader.GetInt32(4)), at, (byte[])reader.GetValue(5)));
+                : new ClipboardRow(reader.GetInt64(0), ClipboardRow.ImageLabel(reader.GetInt32(3), reader.GetInt32(4)), at, (byte[])reader.GetValue(5)) { Width = reader.GetInt32(3), Height = reader.GetInt32(4) };
+            rows.Add(row with { Pinned = reader.GetInt64(6) != 0, Source = reader.IsDBNull(7) ? null : reader.GetString(7), Chars = reader.GetInt32(8) });
         }
 
         return rows;
@@ -153,19 +253,30 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
         Run(connection, "DELETE FROM clipboard_entries WHERE id = $id", ("$id", id));
     }
 
-    public void Clear()
+    /// <summary>Pins the item, so it stays through Clear all and every limit, or takes its pin off.</summary>
+    public void Pin(long id, bool pinned)
     {
         using var connection = db.Open("clipboard", Schema);
-        Run(connection, "DELETE FROM clipboard_entries");
+        Run(connection, "UPDATE clipboard_entries SET pinned = $pinned WHERE id = $id", ("$pinned", pinned ? 1 : 0), ("$id", id));
     }
 
+    /// <summary>Deletes every item, or every item but the pinned ones.</summary>
+    public void Clear(bool keepPinned = false)
+    {
+        using var connection = db.Open("clipboard", Schema);
+        Run(connection, keepPinned ? "DELETE FROM clipboard_entries WHERE pinned = 0" : "DELETE FROM clipboard_entries");
+    }
+
+    // Pinned items are never pruned and do not count toward the limits.
     private void Prune(SqliteConnection connection, DateTimeOffset now)
     {
-        Run(connection, "DELETE FROM clipboard_entries WHERE copied_at < $cutoff", ("$cutoff", now.AddDays(-Retention.MaxDays).ToUnixTimeMilliseconds()));
+        Run(connection, "DELETE FROM clipboard_entries WHERE pinned = 0 AND copied_at < $cutoff", ("$cutoff", now.AddDays(-Retention.MaxDays).ToUnixTimeMilliseconds()));
         // Text and images are counted apart; a text row has no width.
-        Run(connection, "DELETE FROM clipboard_entries WHERE width IS NULL AND id NOT IN (SELECT id FROM clipboard_entries WHERE width IS NULL ORDER BY copied_at DESC, id DESC LIMIT $max)", ("$max", Retention.MaxItems));
-        Run(connection, "DELETE FROM clipboard_entries WHERE width IS NOT NULL AND id NOT IN (SELECT id FROM clipboard_entries WHERE width IS NOT NULL ORDER BY copied_at DESC, id DESC LIMIT $max)", ("$max", Retention.MaxImages));
+        Run(connection, "DELETE FROM clipboard_entries WHERE pinned = 0 AND width IS NULL AND id NOT IN (SELECT id FROM clipboard_entries WHERE pinned = 0 AND width IS NULL ORDER BY copied_at DESC, id DESC LIMIT $max)", ("$max", Retention.MaxItems));
+        Run(connection, "DELETE FROM clipboard_entries WHERE pinned = 0 AND width IS NOT NULL AND id NOT IN (SELECT id FROM clipboard_entries WHERE pinned = 0 AND width IS NOT NULL ORDER BY copied_at DESC, id DESC LIMIT $max)", ("$max", Retention.MaxImages));
     }
+
+    private static object Nullable(string? value) => (object?)value ?? DBNull.Value;
 
     private static void Run(SqliteConnection connection, string sql, params ReadOnlySpan<(string Name, object Value)> parameters)
     {
@@ -207,7 +318,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
     private IClipboardListener? listener;
     private int generation;
     private Task queue = Task.CompletedTask;
-    private (CopiedImage Image, DateTimeOffset At)? pendingImage;
+    private (CopiedImage Image, DateTimeOffset At, string? Source)? pendingImage;
 
     /// <summary>The history or the switch changed. Raised on a worker thread or the caller's.</summary>
     public event Action? Changed;
@@ -248,7 +359,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
             {
                 pendingImage?.Image.Dispose();
                 pendingImage = null;
-                _ = Enqueue(() => Logged("clear the history", history.Clear));
+                _ = Enqueue(() => Logged("clear the history", () => history.Clear()));
             }
         }
 
@@ -343,11 +454,24 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
         Changed?.Invoke();
     });
 
+    /// <summary>Clear all: every item but the pinned ones.</summary>
     public Task ClearAsync() => Enqueue(() =>
     {
-        history.Clear();
+        history.Clear(keepPinned: true);
         Changed?.Invoke();
     });
+
+    public Task PinAsync(long id, bool pinned) => Enqueue(() =>
+    {
+        history.Pin(id, pinned);
+        Changed?.Invoke();
+    });
+
+    /// <summary>The whole text of an item, for the preview; null when it is gone.</summary>
+    public Task<string?> TextAsync(long id) => Enqueue(() => history.Text(id));
+
+    /// <summary>An image item's PNG, for the preview or the shelf; null when it is gone or is text.</summary>
+    public Task<byte[]?> ImageAsync(long id) => Enqueue(() => history.Image(id));
 
     // On the listener's thread, after the read. Only the listener started last may add, and only while it is on.
     private void Captured(int from, ClipboardRead read, DateTimeOffset at)
@@ -366,7 +490,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
                 // decoded and at most two copies are held, the one being decoded and the one waiting.
                 bool waiting = pendingImage is not null;
                 pendingImage?.Image.Dispose();
-                pendingImage = (image, at);
+                pendingImage = (image, at, read.Source);
                 if (!waiting)
                 {
                     _ = Enqueue(() => Logged("store an image", StoreImage));
@@ -376,7 +500,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
             }
             else
             {
-                _ = Enqueue(() => Logged("store an item", () => history.Add(read.Text!, at)));
+                _ = Enqueue(() => Logged("store an item", () => history.Add(read.Text!, at, read.Source)));
             }
         }
     }
@@ -393,6 +517,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
     {
         CopiedImage image;
         DateTimeOffset at;
+        string? source;
         lock (gate)
         {
             if (pendingImage is not { } pending)
@@ -400,7 +525,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
                 return;
             }
 
-            ((image, at), pendingImage) = (pending, null);
+            ((image, at, source), pendingImage) = (pending, null);
         }
 
         KeptImage? kept;
@@ -431,7 +556,7 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
             return;
         }
 
-        history.AddImage(kept, at);
+        history.AddImage(kept, at, source);
     }
 
     // For work nobody awaits. The exception's type only: its message is never checked for what it quotes.

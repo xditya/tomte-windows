@@ -151,7 +151,7 @@ public static class TabStrip
 
         string? cap = Keycap.Words(searchKey);
         float word = MathF.Ceiling(TextSlot.Measure(SearchText, SearchLabel, panelWidth));
-        float capWidth = cap is null ? 0 : Keycap.Width(cap, panelWidth);
+        float capWidth = cap is null ? 0 : Keycap.Width(cap);
         float wide = SearchLeft + Icon + SearchGap + word + (cap is null ? 0 : SearchGap + capWidth) + SearchRight;
         bool roomy = railLeft + iconsOnly + (name > 0 ? NamedExtra + name : 0) + ButtonGap <= searchEnd - wide;
         float searchLeft = searchEnd - (roomy ? wide : Button);

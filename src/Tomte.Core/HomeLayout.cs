@@ -168,11 +168,19 @@ public sealed class HomeLayout(Vector2 body)
         ];
     }
 
-    /// <summary>What a tile's preview shows: a folder or a link glyph, or else the file's extension in capitals.</summary>
+    /// <summary>
+    /// What a tile's preview shows when it has no picture: a folder or a link glyph, as the Shelf tab tells them apart, or
+    /// else the file's extension in capitals. A picture's own thumbnail goes over the extension once it is read.
+    /// </summary>
     public static (GlyphFigure[]? Glyph, string Word) PreviewOf(ShelfItem item)
     {
         string ext = Path.GetExtension(item.Name).TrimStart('.').ToUpperInvariant();
-        return item.IsFolder ? (Glyphs.Folder, "") : ext == "URL" ? (Glyphs.Link, "") : (null, ext is { Length: > 0 and <= 5 } ? ext : "FILE");
+        return ShelfLayout.PreviewOf(item) switch
+        {
+            ShelfPreview.Folder => (Glyphs.Folder, ""),
+            ShelfPreview.Link => (Glyphs.Link, ""),
+            _ => (null, ext is { Length: > 0 and <= 5 } ? ext : "FILE"),
+        };
     }
 
     // ---- Scratchpad ----

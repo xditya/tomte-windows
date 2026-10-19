@@ -4,7 +4,7 @@ using Tomte.Core;
 namespace Tomte.Shell;
 
 /// <summary>
-/// Drives the Palette state on the island for one session: opens at 640 x 150 and grows toward 480
+/// Drives the Palette state on the island for one session: opens at 720 x 150 and grows toward 480
 /// with the gentle preset as the answer streams in. The palette shows its prompt box (or, by voice,
 /// what was said), chips, answer, a tool's question and footer (<see cref="PaletteView"/>) and grows
 /// to their measured height. The window activates only for the palette hotkey, a click on the tomte
@@ -26,6 +26,12 @@ internal sealed partial class PaletteHost(IslandWindow island, IslandStateMachin
 
     /// <summary>What the footer's AI history button does: Panels on the History tab.</summary>
     public Action? OpenHistory { get; set; }
+
+    /// <summary>Where Add to note under a typed palette's answer puts it; null offers no such action.</summary>
+    public Action<string>? AddToNote { get; init; }
+
+    /// <summary>Where Keep on shelf under a typed palette's answer puts it; null offers no such action.</summary>
+    public Action<string>? KeepOnShelf { get; init; }
 
     /// <param name="question">The question the session asks through, drawn with its buttons; null for a driven run that answers itself.</param>
     public async Task RunAsync(PaletteSession session, ToolQuestion? question = null)
