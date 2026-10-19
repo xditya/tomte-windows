@@ -1001,6 +1001,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         log?.Invoke("drag: DragEnter");
     }
 
+    /// <summary>What the shortcut for <paramref name="action"/> does, from a button on the open island (Home's Region chip and mic).</summary>
+    internal void Press(HotkeyAction action) => OnHotkey((int)action + 1);
+
     private void OnHotkey(int id)
     {
         if (id == InputThread.EscapeHotkeyId)

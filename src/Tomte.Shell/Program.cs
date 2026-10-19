@@ -475,6 +475,23 @@ internal static partial class Program
         panels.Register(StartShelf(island, triggers, store, db, text, log));
         panels.ShelfCount = () => Jobs.Shelf?.Items.Count ?? 0;
         Jobs.Shelf!.Changed += panels.ShelfChanged;
+        panels.Register(new HomePanel(island, text, typing, Jobs.Shelf, media, Scratchpad, shortcuts, new HomeActions
+        {
+            Open = panels.Select,
+            // On the next turn, after the key or click that asked.
+            Ask = (words, window, shelf) => island.Queue.TryEnqueue(() => AskFromHome(triggers, words, window, shelf)),
+            Region = () => island.Queue.TryEnqueue(() => triggers.Press(HotkeyAction.CircleToAsk)),
+            Talk = () => HoldToTalk(island, triggers),
+            AddShortcut = () =>
+            {
+                triggers.Hide();
+                OpenSettings(Tomte.Panels.SettingsWindow.ShortcutsHeader);
+            },
+            Provider = () => store.Current.Provider is { } p ? (p.DefaultModel is { Length: > 0 } model ? $"{p.Id} · {model}" : p.Id) : null,
+            Spend = () => Task.Run(() => SpentToday(store)),
+            NoteKey = () => store.Current.Hotkeys[HotkeyAction.Scratchpad],
+            TalkKey = () => store.Current.Hotkeys[HotkeyAction.Rambler],
+        }, () => DateTimeOffset.UtcNow, log));
         // The island goes before the settings window comes up over where it was.
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, () =>
         {

@@ -92,7 +92,7 @@ public class PanelTests
     [Fact]
     public void EveryPanelHasItsSize()
     {
-        Assert.Equal((760, 536), PanelSize.Of(PanelId.Home));
+        Assert.Equal((760, HomeLayout.Height), PanelSize.Of(PanelId.Home));
         Assert.Equal((760, 172), PanelSize.Of(PanelId.Media));
         Assert.Equal((760, 310), PanelSize.Of(PanelId.Shortcuts));
         Assert.Equal((760, 330), PanelSize.Of(PanelId.Scratchpad));

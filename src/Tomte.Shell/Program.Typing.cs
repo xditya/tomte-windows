@@ -27,6 +27,12 @@ internal static partial class Program
     // The conversation the History tab's Continue asked for, taken by the palette that opens next.
     private static AiExchange? continuing;
 
+    // What Home's Ask bar sent, and which of its chips were on, taken by the palette that opens next.
+    private static (string Words, bool Window, bool Shelf)? asking;
+
+    // The mic on Home while it is held.
+    private static Windows.System.DispatcherQueueTimer? holding;
+
     /// <summary>The island's text renderer, made with the panels at start.</summary>
     internal static TextRenderer? Text => text;
 
@@ -88,6 +94,54 @@ internal static partial class Program
         triggers.OpenPalette();
         continuing = null;
     }
+
+    /// <summary>
+    /// Enter in Home's Ask bar: the AI box as Ctrl+K opens it, with the Window and Shelf chips on as they were on Home,
+    /// sending the words at once, since Enter was the send. With no provider it shows the line that says the AI layer is
+    /// off, and nothing goes anywhere.
+    /// </summary>
+    private static void AskFromHome(TriggerController triggers, string words, bool window, bool shelf)
+    {
+        asking = (words, window, shelf);
+        triggers.OpenPalette();
+        asking = null;
+    }
+
+    /// <summary>
+    /// A press on Home's mic: the voice hold, as the voice shortcut held down starts it, until the left button comes up.
+    /// Simplification: the island is never the foreground window and does not hear a release off its own area, so the
+    /// button is looked at every 50 ms while the hold lasts, and at no other time.
+    /// </summary>
+    private static void HoldToTalk(IslandWindow island, TriggerController triggers)
+    {
+        triggers.Press(HotkeyAction.Rambler);
+        if (triggers.Rambler is not { Recording: true })
+        {
+            return;
+        }
+
+        if (holding is null)
+        {
+            holding = island.Queue.CreateTimer();
+            holding.Interval = TimeSpan.FromMilliseconds(50);
+            holding.IsRepeating = true;
+            holding.Tick += (timer, _) =>
+            {
+                if ((PInvoke.GetAsyncKeyState((int)Windows.Win32.UI.Input.KeyboardAndMouse.VIRTUAL_KEY.VK_LBUTTON) & 0x8000) == 0)
+                {
+                    timer.Stop();
+                    triggers.Rambler?.End(keep: true);
+                }
+            };
+        }
+
+        holding.Start();
+    }
+
+    /// <summary>What the provider in settings cost today against its cap, for Home's line ("$0.12 of $2.00 today"). Reads the send log.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static string? SpentToday(SettingsStore store) =>
+        store.Current.Provider is { } provider ? HomeLayout.Spend(new SendLog(SendLogPath).SpentToday(provider.Id, DateTimeOffset.Now), provider.DailyCapUsd) : null;
 
     // The AI box goes back to the tab it came from.
     private static void GoBack(IslandWindow island, TriggerController triggers)
@@ -165,8 +219,9 @@ internal static partial class Program
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static async Task OpenPalette(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, ContextChip? lasso = null, nint? front = null, string? words = null)
     {
-        // Read before the first wait: Continue sets it only for the open it starts.
+        // Read before the first wait: Continue and Home's Ask bar set them only for the open they start.
         var earlier = continuing;
+        var home = asking;
         hotkeyPalette ??= NewPaletteHost(island, triggers, log);
         // Opened from the panels, the AI box has a back arrow to the tab it came from; on the next turn, after the key or click.
         Action? back = triggers.FromPanels ? () => island.Queue.TryEnqueue(() => GoBack(island, triggers)) : null;
@@ -219,11 +274,20 @@ internal static partial class Program
             _ = DescribeAsync(session, configured.Provider, configured.Config);
         }
 
-        hotkeyPalette.Type(session, back);
-        if (words is not null)
+        if (home is { } h)
         {
-            // From the search box's Ask row: choosing the row was the send, so the words go at once with the chips as they are.
-            hotkeyPalette.Send(words);
+            // The chips Home had on, as if turned on here; each reads what it sends only now, with the send.
+            foreach (var chip in session.Chips.Where(c => (h.Window && c.Kind == ContextKind.Window) || (h.Shelf && c.Kind == ContextKind.ShelfItem)))
+            {
+                chip.On = true;
+            }
+        }
+
+        hotkeyPalette.Type(session, back);
+        if ((words ?? home?.Words) is { } sent)
+        {
+            // From the search box's Ask row or Home's Ask bar: Enter or the row was the send, so the words go at once.
+            hotkeyPalette.Send(sent);
         }
     }
 

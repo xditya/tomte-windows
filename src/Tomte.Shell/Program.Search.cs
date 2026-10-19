@@ -99,8 +99,8 @@ internal static partial class Program
             await Step("Esc");
         }
 
-        island.Interaction.Key(NavKey.Tab4, false);
-        await Step("Ctrl+4");
+        island.Interaction.Key(NavKey.Tab5, false);
+        await Step("Ctrl+5");
         Walk("settings");
         // On into the note, which takes the keys: Space and Enter are the note's and open nothing.
         island.Interaction.Key(NavKey.Next, false);

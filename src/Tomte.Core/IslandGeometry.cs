@@ -52,7 +52,7 @@ public static class PanelSize
     /// <summary>Every panel is this wide, so the tab strip and its labels stay where they are from tab to tab; only the height differs.</summary>
     public const double Width = 760;
 
-    public static readonly (double W, double H) Home = (Width, 536);
+    public static readonly (double W, double H) Home = (Width, HomeLayout.Height);
     public static readonly (double W, double H) Media = (Width, 172);
     public static readonly (double W, double H) Shortcuts = (Width, 310);
     public static readonly (double W, double H) Scratchpad = (Width, 330);
