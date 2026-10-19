@@ -96,7 +96,7 @@ public sealed partial class SettingsWindow : Window
                     Header("General"),
                     Card(
                         Row("Start with Windows", startupNote, startup),
-                        Row("Desktop peek", Note("Show the tomte at the top of the screen when no window is there. Point at it to open the island."), Toggle(s => s.DesktopPeek, (s, v) => s with { DesktopPeek = v })),
+                        StackedRow("Desktop peek", Note("How Tomte rests at the top of the screen when no window is there: perched on the edge, an edge lip, the pill, or a small pill in a corner, clear of a clock or widget in the middle. Point at it to open the island."), PeekStyles(), 14),
                         Row("Track changes", Note("Show the pill for a few seconds when another track starts playing."), Toggle(s => s.MediaTrackChangeEvent, (s, v) => s with { MediaTrackChangeEvent = v })),
                         Row("Keep showing while music plays", Note("Keep the pill at the top of the screen with what is playing. It goes 5 seconds after the music pauses or stops, and still hides over fullscreen apps."), Toggle(s => s.KeepWhilePlaying, (s, v) => s with { KeepWhilePlaying = v })),
                         Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors()),
@@ -408,23 +408,34 @@ public sealed partial class SettingsWindow : Window
         return box;
     }
 
-    // Off, 5 seconds or 10 seconds, as buttons side by side, the chosen one raised; a hand-edited number shows as the
-    // choice it acts as.
+    // Off, 5 seconds or 10 seconds; a hand-edited number shows as the choice it acts as.
     private Border UndoAfterClosing()
     {
         int[] seconds = [0, 5, 10];
         int current = (int)(UndoClose.Time(store.Current.UndoSeconds)?.TotalSeconds ?? 0);
+        var (track, choices) = Segmented([.. seconds.Select(v => v == 0 ? "Off" : $"{v} s")], Array.IndexOf(seconds, current), i => Save(s => s with { UndoSeconds = seconds[i] }));
+        for (int i = 1; i < seconds.Length; i++)
+        {
+            AutomationProperties.SetName(choices[i], $"{seconds[i]} seconds");
+        }
+
+        return track;
+    }
+
+    // Choices as buttons side by side on a track, the chosen one raised. A click on the chosen one leaves it chosen.
+    private (Border Track, List<ToggleButton> Choices) Segmented(string[] labels, int chosen, Action<int> pick)
+    {
         var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
         var choices = new List<ToggleButton>();
-        foreach (int value in seconds)
+        for (int i = 0; i < labels.Length; i++)
         {
-            var choice = new ToggleButton { Content = value == 0 ? "Off" : $"{value} s", IsChecked = value == current, Height = 30, MinWidth = 0, Padding = new Thickness(14, 0, 14, 0), CornerRadius = new CornerRadius(8), FontSize = 12 };
-            AutomationProperties.SetName(choice, value == 0 ? "Off" : $"{value} seconds");
+            int index = i;
+            var choice = new ToggleButton { Content = labels[i], IsChecked = i == chosen, Height = 30, MinWidth = 0, Padding = new Thickness(14, 0, 14, 0), CornerRadius = new CornerRadius(8), FontSize = 12 };
+            AutomationProperties.SetName(choice, labels[i]);
             choice.Click += (_, _) =>
             {
-                // A click on the chosen one leaves it chosen.
                 choices.ForEach(c => c.IsChecked = ReferenceEquals(c, choice));
-                Save(s => s with { UndoSeconds = value });
+                pick(index);
             };
             choices.Add(choice);
             bar.Children.Add(choice);
@@ -433,7 +444,7 @@ public sealed partial class SettingsWindow : Window
         var track = new Border { Child = bar, Padding = new Thickness(3), CornerRadius = new CornerRadius(10), Background = Palette.Brush(Palette.Field), HorizontalAlignment = HorizontalAlignment.Left };
         Look(track, "ToggleButton", "", Colors.Transparent, Palette.Hover, Palette.Ink2);
         Look(track, "ToggleButton", "Checked", Palette.RaisedHi, Palette.RaisedHi, Palette.Ink);
-        return track;
+        return (track, choices);
     }
 
     // Turning the history off deletes it here too, so it is gone even when the shell is not running.
