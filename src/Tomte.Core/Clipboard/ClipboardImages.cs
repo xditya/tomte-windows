@@ -105,8 +105,8 @@ public sealed record KeptImage(byte[] Png, int Width, int Height, byte[] Thumb);
 /// </summary>
 public static class ClipboardImages
 {
-    /// <summary>The stored thumbnail, three times the panel's slot, so it is sharp up to 300%.</summary>
-    public const int ThumbWidth = (int)(ClipboardPanelLayout.ThumbWidth * 3), ThumbHeight = (int)(ClipboardPanelLayout.ThumbHeight * 3);
+    /// <summary>The stored thumbnail: 3:2, sharp in the panel's row slot up to 300% and enough for a glance in its preview.</summary>
+    public const int ThumbWidth = 144, ThumbHeight = 96;
 
     private const int InfoHeader = 40;
 

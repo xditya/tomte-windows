@@ -747,6 +747,77 @@ public sealed class ClipboardTests : IDisposable
         return ((dib[at], dib[at + 1], dib[at + 2]), dib[at + 3]);
     }
 
+    [Fact]
+    public void APinnedItemStaysThroughClearAllTheCountAndTheAge()
+    {
+        var history = new ClipboardHistory(new TomteDb(DbPath), new ClipboardRetention(MaxItems: 2));
+        history.Add("pinned", Now);
+        history.Pin(history.Rows(Now).Single().Id, pinned: true);
+        for (int i = 1; i <= 3; i++)
+        {
+            history.Add($"text {i}", Now.AddMinutes(i));
+        }
+
+        // The pin does not count toward the two kept; it stays below them, still pinned.
+        var rows = history.Rows(Now.AddMinutes(4));
+        Assert.Equal(["text 3", "text 2", "pinned"], rows.Select(r => r.Display));
+        Assert.Equal([false, false, true], rows.Select(r => r.Pinned));
+
+        // Copied again it moves up and keeps its pin; a week later it is the only one left.
+        history.Add("pinned", Now.AddMinutes(5));
+        Assert.True(history.Rows(Now.AddMinutes(5))[0] is { Display: "pinned", Pinned: true });
+        Assert.Equal(["pinned"], history.Rows(Now.AddDays(30)).Select(r => r.Display));
+
+        // Clear all keeps it; turning history off clears it with the rest; an unpinned item goes with Clear all.
+        history.Add("loose", Now.AddDays(30));
+        history.Clear(keepPinned: true);
+        Assert.Equal(["pinned"], history.Rows(Now.AddDays(30)).Select(r => r.Display));
+        history.Pin(history.Rows(Now.AddDays(30)).Single().Id, pinned: false);
+        history.Clear(keepPinned: true);
+        Assert.Empty(history.Rows(Now.AddDays(30)));
+        history.Add("again", Now.AddDays(30));
+        history.Pin(history.Rows(Now.AddDays(30)).Single().Id, pinned: true);
+        history.Clear();
+        Assert.Empty(history.Rows(Now.AddDays(30)));
+    }
+
+    [Fact]
+    public void AnItemKeepsTheAppItCameFromAndItsLength()
+    {
+        // The reader names the app that owns the clipboard; history keeps it with the item.
+        var read = Read(new FakeClipboard { Text = "Thanks Lea", OwnerExe = "OUTLOOK.EXE" });
+        Assert.Equal("OUTLOOK.EXE", read.Source);
+        var history = new ClipboardHistory(new TomteDb(DbPath));
+        history.Add(read.Text!, Now, read.Source);
+        history.Add("https://example.com/onboarding/v2", Now.AddMinutes(1));
+        history.Add("#3D7A5A", Now.AddMinutes(2), "Figma.exe");
+        var rows = history.Rows(Now.AddMinutes(3));
+        Assert.Equal(["Colour · 7 chars · from Figma", "Link · 33 chars", "Text · 10 chars · from Outlook"], rows.Select(r => r.Meta()));
+        Assert.Equal(0xFF3D7A5Au, rows[0].Colour);
+        Assert.Null(rows[1].Colour);
+
+        // The filter looks at the text and the app, ignoring case.
+        Assert.Equal([rows[2]], rows.Where(r => r.Matches("outlook")));
+        Assert.Equal([rows[1]], rows.Where(r => r.Matches(" ONBOARDING ")));
+        Assert.Equal(rows, rows.Where(r => r.Matches("")));
+    }
+
+    [Theory]
+    [InlineData("#fff", 0xFFFFFFFFu)]
+    [InlineData("#1a2B3c", 0xFF1A2B3Cu)]
+    [InlineData("#12345", null)]
+    [InlineData("1a2b3c", null)]
+    [InlineData("#gg0000", null)]
+    public void AColourRowNamesItsColour(string text, uint? colour) => Assert.Equal(colour, new ClipboardRow(1, text, Now).Colour);
+
+    [Theory]
+    [InlineData("OUTLOOK.EXE", "Outlook")]
+    [InlineData("msedge.exe", "Msedge")]
+    [InlineData(@"C:\Apps\WindowsTerminal.exe", "WindowsTerminal")]
+    [InlineData(null, null)]
+    [InlineData("", null)]
+    public void AnAppsNameComesFromItsExecutable(string? exe, string? name) => Assert.Equal(name, ClipboardRow.AppName(exe));
+
     private static ClipboardRead Read(FakeClipboard clipboard) => ClipboardReader.Read(clipboard, paused: false, [], Limits);
 
     private ClipboardWatch Watch(List<FakeListener> listeners, ClipboardRetention? retention = null) =>
