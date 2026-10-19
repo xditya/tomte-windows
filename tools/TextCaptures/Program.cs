@@ -370,6 +370,7 @@ internal static unsafe partial class Program
             .. DropZoneScenes(),
             .. HistoryScenes(),
             .. SearchScenes(),
+            .. VoiceScenes(),
             CaptureHint(),
         ];
     }

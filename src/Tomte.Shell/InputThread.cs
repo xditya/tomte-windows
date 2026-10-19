@@ -50,11 +50,15 @@ internal static unsafe class InputThread
     // Win+Alt+Z, only while the pill after a closed AI view offers Undo.
     public const int UndoHotkeyId = 106;
 
+    // E alone while the rambler's card offers its choices and can edit its words; never once Insert was refused, when
+    // the user may be typing in another app.
+    public const int EditHotkeyId = 107;
+
     // Posted to the input window by the UI thread.
     private const uint MsgSetEscape = PInvoke.WM_APP + 10;      // wParam 1 registers Esc, 0 releases it
     private const uint MsgApplySettings = PInvoke.WM_APP + 11;  // re-read the store: thresholds, hooks, hotkeys
     private const uint MsgRawMouse = PInvoke.WM_APP + 12;       // wParam 1 wants raw mouse input for pointer tracking, 0 no longer
-    private const uint MsgSetConfirm = PInvoke.WM_APP + 13;     // wParam 1 registers Win+Alt+Enter, 2 the card's keys with Enter, 3 without it, 0 releases them
+    private const uint MsgSetConfirm = PInvoke.WM_APP + 13;     // wParam 1 registers Win+Alt+Enter, 2 the card's keys with Enter, 3 without it, 4 with Enter and E, 0 releases them
     private const uint MsgSample = PInvoke.WM_APP + 15;         // sample the pointer against the island bounds now
     private const uint MsgPause = PInvoke.WM_APP + 16;          // wParam 1 releases the action hotkeys, 0 registers them again
     private const uint MsgSetUndo = PInvoke.WM_APP + 17;        // wParam 1 registers Win+Alt+Z, 0 releases it
@@ -167,7 +171,7 @@ internal static unsafe class InputThread
     public static void SetUndo(bool on) => PInvoke.PostMessage(window, MsgSetUndo, (nuint)(on ? 1 : 0), 0);
 
     /// <summary>The card's keys while it waits: the Alt keys, and Enter unless <paramref name="enter"/> is false.</summary>
-    public static void SetChoices(bool on, bool enter = true) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(!on ? 0 : enter ? 2 : 3), 0);
+    public static void SetChoices(bool on, bool enter = true, bool edit = false) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(!on ? 0 : !enter ? 3 : edit ? 4 : 2), 0);
 
     public static (int X, int Y) Unpack(LPARAM packed) => ((short)(packed.Value & 0xFFFF), (short)((packed.Value >> 16) & 0xFFFF));
 
@@ -334,6 +338,8 @@ internal static unsafe class InputThread
         {
             PInvoke.UnregisterHotKey(hwnd, id);
         }
+
+        PInvoke.UnregisterHotKey(hwnd, EditHotkeyId);
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvStdcall)])]
@@ -393,7 +399,7 @@ internal static unsafe class InputThread
 
                     return new LRESULT(0);
                 case MsgSetConfirm:
-                    if (wParam.Value is 2 or 3)
+                    if (wParam.Value is 2 or 3 or 4)
                     {
                         // A key another app holds is left to it: the card's buttons still take clicks.
                         UnregisterConfirm(hwnd);
@@ -402,9 +408,14 @@ internal static unsafe class InputThread
                             PInvoke.RegisterHotKey(hwnd, ChoiceHotkeyId + i, HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, ChoiceLetters[i]);
                         }
 
-                        if (wParam.Value == 2)
+                        if (wParam.Value is 2 or 4)
                         {
                             PInvoke.RegisterHotKey(hwnd, ChoiceEnterHotkeyId, HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkReturn);
+                        }
+
+                        if (wParam.Value == 4)
+                        {
+                            PInvoke.RegisterHotKey(hwnd, EditHotkeyId, HOT_KEY_MODIFIERS.MOD_NOREPEAT, 'E');
                         }
                     }
                     else if (wParam.Value == 1 && !PInvoke.RegisterHotKey(hwnd, ConfirmHotkeyId, HOT_KEY_MODIFIERS.MOD_WIN | HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT, VkReturn))

@@ -1024,6 +1024,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
+        if (id == InputThread.EditHotkeyId)
+        {
+            // E on the rambler's card: its words become editable.
+            rambler?.Edit();
+            return;
+        }
+
         if (id is >= InputThread.ChoiceHotkeyId and <= InputThread.ChoiceEnterHotkeyId)
         {
             // Enter, Alt+I, Alt+A or Alt+N on the rambler's card.

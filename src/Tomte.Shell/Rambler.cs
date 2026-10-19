@@ -57,6 +57,8 @@ internal sealed class Rambler(
     private TaskCompletionSource? replyHold;
     private readonly ToolQuestion question = new();
     private nint spokenInto, spokenField;
+    private string? spokenTarget;
+    private VoiceTake? take;
     private VoiceCard? card;
     private TaskCompletionSource<VoiceChoice?>? choosing;
 
@@ -83,6 +85,12 @@ internal sealed class Rambler(
 
     /// <summary>What a voice command's closed palette gives the undo (<see cref="PaletteHost.Triggers"/>).</summary>
     public TriggerController? Triggers { get; init; }
+
+    /// <summary>The text boxes' focus, so the card's words can be edited before a choice; null leaves them as heard.</summary>
+    public TypingFocus? Focus { get; init; }
+
+    /// <summary>The hold chord as settings has it, for the card's hint to hold it again.</summary>
+    public Func<string> HoldKeys { get; init; } = () => new HotkeySettings().Rambler;
 
     /// <summary>What Insert types with: the window the words were spoken into, the field in it that had the keys, and the words. Null when typed, else why not.</summary>
     public Func<nint, nint, string, string?> Insert { get; init; } = DesktopEffects.TypeInto;
@@ -120,6 +128,9 @@ internal sealed class Rambler(
 
     /// <summary>Esc on the card: the words are thrown away. False when no card waits.</summary>
     public bool Discard() => choosing?.TrySetResult(null) ?? false;
+
+    /// <summary>E on the card: its words go into a text box that takes the keys. False when no card waits or it cannot.</summary>
+    public bool Edit() => choosing is { Task.IsCompleted: false } && card?.Edit() == true;
 
     /// <summary>
     /// The answer to the palette's question (Win+Alt+Enter is yes, Esc no); with <paramref name="to"/>, only while that
@@ -162,6 +173,7 @@ internal sealed class Rambler(
         nint front = WindowContext.Foreground();
         spokenInto = front != 0 && front != (nint)island.Hwnd ? front : backTo;
         spokenField = DesktopEffects.FocusIn(spokenInto);
+        spokenTarget = VoiceCardLayout.Target(WindowContext.Describe(spokenInto).Title);
         // The capture thread posts each packet's level; the bars change when a packet arrives, with no timer.
         capture = MicCapture.Start(rms => island.Queue.TryEnqueue(() => Level(rms)));
         ShowView();
@@ -204,6 +216,11 @@ internal sealed class Rambler(
             }
 
             ShowTranscribing();
+            // The take as the card shows it, read before the samples are handed to the transcriber.
+            var length = TimeSpan.FromSeconds(samples.Length / (double)MicCapture.SampleRate);
+            float wave = (float)Math.Min(PanelSize.VoiceWidth, 0.6 * island.MonitorSize.Width) - (2 * (VoiceCardLayout.Side + VoiceCardLayout.WaveInset));
+            take = new VoiceTake(Waveform.Take(samples, Waveform.TakeBars(length.TotalSeconds, wave)), length,
+                VoiceCardLayout.PrivacyLine(speechSend is null ? null : ProviderSetup.NameOf(speechSend.Provider)), spokenTarget, HoldKeys());
             var watch = Stopwatch.StartNew();
             // whisper.cpp cannot be stopped mid-run; the timeout only bounds the provider path.
             using var speechTimeout = new CancellationTokenSource(SendTimeout);
@@ -286,8 +303,14 @@ internal sealed class Rambler(
     {
         log($"{DateTime.Now:HH:mm:ss.fff} voice: transcript \"{transcript}\"");
         string? off = voice is null ? VoiceChoices.NoProvider : askOff();
-        var shown = card = new VoiceCard(island, text, transcript, VoiceChoices.Default(enterDoes(), off is null), off);
+        var shown = card = new VoiceCard(island, text, Focus, transcript, VoiceChoices.Default(enterDoes(), off is null), off,
+            take ?? new VoiceTake([], TimeSpan.Zero, VoiceCardLayout.PrivacyLine(null), spokenTarget, HoldKeys()));
         shown.Picked += c => choosing?.TrySetResult(c);
+        shown.Entered += () => Choose(null);
+        shown.Discarded += () => Discard();
+        // While the words are edited the text box has the keys, so the card's own keys stand down.
+        shown.Editing += () => InputThread.SetChoices(false);
+        shown.Resized += () => _ = island.MorphTo(shown.Shape, SpringPreset.Gentle);
         RemoveView();
         // The tomte goes beside the words with the card; whatever takes the island from the card puts it back.
         island.Seat = VoiceCard.Seat;
@@ -296,6 +319,15 @@ internal sealed class Rambler(
         while (true)
         {
             var choice = await ChooseAsync();
+            // The words as the choice takes them: edited, or as heard.
+            transcript = shown.Words;
+            if (shown.IsEditing && Focus is { } typing)
+            {
+                // The keys go back to the app the words were spoken into before anything is typed there.
+                typing.Release();
+                await NextTurn();
+            }
+
             // A takedown picks Note; a pick may also land in the same turn as one.
             bool takenDown = machine.State != IslandState.Compact;
             log($"{DateTime.Now:HH:mm:ss.fff} voice: {(choice is null ? "thrown away" : "picked " + choice)}{(takenDown ? ", the card was taken down" : "")}");
@@ -350,6 +382,15 @@ internal sealed class Rambler(
         }
     }
 
+    // A turn of the island's queue, after what was queued before it: the keys handed back by a released text box.
+    private Task NextTurn()
+    {
+        var turn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!island.Queue.TryEnqueue(turn.SetResult))
+            turn.SetResult();
+        return turn.Task;
+    }
+
     // The words were dealt with: the island goes back to the triggers, or the pill retracts.
     private async Task Ended()
     {
@@ -395,7 +436,7 @@ internal sealed class Rambler(
         // Esc and the choice keys come to the island only while the card waits; the app in front has them otherwise.
         // Enter not at all once Insert was refused: the user may be typing in another app by then.
         InputThread.SetEscape(true);
-        InputThread.SetChoices(true, enter: card?.Refused == false);
+        InputThread.SetChoices(true, enter: card?.Refused == false, edit: card is { CanEdit: true, IsEditing: false });
         try
         {
             Choosing?.Invoke();

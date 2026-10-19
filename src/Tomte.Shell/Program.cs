@@ -928,6 +928,8 @@ internal static partial class Program
         {
             Insert = args.Contains("--dry") ? NotTyped : DesktopEffects.TypeInto,
             Triggers = triggers,
+            Focus = focus,
+            HoldKeys = () => store.Current.Hotkeys.Rambler,
         };
         // Bounce is raised on the island's thread, where the mascot's level must be set.
         session.Bounce += level => island.Mascot.Level = level;
