@@ -111,6 +111,25 @@ public sealed record TomteSettings
     /// Read from the file only; the settings window does not show them.
     /// </summary>
     public IReadOnlyDictionary<string, ModelPrice> ModelPrices { get; init; } = new Dictionary<string, ModelPrice>();
+
+    /// <summary>
+    /// The one accent colour, as 0xRRGGBB: the selection, the AI, the recording dot. One of <see cref="AccentColors.Choices"/>;
+    /// read it through <see cref="AccentColors.Held"/>, since a hand-edited file can hold anything. Whoever draws with it
+    /// follows <see cref="SettingsStore.Changed"/>, as for every other setting.
+    /// </summary>
+    public uint AccentColor { get; init; } = AccentColors.Default;
+}
+
+/// <summary>The accent colours the settings window offers, as 0xRRGGBB.</summary>
+public static class AccentColors
+{
+    public const uint Default = 0xFF6B4A;
+
+    /// <summary>Coral, amber, sky and green, in the order the settings window shows them.</summary>
+    public static IReadOnlyList<uint> Choices { get; } = [Default, 0xF2B84B, 0x7CC4FF, 0x9BE08F];
+
+    /// <summary>The colour to draw with: <paramref name="rgb"/> when it is one of the choices, the default otherwise.</summary>
+    public static uint Held(uint rgb) => Choices.Contains(rgb) ? rgb : Default;
 }
 
 /// <summary>Chords as text ("Win+Alt+I"); see <see cref="Hotkey.TryParse"/>. Empty means no shortcut.</summary>
