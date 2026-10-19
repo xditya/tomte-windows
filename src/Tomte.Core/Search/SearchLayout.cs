@@ -31,15 +31,17 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     public const float RowHeight = 36, HeadingHeight = 24, IconSize = 20, RowPadX = 8, RowCorner = 8, IconGap = 10, KindWidth = 72, DetailGap = 8;
     public const float FootHeight = 14, CardPad = 14;
 
-    public static readonly TextStyle Name = new(13, Color: TextStyle.WhiteColor);
-    public static readonly TextStyle Detail = new(12, Color: TextStyle.TertiaryColor);
-    public static readonly TextStyle Kind = new(11, Color: TextStyle.SecondaryColor, Align: TextAlign.Trailing);
-    public static readonly TextStyle Heading = new(11, 600, TextStyle.SecondaryColor);
+    public static readonly TextStyle Name = new(13, Color: Theme.Ink);
+    public static readonly TextStyle Detail = new(12, Color: Theme.Ink3);
+    public static readonly TextStyle Kind = new(11, Color: Theme.Ink2, Align: TextAlign.Trailing);
+    public static readonly TextStyle Heading = new(11, 600, Theme.Ink2);
     public static readonly TextStyle Foot = TextStyle.Small;
     public static readonly TextStyle FootRight = TextStyle.Small with { Align = TextAlign.Trailing };
 
     /// <summary>The selected row: a lighter fill and the accent's outline, which shows whether the pointer is there or not.</summary>
-    public const uint SelectedFill = 0x24FFFFFF, SelectedLine = 0x996FA8FF;
+    public const uint SelectedFill = Theme.Raised;
+
+    public static uint SelectedLine => Theme.Accent;
 
     public const string Placeholder = "Search apps, settings, files and folders";
     // The footers fit a box 480 DIPs wide (60% of an 800 DIP screen) beside where files come from; the longer ones leave
@@ -208,8 +210,8 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     /// <summary>The show in folder button: a card this big, 4 DIPs in from the row's right end and centred down it, in the kind's place.</summary>
     public const float FolderSize = 28, FolderGlyphSize = 14, FolderInset = 4, FolderCorner = 6;
 
-    /// <summary>The button's card is the tab strip's faint white; its folder is drawn in the name's white.</summary>
-    public const uint FolderFill = 0x1CFFFFFF, FolderInk = TextStyle.WhiteColor;
+    /// <summary>The button's card is raised; its folder is drawn in the name's ink.</summary>
+    public const uint FolderFill = Theme.Raised, FolderInk = Theme.Ink;
 
     public const string FolderTip = "Show in folder", FolderKey = "Ctrl+Shift+Enter";
 
@@ -240,7 +242,7 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     /// <summary>
     /// A card in the middle of the band: its box, the title, the body on up to four lines, and the buttons along its
     /// bottom right. The button <paramref name="focus"/> names (the card's own <see cref="SearchCard.Focus"/> when -1) is
-    /// the one Enter presses: it takes the white fill and black label, the others the plain look. Widths are measured in
+    /// the one Enter presses: it takes the accent fill and the accent's ink, the others the plain look. Widths are measured in
     /// the bold style, so moving the focus never moves a button.
     /// </summary>
     public (RectangleF Card, TextSlot Title, TextRun Body, PointF BodyAt, IReadOnlyList<(string Id, RectangleF Box, TextSlot Label)> Buttons) Card(SearchCard card, int focus = -1)

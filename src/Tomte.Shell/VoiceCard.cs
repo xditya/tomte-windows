@@ -20,7 +20,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
 {
     public const float Width = 440;
     private const float Corner = 20, Top = 11, Right = 14, Gap = 10, LineGap = 6, LineHeight = 16, Bottom = 10, KeyGap = 6;
-    private const uint DefaultKey = 0x8C000000;
+    private static uint DefaultKey => Theme.WithOpacity(Theme.OnAccent, 0.55f);
 
     private static readonly VoiceChoice[] Order = [VoiceChoice.Insert, VoiceChoice.Ask, VoiceChoice.Note];
 
@@ -144,7 +144,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
             var box = new RectangleF(left + i * (width + PaletteLayout.ButtonGap), rowY, width, PaletteLayout.ButtonHeight);
             b.Pill.Offset = new Vector2(box.X, box.Y);
             b.Pill.Size = new Vector2(box.Width, box.Height);
-            // Filled white as the palette's Run is, the others filled and outlined as an off chip is.
+            // Filled with the accent as the palette's Run is, the others filled and outlined as an off chip is.
             ((CompositionColorBrush)b.Shape.FillBrush).Color = Argb(on ? PaletteLayout.RunFill : PaletteLayout.ButtonFill);
             b.Shape.StrokeThickness = on ? 0 : 1;
             b.Layer.Opacity = enabled ? 1 : StateLook.DisabledOpacity;

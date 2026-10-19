@@ -207,10 +207,11 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
 
     private sealed class View : IDisposable
     {
-        private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
-        private static readonly Color Lit = Color.FromArgb(28, 255, 255, 255);
-        private static readonly Color Line = Color.FromArgb(46, 255, 255, 255);
-        private static readonly Color Glyph = Color.FromArgb(153, 255, 255, 255);
+        private static readonly Color Card = ShelfColors.Of(Theme.Card);
+        private static readonly Color Lit = ShelfColors.Of(Theme.Raised);
+        private static readonly Color IconFill = ShelfColors.Of(Theme.RaisedHi);
+        private static readonly Color Line = ShelfColors.Of(Theme.LineStrong);
+        private static readonly Color Glyph = ShelfColors.Of(Theme.Ink2);
 
         // Rows this far above and below the list's view keep their visuals, so a notch of the wheel rarely builds one.
         private const float Margin = 300;
@@ -342,7 +343,7 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
             rowsVisual.Children.InsertAtTop(shapes);
             Rounded(shapes, new RectangleF(0, 0, at.Width, at.Height), HistoryPanelLayout.Corner, i == layout.Opened ? Lit : Card);
             var icon = HistoryPanelLayout.IconIn;
-            Rounded(shapes, icon, 6, Lit);
+            Rounded(shapes, icon, 6, IconFill);
             var ink = c.CreateColorBrush(Glyph);
             var glyph = c.CreateContainerShape();
             glyph.Offset = new Vector2(icon.X + (icon.Width - HistoryPanelLayout.IconGlyph) / 2, icon.Y + (icon.Height - HistoryPanelLayout.IconGlyph) / 2);
@@ -380,7 +381,7 @@ internal sealed class HistoryPanel(IslandWindow island, AiHistory history, TextR
                     var slot = label.Slot;
                     bool off = label.Text == HistoryPanelLayout.Copy && item.LastAnswer.Length == 0;
                     var shown = label with { Slot = new RectangleF(slot.X - at.X, slot.Y - at.Y, slot.Width, slot.Height) };
-                    row.Text(text, shapes).Show(off ? shown with { Style = shown.Style with { Color = TextStyle.TertiaryColor } } : shown);
+                    row.Text(text, shapes).Show(off ? shown with { Style = shown.Style with { Color = Theme.Ink3 } } : shown);
                 }
             }
 

@@ -131,9 +131,9 @@ public static class ShortcutGrid
     private static RectangleF InCell(RectangleF slot, RectangleF cell) => new(slot.X - cell.X, slot.Y - cell.Y, slot.Width, slot.Height);
 
     /// <summary>A tile's name, the add tile's word, and why a tile would not open, in the warn colour.</summary>
-    public static readonly TextStyle NameStyle = new(12, Color: 0xFFE9E9EE, Align: TextAlign.Center);
-    public static readonly TextStyle AddStyle = NameStyle with { Color = TextStyle.TertiaryColor };
-    public static readonly TextStyle BadgeStyle = new(10, Color: TextStyle.WarnColor, Align: TextAlign.Trailing);
+    public static readonly TextStyle NameStyle = new(12, Align: TextAlign.Center);
+    public static readonly TextStyle AddStyle = NameStyle with { Color = Theme.Ink3 };
+    public static readonly TextStyle BadgeStyle = new(10, Color: Theme.Warn, Align: TextAlign.Trailing);
 
     /// <summary>The band across a tile's top where why it would not open reads, right-aligned, clear of the card's corners.</summary>
     public static RectangleF BadgeSlot(RectangleF cell) => new(cell.X + 4, cell.Y + 1, cell.Width - 10, 12);

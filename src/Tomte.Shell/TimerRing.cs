@@ -29,10 +29,10 @@ internal sealed class TimerRing
 
     public TimerRing(Compositor compositor)
     {
-        var track = Circle(compositor, Color.FromArgb(36, 255, 255, 255), out _);
+        var track = Circle(compositor, ShelfColors.Of(Theme.Track), out _);
         // An ellipse's path starts at 12 o'clock and runs clockwise (checked on screen), so the arc fills like a
         // conic gradient.
-        var arcShape = Circle(compositor, Color.FromArgb(255, 0x4C, 0xC3, 0x8A), out arc);
+        var arcShape = Circle(compositor, ShelfColors.Of(Theme.Accent), out arc);
         visual = compositor.CreateShapeVisual();
         visual.Size = new Vector2(Size);
         visual.Shapes.Add(track);

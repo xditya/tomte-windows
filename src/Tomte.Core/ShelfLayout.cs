@@ -230,9 +230,9 @@ public static class ShelfLayout
     /// <summary>A tile's name, its meta line, the empty box's two lines and the drop target's word.</summary>
     public static readonly TextStyle NameStyle = new(12.5f, 600);
     public static readonly TextStyle MetaStyle = TextStyle.Small;
-    public static readonly TextStyle EmptyStyle = new(13, Color: TextStyle.TertiaryColor, Align: TextAlign.Center);
-    public static readonly TextStyle DropStyle = new(13, 600, Color: TextStyle.SecondaryColor);
-    public static readonly TextStyle ActionStyle = new(12, 500, Color: 0xE6FFFFFF);
+    public static readonly TextStyle EmptyStyle = new(13, Color: Theme.Ink3, Align: TextAlign.Center);
+    public static readonly TextStyle DropStyle = new(13, 600, Color: Theme.Ink2);
+    public static readonly TextStyle ActionStyle = new(12, 500);
 
     /// <summary>The head row in body DIPs: the title, the count beside it, and the hint at the right end.</summary>
     public static IReadOnlyList<TextSlot> HeadText(Vector2 body, int count)
@@ -261,7 +261,7 @@ public static class ShelfLayout
     public static IReadOnlyList<TextSlot> TileText(ShelfItem item, SizeF tile) =>
     [
         new(item.Name, NameStyle, new(TilePad, TilePad + Icon + 6, tile.Width - 2 * TilePad, 14)),
-        new(Meta(item), item.Missing ? MetaStyle with { Color = TextStyle.WarnColor } : MetaStyle, new(TilePad, TilePad + Icon + 24, tile.Width - 2 * TilePad, 12)),
+        new(Meta(item), item.Missing ? MetaStyle with { Color = Theme.Warn } : MetaStyle, new(TilePad, TilePad + Icon + 24, tile.Width - 2 * TilePad, 12)),
     ];
 
     /// <summary>The drop target's folder glyph and its word, centred together in the target, in the target's own DIPs.</summary>
@@ -341,14 +341,14 @@ public static class ShelfLayout
         _ => RemoveGlyph,
     };
 
-    /// <summary>The icon square's colour (RRGGBB) by kind of file.</summary>
-    public static uint KindColor(ShelfItem item) => item.IsFolder ? 0xD9A441u : Path.GetExtension(item.Name).ToLowerInvariant() switch
+    /// <summary>The icon square's colour by kind of file.</summary>
+    public static uint KindColor(ShelfItem item) => item.IsFolder ? Theme.Folder : Path.GetExtension(item.Name).ToLowerInvariant() switch
     {
-        ".pdf" => 0xC0392Bu,
-        ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".csv" => 0x2E8B57,
-        ".doc" or ".docx" => 0x2C6FBF,
-        ".url" => 0x5A4FCF,
-        _ => 0x5D6D7E,
+        ".pdf" => Theme.KindPdf,
+        ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".csv" => Theme.KindPicture,
+        ".doc" or ".docx" => Theme.KindDocument,
+        ".url" => Theme.KindLink,
+        _ => Theme.KindOther,
     };
 }
 

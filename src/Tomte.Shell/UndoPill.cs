@@ -10,16 +10,15 @@ using Color = Windows.UI.Color;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The Compact pill after an AI view closed: what closed, then Undo at the right end, white as the palette's Run, with
+/// The Compact pill after an AI view closed: what closed, then Undo at the right end, in the accent as the palette's Run, with
 /// Win+Alt+Z beside the word while Tomte holds that chord. Laid out by <see cref="CompactLayout.Undo"/>. A click on Undo
 /// is the only target; the rest of the pill does nothing. It fades in with the shape and goes with the next state change.
 /// </summary>
 internal sealed class UndoPill : IInteractive, IDisposable
 {
     private const string UndoId = "undo", Undo = "Undo";
-    private const uint KeyInk = 0x8C000000;
-    private static readonly TextStyle Label = PaletteLayout.RunButton with { Align = TextAlign.Leading };
-    private static readonly TextStyle Key = TextStyle.Small with { Color = KeyInk };
+    private static TextStyle Label => PaletteLayout.RunButton with { Align = TextAlign.Leading };
+    private static TextStyle Key => TextStyle.Small with { Color = Theme.WithOpacity(Theme.OnAccent, 0.55f) };
 
     private readonly IslandWindow island;
     private readonly IslandStateMachine machine;

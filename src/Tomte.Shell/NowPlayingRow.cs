@@ -174,7 +174,7 @@ internal sealed class NowPlayingRow
 
             // Each bar breathes on its own period, 50 ms after the one before it, from the compositor:
             // 4 DIPs, up to 4 + 18 x reach, down to 6 + 8 x reach, up to 4 + 16 x reach, back to 4.
-            var white = compositor.CreateColorBrush(Color.FromArgb(255, 255, 255, 255));
+            var white = compositor.CreateColorBrush(ShelfColors.Of(Theme.Ink));
             var ease = compositor.CreateCubicBezierEasingFunction(new Vector2(0.42f, 0), new Vector2(0.58f, 1));
             for (int i = 0; i < Reach.Length; i++)
             {

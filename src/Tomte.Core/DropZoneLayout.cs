@@ -28,9 +28,9 @@ public sealed class DropZoneLayout
 {
     public const float RowHeight = 52, Gap = 6, LineTop = 68, LineHeight = 14, ZonePad = 5, MinZone = 40, MaxZone = 72;
 
-    public static readonly TextStyle ZoneStyle = new(11, Color: TextStyle.SecondaryColor, Align: TextAlign.Center, LineHeight: 13);
-    public static readonly TextStyle TargetStyle = new(12, 600, Color: TextStyle.SecondaryColor, Align: TextAlign.Center, LineHeight: 15);
-    public static readonly TextStyle LineStyle = new(11, Color: TextStyle.SecondaryColor);
+    public static readonly TextStyle ZoneStyle = new(11, Color: Theme.Ink2, Align: TextAlign.Center, LineHeight: 13);
+    public static readonly TextStyle TargetStyle = new(12, 600, Color: Theme.Ink2, Align: TextAlign.Center, LineHeight: 15);
+    public static readonly TextStyle LineStyle = new(11, Color: Theme.Ink2);
 
     private const float Glyph = 16, GlyphGap = 4;
 
@@ -137,7 +137,7 @@ public sealed class DropZoneLayout
 
     /// <summary>A zone's label, wrapped at its words into up to three lines and centred in the zone.</summary>
     public TextAt ZoneText(DropZone zone, RectangleF rect) =>
-        Centred(Label(zone, skill), zone == DropZone.Skill && SlotEmpty ? ZoneStyle with { Color = TextStyle.TertiaryColor } : ZoneStyle, rect, 3, 0);
+        Centred(Label(zone, skill), zone == DropZone.Skill && SlotEmpty ? ZoneStyle with { Color = Theme.Ink3 } : ZoneStyle, rect, 3, 0);
 
     /// <summary>
     /// The target's words, centred: under the folder glyph, whose top-left corner is the second value, when they fit

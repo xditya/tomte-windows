@@ -1125,7 +1125,7 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal("2.4 MB", ShelfLayout.Meta(item));
         Assert.Equal("File moved or deleted", ShelfLayout.Meta(item with { Missing = true }));
         Assert.Equal("Folder", ShelfLayout.Meta(item with { IsFolder = true, Size = null }));
-        Assert.Equal(0xC0392Bu, ShelfLayout.KindColor(item));
+        Assert.Equal(Theme.KindPdf, ShelfLayout.KindColor(item));
         Assert.Equal("Show in folder", ShelfLayout.Name(ShelfAction.Reveal));
     }
 

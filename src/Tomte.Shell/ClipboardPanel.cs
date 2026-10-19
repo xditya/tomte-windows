@@ -255,16 +255,18 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
 
     private sealed class View : IDisposable
     {
-        private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
-        private static readonly Color CardSelected = Color.FromArgb(28, 255, 255, 255);
-        private static readonly Color Line = Color.FromArgb(46, 255, 255, 255);
-        private static readonly Color Glyph = Color.FromArgb(153, 255, 255, 255);
-        private static readonly Color Faint = Color.FromArgb(97, 255, 255, 255);
-        private static readonly Color Off = Color.FromArgb(51, 255, 255, 255);
-        private static readonly Color On = Color.FromArgb(255, 0x6F, 0xA8, 0xFF);
-        private static readonly Color White = Color.FromArgb(255, 255, 255, 255);
-        private static readonly Color Outline = Color.FromArgb(64, 255, 255, 255);
-        private static readonly Color Warn = Color.FromArgb(255, 0xF0, 0xB3, 0x5A);
+        private static readonly Color Card = ShelfColors.Of(Theme.Card);
+        private static readonly Color CardSelected = ShelfColors.Of(Theme.Raised);
+        private static readonly Color IconFill = ShelfColors.Of(Theme.RaisedHi);
+        private static readonly Color Line = ShelfColors.Of(Theme.LineStrong);
+        private static readonly Color Glyph = ShelfColors.Of(Theme.Ink2);
+        private static readonly Color Faint = ShelfColors.Of(Theme.Ink3);
+        private static readonly Color Off = ShelfColors.Of(Theme.LineStrong);
+        private static readonly Color Knob = ShelfColors.Of(Theme.Ink);
+        private static readonly Color Outline = ShelfColors.Of(Theme.LineStrong);
+        private static readonly Color Warn = ShelfColors.Of(Theme.Warn);
+
+        private static Color On => ShelfColors.Of(Theme.Accent);
 
         private readonly Compositor c;
         private readonly TextRenderer text;
@@ -409,7 +411,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             }
             else
             {
-                Rounded(shapes, icon, 6, c.CreateColorBrush(CardSelected));
+                Rounded(shapes, icon, 6, c.CreateColorBrush(IconFill));
             }
 
             var glyph = c.CreateColorBrush(Glyph);
@@ -478,7 +480,7 @@ internal sealed class ClipboardPanel(IslandWindow island, ClipboardWatch watch, 
             knob.Radius = new Vector2(7);
             knob.Center = new Vector2(on ? track.Right - 9 : track.X + 9, track.Y + track.Height / 2);
             var shape = c.CreateSpriteShape(knob);
-            shape.FillBrush = c.CreateColorBrush(White);
+            shape.FillBrush = c.CreateColorBrush(Knob);
             frame.Shapes.Add(shape);
         }
 

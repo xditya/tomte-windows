@@ -242,7 +242,7 @@ public sealed class PanelLayoutTests
             Assert.True(foot[0].Slot.Right <= Clipboard.ClearAll(true).X - ClipboardPanelLayout.Gap, "the note runs into Clear all");
             Assert.Equal(Clipboard.ClearAll(asking), foot[1].Slot);
             Assert.Equal(asking ? "Clear all? Click again" : "Clear all", foot[1].Text);
-            Assert.Equal(asking ? TextStyle.WarnColor : TextStyle.SecondaryColor, foot[1].Style.Color);
+            Assert.Equal(asking ? Theme.Warn : Theme.Ink2, foot[1].Style.Color);
             using var word = TextLayout.Of(new TextRun(foot[1].Text, foot[1].Style, foot[1].Slot.Width));
             Assert.False(word.Trimmed, foot[1].Text);
         }
@@ -303,7 +303,7 @@ public sealed class PanelLayoutTests
         var tile = ShelfLayout.Tile(0, body);
         var item = new ShelfItem(1, "Q3-report.pdf", @"C:\Users\me\Q3-report.pdf", ShelfKind.Reference, DateTimeOffset.Now) { Missing = true };
         var lines = ShelfLayout.TileText(item, tile.Size);
-        Assert.Equal(TextStyle.WarnColor, lines[1].Style.Color);
+        Assert.Equal(Theme.Warn, lines[1].Style.Color);
         Assert.All(lines, line => Assert.True(line.Slot.Right <= tile.Width && line.Slot.Bottom <= tile.Height, line.Text));
     }
 

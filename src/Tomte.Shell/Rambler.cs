@@ -40,7 +40,7 @@ internal sealed class Rambler(
     private const double PillWidth = 262;
     private const float GroupWidth = 6 + 8 + Waveform.Bars * Waveform.BarWidth + (Waveform.Bars - 1) * Waveform.Gap;
     private const float GroupHeight = Waveform.MinHeight + Waveform.Swing;
-    private static readonly Color Mic = Color.FromArgb(255, 0xFF, 0x6B, 0x6B);
+    private static Color Mic => ShelfColors.Of(Theme.Accent);
 
     // A slow or stuck provider must not hold the rambler: every later hold waits for this one to finish.
     private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(30);
@@ -532,7 +532,7 @@ internal sealed class Rambler(
         micShape.Offset = new Vector2(0, (GroupHeight - 11) / 2);
         view.Shapes.Add(micShape);
 
-        var white = c.CreateColorBrush(Color.FromArgb(255, 255, 255, 255));
+        var white = c.CreateColorBrush(ShelfColors.Of(Theme.Ink));
         bars = new CompositionRoundedRectangleGeometry[Waveform.Bars];
         barShapes = new CompositionSpriteShape[Waveform.Bars];
         for (int i = 0; i < Waveform.Bars; i++)

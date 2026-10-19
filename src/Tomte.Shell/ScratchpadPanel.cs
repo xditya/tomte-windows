@@ -21,7 +21,7 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
 {
     private const string NoteId = "note";
 
-    private static readonly Color Card = Color.FromArgb(15, 255, 255, 255);
+    private static readonly Color Card = ShelfColors.Of(Theme.Card);
 
     private readonly List<TextVisual> texts = [];
 
@@ -154,7 +154,7 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
                 var notice = text.Create(host);
                 texts.Add(notice);
                 var box = layout.Editor;
-                notice.Show(ScratchpadPanelLayout.Unreadable, TextStyle.Secondary with { Color = TextStyle.WarnColor }, new System.Drawing.RectangleF(box.X, box.Y, box.Width, 18));
+                notice.Show(ScratchpadPanelLayout.Unreadable, TextStyle.Secondary with { Color = Theme.Warn }, new System.Drawing.RectangleF(box.X, box.Y, box.Width, 18));
             }
 
             return;

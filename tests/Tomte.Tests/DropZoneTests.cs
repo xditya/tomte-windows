@@ -416,7 +416,7 @@ public sealed class DropZoneTests : IDisposable
     public void APressOnTheResultLandsOnItsTileOrChoiceAtEveryScale(double scale)
     {
         var result = new DropResult("Tables to CSV · sales.pdf", "Sent to ollama · llama3.2:3b", "2 files kept on the shelf.", false, "The file has two tables.",
-            [new("sales table 1.csv", ResultTile.OnShelf, 0x2E8B57), new("sales table 2.csv", ResultTile.OnShelf, 0x2E8B57)], ["Truncate: send the start.", "Cancel: send nothing."]);
+            [new("sales table 1.csv", ResultTile.OnShelf, Theme.KindPicture), new("sales table 2.csv", ResultTile.OnShelf, Theme.KindPicture)], ["Truncate: send the start.", "Cancel: send nothing."]);
         float width = (float)PanelSize.PaletteWidth;
         var layout = new DropResultLayout(result, width, mascot: true);
         var shape = IslandGeometry.Panel(width, layout.Height);

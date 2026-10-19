@@ -299,10 +299,10 @@ public class TextTests
         // Each part of the run lays it out again.
         Assert.True(block.Set(run with { Text = "Daybreak" }, 1.5));
         Assert.NotSame(layout, block.Layout);
-        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.WarnColor } }, 1.5));
-        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.WarnColor }, MaxWidth = 200 }, 1.5));
-        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.WarnColor }, MaxWidth = 200, Lines = 2 }, 1.5));
-        Assert.False(block.Set(run with { Text = "Daybreak", Style = Title with { Color = TextStyle.WarnColor }, MaxWidth = 200, Lines = 2 }, 1.5));
+        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = Theme.Warn } }, 1.5));
+        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = Theme.Warn }, MaxWidth = 200 }, 1.5));
+        Assert.True(block.Set(run with { Text = "Daybreak", Style = Title with { Color = Theme.Warn }, MaxWidth = 200, Lines = 2 }, 1.5));
+        Assert.False(block.Set(run with { Text = "Daybreak", Style = Title with { Color = Theme.Warn }, MaxWidth = 200, Lines = 2 }, 1.5));
     }
 
     [Fact]

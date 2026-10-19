@@ -50,7 +50,8 @@ internal sealed unsafe class EditorView : IDisposable
         Visual = compositor.CreateSpriteVisual();
         Visual.Brush = brush;
         caret = compositor.CreateSpriteVisual();
-        caret.Brush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255));
+        uint ink = Theme.Ink;
+        caret.Brush = compositor.CreateColorBrush(Windows.UI.Color.FromArgb((byte)(ink >> 24), (byte)(ink >> 16), (byte)(ink >> 8), (byte)ink));
         caret.IsVisible = false;
         Visual.Children.InsertAtTop(caret);
         host.Children.InsertAtTop(Visual);

@@ -662,16 +662,20 @@ public sealed class PointerPress
 public static class StateLook
 {
     /// <summary>The state layer the host lays over a hovered target, on top of the target's own fill: white at about 8%.</summary>
-    public const uint Hover = 0x15FFFFFF;
+    public const uint Hover = Theme.HoverLayer;
 
     /// <summary>The same while the button is down on it: about 3%, lighter than hover as in Windows 11's dark theme.</summary>
-    public const uint Pressed = 0x08FFFFFF;
+    public const uint Pressed = Theme.PressedLayer;
 
     /// <summary>A disabled target's content is drawn at this opacity.</summary>
     public const float DisabledOpacity = 0.4f;
 
     /// <summary>The accent: the focus ring, and a checked target's fill with its text in <see cref="CheckedText"/>.</summary>
-    public const uint Accent = 0xFF6FA8FF, CheckedFill = Accent, CheckedText = 0xFF000000;
+    public static uint Accent => Theme.Accent;
+
+    public static uint CheckedFill => Theme.Accent;
+
+    public static uint CheckedText => Theme.OnAccent;
 
     /// <summary>The focus ring is a stroke this wide, this far outside the target's bounds.</summary>
     public const float FocusWidth = 2, FocusGap = 2;
@@ -690,13 +694,13 @@ public static class StateLook
 
     /// <summary>
     /// The tooltip's card: this tall, this much room either side of its line, this far off the target and the island's
-    /// edges, with these corners; a grey a step above the island's black, with a faint hairline.
+    /// edges, with these corners; a raised grey a step above the island, with a hairline.
     /// </summary>
-    public const float TipHeight = 24, TipPadX = 8, TipGap = 5, TipCorner = 6;
+    public const float TipHeight = 24, TipPadX = 8, TipGap = 5, TipCorner = 8;
 
-    public const uint TipFill = 0xFF2C2C30, TipLine = 0x1AFFFFFF;
+    public const uint TipFill = Theme.Raised, TipLine = Theme.Line;
 
-    public static readonly TextStyle TipText = new(12, Color: 0xEBFFFFFF);
+    public static readonly TextStyle TipText = new(12);
 
     /// <summary>An acknowledgement's tick: a filled check this square, this far before the word, in the accent.</summary>
     public const float TickSize = 10, TickGap = 5;
