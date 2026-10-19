@@ -105,13 +105,8 @@ public sealed partial class SettingsWindow
             buttons.Children.Add(WebButton(new Button(), page));
         }
 
-        var row = Row("Donate", line, buttons);
-        row.RowSpacing = 12;
-        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        Grid.SetRow(buttons, 1);
-        Grid.SetColumn(buttons, 0);
-        Grid.SetColumnSpan(buttons, 2);
+        var row = StackedRow("Donate", line, buttons);
+        buttons.HorizontalAlignment = HorizontalAlignment.Stretch;
         return row;
     }
 
