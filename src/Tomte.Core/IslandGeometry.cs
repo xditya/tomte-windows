@@ -3,9 +3,13 @@ namespace Tomte.Core;
 /// <summary>
 /// The values the island outline is built from, in DIPs at 100% scale. Each one is driven by its own
 /// spring, so any change of state is one continuous morph of the same shape. The floating pill is
-/// width, depth and corner. The two ramps are the fillets of the attached silhouette and stay 0 otherwise.
+/// width, depth and corner. The two ramps are the fillets of the attached silhouette and stay 0 otherwise. The last three
+/// are 0 for every shape but desktop peek's resting ones: <paramref name="Lift"/> raises the outline above its place under
+/// the gap, so part of it can sit above the screen's top edge; <paramref name="Bare"/> (0 to 1) takes away the pill's fill,
+/// hairline and shadow, leaving the tomte alone with a shadow of its own; <paramref name="Shift"/> moves the centre right
+/// of the island's place, into a corner.
 /// </summary>
-public readonly record struct IslandGeometry(double Width, double Depth, double Corner, double RampW = 0, double RampH = 0)
+public readonly record struct IslandGeometry(double Width, double Depth, double Corner, double RampW = 0, double RampH = 0, double Lift = 0, double Bare = 0, double Shift = 0)
 {
     public static readonly IslandGeometry Hidden = new(120, 0, 0);
 
@@ -14,6 +18,27 @@ public readonly record struct IslandGeometry(double Width, double Depth, double 
 
     /// <summary>Desktop peek: Compact's depth and corner around the tomte alone, its inset on both sides (37 wide).</summary>
     public static readonly IslandGeometry Peek = new(2 * MascotArt.InsetX + MascotArt.SizeDips, 40, 20);
+
+    /// <summary>
+    /// The perched tomte: the peek pill raised until the tomte's box sits on the screen's top edge, with nothing of the pill
+    /// drawn. Only that 26 x 26 box takes the pointer.
+    /// </summary>
+    public static readonly IslandGeometry Perched = Peek with { Lift = IslandOutline.Gap + MascotArt.Box(Peek).Y, Bare = 1 };
+
+    /// <summary>How far the edge lip hangs down from the screen's top edge, which is also its bottom corners.</summary>
+    public const double LipDepth = 6;
+
+    /// <summary>
+    /// The edge lip: a 72 wide tab of the island hanging <see cref="LipDepth"/> from the top edge. It is a capsule twice as
+    /// deep raised until its top half is above the screen, so the edge cuts it square and only its rounded bottom shows.
+    /// </summary>
+    public static readonly IslandGeometry Lip = new(72, 2 * LipDepth, LipDepth, Lift: IslandOutline.Gap + LipDepth);
+
+    /// <summary>The corner pill's depth: shallower than Compact, with room for a smaller tomte and the time.</summary>
+    public const double CornerDepth = 34;
+
+    /// <summary>The pill desktop peek rests as in a top corner, as wide as its tomte and time need; its Shift puts it there.</summary>
+    public static IslandGeometry CornerPill(double width) => new(width, CornerDepth, CornerDepth / 2);
 
     /// <summary>The pill a drag to the top edge opens: a capsule a little deeper than Compact, with room for its dashed ring.</summary>
     public static readonly IslandGeometry ShelfDrop = new(360, 52, 26);

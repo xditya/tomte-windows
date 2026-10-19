@@ -33,7 +33,7 @@ public static class Places
         ("Skills", "Skills", "ai agent skills custom drop zone"),
         // Not "About": that is Windows' page, which "about" should list first.
         ("About Tomte", "About", "about donate donation support sponsor developer credits notices"),
-        ("General", "General", "start with windows startup desktop peek track changes monitors island position"),
+        ("General", "General", "start with windows startup desktop peek perched edge lip corner pill track changes monitors island position"),
         ("Appearance", "Appearance", "accent colour color theme"),
         ("Per-app rules", "Per-app rules", "app rules fullscreen allow deny games"),
         ("AI history", "AI history", "conversations answers undo keep history memory privacy"),

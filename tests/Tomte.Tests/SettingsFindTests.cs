@@ -12,7 +12,7 @@ public sealed class SettingsFindTests
         new("Opening and closing", "Advanced", "Retract margin", "How far outside the island the cursor can go before it starts to retract, in pixels at 100% scale."),
         new("Opening and closing", "Advanced", "Retract delay", "Milliseconds outside that margin before the island retracts."),
         new("Opening and closing", "General", "Start with Windows", "Open Tomte when you sign in. It stays hidden until you call it."),
-        new("Opening and closing", "General", "Desktop peek", "Show the tomte at the top of the screen when no window is there. Point at it to open the island."),
+        new("Opening and closing", "General", "Desktop peek", "How Tomte rests at the top of the screen when no window is there: perched on the edge, an edge lip, the pill, or a small pill in a corner, clear of a clock or widget in the middle. Point at it to open the island."),
         new("Opening and closing", "General", "Island position", "Drag the island along the top edge to move it."),
         new("Opening and closing", "Appearance", "Accent colour", "The colour of the selection, the AI and the recording dot, on the island and here."),
         new("Hotkeys", "", "Summon island", ""),
@@ -48,6 +48,14 @@ public sealed class SettingsFindTests
         Assert.Contains("Desktop peek, Opening and closing", found.Skip(2));
         Assert.Equal("Undo after closing, Provider and spend", Find("undo")[0]);
     }
+
+    [Theory]
+    [InlineData("peek")]
+    [InlineData("perched")]
+    [InlineData("corner")]
+    [InlineData("edge")]
+    public void ThePeekStylesFindDesktopPeek(string query) =>
+        Assert.Contains("Desktop peek, Opening and closing", Find(query));
 
     [Fact]
     public void OneTypoInALongWordAndInitialsStillFind()

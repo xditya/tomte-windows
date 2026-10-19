@@ -18,8 +18,14 @@ public sealed record TomteSettings
     /// <summary>Executable rules, matched by file name without the extension; see <see cref="AppRules"/>.</summary>
     public IReadOnlyList<AppRule> AppRules { get; init; } = [];
 
-    /// <summary>Show Compact with ambient content when no window covers the reveal zone.</summary>
+    /// <summary>Show desktop peek when no window covers the top of the screen where the island rests. Off draws nothing.</summary>
     public bool DesktopPeek { get; init; } = true;
+
+    /// <summary>What desktop peek looks like while it rests; see <see cref="Core.PeekStyle"/>. Read only while <see cref="DesktopPeek"/> is on.</summary>
+    public PeekStyle PeekStyle { get; init; }
+
+    /// <summary>The top corner the <see cref="PeekStyle.Corner"/> pill rests in.</summary>
+    public PeekCorner PeekCorner { get; init; }
 
     /// <summary>Script tiles may run, each once the user confirmed its command. Off until the user turns it on in the settings window.</summary>
     public bool ScriptShortcuts { get; init; }
@@ -118,6 +124,28 @@ public sealed record TomteSettings
     /// follows <see cref="SettingsStore.Changed"/>, as for every other setting.
     /// </summary>
     public uint AccentColor { get; init; } = AccentColors.Default;
+}
+
+/// <summary>How desktop peek rests at the top of the screen. Each grows into the same peek pill and panels when pointed at or pushed.</summary>
+public enum PeekStyle
+{
+    /// <summary>Only the tomte, sitting on the very top edge with a soft shadow and no pill behind it.</summary>
+    Perched,
+
+    /// <summary>A short tab of the island hanging from the top edge, with an accent dot while something waits.</summary>
+    Lip,
+
+    /// <summary>The peek pill itself: the tomte, the time and one more thing, under the edge.</summary>
+    Pill,
+
+    /// <summary>A small pill with the tomte and the time in a top corner, clear of a clock or widget in the middle.</summary>
+    Corner,
+}
+
+public enum PeekCorner
+{
+    Right,
+    Left,
 }
 
 /// <summary>The accent colours the settings window offers, as 0xRRGGBB.</summary>

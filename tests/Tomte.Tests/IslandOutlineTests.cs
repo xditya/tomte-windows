@@ -216,7 +216,7 @@ public class IslandOutlineTests
 
         // Retraction watches the pill and the strip above it: a pointer left on the top row by a push is on the
         // island even with no retract margin, and the shadow's room is not.
-        var pointer = IslandOutline.PointerBounds(window, scale, attached: false);
+        var pointer = IslandOutline.PointerBounds(window, g, scale, attached: false);
         Assert.Equal(System.Drawing.Rectangle.FromLTRB(window.Left + side, 0, window.Right - side, gap + depth), pointer);
         Assert.True(RetractionRules.Inside(centerX, 0, pointer.Left, pointer.Top, pointer.Right, pointer.Bottom, margin: 0));
         Assert.False(RetractionRules.Inside(centerX, gap + depth + 1, pointer.Left, pointer.Top, pointer.Right, pointer.Bottom, margin: 0));
@@ -369,6 +369,6 @@ public class IslandOutlineTests
         var g = IslandGeometry.Panel(PanelSize.Shelf.W, PanelSize.Shelf.H).Attached();
         var window = IslandOutline.WindowBounds(g, scale, 1280, attached: true);
         Assert.Equal(new System.Drawing.Rectangle(1280 - width / 2, 0, width, height), window);
-        Assert.Equal(window, IslandOutline.PointerBounds(window, scale, attached: true));
+        Assert.Equal(window, IslandOutline.PointerBounds(window, g, scale, attached: true));
     }
 }

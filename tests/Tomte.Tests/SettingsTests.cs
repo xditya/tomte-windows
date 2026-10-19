@@ -38,6 +38,8 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(24, s.Reveal.RetractMarginDip);
         Assert.Equal(400, s.Reveal.RetractDelayMs);
         Assert.True(s.DesktopPeek);
+        Assert.Equal(PeekStyle.Perched, s.PeekStyle);
+        Assert.Equal(PeekCorner.Right, s.PeekCorner);
         Assert.False(s.AttachToTopEdge);
         Assert.Equal(0, s.IslandOffset);
         Assert.Empty(s.AppRules);
@@ -124,6 +126,20 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal("Win+Alt+J", s.Hotkeys.Summon);
         Assert.Equal("Win+Alt+N", s.Hotkeys.Scratchpad);
         Assert.True(s.DesktopPeek);
+    }
+
+    [Fact]
+    public void AFileFromBeforePeekStylesKeepsPeekOffAndTheStyleIsSavedByName()
+    {
+        Directory.CreateDirectory(dir);
+        System.IO.File.WriteAllText(File, """{ "desktopPeek": false }""");
+        var off = SettingsStore.Load(File);
+        Assert.False(off.DesktopPeek);
+        Assert.Equal(PeekStyle.Perched, off.PeekStyle);
+
+        string text = SettingsStore.Serialize(new TomteSettings { PeekStyle = PeekStyle.Corner, PeekCorner = PeekCorner.Left });
+        Assert.Contains("\"peekStyle\": \"Corner\"", text);
+        Assert.Contains("\"peekCorner\": \"Left\"", text);
     }
 
     [Fact]

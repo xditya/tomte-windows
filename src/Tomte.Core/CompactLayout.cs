@@ -87,6 +87,74 @@ public static class CompactLayout
             : [open, ask with { Bounds = MascotArt.Box(shape), Corner = MascotArt.SizeDips / 2 }];
     }
 
+    /// <summary>
+    /// The peek style as it can be drawn: the perched tomte needs the tomte, and the perched tomte and the edge lip hang
+    /// from the screen's edge through the floating pill's gap. Without the tomte the perched one is the lip; on the
+    /// notch, which has no gap, both are the pill.
+    /// </summary>
+    public static PeekStyle Resting(PeekStyle style, bool tomte, bool attached) => style switch
+    {
+        PeekStyle.Perched or PeekStyle.Lip when attached => PeekStyle.Pill,
+        PeekStyle.Perched when !tomte => PeekStyle.Lip,
+        _ => style,
+    };
+
+    /// <summary>The shape desktop peek rests as for a style from <see cref="Resting"/>; the corner pill still needs its shift.</summary>
+    public static IslandGeometry PeekShape(PeekStyle resting) => resting switch
+    {
+        PeekStyle.Perched => IslandGeometry.Perched,
+        PeekStyle.Lip => IslandGeometry.Lip,
+        PeekStyle.Corner => IslandGeometry.CornerPill(CornerWidth),
+        _ => IslandGeometry.Compact,
+    };
+
+    /// <summary>
+    /// Where the tomte sits while peek rests, or null for its place on the pill: nowhere on the lip (a seat of size 0, so it
+    /// grows in as the lip grows into the pill) and smaller, at the corner pill's inset, on the corner pill.
+    /// </summary>
+    public static MascotSeat? PeekSeat(PeekStyle resting) => resting switch
+    {
+        PeekStyle.Lip => new MascotSeat(PanelSpace.TabStripHeight / 2, MascotArt.InsetX, 0),
+        PeekStyle.Corner => CornerSeat,
+        _ => null,
+    };
+
+    /// <summary>The corner pill: its tomte's size and inset, the gap after it, the room after the time, and the time's style.</summary>
+    public const float CornerTomte = 20, CornerInset = 7, CornerGap = 8, CornerEnd = 12;
+
+    public static readonly TextStyle CornerTimeStyle = new(12, 500, Tabular: true, Family: TextStyle.Mono);
+
+    /// <summary>
+    /// The corner pill's seat, worked back through <see cref="MascotArt.Box"/>: a pill shallower than Compact draws the tomte
+    /// smaller by <see cref="MascotArt.Ride"/>, so the seat makes up the rest to put a <see cref="CornerTomte"/> box
+    /// <see cref="CornerInset"/> from the left edge, centred down the pill.
+    /// </summary>
+    public static MascotSeat CornerSeat
+    {
+        get
+        {
+            float k = (float)MascotArt.Ride(IslandGeometry.CornerPill(0)), size = CornerTomte / k;
+            return new MascotSeat((float)IslandGeometry.CornerDepth / 2, (CornerInset / k) + (MascotArt.ArtLeft * size / MascotArt.ViewBox), size);
+        }
+    }
+
+    /// <summary>
+    /// How wide the corner pill is: the tomte, the gap, the time and the end, with the time measured at its widest, a
+    /// two-digit hour in the user's culture, so the pill keeps one width all day.
+    /// </summary>
+    public static float CornerWidth =>
+        CornerInset + CornerTomte + CornerGap + TextSlot.Measure(Triggers.CompactRules.TimeOfDay(new DateTimeOffset(new DateTime(2000, 1, 1, 22, 58, 0, DateTimeKind.Local))), CornerTimeStyle, 4096) + CornerEnd;
+
+    /// <summary>The time's slot on a corner pill this wide, in island space.</summary>
+    public static RectangleF CornerClock(float width)
+    {
+        float x = -width / 2 + CornerInset + CornerTomte + CornerGap;
+        return new(x, 0, width / 2 - CornerEnd - x + 1, (float)IslandGeometry.CornerDepth);
+    }
+
+    /// <summary>The edge lip's dot while something waits, in island space: 4 x 2, 2 below the screen's edge, centred.</summary>
+    public static RectangleF LipDot => new(-2, (float)(IslandGeometry.Lip.Lift - IslandOutline.Gap) + 2, 4, 2);
+
     /// <summary>Where the ring or the art starts, from the pill's left edge: after the tomte, or at the end inset when it is off.</summary>
     public static float RingLeft(bool mascot) => mascot ? MascotArt.InsetX + MascotArt.SizeDips + Gap : EndInset;
 

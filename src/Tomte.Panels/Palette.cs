@@ -29,11 +29,17 @@ internal static class Palette
     public static readonly Color Ok = Rgb(0x6FD39A);
     public static readonly Color Danger = Rgb(0xFF9A85);
 
+    /// <summary>The desktop the peek previews are drawn on: a dusk-blue wallpaper with a lighter glow, and the island's fill.</summary>
+    public static readonly Color Wallpaper = Rgb(0x2E3A47), WallpaperGlow = Rgb(0x5B7A86), Island = Rgb(Theme.Island);
+
     /// <summary>The monospaced face for keys, model ids and money: Cascadia Mono where Windows has it.</summary>
     public const string Mono = "Cascadia Mono, Consolas";
 
     /// <summary>The hover layer over a dark surface.</summary>
     public static readonly Color Hover = Color.FromArgb(0x15, 0xFF, 0xFF, 0xFF);
+
+    /// <summary>The island's hairline, a faint white edge on its dark fill.</summary>
+    public static readonly Color Hairline = Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF);
 
     // The brushes made here that show the accent, so a new accent reaches them too.
     private static readonly List<SolidColorBrush> AccentBrushes = [];

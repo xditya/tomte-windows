@@ -55,6 +55,15 @@ internal sealed class NowPlayingRow
         release = PanelHost.AfterFadeOut(island, Release);
         triggers.Machine.Changed += OnState;
         island.ContentReady += OnContentReady;
+        // Desktop peek grows into the peek pill and back with no change of state: once the pill is no longer the row's,
+        // the row goes and stops watching.
+        triggers.CompactChanged += () =>
+        {
+            if (watching && !Mine)
+            {
+                OnState(IslandState.Compact, IslandState.Compact);
+            }
+        };
     }
 
     // Why the pill is up is settled once it is up, so the row decides at ContentReady whether to watch:
