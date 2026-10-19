@@ -22,6 +22,18 @@ public static class IslandPlace
         return lo > hi ? screenWidth / 2 : Math.Clamp(screenWidth / 2 + (int)Math.Round(offset * scale), lo, hi);
     }
 
+    /// <summary>
+    /// The <see cref="IslandGeometry.Shift"/> that takes <paramref name="shape"/> from the place at <paramref name="offset"/>
+    /// to the left or right end of the top edge, as far as <see cref="Center"/> lets it go, in DIPs. One DIP more than the
+    /// distance, so rounding never leaves it a pixel short of the end.
+    /// </summary>
+    public static double ToCorner(double offset, in IslandGeometry shape, double scale, int screenWidth, bool attached, bool left)
+    {
+        var (lo, hi) = Span(shape, scale, screenWidth, attached);
+        int from = Center(offset, shape, scale, screenWidth, attached);
+        return lo > hi ? 0 : left ? (lo - from) / scale - 1 : (hi - from) / scale + 1;
+    }
+
     // The columns the centre may take: the window (IslandOutline.WindowBounds) on the screen, and the outline a gap in
     // from the sides, which the floating pill's shadow room already gives.
     private static (int Lo, int Hi) Span(in IslandGeometry shape, double scale, int screenWidth, bool attached)
