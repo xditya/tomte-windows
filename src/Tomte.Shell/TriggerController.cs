@@ -2076,6 +2076,19 @@ internal sealed partial class TriggerController
             overlay = null;
             log?.Invoke($"capture failed: {e}");
             ToHiddenFromCapture();
+            // Windows said no to the capture: open the Settings page where it can be allowed, so the circle that
+            // just disappeared has an explanation.
+            if (e is UnauthorizedAccessException)
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(Tomte.AI.Palette.WindowCapture.PrivacyPage) { UseShellExecute = true })?.Dispose();
+                }
+                catch (Exception open) when (open is System.ComponentModel.Win32Exception or InvalidOperationException)
+                {
+                    log?.Invoke($"capture: privacy page did not open: {open.Message}");
+                }
+            }
         }
         finally
         {
