@@ -10,6 +10,7 @@ using Tomte.AI.Skills;
 using Tomte.Core;
 using Tomte.Core.Clipboard;
 using Tomte.Core.Device;
+using Tomte.Core.Jobs;
 using Tomte.Core.Media;
 using Tomte.Core.Rambler;
 using Tomte.Core.Shortcuts;
@@ -64,6 +65,15 @@ internal static partial class Program
         if (Jobs.RunJobStart(args) is int code)
         {
             return code;
+        }
+
+        // One Tomte per data folder: launching it again (Start, the Store, a shortcut) opens the running one instead.
+        string dataFolder = Path.GetDirectoryName(Path.GetFullPath(Arg(args, "--debug-settings") ?? SettingsStore.DefaultPath))!;
+        using var single = new Mutex(true, JobTask.InstanceName(dataFolder), out bool first);
+        if (!first)
+        {
+            JobTask.Summon(dataFolder);
+            return 0;
         }
 
         bool debugMascot = args.Contains("--debug-mascot");

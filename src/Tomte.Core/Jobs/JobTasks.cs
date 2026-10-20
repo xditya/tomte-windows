@@ -63,6 +63,9 @@ public static class JobTask
     /// <summary>What the settings window posts to the running Tomte after removing a job: read the next-due file again.</summary>
     public const uint MsgJobsChanged = PInvoke.WM_APP + 0x4B;
 
+    /// <summary>What a second start of Tomte posts to the one already running on the same data folder: open the island.</summary>
+    public const uint MsgSummon = PInvoke.WM_APP + 0x4D;
+
     private static readonly XNamespace Ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
 
     /// <summary>The job id of a --run-job start, or null.</summary>
@@ -111,6 +114,12 @@ public static class JobTask
 
     /// <summary>Tells the Tomte running on <paramref name="dataFolder"/>, if any, that its jobs changed. False with none.</summary>
     public static bool Changed(string dataFolder) => Post(dataFolder, MsgJobsChanged, 0);
+
+    /// <summary>Asks the Tomte running on <paramref name="dataFolder"/> to open; false when none answered.</summary>
+    public static bool Summon(string dataFolder) => Post(dataFolder, MsgSummon, 0);
+
+    /// <summary>The name of the mutex the Tomte running on <paramref name="dataFolder"/> holds, one per signed-in user.</summary>
+    public static string InstanceName(string dataFolder) => $"Local\\Tomte-{Key(dataFolder)}";
 
     internal static unsafe bool Post(string dataFolder, uint message, nuint wParam)
     {

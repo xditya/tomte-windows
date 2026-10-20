@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using Tomte.Core;
 using Tomte.Core.Interaction;
+using Tomte.Core.Jobs;
 using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
@@ -543,6 +544,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         switch (message)
         {
+            case JobTask.MsgSummon:
+                if (machine.State != IslandState.Panels)
+                {
+                    Press(HotkeyAction.Summon);
+                }
+
+                return true;
             case InputThread.MsgEdgeReveal:
                 if (RetractionRules.PushShows(machine.State, activity, Compact))
                 {

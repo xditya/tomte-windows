@@ -128,6 +128,18 @@ public sealed class JobTests : IDisposable
     // ---- Making a job ----
 
     [Fact]
+    public async Task ASecondStartOnTheSameFolderMeetsTheFirstOnesMutex()
+    {
+        string a = Path.Combine(Path.GetTempPath(), "tomte-a"), b = Path.Combine(Path.GetTempPath(), "tomte-b");
+        Assert.Equal(JobTask.InstanceName(a), JobTask.InstanceName(a.ToUpperInvariant() + "\\"));
+        Assert.NotEqual(JobTask.InstanceName(a), JobTask.InstanceName(b));
+        using var first = new Mutex(true, JobTask.InstanceName(a), out bool created);
+        Assert.True(created);
+        var second = Task.Run(() => { using var m = new Mutex(true, JobTask.InstanceName(a), out bool again); return again; });
+        Assert.False(await second);
+    }
+
+    [Fact]
     public async Task AWeekdayJobIsShownInPlainWordsAndStoredOnlyAfterTheYes()
     {
         var (session, handler, planner) = Planning("weekday", 2);
