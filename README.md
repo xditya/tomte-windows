@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src=".github/readme/hero.gif" alt="The pointer pushes against the top edge, a pill shows the time, then the panels open and step through Shelf, Shortcuts, Media, Scratchpad and Clipboard" width="960">
+  <img src=".github/readme/home.png" alt="Tomte open at the top of the screen on Home: the shelf, a podcast playing, the scratchpad note with ticked boxes, shortcuts and the Ask bar" width="960">
 </p>
 
 When you're not using it, Tomte draws nothing, takes no screen space and never steals focus. Push the pointer against
@@ -19,17 +19,23 @@ account and no key.
 
 ## What's in it
 
-- **Shelf.** Park files, text and links while you work, then drag them out into any app.
+- **Home.** Your shelf, what's playing, your note, your shortcuts and an Ask bar on one page.
+- **Shelf.** Park files, text and links while you work, then drag them out into any app. Pin the ones you want to
+  keep there after you drag them out, and filter by files, text or links.
 - **Shortcuts.** Tiles for apps, folders, web pages and scripts.
 - **Media.** Play, pause, skip and seek whatever is playing, in any app that shows up in Windows' media controls.
-- **Scratchpad.** One Markdown note, <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> away.
-- **Clipboard history.** The last 50 bits of text and 50 images you copied. Anything a password manager marks as
-  private is never kept.
+- **Scratchpad.** One Markdown note, <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> away. It shows formatted, and you
+  can tick its checklists without editing.
+- **Clipboard history.** The last 50 bits of text and 50 images you copied, with a preview, a filter and pins.
+  Anything a password manager marks as private is never kept.
 - **Search.** <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> finds apps, files and Windows settings pages. It uses
   [Everything](https://www.voidtools.com/) when that's running, and the Windows index when it isn't.
 - **Timers** that count down in the pill, and an optional pill that shows the song while music plays.
 
-It hides over fullscreen apps, games and the lock screen.
+<img src=".github/readme/shelf.png" alt="The Shelf panel with two rows of tiles, previews of a recipe, a lease and a podcast cover, and a pinned photo" width="960">
+
+It hides over fullscreen apps, games and the lock screen. On an empty desktop a small tomte can sit on the top edge
+(or an edge tab, the pill, or a corner pill, or nothing), and the island follows your taskbar's light or dark theme.
 
 ## AI, if you want it
 
@@ -38,17 +44,18 @@ until you send it, and every answer says which model got it and what it cost.
 
 **Circle to ask.** Press <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>, draw around anything on screen and ask about it.
 
-<img src=".github/readme/circle.gif" alt="A loop drawn around an invoice, then the question 'does this add up? one line' and the answer: the line items sum to $3,720 but the total says $3,820" width="960">
+<img src=".github/readme/circle.png" alt="A receipt circled on screen with the question 'does this add up?' and the answer: the items come to $30.66 but the total says $40.66" width="960">
 
 **Voice.** Hold <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd>, talk, let go. Insert types the words where you were
-typing. Speech becomes text on your PC with whisper.cpp, so this part needs no AI at all.
+typing, and <kbd>E</kbd> lets you fix the words first. Speech becomes text on your PC with whisper.cpp, so this part
+needs no AI at all.
 
-<img src=".github/readme/voice.gif" alt="The spoken words show in a card at the top with Insert, Ask Tomte and Add to note, then appear in the Standup notes box" width="800">
+<img src=".github/readme/voice.png" alt="The voice card at the top with the spoken words and the Insert, Ask Tomte and Add to note buttons" width="960">
 
-**Drop zones.** Drag a file to the top edge and drop it on Summarize, Ask, Tables to CSV or Rename. The result lands
-on the shelf.
+**Drop zones.** Drag a file to the top edge and hold it there for a moment, then drop it on Summarize, Ask, Tables to
+CSV or Rename. The result lands on the shelf. Dropping it straight away just puts it on the shelf.
 
-<img src=".github/readme/drop.gif" alt="An album cover dragged to the top edge, dropped on Summarize, and the summary shown with a new file on the shelf" width="760">
+<img src=".github/readme/drop.png" alt="The summary of a recipe card shown at the top of the screen, kept on the shelf" width="960">
 
 It can also read PDF and Word files, change settings like dark mode or volume (it asks before each one), use MCP
 servers and Agent Skills, and run jobs on a schedule you confirm. Closed an answer by mistake?
@@ -56,15 +63,16 @@ servers and Agent Skills, and run jobs on a schedule you confirm. Closed an answ
 
 ## Settings
 
-<img src=".github/readme/settings.png" alt="The Tomte settings window on the AI page, with 'undo' typed in the Find a setting box and the result Undo after closing" width="640">
+<img src=".github/readme/settings.png" alt="The Tomte settings window on Opening and closing, with a picture of each way Tomte can rest on the desktop" width="960">
 
-Every setting has a page, and <kbd>Ctrl</kbd>+<kbd>F</kbd> finds one by name or by what it does.
+Every setting has a page, and <kbd>Ctrl</kbd>+<kbd>F</kbd> finds one by name or by what it does. Choices like how
+Tomte rests on the desktop, its theme and its accent colour show a picture of each option.
 
 ## Keyboard
 
 | Hotkey | Opens |
 |---|---|
-| <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>I</kbd> | The panels |
+| <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>I</kbd> | Home and the panels |
 | <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> | Search |
 | <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> | The AI box |
 | <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> | Circle to ask |
