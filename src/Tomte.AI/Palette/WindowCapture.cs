@@ -5,6 +5,7 @@ using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using Windows.Graphics.DirectX.Direct3D11;
 using Windows.Graphics.Imaging;
+using Windows.Security.Authorization.AppCapabilityAccess;
 using Windows.Storage.Streams;
 using Windows.Win32;
 using Windows.Win32.Foundation;
@@ -21,12 +22,16 @@ namespace Tomte.AI.Palette;
 public static class WindowCapture
 {
     public const int MaxWidth = 1280;
+
+    /// <summary>The Windows Settings page where people allow apps to capture the screen.</summary>
+    public const string PrivacyPage = "ms-settings:privacy-graphicscaptureprogrammatic";
     private static readonly TimeSpan FirstFrameTimeout = TimeSpan.FromSeconds(3);
 
     public static async Task<byte[]> CapturePngAsync(nint hwnd, CancellationToken ct)
     {
         if (!GraphicsCaptureSession.IsSupported())
             throw new InvalidOperationException("Window capture is not available on this PC.");
+        await RequestProgrammaticAsync();
         var item = GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId((ulong)hwnd))
             ?? throw new InvalidOperationException("The window cannot be captured.");
 
@@ -39,6 +44,7 @@ public static class WindowCapture
     {
         if (!GraphicsCaptureSession.IsSupported())
             throw new InvalidOperationException("Screen capture is not available on this PC.");
+        await RequestProgrammaticAsync();
         var item = GraphicsCaptureItem.TryCreateFromDisplayId(new DisplayId((ulong)hmonitor))
             ?? throw new InvalidOperationException("The screen cannot be captured.");
 
@@ -61,6 +67,27 @@ public static class WindowCapture
         int sw = Math.Max(1, (int)Math.Round(width * f)), sh = Math.Max(1, (int)Math.Round(height * f));
         int bx = Math.Min((int)(x * f), sw - 1), by = Math.Min((int)(y * f), sh - 1);
         return (sw, sh, new PixelRect(bx, by, Math.Min(maxWidth, sw - bx), Math.Clamp((int)Math.Round(h * f), 1, sh - by)));
+    }
+
+    /// <summary>
+    /// A packaged app may only create a capture item without the picker once it has asked for programmatic access;
+    /// before that Windows answers every TryCreateFrom call with "Access is denied". Windows asks the user the first
+    /// time. An unpackaged run has nothing to ask for and the request throws, which is fine.
+    /// </summary>
+    private static async Task RequestProgrammaticAsync()
+    {
+        AppCapabilityAccessStatus status;
+        try
+        {
+            status = await GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Programmatic);
+        }
+        catch (Exception e) when (e is UnauthorizedAccessException or COMException)
+        {
+            return;
+        }
+
+        if (status != AppCapabilityAccessStatus.Allowed)
+            throw new UnauthorizedAccessException($"Windows did not allow Tomte to capture the screen ({status}).");
     }
 
     /// <summary>One frame, then the session and pool are gone before the encode starts, so no later frame is copied.</summary>
