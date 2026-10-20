@@ -35,7 +35,7 @@ powershell -File tools\package\New-TomtePackage.ps1
 #>
 param(
     [string]$CertSubject = 'CN=Tomte Dev',
-    [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version = '0.1.0.0',
+    [ValidatePattern('^\d+\.\d+\.\d+\.\d+$')][string]$Version = '0.2.0.0',
     [string]$AppInstallerBaseUri = 'https://example.invalid/tomte/',
     [switch]$Register,
     [switch]$NoInstall
