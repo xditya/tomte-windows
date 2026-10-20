@@ -149,6 +149,28 @@ public sealed class ScratchpadNote : IScratchpad
     }
 
     /// <summary>
+    /// Ticks or clears the task box on the line that starts at <paramref name="lineStart"/>, as the note is now, and saves
+    /// after <see cref="SaveDelay"/>. Raises <see cref="Changed"/>. False, and nothing changed, when that line holds no task.
+    /// </summary>
+    public bool ToggleTask(int lineStart)
+    {
+        lock (gate)
+        {
+            ThrowIfNotLoaded();
+            if (Tomte.Core.Text.NoteMarkdown.ToggleTask(text, lineStart) is not { } toggled)
+            {
+                return false;
+            }
+
+            text = toggled;
+            MarkDirty();
+        }
+
+        Changed?.Invoke();
+        return true;
+    }
+
+    /// <summary>
     /// Reads the saved note. The first call loads it (and carries an earlier build's file over); later
     /// calls pick up a change another process saved, unless this one holds edits not yet saved, in
     /// which case the save merges the two.

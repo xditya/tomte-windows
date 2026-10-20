@@ -297,9 +297,11 @@ public sealed class HomeLayout(Vector2 body)
     /// on top of it (<paramref name="media"/> are the Now playing card's, <paramref name="shelfItems"/> the shelf's
     /// items, of which the tiles that show are each a target that opens and drags out its item; the "+N more" tile is
     /// the section's), then the Ask bar's prompt, its chips and the mic. Sections in a row that does not fit are left
-    /// out. The shelf tiles are one arrow-key group, the shortcut tiles another.
+    /// out. The shelf tiles are one arrow-key group, the shortcut tiles another. The note's task boxes that show
+    /// (<paramref name="noteLines"/>, from <see cref="NotePreview"/>) each tick in place.
     /// </summary>
-    public IReadOnlyList<Target> Targets(IReadOnlyList<Target> media, IReadOnlyList<(long Id, string Name)> shortcuts, bool window, bool shelf, IReadOnlyList<ShelfItem>? shelfItems = null)
+    public IReadOnlyList<Target> Targets(IReadOnlyList<Target> media, IReadOnlyList<(long Id, string Name)> shortcuts, bool window, bool shelf, IReadOnlyList<ShelfItem>? shelfItems = null,
+        IReadOnlyList<(string Text, bool? Done, int Line)>? noteLines = null)
     {
         var all = new List<Target>();
         if (Rows >= 1)
@@ -318,6 +320,17 @@ public sealed class HomeLayout(Vector2 body)
         if (Rows >= 2)
         {
             all.Add(new(NoteId, Scratchpad, Section.Corner, TargetKind.Tile, Tip: "Open the Scratchpad"));
+            var lines = noteLines ?? [];
+            for (int i = 0; i < lines.Count && i < NoteLinesShown; i++)
+            {
+                if (lines[i].Done is bool done)
+                {
+                    var box = NoteLineAt(i, box: true).Box;
+                    box.Inflate(4, 4);
+                    all.Add(new(NotePreviewLayout.TaskId(lines[i].Line), box, BoxCorner + 2, TargetKind.Toggle, Tip: $"{(done ? "Done" : "To do")}: {lines[i].Text}", Checked: done));
+                }
+            }
+
             all.Add(new(ShortcutsId, Shortcuts, Section.Corner, TargetKind.Tile, Tip: "Open Shortcuts"));
             all.Add(new(AddId, AddButton, Add / 2, TargetKind.Button, Tip: "Add a shortcut in Settings"));
             for (int i = 0; i < shortcuts.Count && i < ShortcutColumns * ShortcutRowsShown; i++)
@@ -340,33 +353,43 @@ public sealed class HomeLayout(Vector2 body)
 
     /// <summary>
     /// A note's preview: its first line as the title (a heading's marks dropped), then up to four lines after it, each
-    /// with whether it is a checkbox and whether that is ticked. Blank lines are skipped; list and emphasis marks are not
-    /// shown.
+    /// with whether it is a task box and whether that is ticked, and where the line starts in the note. Blank lines are
+    /// skipped; list and emphasis marks are not shown.
     /// </summary>
-    public static (string Title, IReadOnlyList<(string Text, bool? Done)> Lines) NotePreview(string note)
+    public static (string Title, IReadOnlyList<(string Text, bool? Done, int Line)> Lines) NotePreview(string note)
     {
-        var lines = note.Split('\n').Select(l => l.TrimEnd('\r').Trim()).Where(l => l.Length > 0).ToList();
+        var lines = new List<(string Text, int Start, int End)>();
+        for (int start = 0; start < note.Length;)
+        {
+            int end = note.IndexOf('\n', start);
+            end = end < 0 ? note.Length : end;
+            string line = note[start..end].Trim();
+            if (line.Length > 0)
+            {
+                lines.Add((line, start, end));
+            }
+
+            start = end + 1;
+        }
+
         if (lines.Count == 0)
         {
             return ("", []);
         }
 
-        string title = Plain(lines[0].TrimStart('#').Trim());
-        var rest = new List<(string, bool?)>();
-        foreach (string line in lines.Skip(1).Take(NoteLines))
+        string title = Plain(lines[0].Text.TrimStart('#').Trim());
+        var rest = new List<(string, bool?, int)>();
+        foreach (var (line, start, end) in lines.Skip(1).Take(NoteLines))
         {
-            string text = line.StartsWith("- ", StringComparison.Ordinal) || line.StartsWith("* ", StringComparison.Ordinal) ? line[2..] : line;
-            bool? done = null;
-            if (text.StartsWith("[ ]", StringComparison.Ordinal))
+            // A task's words are what follows its box.
+            if (NoteMarkdown.TaskBox(note, start) is var (mark, done))
             {
-                done = false;
-            }
-            else if (text.StartsWith("[x]", StringComparison.OrdinalIgnoreCase))
-            {
-                done = true;
+                rest.Add((Plain(note[Math.Min(mark + 2, end)..end].Trim()), done, start));
+                continue;
             }
 
-            rest.Add((Plain(done is null ? text.TrimStart('#').Trim() : text[3..].Trim()), done));
+            string text = line.StartsWith("- ", StringComparison.Ordinal) || line.StartsWith("* ", StringComparison.Ordinal) ? line[2..] : line;
+            rest.Add((Plain(text.TrimStart('#').Trim()), null, start));
         }
 
         return (title, rest);

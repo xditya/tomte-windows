@@ -1,3 +1,5 @@
+using System.Numerics;
+using Tomte.Core;
 using Tomte.Core.Text;
 using Xunit;
 
@@ -146,5 +148,50 @@ public class NoteMarkdownTests
         Assert.Equal("- a\n\t- b\n\t- []", Indented("- a\n\t- b\n- ", 11, 11));
         Assert.Equal("x\n   y\nab   []", Indented("x\n   y\nab", 9, 9));
         Assert.Equal("x\n y\nab  []", Indented("x\n y\nab", 7, 7));
+    }
+
+    [Fact]
+    public void ATaskBoxTogglesOnItsOwnLineOnly()
+    {
+        const string text = "# Week\n- [ ] call\n  3. [X] mail\r\n- plain\n```\n- [ ] code\n```\n- [x]";
+        int call = text.IndexOf("- [ ] call", StringComparison.Ordinal), mail = text.IndexOf("  3.", StringComparison.Ordinal);
+        Assert.Equal((call + 3, false), NoteMarkdown.TaskBox(text, call));
+        Assert.Equal((mail + 6, true), NoteMarkdown.TaskBox(text, mail));
+        Assert.Equal(text.Replace("- [ ] call", "- [x] call", StringComparison.Ordinal), NoteMarkdown.ToggleTask(text, call));
+        Assert.Equal(text.Replace("3. [X]", "3. [ ]", StringComparison.Ordinal), NoteMarkdown.ToggleTask(text, mail));
+        // A box with nothing after it at the note's end is a task too.
+        Assert.Equal(text[..^2] + " ]", NoteMarkdown.ToggleTask(text, text.LastIndexOf('\n') + 1));
+
+        // Not a line's start, a plain item, a heading, a box in code, past the end: nothing.
+        Assert.Null(NoteMarkdown.ToggleTask(text, call + 1));
+        Assert.Null(NoteMarkdown.ToggleTask(text, text.IndexOf("- plain", StringComparison.Ordinal)));
+        Assert.Null(NoteMarkdown.ToggleTask(text, 0));
+        Assert.Null(NoteMarkdown.ToggleTask(text, text.IndexOf("- [ ] code", StringComparison.Ordinal)));
+        Assert.Null(NoteMarkdown.ToggleTask(text, text.Length));
+    }
+
+    [Fact]
+    public void AClickOnTheShownNoteFindsItsPlaceInTheText()
+    {
+        const string text = "# Week\n\n- [ ] call the **dentist**\n- [x] mail\n\nlast line";
+        var laid = new NotePreviewLayout(text, 400);
+        Assert.Equal([(text.IndexOf("- [ ] call", StringComparison.Ordinal), false, "To do: call the dentist"), (text.IndexOf("- [x]", StringComparison.Ordinal), true, "Done: mail")],
+            laid.Tasks.Select(t => (t.Line, t.Done, t.Name)));
+        // The box sits where the marker would, at the left edge, the item's words after it.
+        var box = laid.Tasks[0].Box;
+        Assert.Equal(0, box.X);
+        Assert.Equal(box.Right + DropResultLayout.TaskGap, laid.Runs.Single(r => r.Run.Text == "call the dentist").At.X);
+        Assert.Equal(NotePreviewLayout.TaskLine(laid.Tasks[1].Id), laid.Tasks[1].Line);
+        Assert.Null(NotePreviewLayout.TaskLine("tile:3"));
+
+        // On the box: the start of the item's words. On the far end of the words: after their last letter, before the closing **.
+        int words = text.IndexOf("call", StringComparison.Ordinal);
+        Assert.Equal(words, laid.SourceAt(new Vector2(box.X + 4, box.Y + 4), text.Length));
+        var run = laid.Runs.Single(r => r.Run.Text == "call the dentist");
+        Assert.Equal(text.IndexOf("dentist", StringComparison.Ordinal) + 7, laid.SourceAt(run.At + new Vector2(390 - run.At.X, 5), text.Length));
+        // Over the first letter of the heading, and below everything.
+        var heading = laid.Runs[0];
+        Assert.Equal(2, laid.SourceAt(heading.At + new Vector2(1, 5), text.Length));
+        Assert.Equal(text.Length, laid.SourceAt(new Vector2(10, laid.Height + 50), text.Length));
     }
 }

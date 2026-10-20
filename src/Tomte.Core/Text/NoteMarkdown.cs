@@ -320,6 +320,35 @@ public static class NoteMarkdown
         return text.AsSpan(start, LineEnd(text, b) - start).Contains(Fence, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// The task box on the line that starts at <paramref name="lineStart"/>: where its mark (the space or x between the
+    /// brackets) is, and whether it is ticked. Null when that is not a line's start, the line is no task item, or it sits
+    /// in a code block.
+    /// </summary>
+    public static (int Mark, bool Done)? TaskBox(string text, int lineStart)
+    {
+        if (lineStart < 0 || lineStart >= text.Length || (lineStart > 0 && text[lineStart - 1] != '\n') || InFence(text, lineStart))
+        {
+            return null;
+        }
+
+        int end = LineEnd(text, lineStart);
+        end -= end > lineStart && text[end - 1] == '\r' ? 1 : 0;
+        var line = text.AsSpan(lineStart, end - lineStart);
+        var trimmed = line.TrimStart();
+        if (Markdown.Item(trimmed, note: false) is not (_, int width) || Markdown.Item(trimmed, note: true) is not (_, int boxed) || boxed == width)
+        {
+            return null;
+        }
+
+        int mark = lineStart + (line.Length - trimmed.Length) + width + 1;
+        return (mark, text[mark] != ' ');
+    }
+
+    /// <summary>The note with the task box on the line at <paramref name="lineStart"/> ticked or cleared, nothing else changed; null when there is none.</summary>
+    public static string? ToggleTask(string text, int lineStart) =>
+        TaskBox(text, lineStart) is var (mark, done) ? string.Concat(text.AsSpan(0, mark), done ? " " : "x", text.AsSpan(mark + 1)) : null;
+
     private static int LineStart(string text, int at) => at == 0 ? 0 : text.LastIndexOf('\n', at - 1) + 1;
 
     private static int LineEnd(string text, int at)

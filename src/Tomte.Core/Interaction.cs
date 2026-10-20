@@ -444,6 +444,9 @@ public enum NavKey
     ScreenshotChip,
     ShelfChip,
     NoteChip,
+
+    /// <summary>Ctrl+E: the Scratchpad switches between showing the note and typing in it.</summary>
+    Edit,
 }
 
 /// <summary>Which keys move between the island's targets, which act on them, and which ones a text box gives up.</summary>
@@ -460,7 +463,7 @@ public static class NavKeys
     /// Tab and Shift+Tab move between stops, the arrows inside a group, Home and End to its ends, Enter and Space click,
     /// Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs and Ctrl+1 to Ctrl+6 pick one, Ctrl+K asks, Ctrl+P pins and unpins
     /// the island. On the focused item
-    /// Delete removes, Ctrl+C copies, Ctrl+Shift+E shows it in its folder and P pins it. Esc steps back. The AI box: Alt+Left is the
+    /// Delete removes, Ctrl+C copies, Ctrl+Shift+E shows it in its folder and P pins it. Ctrl+E switches the Scratchpad between showing and editing. Esc steps back. The AI box: Alt+Left is the
     /// back arrow, Ctrl+H opens History, Alt+A always allows, Alt+W, Alt+S, Alt+H and Alt+N toggle the chips, Page Up and
     /// Page Down scroll the answer. Ctrl with Alt is AltGr on many layouts, which types, so it is nothing here.
     /// </summary>
@@ -484,6 +487,7 @@ public static class NavKeys
             'P' when ctrl && !shift => NavKey.Pin,
             'C' when ctrl && !shift => NavKey.Copy,
             'E' when ctrl && shift => NavKey.ShowInFolder,
+            'E' when ctrl => NavKey.Edit,
             _ when ctrl => NavKey.None,
             'P' when !shift => NavKey.PinItem,
             VkLeft => NavKey.Left,
@@ -531,11 +535,12 @@ public static class NavKeys
     /// <summary>
     /// A key down in a text box that the island's views get first while the box keeps the keys, and the box gets when no
     /// view takes it: the AI box's own keys from its prompt (Alt+Left, Ctrl+H, Alt+A, the chips' Alt keys, Page Up and
-    /// Page Down for the answer), and Ctrl+K, so the panels ask from the note as the Ask pill's tooltip says. A typed "/"
+    /// Page Down for the answer), Ctrl+K, so the panels ask from the note as the Ask pill's tooltip says, and Ctrl+E, which
+    /// takes the note back to showing it. A typed "/"
     /// is never offered: in a text box it is text.
     /// </summary>
     public static bool Offered(NavKey key) =>
-        key is NavKey.Back or NavKey.History or NavKey.AlwaysAllow or NavKey.PageUp or NavKey.PageDown or NavKey.Ask || Chip(key) is not null;
+        key is NavKey.Back or NavKey.History or NavKey.AlwaysAllow or NavKey.PageUp or NavKey.PageDown or NavKey.Ask or NavKey.Edit || Chip(key) is not null;
 }
 
 /// <summary>

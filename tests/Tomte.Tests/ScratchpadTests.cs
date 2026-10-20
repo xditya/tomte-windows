@@ -38,6 +38,22 @@ public sealed class ScratchpadTests : IDisposable
     }
 
     [Fact]
+    public async Task ATickedBoxIsSavedAndTold()
+    {
+        var note = await Loaded();
+        note.Edit("Today\n- [ ] milk\n- [ ] bread", 3);
+        int told = 0;
+        note.Changed += () => told++;
+
+        Assert.True(note.ToggleTask(6));
+        Assert.False(note.ToggleTask(0));
+        await note.FlushAsync();
+
+        Assert.Equal("Today\n- [x] milk\n- [ ] bread", (await Loaded()).Text);
+        Assert.Equal((1, 3), (told, note.Caret));
+    }
+
+    [Fact]
     public async Task TheEarlierBuildsFileIsCarriedOverOnce()
     {
         Directory.CreateDirectory(dir);

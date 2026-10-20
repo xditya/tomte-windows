@@ -76,6 +76,12 @@ internal sealed class TypingFocus
     /// <summary>Ctrl+P while the island has the keys: it pins or unpins.</summary>
     public Action? Pin { get; set; }
 
+    /// <summary>
+    /// A character typed while the island has the keys and no box does, that no target took: true when a view used it
+    /// (the Scratchpad showing its note goes to typing in it, and the character goes in).
+    /// </summary>
+    public Func<char, bool>? Typed { get; set; }
+
     /// <summary>The user moved the foreground to another window while a box had the keys.</summary>
     public event Action? Lost;
 
@@ -370,6 +376,11 @@ internal sealed class TypingFocus
         if (keys && island.Interaction.Key(nav, repeat))
         {
             taken = true;
+            return new LRESULT(0);
+        }
+
+        if (keys && message == PInvoke.WM_CHAR && nav == NavKey.None && !char.IsControl((char)key) && Typed?.Invoke((char)key) == true)
+        {
             return new LRESULT(0);
         }
 

@@ -505,11 +505,12 @@ internal static partial class Program
         panels.Register(new MediaPanel(island, media, text, () => DateTimeOffset.UtcNow, log));
         var scratchpad = new ScratchpadPanel(island, Scratchpad, text, typing, log);
         panels.Register(scratchpad);
-        triggers.ScratchpadOpened = scratchpad.TakeKeys;
-        // Panels opened on the Scratchpad tab gives the note the keys, as its own hotkey does; any other tab, its targets.
+        triggers.ScratchpadOpened = () => scratchpad.TakeKeys();
+        // Panels opened on the Scratchpad tab gives the note the keys when it is being edited, as its own hotkey does; a
+        // note shown in Preview, or any other tab, gives them to its targets.
         triggers.SummonOpened = () =>
         {
-            scratchpad.TakeKeys();
+            scratchpad.TakeKeys(edit: false);
             if (typing.Focused is null && typing.TakeKeys())
             {
                 // Opened from the keyboard: the tab's first item takes focus, and the ring shows it.

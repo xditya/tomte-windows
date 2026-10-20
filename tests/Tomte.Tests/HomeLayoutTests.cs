@@ -121,13 +121,23 @@ public class HomeLayoutTests
     [Fact]
     public void TheNoteShowsItsTitleAndFourLinesWithTheirBoxes()
     {
-        var (title, lines) = HomeLayout.NotePreview("# Launch week\n\n- [x] Send the hero banner to Priya\n- [X] Book the review room\n- [ ] Record the 30 second demo\n- [ ] **Thu 3 pm** pricing review\nA fifth line\n");
+        const string note = "# Launch week\n\n- [x] Send the hero banner to Priya\n- [X] Book the review room\n- [ ] Record the 30 second demo\n- [ ] **Thu 3 pm** pricing review\nA fifth line\n";
+        var (title, lines) = HomeLayout.NotePreview(note);
         Assert.Equal("Launch week", title);
         Assert.Equal(
-            [("Send the hero banner to Priya", (bool?)true), ("Book the review room", true), ("Record the 30 second demo", false), ("Thu 3 pm pricing review", false)],
+            [("Send the hero banner to Priya", (bool?)true, note.IndexOf("- [x]", StringComparison.Ordinal)), ("Book the review room", true, note.IndexOf("- [X]", StringComparison.Ordinal)),
+                ("Record the 30 second demo", false, note.IndexOf("- [ ] Record", StringComparison.Ordinal)), ("Thu 3 pm pricing review", false, note.IndexOf("- [ ] **", StringComparison.Ordinal))],
             lines);
         Assert.Equal(("", []), HomeLayout.NotePreview("  \n"));
-        Assert.Equal([("plain", (bool?)null)], HomeLayout.NotePreview("Title\nplain").Lines);
+        Assert.Equal([("plain", (bool?)null, 6)], HomeLayout.NotePreview("Title\nplain").Lines);
+
+        // Each box that shows ticks in place, named for what it says, on top of the card, whose click still opens the tab.
+        var targets = Layout.Targets([], [], false, false, noteLines: lines).ToList();
+        var box = targets.Single(t => t.Id == NotePreviewLayout.TaskId(lines[2].Line));
+        Assert.Equal(("To do: Record the 30 second demo", TargetKind.Toggle, false), (box.Tip, box.Kind, box.Checked));
+        Assert.True(targets.Single(t => t.Id == NotePreviewLayout.TaskId(lines[0].Line)).Checked);
+        Assert.True(targets.FindIndex(t => t.Id == HomeLayout.NoteId) < targets.IndexOf(box));
+        Assert.True(box.Bounds.Contains(Layout.NoteLineAt(2, box: true).Box));
 
         // Four lines fit under the title inside the card; a line with a box starts after it.
         var last = Layout.NoteLineAt(3, box: true);

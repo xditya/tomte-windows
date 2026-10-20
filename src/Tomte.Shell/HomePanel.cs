@@ -73,6 +73,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
     private TextVisual? placeholder;
     private IReadOnlyList<(Shortcut Row, ShortcutTarget Target)> tiles = [];
     private IReadOnlyList<Target> targets = [];
+    private IReadOnlyList<(string Text, bool? Done, int Line)> noteLines = [];
     private string? spend;
     private bool window, withShelf, showsMedia;
     private int showing;
@@ -139,6 +140,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         surfaces?.Dispose();
         iconSlots.Clear();
         (shelfParts, noteParts, shortcutParts, askParts, footParts, surfaces, editor, placeholder, layout, body) = (null, null, null, null, null, null, null, null, null, null);
+        noteLines = [];
         targets = [];
         TargetsChanged?.Invoke();
     }
@@ -210,8 +212,15 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
                 island.Interaction.Acknowledge(this, id, Hotkey.TryParse(key, out var chord, out _) ? $"Hold the mic, or hold {chord}" : "Hold the mic to talk", tick: false);
                 break;
             default:
-                // The first click of a double click already opened it.
-                if (by != ActivateBy.DoubleClick && ShelfItemOf(id) is { } item)
+                // A task box in the note's preview ticks in place; the first click of a double click already opened an item.
+                if (NotePreviewLayout.TaskLine(id) is int line)
+                {
+                    if (note.IsLoaded)
+                    {
+                        note.ToggleTask(line);
+                    }
+                }
+                else if (by != ActivateBy.DoubleClick && ShelfItemOf(id) is { } item)
                 {
                     OpenItem(item);
                 }
@@ -289,7 +298,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
             return;
         }
 
-        targets = layout.Targets(showsMedia ? media.Targets : [], [.. tiles.Select(t => (t.Row.Id, t.Row.Name))], window, withShelf, shelf.Items);
+        targets = layout.Targets(showsMedia ? media.Targets : [], [.. tiles.Select(t => (t.Row.Id, t.Row.Name))], window, withShelf, shelf.Items, noteLines);
         TargetsChanged?.Invoke();
     }
 
@@ -471,6 +480,8 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         }
 
         var (title, lines) = note.IsLoaded ? HomeLayout.NotePreview(note.Text) : ("", []);
+        noteLines = lines;
+        Retarget();
         if (title.Length == 0)
         {
             p.Text(v, new TextSlot(note.IsLoaded ? HomeLayout.NoteEmpty : "", Section.Note, layout.NoteHeadingBox));
@@ -480,7 +491,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         p.Text(v, new TextSlot(title, HomeLayout.NoteHeading, layout.NoteHeadingBox));
         for (int i = 0; i < lines.Count && i < layout.NoteLinesShown; i++)
         {
-            var (words, done) = lines[i];
+            var (words, done, _) = lines[i];
             var (square, slot) = layout.NoteLineAt(i, done is not null);
             if (done == true)
             {
