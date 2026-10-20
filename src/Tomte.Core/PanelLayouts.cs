@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Globalization;
 using System.Numerics;
 using Tomte.Core.Clipboard;
 using Tomte.Core.Interaction;
@@ -346,19 +347,27 @@ public sealed class ClipboardPanelLayout(Vector2 body)
 }
 
 /// <summary>
-/// Where the Scratchpad panel's parts sit, in DIPs from the body's top-left corner: the panel's title line, the card
-/// the note is typed into, and the footer.
+/// Where the Scratchpad panel's parts sit, in DIPs from the body's top-left corner: the panel's title line with the
+/// Preview and Edit switch at its end, the card the note is shown or typed in, and the footer.
 /// </summary>
 public sealed class ScratchpadPanelLayout(Vector2 body)
 {
     public const float Pad = Section.BodyPad, Top = Section.BodyTop, Bottom = Section.BodyPad, HeadHeight = 22, FootHeight = 14, Gap = 12, Corner = Section.Corner;
     public const float TextInset = Section.Pad;
 
+    /// <summary>The switch: a capsule this tall, its segments inset by <see cref="SegmentInset"/>, each its label plus <see cref="SegmentPad"/> a side.</summary>
+    public const float SegmentHeight = 26, SegmentInset = 3, SegmentPad = 12;
+
+    public const string PreviewLabel = "Preview", EditLabel = "Edit", PreviewId = "mode:preview", EditId = "mode:edit";
+
+    /// <summary>A label of the switch: the current one in primary ink, the other in secondary.</summary>
+    public static TextStyle SegmentStyle(bool current) => new(12, 500, current ? Theme.Ink : Theme.Ink2, TextAlign.Center);
+
     public Vector2 Body { get; } = body;
 
     public RectangleF Head => new(Pad, Top, Body.X - 2 * Pad, HeadHeight);
 
-    /// <summary>The card the note is typed into.</summary>
+    /// <summary>The card the note is shown or typed in.</summary>
     public RectangleF Note => RectangleF.FromLTRB(Pad, Top + HeadHeight + Gap, Body.X - Pad, Body.Y - Bottom - FootHeight - Gap);
 
     public RectangleF Foot => new(Pad, Body.Y - Bottom - FootHeight, Body.X - 2 * Pad, FootHeight);
@@ -369,24 +378,130 @@ public sealed class ScratchpadPanelLayout(Vector2 body)
     /// <summary>Said in the card when the note cannot be read; what is typed then waits for it.</summary>
     public const string Unreadable = "The note could not be opened. What you type is kept and goes in once it opens.";
 
-    /// <summary>The text box the note is typed in: the card less its insets. Its text scrolls inside it.</summary>
+    /// <summary>Said in the card when the note shown has nothing in it yet.</summary>
+    public const string Empty = "Nothing in the note yet. Click here or press Enter to write.";
+
+    /// <summary>The text box the note is typed in, which is also where the shown note sits: the card less its insets. Its text scrolls inside it.</summary>
     public RectangleF Editor => RectangleF.FromLTRB(Note.X + TextInset, Note.Y + 12, Note.Right - TextInset, Note.Bottom - 12);
 
-    /// <summary>The footer's keys: what Tab and Esc do in the note, and the pin.</summary>
-    public const string Keys = "Tab indents, Esc leaves the note, Ctrl+P pins";
+    /// <summary>The footer's keys while the note is typed in, and while it is shown.</summary>
+    public const string Keys = "Tab indents, Esc shows the note, Ctrl+P pins", PreviewKeys = "Click a line to edit it, Space ticks a box, Ctrl+E edits";
 
-    /// <summary>The heading, what goes beside it, and the footer's two ends.</summary>
-    public IReadOnlyList<TextSlot> FrameText()
+    /// <summary>The switch's capsule and its two segments, at the end of the title line and centred on it.</summary>
+    public (RectangleF Track, RectangleF Preview, RectangleF Edit) Segments
+    {
+        get
+        {
+            float preview = SegmentWidth(PreviewLabel), edit = SegmentWidth(EditLabel), inner = SegmentHeight - 2 * SegmentInset;
+            var track = new RectangleF(Head.Right - preview - edit - 2 * SegmentInset, Head.Y + (HeadHeight - SegmentHeight) / 2, preview + edit + 2 * SegmentInset, SegmentHeight);
+            float y = track.Y + SegmentInset;
+            return (track, new(track.X + SegmentInset, y, preview, inner), new(track.X + SegmentInset + preview, y, edit, inner));
+        }
+    }
+
+    private static float SegmentWidth(string label) => MathF.Ceiling(TextSlot.Measure(label, SegmentStyle(true), 200)) + 2 * SegmentPad;
+
+    /// <summary>The heading, what goes beside it, and the footer's two ends; the footer names the keys of the mode shown.</summary>
+    public IReadOnlyList<TextSlot> FrameText(bool editing = true)
     {
         const string title = "Scratchpad";
+        string keysText = editing ? Keys : PreviewKeys;
         float after = TextSlot.Measure(title, TextStyle.PageTitle, Head.Width) + 10;
-        float keys = MathF.Ceiling(TextSlot.Measure(Keys, TextStyle.Small, Foot.Width - 150));
+        float keys = MathF.Ceiling(TextSlot.Measure(keysText, TextStyle.Small, Foot.Width - 150));
         return
         [
             new(title, TextStyle.PageTitle, Head),
-            new("one note, saved locally", Section.Note with { Size = 13 }, new(Head.X + after, Head.Y, Head.Width - after, HeadHeight)),
+            new("one note, saved locally", Section.Note with { Size = 13 }, new(Head.X + after, Head.Y, Math.Max(0, Segments.Track.X - 10 - Head.X - after), HeadHeight)),
             new("Saved on this PC", TextStyle.Small, new(Foot.X, Foot.Y, 140, FootHeight)),
-            new(Keys, TextStyle.Small with { Align = TextAlign.Trailing }, new(Foot.Right - keys, Foot.Y, keys, FootHeight)),
+            new(keysText, TextStyle.Small with { Align = TextAlign.Trailing }, new(Foot.Right - keys, Foot.Y, keys, FootHeight)),
         ];
+    }
+}
+
+/// <summary>A task box in the shown note: the line it is on (that line's start in the note), whether it is ticked, its square, and the name it is read out by.</summary>
+public readonly record struct NoteTask(int Line, bool Done, RectangleF Box, string Name)
+{
+    public string Id => NotePreviewLayout.TaskId(Line);
+}
+
+/// <summary>
+/// The note shown rather than typed: its Markdown read as the note reads it (<see cref="Markdown.Note"/>) and laid out as
+/// answers are (<see cref="DropResultLayout.Lay"/>), task items with a box in place of their marker. Positions are in
+/// DIPs from the top-left of the text box's place (<see cref="ScratchpadPanelLayout.Editor"/>), before any scroll.
+/// </summary>
+public sealed class NotePreviewLayout
+{
+    public const string TaskPrefix = "task:";
+
+    /// <summary>The words after the last line laid out when the note is longer than a preview lays out.</summary>
+    public const string Rest = "The note goes on. Press Ctrl+E to see all of it.";
+
+    public static TextStyle Style => TextStyle.Body;
+
+    public static TextStyle Heading => new(16, 600, LineHeight: 23);
+
+    /// <summary>A wheel notch scrolls three lines.</summary>
+    public const float WheelStep = 3 * 21;
+
+    private readonly List<(MarkdownBlock Block, TextAt At, float Height)> parts = [];
+    private readonly List<NoteTask> tasks = [];
+
+    public NotePreviewLayout(string note, float width)
+    {
+        var shift = new Vector2(DropResultLayout.Pad, 0);
+        var (runs, height) = DropResultLayout.Lay(Markdown.Note(note, 0, note.Length, fenced: false), Style, width, cut: false, rest: Rest, heading: Heading, laid: (block, at, h, box) =>
+        {
+            parts.Add((block, at with { At = at.At - shift }, h));
+            if (box is { } b && block.Task is bool done)
+            {
+                tasks.Add(new(block.Source, done, new(b.X - shift.X, b.Y, b.Width, b.Height), $"{(done ? "Done" : "To do")}: {block.Text.Replace('\n', ' ')}"));
+            }
+        });
+        Runs = [.. runs.Select(r => r with { At = r.At - shift })];
+        Height = height;
+    }
+
+    public IReadOnlyList<TextAt> Runs { get; }
+
+    public float Height { get; }
+
+    public IReadOnlyList<NoteTask> Tasks => tasks;
+
+    /// <summary>The id of the target for the task box on the line that starts at <paramref name="line"/>, the same on Home and on the Scratchpad tab.</summary>
+    public static string TaskId(int line) => TaskPrefix + line.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>The line start a task target's id names; null for any other id.</summary>
+    public static int? TaskLine(string id) =>
+        id.StartsWith(TaskPrefix, StringComparison.Ordinal) && int.TryParse(id.AsSpan(TaskPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out int line) ? line : null;
+
+    /// <summary>How far the note scrolls in a place <paramref name="band"/> tall.</summary>
+    public float MaxScroll(float band) => Math.Max(0, Height - band);
+
+    /// <summary>
+    /// Where in the note a click at <paramref name="at"/> (unscrolled) puts the caret: the character under it in the
+    /// block it is on, the start of an item's text when it is on the marker or the box, the end of a block when it is in
+    /// the gap under it, and the note's end below the last block.
+    /// </summary>
+    public int SourceAt(Vector2 at, int noteLength)
+    {
+        if (parts.Count == 0)
+        {
+            return noteLength;
+        }
+
+        int i = parts.FindLastIndex(p => p.At.At.Y <= at.Y);
+        var (block, run, height) = parts[Math.Max(0, i)];
+        if (at.Y >= run.At.Y + height)
+        {
+            return i == parts.Count - 1 ? noteLength : block.SourceOf(block.Text.Length);
+        }
+
+        if (at.X < run.At.X || at.Y < run.At.Y)
+        {
+            return block.SourceOf(0);
+        }
+
+        using var laid = TextLayout.Of(run.Run);
+        return block.SourceOf(laid.Hit(at.X - run.At.X, at.Y - run.At.Y));
     }
 }

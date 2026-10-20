@@ -232,6 +232,18 @@ public sealed class TextLayout : IDisposable
 
     public static TextLayout Of(TextRun run) => new(run);
 
+    /// <summary>
+    /// The character under a point, in DIPs from the layout's top-left, as a caret index: before the character, or after
+    /// it when the point is on its trailing half. A point off the text goes to the nearest character.
+    /// </summary>
+    public unsafe int Hit(float x, float y)
+    {
+        Windows.Win32.Foundation.BOOL trailing, inside;
+        DWRITE_HIT_TEST_METRICS metrics;
+        layout!.HitTestPoint(x, y, &trailing, &inside, &metrics);
+        return (int)metrics.textPosition + (trailing ? (int)metrics.length : 0);
+    }
+
     /// <summary>Whether Windows has the font family <paramref name="family"/> installed.</summary>
     public static bool Installed(string family)
     {

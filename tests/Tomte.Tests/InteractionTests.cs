@@ -316,7 +316,7 @@ public class InteractionTests
     [InlineData((int)'C', false, true, false, NavKey.Copy)]
     [InlineData((int)'C', true, true, false, NavKey.None)]
     [InlineData((int)'E', true, true, false, NavKey.ShowInFolder)]
-    [InlineData((int)'E', false, true, false, NavKey.None)]
+    [InlineData((int)'E', false, true, false, NavKey.Edit)]
     [InlineData(0x20, false, false, false, NavKey.Space)]
     // The AI box: Ctrl+H, Alt+A, the chips' Alt keys, Page Up and Page Down, Alt+Left.
     [InlineData((int)'H', false, true, false, NavKey.History)]

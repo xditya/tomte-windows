@@ -71,6 +71,32 @@ public sealed record MarkdownBlock(MarkdownKind Kind, int Depth, string Marker, 
     /// <summary>The parts of <see cref="Text"/> written as code.</summary>
     public IReadOnlyList<(int Start, int Length)> Code => Parts(MarkdownLook.Code);
 
+    /// <summary>The links in <see cref="Text"/>: a link's words and bare addresses.</summary>
+    public IReadOnlyList<(int Start, int Length)> Link => Parts(MarkdownLook.Link);
+
+    /// <summary>A note's task item: whether its box is ticked ("- [x]") or not ("- [ ]"); null for any other block.</summary>
+    public bool? Task => Kind is MarkdownKind.Bullet or MarkdownKind.Numbered && Marker.Length >= 3 && Marker[^3] == '[' && Marker[^1] == ']' ? Marker[^2] != ' ' : null;
+
+    /// <summary>
+    /// Where character <paramref name="index"/> of <see cref="Text"/> is in the source; the end of <see cref="Text"/> is
+    /// just after its last character.
+    /// </summary>
+    public int SourceOf(int index)
+    {
+        int at = 0;
+        foreach (var span in Spans)
+        {
+            if (index < at + span.Text.Length)
+            {
+                return span.Source + Math.Max(0, index - at);
+            }
+
+            at += span.Text.Length;
+        }
+
+        return Spans is [.., var last] ? last.Source + last.Text.Length : Source;
+    }
+
     private List<(int, int)> Parts(MarkdownLook look)
     {
         var parts = new List<(int, int)>();

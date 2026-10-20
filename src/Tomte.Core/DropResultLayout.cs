@@ -59,6 +59,9 @@ public sealed class DropResultLayout
 
     public const float BlockGap = 8, ItemGap = 3;
 
+    /// <summary>A note's task box and the room between it and the item's text.</summary>
+    public const float TaskBox = 16, TaskGap = 10, TaskCorner = 5, TaskTick = 12;
+
     public static TextStyle IndicatorStyle => TextStyle.Secondary with { Align = TextAlign.Trailing };
     public static TextStyle BodyStyle => TextStyle.Primary with { LineHeight = 19 };
     public static TextStyle CodeStyle => new(12, Family: TextStyle.Mono, LineHeight: 17);
@@ -173,9 +176,12 @@ public sealed class DropResultLayout
     /// the marker. Items of one list sit closer together than other blocks. At most <paramref name="maxLines"/> lines; an
     /// answer that goes on, or that was <paramref name="cut"/> before, ends with <paramref name="rest"/>. Each run is
     /// measured by <paramref name="measure"/>, <see cref="Measure"/> unless the caller keeps what it measured before.
+    /// A note's task item gets room for its box (<see cref="TaskBox"/>) where the marker would be, and its text in tertiary
+    /// ink once ticked; links are drawn in the link colour. Headings take <paramref name="heading"/> when given.
+    /// <paramref name="laid"/> hears of each block with its text's run, that run's height and its task box, if any.
     /// </summary>
     internal static (IReadOnlyList<TextAt> Runs, float Height) Lay(IReadOnlyList<MarkdownBlock> blocks, TextStyle style, float width, bool cut, int maxLines = MaxLines, string rest = Rest,
-        Func<TextRun, (float Width, float Height, int Lines, bool Trimmed)>? measure = null)
+        Func<TextRun, (float Width, float Height, int Lines, bool Trimmed)>? measure = null, TextStyle? heading = null, Action<MarkdownBlock, TextAt, float, RectangleF?>? laid = null)
     {
         measure ??= Measure;
         var runs = new List<TextAt>();
@@ -194,12 +200,20 @@ public sealed class DropResultLayout
             y += last is null ? 0 : item && last.Kind is MarkdownKind.Bullet or MarkdownKind.Numbered ? ItemGap : BlockGap;
             var look = block.Kind switch
             {
-                MarkdownKind.Heading => style with { Weight = 600 },
+                MarkdownKind.Heading => heading ?? style with { Weight = 600 },
                 MarkdownKind.Code => CodeStyle,
-                _ => style,
+                _ => block.Task == true ? style with { Color = Theme.Ink3 } : style,
             };
             float x = Pad + (item ? Math.Min(block.Depth, 4) * Indent : 0);
-            if (item)
+            RectangleF? box = null;
+            if (block.Task is not null)
+            {
+                // The box sits on the first line, centred in its height.
+                float line = look.LineHeight > 0 ? look.LineHeight : look.Size * 1.33f;
+                box = new RectangleF(x, y + ((line - TaskBox) / 2), TaskBox, TaskBox);
+                x += TaskBox + TaskGap;
+            }
+            else if (item)
             {
                 string marker = block.Kind == MarkdownKind.Bullet ? "•" : block.Marker;
                 // Two digits and their dot fit the column the numbers share.
@@ -208,12 +222,14 @@ public sealed class DropResultLayout
                 x += hang;
             }
 
-            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), maxLines - lines) { Bold = block.Bold, Italic = block.Italic, Code = block.Code };
-            var laid = measure(run);
-            runs.Add(new TextAt(run, new Vector2(x, y)));
-            y += laid.Height;
-            lines += laid.Lines;
-            cut |= laid.Trimmed;
+            var run = new TextRun(block.Text, look, Math.Max(Indent, Pad + width - x), maxLines - lines) { Bold = block.Bold, Italic = block.Italic, Code = block.Code, Tint = block.Link, TintColor = Theme.Link };
+            var size = measure(run);
+            var at = new TextAt(run, new Vector2(x, y));
+            runs.Add(at);
+            laid?.Invoke(block, at, size.Height, box);
+            y += size.Height;
+            lines += size.Lines;
+            cut |= size.Trimmed;
             last = block;
         }
 
