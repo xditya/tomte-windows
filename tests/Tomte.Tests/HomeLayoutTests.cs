@@ -202,6 +202,16 @@ public class HomeLayoutTests
         Assert.All(targets.Where(t => t.Id.StartsWith("shortcut:", StringComparison.Ordinal)), t => Assert.Equal(2, t.Group));
         Assert.All(targets.Except(media), t => Assert.False(string.IsNullOrEmpty(t.Tip) && t.Kind != TargetKind.Box, t.Id));
 
+        // The shelf's tiles that show follow its section, one arrow-key group, each dragged out by a press and named in its
+        // tip; with more than four, the fourth is the section's "+N more".
+        var items = Enumerable.Range(1, 6).Select(i => new ShelfItem(i, $"f{i}.pdf", $@"C:\docs{i}.pdf", ShelfKind.Reference, default)).ToList();
+        var withShelf = Layout.Targets(media, [], false, false, items);
+        Assert.Equal(["shelf", "tile:1", "tile:2", "tile:3", "media"], withShelf.Take(5).Select(t => t.Id));
+        Assert.All(withShelf.Skip(1).Take(3), t => Assert.True(t is { Kind: TargetKind.Tile, Group: 3, Draggable: true }));
+        Assert.Equal(Layout.ShelfTile(1), withShelf[2].Bounds);
+        Assert.Equal(ShelfLayout.Tip(items[0]), withShelf[1].Tip);
+        Assert.Equal(4, Layout.Targets(media, [], false, false, items.Take(4).ToList()).Count(t => t.Id.StartsWith("tile:", StringComparison.Ordinal)));
+
         // With no room for the sections only the Ask bar is left.
         var bare = new HomeLayout(new(760, 120)).Targets(media, [], false, false);
         Assert.Equal(["ask", "region", "window", "shelfchip", "mic"], bare.Select(t => t.Id));

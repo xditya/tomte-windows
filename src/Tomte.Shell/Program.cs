@@ -494,6 +494,7 @@ internal static partial class Program
             Spend = () => Task.Run(() => SpentToday(store)),
             NoteKey = () => store.Current.Hotkeys[HotkeyAction.Scratchpad],
             TalkKey = () => store.Current.Hotkeys[HotkeyAction.Rambler],
+            DragOut = items => ShelfDrag.Run(island, triggers, shelf, items, log),
         }, () => DateTimeOffset.UtcNow, log));
         // The island goes before the settings window comes up over where it was.
         panels.Register(new ShortcutsPanel(island, shortcuts, () => store.Current.ScriptShortcuts, () =>
