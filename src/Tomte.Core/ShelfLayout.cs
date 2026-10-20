@@ -51,7 +51,7 @@ public static class ShelfLayout
 {
     // Below this width the grid has three columns instead of four.
     public const float NarrowBelow = 640;
-    public const float PadX = 16, Top = 14, HeadHeight = 32, HeadGap = 14, Gap = 10, FootGap = 14, FootHeight = 24, PadBottom = 16;
+    public const float PadX = 16, Top = 14, HeadHeight = 32, HeadGap = 14, Gap = 10, FootGap = 10, FootHeight = 24, PadBottom = 16;
 
     // A tile: its padding, the preview at its top, then its name and its meta line, inset a little.
     public const float TilePad = 8, Preview = 92, PreviewCorner = 10, TileCorner = 14, PreviewGap = 8, NameLine = 17, MetaGap = 3, MetaLine = 14, TextInset = 4;

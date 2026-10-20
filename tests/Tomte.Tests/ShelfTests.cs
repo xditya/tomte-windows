@@ -492,6 +492,11 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    // 760 x 480 is the panel at the height cap of a 1440 high screen at 150%: the body under the rail must hold two rows.
+    public void TwoRowsFitInTheBodyOfACappedPanel() =>
+        Assert.Equal(2, ShelfLayout.Rows(new System.Numerics.Vector2(760, 480 - PanelSpace.Head)));
+
+    [Fact]
     public void TheSweepTakesOnlyTheShelfsOwnFolders()
     {
         string folder = Path.Combine(dir, "Shelf");
