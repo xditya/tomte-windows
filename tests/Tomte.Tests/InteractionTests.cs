@@ -306,7 +306,8 @@ public class InteractionTests
     [InlineData((int)'1', false, false, false, NavKey.None)]
     [InlineData((int)'K', false, true, false, NavKey.Ask)]
     [InlineData((int)'P', false, true, false, NavKey.Pin)]
-    [InlineData((int)'P', false, false, false, NavKey.None)]
+    [InlineData((int)'P', false, false, false, NavKey.PinItem)]
+    [InlineData((int)'P', true, false, false, NavKey.None)]
     [InlineData(0x24, false, false, false, NavKey.Home)]
     [InlineData(0x23, false, false, false, NavKey.End)]
     // Items: Delete removes (Shelf, Clipboard, Shortcuts), Ctrl+C copies (Shelf, Clipboard, History), Ctrl+Shift+E shows

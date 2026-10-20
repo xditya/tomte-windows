@@ -67,6 +67,9 @@ public sealed class HomeLayout(Vector2 body)
 
     public static string ShortcutId(long id) => $"shortcut:{id}";
 
+    /// <summary>A shelf tile's id: the Shelf tab's own, so both name an item the same way.</summary>
+    public static string ShelfTileId(long id) => ShelfLayout.TileId(id);
+
     public Vector2 Body { get; } = body;
 
     private float Inner => Body.X - (2 * Pad);
@@ -291,15 +294,23 @@ public sealed class HomeLayout(Vector2 body)
 
     /// <summary>
     /// The clickable parts in Tab order: each section (a click opens its tab) with its own controls after it, so they sit
-    /// on top of it (<paramref name="media"/> are the Now playing card's), then the Ask bar's prompt, its chips and the
-    /// mic. Sections in a row that does not fit are left out. The shortcut tiles are one arrow-key group.
+    /// on top of it (<paramref name="media"/> are the Now playing card's, <paramref name="shelfItems"/> the shelf's
+    /// items, of which the tiles that show are each a target that opens and drags out its item; the "+N more" tile is
+    /// the section's), then the Ask bar's prompt, its chips and the mic. Sections in a row that does not fit are left
+    /// out. The shelf tiles are one arrow-key group, the shortcut tiles another.
     /// </summary>
-    public IReadOnlyList<Target> Targets(IReadOnlyList<Target> media, IReadOnlyList<(long Id, string Name)> shortcuts, bool window, bool shelf)
+    public IReadOnlyList<Target> Targets(IReadOnlyList<Target> media, IReadOnlyList<(long Id, string Name)> shortcuts, bool window, bool shelf, IReadOnlyList<ShelfItem>? shelfItems = null)
     {
         var all = new List<Target>();
         if (Rows >= 1)
         {
             all.Add(new(ShelfId, Shelf, Section.Corner, TargetKind.Tile, Tip: "Open the Shelf"));
+            var items = shelfItems ?? [];
+            for (int i = 0; i < ShelfShows(items.Count).Tiles; i++)
+            {
+                all.Add(new(ShelfTileId(items[i].Id), ShelfTile(i), Section.TileCorner, TargetKind.Tile, Tip: ShelfLayout.Tip(items[i]), Group: 3, Draggable: true));
+            }
+
             all.Add(new(MediaId, NowPlaying, Section.Corner, TargetKind.Tile, Tip: "Open Media"));
             all.AddRange(media);
         }

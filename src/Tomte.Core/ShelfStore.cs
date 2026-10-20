@@ -24,6 +24,9 @@ public enum ShelfAction
     Reveal,
     CopyPath,
     Share,
+
+    /// <summary>Pins the items, or unpins them when every one is pinned. A pinned item stays on the shelf after a drag out and a Clear shelf.</summary>
+    Pin,
     Remove,
 }
 
@@ -48,6 +51,9 @@ public sealed record ShelfItem(long Id, string Name, string Path, ShelfKind Kind
     public long? Size { get; init; }
 
     public bool IsFolder { get; init; }
+
+    /// <summary>Stays on the shelf after it is dragged out, whatever the setting says, and when the shelf is cleared.</summary>
+    public bool Pinned { get; init; }
 }
 
 /// <summary>
@@ -94,6 +100,7 @@ public sealed class ShelfStore : IShelf
     private static readonly string[] Schema =
     [
         "CREATE TABLE shelf_items(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, kind INTEGER NOT NULL, added INTEGER NOT NULL, removed INTEGER NOT NULL DEFAULT 0)",
+        "ALTER TABLE shelf_items ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
     ];
 
     // Names Windows keeps for devices, with or without an extension.
@@ -306,6 +313,31 @@ public sealed class ShelfStore : IShelf
     {
         var ids = items.Select(i => i.Id).ToHashSet();
         return Run(() => RemoveAll(ids));
+    }
+
+    /// <summary>Pins or unpins the items. Queued; returns at once.</summary>
+    public Task SetPinned(IReadOnlyList<ShelfItem> items, bool pinned)
+    {
+        var ids = items.Select(i => i.Id).ToHashSet();
+        return Run(() =>
+        {
+            using (var connection = db.Open(Feature, Schema))
+            using (var transaction = connection.BeginTransaction())
+            {
+                foreach (long id in ids)
+                {
+                    using var update = connection.CreateCommand();
+                    update.CommandText = "UPDATE shelf_items SET pinned = $pinned WHERE id = $id";
+                    update.Parameters.AddWithValue("$pinned", pinned ? 1 : 0);
+                    update.Parameters.AddWithValue("$id", id);
+                    update.ExecuteNonQuery();
+                }
+
+                transaction.Commit();
+            }
+
+            rows = rows.ConvertAll(r => ids.Contains(r.Id) ? r with { Pinned = pinned } : r);
+        });
     }
 
     /// <summary>The "Remove from the shelf after dragging out" setting, read as each drag ends.</summary>
@@ -623,12 +655,12 @@ public sealed class ShelfStore : IShelf
         {
             using (var command = connection.CreateCommand())
             {
-                command.CommandText = "SELECT id, name, path, kind, added FROM shelf_items WHERE removed = 0 ORDER BY added DESC, id DESC";
+                command.CommandText = "SELECT id, name, path, kind, added, pinned FROM shelf_items WHERE removed = 0 ORDER BY added DESC, id DESC";
                 using var reader = command.ExecuteReader();
                 while (reader.Read())
                 {
                     var added = DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(4));
-                    loadedRows.Add(Probe(new ShelfItem(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), (ShelfKind)reader.GetInt32(3), added)));
+                    loadedRows.Add(Probe(new ShelfItem(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), (ShelfKind)reader.GetInt32(3), added) { Pinned = reader.GetInt32(5) != 0 }));
                 }
             }
 

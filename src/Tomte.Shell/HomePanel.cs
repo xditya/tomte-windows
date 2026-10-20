@@ -40,13 +40,17 @@ internal sealed class HomeActions
 
     /// <summary>The voice shortcut as set in Settings, for the mic's tooltip.</summary>
     public required Func<string> TalkKey { get; init; }
+
+    /// <summary>A shelf tile dragged out: the Shelf tab's drag, with what leaves the shelf after it.</summary>
+    public required Func<IReadOnlyList<ShelfItem>, Task> DragOut { get; init; }
 }
 
 /// <summary>
 /// The Home tab, laid out by <see cref="HomeLayout"/>: the first shelf tiles, Now playing (the Media panel's own card,
 /// stacked to fit), the start of the note, the first shortcuts, and the Ask bar with the provider's line under it.
 /// Everything is read from the stores the other tabs use, when the tab shows, and the parts are rebuilt when those
-/// change while it shows. A click on a section opens its tab; the controls inside a section act there. The Ask bar's
+/// change while it shows. A click on a section opens its tab; the controls inside a section act there: a shelf tile
+/// opens its item and drags it out as on the Shelf tab, a shortcut launches, the media buttons play. The Ask bar's
 /// text box sends nothing until Enter, and then through the AI box as Ctrl+K opens it, with the chips that are on.
 /// </summary>
 internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFocus focus, ShelfStore shelf, MediaTracker tracker,
@@ -206,7 +210,12 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
                 island.Interaction.Acknowledge(this, id, Hotkey.TryParse(key, out var chord, out _) ? $"Hold the mic, or hold {chord}" : "Hold the mic to talk", tick: false);
                 break;
             default:
-                if (by != ActivateBy.DoubleClick && tiles.FirstOrDefault(t => HomeLayout.ShortcutId(t.Row.Id) == id) is { Row: not null } tile)
+                // The first click of a double click already opened it.
+                if (by != ActivateBy.DoubleClick && ShelfItemOf(id) is { } item)
+                {
+                    OpenItem(item);
+                }
+                else if (by != ActivateBy.DoubleClick && tiles.FirstOrDefault(t => HomeLayout.ShortcutId(t.Row.Id) == id) is { Row: not null } tile)
                 {
                     _ = LaunchAsync(tile.Row);
                 }
@@ -223,7 +232,42 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
             return true;
         }
 
+        if (ShelfItemOf(id) is { } item)
+        {
+            // Win32 runs the press, move and release loop with the system's drag threshold: no drag is a click.
+            Windows.Win32.PInvoke.GetCursorPos(out var cursor);
+            if (!Windows.Win32.PInvoke.DragDetect(island.Hwnd, cursor))
+            {
+                return false;
+            }
+
+            Observe(actions.DragOut([item]), "drag the item out");
+            return true;
+        }
+
         return MediaIds.Contains(id) && media.TryDrag(id, at);
+    }
+
+    // A shelf tile's item, while its tile shows.
+    private ShelfItem? ShelfItemOf(string id) =>
+        id.StartsWith("tile:", StringComparison.Ordinal) ? shelf.Items.Take(HomeLayout.ShelfShows(shelf.Items.Count).Tiles).FirstOrDefault(i => HomeLayout.ShelfTileId(i.Id) == id) : null;
+
+    // As the Shelf tab's Open: a moved or deleted file is left alone.
+    private void OpenItem(ShelfItem item)
+    {
+        if (!ShelfStore.Allows(ShelfAction.Open, item))
+        {
+            return;
+        }
+
+        try
+        {
+            ShelfPanel.Open([item]);
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            log?.Invoke($"home: could not open a shelf item: {e.Message}");
+        }
     }
 
     public void Hovered(string? id) => media.Hovered(id);
@@ -245,7 +289,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
             return;
         }
 
-        targets = layout.Targets(showsMedia ? media.Targets : [], [.. tiles.Select(t => (t.Row.Id, t.Row.Name))], window, withShelf);
+        targets = layout.Targets(showsMedia ? media.Targets : [], [.. tiles.Select(t => (t.Row.Id, t.Row.Name))], window, withShelf, shelf.Items);
         TargetsChanged?.Invoke();
     }
 
@@ -276,6 +320,7 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         {
             Dashed(p.Box(v, grid, Section.TileCorner, null, p.Brush(Theme.Dash)));
             p.Text(v, new TextSlot(HomeLayout.ShelfEmpty, HomeLayout.EmptyWords, grid));
+            Retarget();
             return;
         }
 
@@ -301,9 +346,11 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
                 p.Text(v, line with { Slot = Moved(line.Slot, tile) });
             }
         }
+
+        Retarget();
     }
 
-    private static void Tile(Parts p, ShapeVisual v, ShelfItem item, RectangleF tile)
+    private void Tile(Parts p, ShapeVisual v, ShelfItem item, RectangleF tile)
     {
         p.Box(v, tile, Section.TileCorner, p.Brush(Theme.Raised));
         var preview = Moved(HomeLayout.Preview(tile), tile);
@@ -322,6 +369,11 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
         foreach (var line in HomeLayout.TileText(tile, item.Name, ShelfLayout.Meta(item)))
         {
             p.Text(v, line with { Slot = Moved(line.Slot, tile) });
+        }
+
+        if (item.Pinned)
+        {
+            ShelfPanel.PinBadge(p, body!, preview);
         }
     }
 
@@ -357,6 +409,11 @@ internal sealed class HomePanel(IslandWindow island, TextRenderer text, TypingFo
                 {
                     brush.Stretch = CompositionStretch.UniformToFill;
                     built.Sprite(host, pictures[i].Preview, HomeLayout.PreviewCorner, brush);
+                    if (pictures[i].Item.Pinned)
+                    {
+                        // Over the picture that just went over it.
+                        ShelfPanel.PinBadge(built, host, pictures[i].Preview);
+                    }
                 }
             }
         }

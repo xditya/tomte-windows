@@ -113,7 +113,7 @@ public sealed partial class SettingsWindow : Window
                     Header("Shelf"),
                     Card(Row(
                         "Remove from the shelf after dragging out",
-                        Note("When an app takes the drop, links to your files leave the shelf and the files stay where they are. Copies the shelf keeps (images, notes, attachments) stay, unless notes or images went out on their own."),
+                        Note("When an app takes the drop, links to your files leave the shelf and the files stay where they are. Copies the shelf keeps (images, notes, attachments) stay, unless notes or images went out on their own. Pinned items always stay."),
                         Toggle(s => s.RemoveAfterDragOut, (s, v) => s with { RemoveAfterDragOut = v }))),
                     Header(ShortcutsHeader),
                     ShortcutsSection()]),

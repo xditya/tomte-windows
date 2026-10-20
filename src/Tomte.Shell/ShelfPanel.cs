@@ -23,7 +23,7 @@ namespace Tomte.Shell;
 /// keeps its choice while Tomte runs. Each tile previews its item: the picture, the first lines of a text, a link's host,
 /// a folder, or a page's sketch. A click selects (Ctrl adds or takes away), a double click or Enter opens, a press and
 /// drag drags the tile out (the whole selection when it is one of it), and the buttons act on the same items. Remove
-/// and Clear shelf ask once. Missing items are dimmed, with their own meta line. The island's interaction host runs the
+/// and Clear shelf ask once; Clear shelf and a drag out leave pinned items, which carry a pin on their preview. Missing items are dimmed, with their own meta line. The island's interaction host runs the
 /// presses, hover, tooltips and focus.
 /// </summary>
 internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log) : IPanel, IInteractive
@@ -200,7 +200,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     /// <summary>
     /// On a focused tile or the band, the band's actions by key: Delete asks to remove, as the Remove button does, and a
-    /// second Delete, not a repeat, removes; Ctrl+C copies the path; Ctrl+Shift+E shows it in its folder. An arrow off
+    /// second Delete, not a repeat, removes; Ctrl+C copies the path; Ctrl+Shift+E shows it in its folder; P pins or unpins. An arrow off
     /// the page scrolls a row first, so the arrow finds the tile it heads for.
     /// </summary>
     public bool KeyDown(string id, NavKey key, bool repeat)
@@ -226,6 +226,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             NavKey.Remove => ShelfAction.Remove,
             NavKey.Copy => ShelfAction.CopyPath,
             NavKey.ShowInFolder => ShelfAction.Reveal,
+            NavKey.PinItem => ShelfAction.Pin,
             _ => null,
         };
         if (action is null || (Item(id) is null && ActionOf(id) is null))
@@ -341,8 +342,8 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     }
 
     /// <summary>
-    /// Clear shelf: the first click asks, a second within a few seconds takes every item off the shelf. Files stay where
-    /// they are. A second click sooner than the double-click time is the first one doubled and does not count.
+    /// Clear shelf: the first click asks, a second within a few seconds takes every item but the pinned ones off the
+    /// shelf. Files stay where they are. A second click sooner than the double-click time is the first one doubled and does not count.
     /// </summary>
     private void Clear()
     {
@@ -360,7 +361,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
 
         Clearing(false);
-        var all = shelf.Items.ToList();
+        var all = ShelfLayout.Clearable(shelf.Items);
         log?.Invoke($"shelf: clearing {all.Count} items");
         selected.Clear();
         Show(null);
@@ -480,11 +481,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             switch (action)
             {
                 case ShelfAction.Open:
-                    foreach (var item in allowed)
-                    {
-                        Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true })?.Dispose();
-                    }
-
+                    Open(allowed);
                     break;
                 case ShelfAction.Reveal:
                     // Explorer by its full path, never a name looked up where something else could stand in for it.
@@ -496,6 +493,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
                     break;
                 case ShelfAction.Share:
                     Share(allowed);
+                    break;
+                case ShelfAction.Pin:
+                    _ = shelf.SetPinned(allowed, !ShelfLayout.AllPinned(allowed));
                     break;
                 default:
                     // Focus on the band's Remove goes to the tile first, so it moves on to the tile that takes its place.
@@ -514,6 +514,15 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         catch (Exception e) when (e is Win32Exception or IOException or UnauthorizedAccessException or InvalidOperationException or System.Runtime.InteropServices.COMException)
         {
             log?.Invoke($"shelf: {action} failed: {e.Message}");
+        }
+    }
+
+    /// <summary>Opens each item as File Explorer would. Throws what <see cref="Process.Start(ProcessStartInfo)"/> throws.</summary>
+    internal static void Open(IEnumerable<ShelfItem> items)
+    {
+        foreach (var item in items)
+        {
+            Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true })?.Dispose();
         }
     }
 
@@ -629,7 +638,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             p.Text(dash, words, at);
         }
 
-        Foot(p, all.Count > 0);
+        Foot(p, all.Any(i => !i.Pinned));
         Band();
         Load(items.Skip(first).Take(visible));
     }
@@ -672,7 +681,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var owner = Owner();
         var acting = owner is null ? [] : Acting(owner);
         bool confirming = question.Asks(owner?.Id, Environment.TickCount64);
-        targets = ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Count > 0);
+        targets = ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Any(i => !i.Pinned));
         var (track, segments) = ShelfLayout.Filter(size, filter);
         b.Box(into, track, track.Height / 2, b.Brush(ShelfColors.Card));
         foreach (var segment in segments)
@@ -702,13 +711,13 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             b.Box(mark, new RectangleF(0, 0, tile.Bounds.Width, tile.Bounds.Height), ShelfLayout.TileCorner, null, b.Brush(ShelfColors.Mark), 1);
         }
 
-        foreach (var slot in ShelfLayout.Actions(size, confirming))
+        foreach (var slot in ShelfLayout.Actions(size, confirming, ShelfLayout.AllPinned(acting)))
         {
             bool asking = confirming && slot.Action == ShelfAction.Remove;
             bool allowed = acting.Any(i => ShelfStore.Allows(slot.Action, i));
             b.Box(into, slot.Box, ShelfLayout.ActionCorner, b.Brush(asking ? ShelfColors.WarnFill : ShelfColors.Raised));
             var ink = asking ? ShelfColors.Warn : allowed ? ShelfColors.Ink : ShelfColors.Disabled;
-            Glyph(b, into, slot.Action, slot.Icon, b.Brush(ink));
+            Glyph(b, into, slot.Action, slot.Icon, ink);
             if (slot.Label is { } label)
             {
                 b.Text(into, label with { Style = label.Style with { Color = ShelfColors.Argb(ink) } });
@@ -732,7 +741,12 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         v.Opacity = item.Missing ? 0.55f : 1;
         p.Box(v, new RectangleF(0, 0, r.Width, r.Height), ShelfLayout.TileCorner, p.Brush(ShelfColors.Card));
         var peek = peeks.GetValueOrDefault(item.Path);
-        Preview(p, v, item, ShelfLayout.PreviewIn(r.Size), peek);
+        var preview = ShelfLayout.PreviewIn(r.Size);
+        Preview(p, v, item, preview, peek);
+        if (item.Pinned)
+        {
+            PinBadge(p, v, preview);
+        }
         foreach (var line in ShelfLayout.TileText(item, r.Size, peek))
         {
             p.Text(v, line);
@@ -881,9 +895,28 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         return new ShelfPeek();
     }
 
-    /// <summary>An action's line icon in its square.</summary>
-    private static void Glyph(Parts p, ShapeVisual into, ShelfAction action, RectangleF icon, CompositionBrush ink)
+    /// <summary>
+    /// The pin on a pinned tile's preview, at its top-right corner: the accent pin on a disc of the tile's own grey, in a
+    /// visual of its own so it sits over a picture too.
+    /// </summary>
+    internal static void PinBadge(Parts p, ContainerVisual into, RectangleF preview)
     {
+        var (disc, glyph) = ShelfLayout.PinBadge(preview);
+        var badge = p.Shapes(into, disc);
+        p.Box(badge, new RectangleF(0, 0, disc.Width, disc.Height), disc.Width / 2, p.Brush(ShelfColors.Card));
+        p.Glyph(badge, Glyphs.Pin, ShelfColors.Accent, new RectangleF(glyph.X - disc.X, glyph.Y - disc.Y, glyph.Width, glyph.Height));
+    }
+
+    /// <summary>An action's line icon in its square; Pin's from the icon set.</summary>
+    private static void Glyph(Parts p, ShapeVisual into, ShelfAction action, RectangleF icon, Color color)
+    {
+        if (action == ShelfAction.Pin)
+        {
+            p.Glyph(into, Glyphs.Pin, color, icon);
+            return;
+        }
+
+        var ink = p.Brush(color);
         var at = new Vector2(icon.X, icon.Y);
         foreach (var s in ShelfLayout.Glyph(action))
         {

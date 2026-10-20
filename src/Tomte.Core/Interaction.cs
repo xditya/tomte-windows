@@ -434,6 +434,9 @@ public enum NavKey
     Escape,
     Back,
     Pin,
+
+    /// <summary>P on its own: pins or unpins the focused shelf item.</summary>
+    PinItem,
     Ask,
     History,
     AlwaysAllow,
@@ -457,7 +460,7 @@ public static class NavKeys
     /// Tab and Shift+Tab move between stops, the arrows inside a group, Home and End to its ends, Enter and Space click,
     /// Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs and Ctrl+1 to Ctrl+6 pick one, Ctrl+K asks, Ctrl+P pins and unpins
     /// the island. On the focused item
-    /// Delete removes, Ctrl+C copies and Ctrl+Shift+E shows it in its folder. Esc steps back. The AI box: Alt+Left is the
+    /// Delete removes, Ctrl+C copies, Ctrl+Shift+E shows it in its folder and P pins it. Esc steps back. The AI box: Alt+Left is the
     /// back arrow, Ctrl+H opens History, Alt+A always allows, Alt+W, Alt+S, Alt+H and Alt+N toggle the chips, Page Up and
     /// Page Down scroll the answer. Ctrl with Alt is AltGr on many layouts, which types, so it is nothing here.
     /// </summary>
@@ -482,6 +485,7 @@ public static class NavKeys
             'C' when ctrl && !shift => NavKey.Copy,
             'E' when ctrl && shift => NavKey.ShowInFolder,
             _ when ctrl => NavKey.None,
+            'P' when !shift => NavKey.PinItem,
             VkLeft => NavKey.Left,
             VkRight => NavKey.Right,
             VkUp => NavKey.Up,

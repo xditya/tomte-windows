@@ -240,18 +240,14 @@ public static class ShelfFormats
     /// went out as virtual files, whose bytes the target copied during the drop. The shelf's own item that went out by
     /// its path stays: an app that opens a dropped file where it is (Excel, Notepad, a browser) reports a copy, and the
     /// sweep would then delete the only copy, edits and all. Off, or when the target took nothing, only references the
-    /// target moved away, whose files are gone.
+    /// target moved away, whose files are gone. A pinned item stays either way, unless it is such a reference.
     /// </summary>
     public static List<ShelfItem> LeaveAfterDrag(IReadOnlyList<ShelfItem> dragged, ShelfEffect returned, ShelfEffect performed, bool removeAfter, Func<string, bool> exists)
     {
         var effect = returned | performed;
-        if (removeAfter && effect != ShelfEffect.None)
-        {
-            bool bytes = AsVirtualFiles(dragged);
-            return [.. dragged.Where(i => bytes || i.Kind == ShelfKind.Reference)];
-        }
-
-        return (effect & ShelfEffect.Move) == 0 ? [] : [.. dragged.Where(i => i.Kind == ShelfKind.Reference && !exists(i.Path))];
+        bool took = removeAfter && effect != ShelfEffect.None, bytes = AsVirtualFiles(dragged);
+        bool Gone(ShelfItem i) => (effect & ShelfEffect.Move) != 0 && i.Kind == ShelfKind.Reference && !exists(i.Path);
+        return [.. dragged.Where(i => (took && !i.Pinned && (bytes || i.Kind == ShelfKind.Reference)) || Gone(i))];
     }
 }
 
