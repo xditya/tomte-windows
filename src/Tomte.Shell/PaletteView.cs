@@ -840,7 +840,6 @@ internal sealed class PaletteView : IDisposable, IInteractive
             return;
         }
 
-        var box = layout.Prompt;
         var editorBox = layout.Editor;
         if (sendVisual is not null)
         {
@@ -858,7 +857,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
         }
 
         bool empty = prompt is null || prompt.Services.Text.Length == 0;
-        placeholder.Show(empty ? (session is null ? PaletteLayout.Off : hint) : "", PaletteLayout.Placeholder, new RectangleF(editorBox.X, box.Y, editorBox.Width, box.Height));
+        placeholder.Show(empty ? (session is null ? PaletteLayout.Off : hint) : "", PaletteLayout.Placeholder, layout.HintLine);
     }
 
     // A palette with no text box (the voice palette) shows what was said in the box's place, up to four lines; its

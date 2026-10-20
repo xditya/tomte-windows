@@ -345,6 +345,7 @@ internal static unsafe partial class Program
             new("palette-prompt", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("What does this error mean?", Chips(false), [])), c => Palette(c, "What does this error mean?", Chips(false), "Nothing sent", [], 0, 0.03m)),
             new("palette-empty", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("", Chips(false), [])), c => Palette(c, "", Chips(false), "Nothing sent", [], 0, 0.03m)),
             new("palette-chips-some-on", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text", Chips(true, ChipIcon.Selection, ChipIcon.Screenshot), [], sends: SomeOn)), c => Palette(c, "Summarize the selected text", Chips(true, ChipIcon.Selection, ChipIcon.Screenshot), "Nothing sent", [], 0, 0.03m, sends: SomeOn)),
+            new("palette-region-empty", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("", CircledChips, [], sends: RegionOn)), c => Palette(c, "", CircledChips, "Nothing sent", [], 0, 0.03m, sends: RegionOn)),
             new("palette-region", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Which game is this?", RegionChips(), [], sends: RegionOn)), c => Palette(c, "Which game is this?", RegionChips(), "Nothing sent", [], 0, 0.03m, sends: RegionOn)),
             // Sending: the chips and Send dim.
             new("palette-streaming", IslandGeometry.Panel(PanelSize.PaletteWidth, PaletteHeight("Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), Streaming, sends: SelectionOn)), c => Palette(c, "Summarize the selected text\nin two lines", Chips(true, ChipIcon.Selection), "Sending to ollama · llama3.2:3b", Streaming, 1, 0.03m, sending: true, sends: SelectionOn)),
@@ -846,6 +847,9 @@ internal static unsafe partial class Program
     // Circle-to-ask's: the region first and on, then the others.
     private static ChipSpec[] RegionChips() => [new("Region", ChipIcon.Region, true, Thumb: true), .. Chips(true)];
 
+    // Right after a circle: the region, then the chips a plain window offers.
+    private static readonly ChipSpec[] CircledChips = [new("Region", ChipIcon.Region, true, Thumb: true), new("Window", ChipIcon.Window, false), new("Screenshot", ChipIcon.Screenshot, false), new("Note", ChipIcon.Note, false)];
+
     // The line under the chips for those scenes, as the chips word it.
     private const string SomeOn = "Sends your question, the text selected in Notepad and a screenshot of Notepad";
     private const string RegionOn = "Sends your question and the region you circled";
@@ -953,7 +957,7 @@ internal static unsafe partial class Program
         var box = layout.Editor;
         if (prompt is null)
         {
-            c.Text(PaletteLayout.Off, PaletteLayout.Placeholder, new RectangleF(box.X, card.Y, box.Width, card.Height), origin);
+            c.Text(PaletteLayout.Off, PaletteLayout.Placeholder, layout.HintLine, origin);
             c.Text(new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad + PaletteLayout.AnswerInset, layout.AnswerTop), origin);
             return;
         }
@@ -969,7 +973,7 @@ internal static unsafe partial class Program
             editor.Dispose();
             if (prompt.Length == 0)
             {
-                c.Text(PaletteLayout.Hint, PaletteLayout.Placeholder, new RectangleF(box.X, card.Y, box.Width, card.Height), origin);
+                c.Text(PaletteLayout.Hint, PaletteLayout.Placeholder, layout.HintLine, origin);
             }
 
             // Send, in a visual of its own that dims as one.
@@ -1003,7 +1007,9 @@ internal static unsafe partial class Program
             var mark = Offset(chip.Mark, origin);
             if (chip.Thumb)
             {
-                c.RoundRect(icon, PaletteLayout.ThumbCorner, Theme.Ink);
+                // The circled region as the view shows it: covered into the slot's pixels, its corners rounded.
+                int w = (int)Math.Round(icon.Width * c.Scale), h = (int)Math.Round(icon.Height * c.Scale);
+                c.Picture(icon, PaletteLayout.ThumbCorner, ClipboardImages.Thumbnail(ImageRows.Value[0].Thumb!, w, h), w, h);
             }
             else
             {

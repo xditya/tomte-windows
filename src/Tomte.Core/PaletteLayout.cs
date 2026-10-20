@@ -295,6 +295,12 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
         }
     }
 
+    /// <summary>
+    /// The placeholder's line: the text box's first line, so the hint sits where typing starts, under the chips when
+    /// they took the row rather than across the middle of the whole card.
+    /// </summary>
+    public RectangleF HintLine => Editor with { Height = PromptLine };
+
     /// <summary>The Send button at the card's right end, level with its last line; empty without one.</summary>
     public RectangleF Send
     {

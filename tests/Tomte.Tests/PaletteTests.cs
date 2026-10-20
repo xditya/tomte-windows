@@ -685,6 +685,39 @@ public class PaletteLayoutTests
     }
 
     [Fact]
+    public void AfterACircleTheChipsShareACentreLineAndTheTextLineSitsClearUnderThem()
+    {
+        ChipSpec[] chips = [new("Region", ChipIcon.Region, true, Thumb: true), new("Window", ChipIcon.Window, false), new("Screenshot", ChipIcon.Screenshot, false), new("Note", ChipIcon.Note, false)];
+        var layout = new PaletteLayout(720, mascot: true, chips: chips, send: true);
+        var card = layout.Prompt;
+        var region = layout.Chips[0];
+
+        // The thumbnail is 40 by 32 inside its chip, 4 in from the chip's left, and the chip is inset in the card.
+        Assert.True(region.Box.Contains(region.Icon));
+        Assert.Equal(region.Box.X + PaletteLayout.ThumbInset, region.Icon.X);
+        Assert.Equal(card.X + PaletteLayout.PromptInsetLeft, region.Box.X);
+        Assert.Equal(card.Y + PaletteLayout.PromptInset, region.Box.Y);
+
+        // One row of chips on one centre line, the 40 high region and the 30 high pills alike.
+        float middle = region.Box.Y + (region.Box.Height / 2);
+        Assert.All(layout.Chips, chip => Assert.Equal(middle, chip.Box.Y + (chip.Box.Height / 2), 2));
+
+        // Four chips leave no room for the text beside them: its line goes under the row, at least 8 clear of it,
+        // and the placeholder sits on that line. The card holds both, and Send is centred on the line.
+        var line = layout.HintLine;
+        Assert.Equal(layout.Editor.Y, line.Y);
+        Assert.Equal(PaletteLayout.PromptLine, line.Height);
+        Assert.True(line.Y - layout.Chips.Max(c => c.Box.Bottom) >= 8);
+        Assert.True(card.Contains(line) && layout.Chips.All(c => card.Contains(c.Box)));
+        Assert.Equal(line.Y + (line.Height / 2), layout.Send.Y + (layout.Send.Height / 2), 2);
+        Assert.True(layout.Send.Bottom <= card.Bottom - PaletteLayout.SendInset);
+
+        // With nothing beside it the hint is centred in the card's single row.
+        var bare = new PaletteLayout(720, mascot: true, send: true);
+        Assert.Equal(bare.Prompt.Y + (PaletteLayout.PromptHeight / 2), bare.HintLine.Y + (bare.HintLine.Height / 2), 2);
+    }
+
+    [Fact]
     public void SendSitsAtThePromptsRightEndAndWorksOnlyWithSomethingToSend()
     {
         var plain = new PaletteLayout(720, mascot: true);
