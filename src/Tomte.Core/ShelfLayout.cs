@@ -63,7 +63,7 @@ public static class ShelfLayout
     // The band in the head row holds the title and the count, or the action buttons of the tile they are for.
     public const float ActionHeight = StateLook.ActionHeight, BandTop = Top + (HeadHeight - ActionHeight) / 2;
     public const float ActionCorner = 10, ActionPadX = 8, ActionIcon = 16, ActionIconGap = 5, ActionGap = 4;
-    public const float IconOnlyWidth = 32, RemoveApart = 8;
+    public const float IconOnlyWidth = 28, RemoveApart = 8;
 
     // The filter at the head row's right end: a capsule track with the segments inside it, the band kept clear of it.
     public const float SegmentHeight = 26, SegmentPadX = 12, SegmentGap = 2, SegmentInset = 3, FilterApart = 8;
@@ -80,11 +80,11 @@ public static class ShelfLayout
     public const string DropSlot = "Drop files, text or links here";
     public const string DropHere = "Drop to shelf";
     public const string ConfirmRemove = "Remove? Click again";
-    public const string ClearText = "Clear shelf", ClearAsk = "Clear shelf? Click again";
+    public const string ClearText = "Clear shelf", ClearAsk = "Clear all but pinned? Click again";
     public const string ClearId = "clear";
 
     /// <summary>The keys the footer names, each with what it does to the focused tile.</summary>
-    public static readonly (string Keys, string Does)[] FootKeys = [("Ctrl C", "copy"), ("Del", "remove")];
+    public static readonly (string Keys, string Does)[] FootKeys = [("Ctrl C", "copy"), ("P", "pin"), ("Del", "remove")];
 
     public static float GridTop => Top + HeadHeight + HeadGap;
 
@@ -143,10 +143,11 @@ public static class ShelfLayout
 
         if (owner is not null && targets.Any(t => t.Id == TileId(owner)))
         {
-            foreach (var slot in Actions(body, confirming))
+            bool pinned = AllPinned(acting);
+            foreach (var slot in Actions(body, confirming, pinned))
             {
                 bool allowed = acting.Any(i => ShelfStore.Allows(slot.Action, i));
-                targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, slot.Label is null ? Name(slot.Action) : null, Group: 2,
+                targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, slot.Label is null ? Name(slot.Action, pinned) : null, Group: 2,
                     Key: ActionKey(slot.Action)));
             }
         }
@@ -170,24 +171,26 @@ public static class ShelfLayout
 
     /// <summary>
     /// The action buttons in the band, in the enum's order from the left padding, with Remove on its own at the band's
-    /// right end, before the filter, so its question grows away from the others. Every button shows its icon and name
-    /// when all the names fit with Remove asking; otherwise every one is icon only, its name in its tooltip, except Remove
-    /// while it asks. So the others never move when Remove asks.
+    /// right end, before the filter, so its question grows away from the others. Every button but Copy path and Share
+    /// (see <see cref="IconOnly"/>) shows its icon and name when all the names fit with Remove asking; otherwise every
+    /// one is icon only, its name in its tooltip, except Remove while it asks. So the others never move when Remove asks.
+    /// Pin is measured as Unpin, so it keeps its width too.
     /// </summary>
-    public static IReadOnlyList<ActionSlot> Actions(Vector2 body, bool confirming)
+    /// <param name="pinned">Every item acted on is pinned: Pin reads Unpin.</param>
+    public static IReadOnlyList<ActionSlot> Actions(Vector2 body, bool confirming, bool pinned = false)
     {
         var actions = Enum.GetValues<ShelfAction>();
         var row = BandRow(body);
         float left = row.Left, right = row.Right;
         float Labelled(string name) => 2 * ActionPadX + ActionIcon + ActionIconGap + MathF.Ceiling(TextSlot.Measure(name, ActionStyle, Math.Max(1, right - left)));
-        float widest = actions.Sum(a => Labelled(a == ShelfAction.Remove ? ConfirmRemove : Name(a))) + (actions.Length - 2) * ActionGap + RemoveApart;
+        float widest = actions.Sum(a => IconOnly(a) ? IconOnlyWidth : Labelled(a == ShelfAction.Remove ? ConfirmRemove : Name(a, pinned: true))) + (actions.Length - 2) * ActionGap + RemoveApart;
         bool names = widest <= right - left;
         var slots = new List<ActionSlot>();
         foreach (var action in actions)
         {
-            bool remove = action == ShelfAction.Remove, label = names || (remove && confirming);
-            string name = remove && confirming ? ConfirmRemove : Name(action);
-            float w = label ? Labelled(name) : IconOnlyWidth, x = left;
+            bool remove = action == ShelfAction.Remove, label = (names && !IconOnly(action)) || (remove && confirming);
+            string name = remove && confirming ? ConfirmRemove : Name(action, pinned);
+            float w = label ? Labelled(action == ShelfAction.Pin ? Name(action, pinned: true) : name) : IconOnlyWidth, x = left;
             if (remove)
             {
                 // Never over Share: on a band too narrow for it the question is cut short.
@@ -584,14 +587,38 @@ public static class ShelfLayout
         : bytes < 1L << 30 ? FormattableString.Invariant($"{bytes / 1048576.0:0.0} MB")
         : FormattableString.Invariant($"{bytes / 1073741824.0:0.0} GB");
 
-    public static string Name(ShelfAction action) => action switch
+    public static string Name(ShelfAction action) => Name(action, pinned: false);
+
+    /// <param name="pinned">Every item acted on is pinned: Pin reads Unpin.</param>
+    public static string Name(ShelfAction action, bool pinned) => action switch
     {
         ShelfAction.Open => "Open",
         ShelfAction.Reveal => "Show in folder",
         ShelfAction.CopyPath => "Copy path",
         ShelfAction.Share => "Share",
+        ShelfAction.Pin => pinned ? "Unpin" : "Pin",
         _ => "Remove",
     };
+
+    /// <summary>
+    /// Copy path and Share always show their icon only, their names in their tooltips: with them named the band no
+    /// longer fits the Shelf's own width and every button would lose its name. Copy path's key is in the footer.
+    /// </summary>
+    public static bool IconOnly(ShelfAction action) => action is ShelfAction.CopyPath or ShelfAction.Share;
+
+    /// <summary>Whether Pin unpins: there are items acted on and every one is pinned.</summary>
+    public static bool AllPinned(IReadOnlyList<ShelfItem> acting) => acting.Count > 0 && acting.All(i => i.Pinned);
+
+    /// <summary>What Clear shelf takes off: everything but the pinned items.</summary>
+    public static List<ShelfItem> Clearable(IReadOnlyList<ShelfItem> items) => [.. items.Where(i => !i.Pinned)];
+
+    /// <summary>The pin badge on a pinned tile: a disc at the preview's top-right corner, with the pin glyph in it.</summary>
+    public static (RectangleF Disc, RectangleF Glyph) PinBadge(RectangleF preview)
+    {
+        const float disc = 20, inset = 5, glyph = 12;
+        var at = new RectangleF(preview.Right - inset - disc, preview.Y + inset, disc, disc);
+        return (at, new(at.X + (disc - glyph) / 2, at.Y + (disc - glyph) / 2, glyph, glyph));
+    }
 
     /// <summary>The key that does an action on a focused tile, for the button's tooltip while the island has the keys; null for Share.</summary>
     public static string? ActionKey(ShelfAction action) => action switch
@@ -599,6 +626,7 @@ public static class ShelfLayout
         ShelfAction.Open => "Enter",
         ShelfAction.Reveal => "Ctrl+Shift+E",
         ShelfAction.CopyPath => "Ctrl+C",
+        ShelfAction.Pin => "P",
         ShelfAction.Remove => "Delete",
         _ => null,
     };
@@ -633,13 +661,17 @@ public static class ShelfLayout
     private static readonly GlyphStroke[] ShareGlyph = [new(new(8, 2), new(8, 10)), new(new(5, 5), new(8, 2)), new(new(8, 2), new(11, 5)), new(new(3, 8), new(3, 13)), new(new(3, 13), new(13, 13)), new(new(13, 13), new(13, 8))];
     private static readonly GlyphStroke[] RemoveGlyph = [new(new(2, 4), new(14, 4)), new(new(6, 2), new(10, 2)), new(new(4, 5), new(12, 14), 1.5f)];
 
-    /// <summary>An action's line icon: Open an arrow out of a box, Show in folder a folder, Copy path two sheets, Share an arrow out of a tray, Remove a bin.</summary>
+    /// <summary>
+    /// An action's line icon: Open an arrow out of a box, Show in folder a folder, Copy path two sheets, Share an arrow
+    /// out of a tray, Remove a bin. Pin has none here: it is drawn with <see cref="Glyphs.Pin"/>.
+    /// </summary>
     public static IReadOnlyList<GlyphStroke> Glyph(ShelfAction action) => action switch
     {
         ShelfAction.Open => OpenGlyph,
         ShelfAction.Reveal => FolderGlyphStrokes,
         ShelfAction.CopyPath => CopyGlyph,
         ShelfAction.Share => ShareGlyph,
+        ShelfAction.Pin => [],
         _ => RemoveGlyph,
     };
 

@@ -745,6 +745,28 @@ public sealed class ShelfTests : IDisposable
     }
 
     [Fact]
+    public async Task APinnedItemStaysAfterADragOutAndAClearAndAcrossARestart()
+    {
+        string report = Write(user, "report.pdf", "pdf"), notes = Write(user, "notes.txt", "n");
+        var first = Store();
+        await first.Accept(new DroppedItems([report, notes], [], null, KeepCopy: false));
+        await first.SetPinned([first.Items.Single(i => i.Name == "report.pdf")], true);
+        Assert.Equal(["notes.txt"], ShelfLayout.Clearable(first.Items).Select(i => i.Name));
+        // A drag of both: only the unpinned one leaves.
+        await first.AfterDragOut(first.Items, ShelfEffect.Copy, ShelfEffect.None);
+        Assert.Equal(["report.pdf"], first.ItemNames);
+
+        var second = Store();
+        await second.Load();
+        Assert.True(second.Items.Single().Pinned);
+        Assert.True(ShelfLayout.AllPinned(second.Items));
+        await second.SetPinned(second.Items, false);
+        Assert.False(second.Items.Single().Pinned);
+        await second.AfterDragOut(second.Items, ShelfEffect.Copy, ShelfEffect.None);
+        Assert.Empty(second.Items);
+    }
+
+    [Fact]
     public void WhatLeavesTheShelfAfterADragOut()
     {
         var moved = Item(ShelfKind.Reference, @"C:\gone.txt");
@@ -768,6 +790,13 @@ public sealed class ShelfTests : IDisposable
         var image = Item(ShelfKind.Content, @"C:\shelf\b\pasted.png");
         Assert.Equal([note, image], ShelfFormats.LeaveAfterDrag([note, image], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
         Assert.Equal([stayed], ShelfFormats.LeaveAfterDrag([stayed, note], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+
+        // Pinned items stay whatever the setting says; a pinned reference the target moved away still goes, its file gone.
+        var pinned = stayed with { Pinned = true };
+        var pinnedNote = note with { Pinned = true };
+        Assert.Equal([moved], ShelfFormats.LeaveAfterDrag([moved, pinned], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        Assert.Equal([note], ShelfFormats.LeaveAfterDrag([note, pinnedNote], ShelfEffect.Copy, ShelfEffect.None, true, Exists));
+        Assert.Equal([moved with { Pinned = true }], ShelfFormats.LeaveAfterDrag([moved with { Pinned = true }, pinned], ShelfEffect.None, ShelfEffect.Move, true, Exists));
     }
 
     [Fact]
@@ -900,12 +929,13 @@ public sealed class ShelfTests : IDisposable
             }
         }
 
-        // Remove's question always says itself; the rest are named when every name fits, else icons with tips.
+        // Remove's question always says itself; the rest are named when every name fits, else icons with tips. Copy path
+        // and Share are always icons.
         var remove = actions[^1];
         Assert.Equal(confirming ? ShelfLayout.ConfirmRemove : "Remove", remove.Label?.Text ?? "Remove");
         Assert.Equal(width >= 760 || confirming, remove.Label is not null);
         bool named = width >= 760;
-        Assert.All(actions.SkipLast(1), a => Assert.Equal(named, a.Label is not null));
+        Assert.All(actions.SkipLast(1), a => Assert.Equal(named && !ShelfLayout.IconOnly(a.Action), a.Label is not null));
     }
 
     [Theory]
@@ -951,10 +981,10 @@ public sealed class ShelfTests : IDisposable
         // The second tile's actions follow the tiles in group 2; it is missing, so only Copy path and Remove work.
         var band = In(ShelfLayout.Targets(Body, 0, items, items[1], [items[1]], false), 2);
         Assert.Equal(Enum.GetValues<ShelfAction>().Select(a => $"act:{a}"), band.Select(t => t.Id));
-        Assert.All(band, t => Assert.True(t is { Kind: TargetKind.Button, Group: 2, Draggable: false, Tip: null }));
-        // Named on the band, so with the keys a tip only says the key; Share has none.
-        Assert.Equal(["Enter", "Ctrl+Shift+E", "Ctrl+C", null, "Delete"], band.Select(t => t.TipWith(keys: true)));
-        Assert.Equal([false, false, true, false, true], band.Select(t => t.Enabled));
+        Assert.All(band, t => Assert.True(t is { Kind: TargetKind.Button, Group: 2, Draggable: false }));
+        // Named on the band, so with the keys a tip only says the key; Copy path and Share are icons, named in their tips.
+        Assert.Equal(["Enter", "Ctrl+Shift+E", "Copy path (Ctrl+C)", "Share", "P", "Delete"], band.Select(t => t.TipWith(keys: true)));
+        Assert.Equal([false, false, true, false, false, true], band.Select(t => t.Enabled));
         Assert.Equal(ShelfLayout.Actions(Body, false).Select(a => a.Box), band.Select(t => t.Bounds));
         // Acting on the selection: an action works when one of the items allows it.
         Assert.All(In(ShelfLayout.Targets(Body, 0, items, items[1], [items[0], items[1]], false), 2), t => Assert.True(t.Enabled));
@@ -962,7 +992,11 @@ public sealed class ShelfTests : IDisposable
         // Icon only on a narrow band, each named in its tooltip, with its key while the island has the keys.
         var narrow = In(ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [items[0]], false), 2);
         Assert.Equal(Enum.GetValues<ShelfAction>().Select(ShelfLayout.Name), narrow.Select(t => t.Tip));
-        Assert.Equal(["Open (Enter)", "Show in folder (Ctrl+Shift+E)", "Copy path (Ctrl+C)", "Share", "Remove (Delete)"], narrow.Select(t => t.TipWith(keys: true)));
+        Assert.Equal(["Open (Enter)", "Show in folder (Ctrl+Shift+E)", "Copy path (Ctrl+C)", "Share", "Pin (P)", "Remove (Delete)"], narrow.Select(t => t.TipWith(keys: true)));
+        // Pin reads Unpin when every item acted on is pinned.
+        var pinned = items[0] with { Pinned = true };
+        Assert.Equal("Unpin", In(ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [pinned], false), 2).Single(t => t.Id == "act:Pin").Tip);
+        Assert.Equal("Pin", In(ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [pinned, items[3]], false), 2).Single(t => t.Id == "act:Pin").Tip);
         Assert.Equal("Show in folder", ShelfLayout.Name(ShelfAction.Reveal));
 
         // Scrolled away from the tile the band was for: no band.

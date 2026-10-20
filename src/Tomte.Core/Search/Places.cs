@@ -23,7 +23,7 @@ public static class Places
         ("Opening and closing", "Opening and closing", "edge push dwell reveal drag reveal retract delay open close"),
         ("Hotkeys", "Hotkeys", "shortcut keys keyboard shortcuts key bindings hotkey"),
         ("Search", "Search", "file search everything windows index whole disk files web search engine"),
-        ("Shelf and shortcuts", "Shelf and shortcuts", "shelf tiles drag out"),
+        ("Shelf and shortcuts", "Shelf and shortcuts", "shelf tiles drag out remove after dragging pinned"),
         ("Clipboard", "Clipboard", "clipboard history keep history memory privacy"),
         ("Voice", "Voice", "rambler speech dictation spoken replies microphone"),
         ("Provider and spend", "Provider and spend", "ai provider api key model openai anthropic claude gemini ollama spend cost daily cap"),
@@ -43,7 +43,7 @@ public static class Places
     private static readonly (PanelId Tab, string Words)[] Tabs =
     [
         (PanelId.Home, "home start overview"),
-        (PanelId.Shelf, "files drop shelf"),
+        (PanelId.Shelf, "files drop shelf pinned keep"),
         (PanelId.Shortcuts, "tiles launcher"),
         (PanelId.Media, "music now playing player song"),
         (PanelId.Scratchpad, "notes note scratch pad"),
