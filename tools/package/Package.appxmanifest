@@ -8,7 +8,7 @@
   xmlns:uap11="http://schemas.microsoft.com/appx/manifest/uap/windows10/11"
   IgnorableNamespaces="uap uap5 uap11 rescap">
 
-  <Identity Name="xditya.Tomte" Publisher="CN=Tomte Dev" Version="0.2.0.0" ProcessorArchitecture="x64" />
+  <Identity Name="xditya.Tomte" Publisher="CN=Tomte Dev" Version="0.2.1.0" ProcessorArchitecture="x64" />
 
   <Properties>
     <DisplayName>Tomte</DisplayName>
