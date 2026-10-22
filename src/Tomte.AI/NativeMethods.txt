@@ -77,3 +77,7 @@ DwmGetWindowAttribute
 DWMWINDOWATTRIBUTE
 GetACP
 QueryInformationJobObject
+RegisterClassEx
+DefWindowProc
+GetOpenClipboardWindow
+WM_RENDERFORMAT

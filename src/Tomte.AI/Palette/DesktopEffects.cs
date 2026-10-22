@@ -27,9 +27,9 @@ public static unsafe class DesktopEffects
 
     /// <summary>
     /// Types <paramref name="text"/> at the cursor of <paramref name="window"/>, the window the words were spoken into, as
-    /// Unicode key events, so nothing passes through the clipboard or its history. The island never takes the keys, so the
-    /// field that had them when the hold started, <paramref name="field"/> (see <see cref="FocusIn"/>), should still have them;
-    /// if another field has, nothing is typed. Null when typed, else why not (see <see cref="VoiceChoices.Refusal"/>), for
+    /// a paste, with the clipboard put back after and nothing kept in its history, or as Unicode key events where Ctrl+V
+    /// does not paste. The island never takes the keys, so the field that had them when the hold started,
+    /// <paramref name="field"/> (see <see cref="FocusIn"/>), should still have them; if another field has, nothing is typed. Null when typed, else why not (see <see cref="VoiceChoices.Refusal"/>), for
     /// the island to say.
     /// </summary>
     public static string? TypeInto(nint window, nint field, string text)
@@ -47,8 +47,20 @@ public static unsafe class DesktopEffects
         if (VoiceChoices.Refusal(window, open, (nint)PInvoke.GetForegroundWindow().Value, elevated, sameField: FocusIn(window) == field) is { } refused)
             return refused;
 
+        // A paste lands whole in every app that takes Ctrl+V. Typed keys are the fallback: apps that read the key
+        // state as they handle each key (Notepad, WinUI fields) drop and repeat keys when they come faster than that.
+        if (ClipboardSnapshot.Paste(text.ReplaceLineEndings(" "), window, pid))
+            return null;
+
+        // One event per call, so an app that keeps up with typing sees them one at a time.
         var keys = Keys(text, Held(VIRTUAL_KEY.VK_LMENU), Held(VIRTUAL_KEY.VK_RMENU));
-        return PInvoke.SendInput(CollectionsMarshal.AsSpan(keys), sizeof(INPUT)) == keys.Count ? null : "Windows did not take the keys.";
+        foreach (var key in CollectionsMarshal.AsSpan(keys))
+        {
+            if (PInvoke.SendInput([key], sizeof(INPUT)) != 1)
+                return "Windows did not take the keys.";
+        }
+
+        return null;
     }
 
     /// <summary>

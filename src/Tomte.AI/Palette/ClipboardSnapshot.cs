@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using Tomte.Core.Clipboard;
 using Windows.Win32;
@@ -27,12 +28,17 @@ internal static unsafe class ClipboardSnapshot
     private static HWND owner;
     private static int ownerThread;
 
+    // The words a paste offers until the app asks for them, the process that is meant to ask, and who asked so far.
+    private static string? offered;
+    private static uint offeredTo;
+    private static bool rendered, renderedForTarget;
+
     /// <summary>
     /// A message-only owner window, created on first use: with a null owner SetClipboardData fails
     /// after EmptyClipboard. A window dies with the thread that created it and only that thread
-    /// receives its messages (WM_CLIPBOARDUPDATE, WM_DESTROYCLIPBOARD), so every clipboard call
-    /// must come from one long-lived thread with a message loop: the selection chip and the copy
-    /// tool are wired on the island thread.
+    /// receives its messages (WM_CLIPBOARDUPDATE, WM_DESTROYCLIPBOARD, WM_RENDERFORMAT), so every
+    /// clipboard call must come from one long-lived thread with a message loop: the selection chip,
+    /// the copy tool and the rambler's Insert are wired on the island thread.
     /// </summary>
     private static HWND Owner
     {
@@ -40,13 +46,40 @@ internal static unsafe class ClipboardSnapshot
         {
             if (owner.IsNull)
             {
-                owner = PInvoke.CreateWindowEx(0, "STATIC", "tomte-clipboard", 0, 0, 0, 0, 0, HWND.HWND_MESSAGE, null, null, null);
+                fixed (char* className = "TomteClipboard")
+                {
+                    PInvoke.RegisterClassEx(new WNDCLASSEXW { cbSize = (uint)Marshal.SizeOf<WNDCLASSEXW>(), lpfnWndProc = Render, lpszClassName = className });
+                }
+
+                owner = PInvoke.CreateWindowEx(0, "TomteClipboard", null, 0, 0, 0, 0, 0, HWND.HWND_MESSAGE, null, null, null);
                 ownerThread = Environment.CurrentManagedThreadId;
             }
 
             Debug.Assert(ownerThread == Environment.CurrentManagedThreadId, "clipboard calls must stay on the thread that created the owner window");
             return owner;
         }
+    }
+
+    // Held in a field, so the delegate the window class points at is never collected.
+    private static readonly WNDPROC Render = HandleMessage;
+
+    // An app asked for the offered words: they go on the clipboard now, and the paste knows whether the app it was
+    // sent to is the one that asked, rather than a clipboard monitor.
+    private static LRESULT HandleMessage(HWND hwnd, uint message, WPARAM wParam, LPARAM lParam)
+    {
+        if (message == PInvoke.WM_RENDERFORMAT && wParam.Value == CF_UNICODETEXT && offered is { } text)
+        {
+            PInvoke.SetClipboardData(CF_UNICODETEXT, Alloc(Encoding.Unicode.GetBytes(text + "\0")));
+            uint pid = 0;
+            var reader = PInvoke.GetOpenClipboardWindow();
+            if (!reader.IsNull)
+                PInvoke.GetWindowThreadProcessId(reader, &pid);
+            rendered = true;
+            renderedForTarget |= pid == offeredTo;
+            return default;
+        }
+
+        return PInvoke.DefWindowProc(hwnd, message, wParam, lParam);
     }
 
     public static uint Sequence => PInvoke.GetClipboardSequenceNumber();
@@ -62,6 +95,70 @@ internal static unsafe class ClipboardSnapshot
         finally
         {
             PInvoke.CloseClipboard();
+        }
+    }
+
+    /// <summary>
+    /// Pastes <paramref name="text"/> with Ctrl+V into <paramref name="window"/> of process <paramref name="pid"/>, then
+    /// puts the clipboard back as it was. The words are rendered only when an app asks for them, so the clipboard is put
+    /// back once the app has read them, never before; they are marked to stay out of clipboard history and other
+    /// monitors. False when nothing asked for them in time (an app where Ctrl+V does not paste, such as some
+    /// terminals), or a key still held would have made Ctrl+V another chord: nothing was pasted then.
+    /// </summary>
+    public static bool Paste(string text, nint window, uint pid, int timeoutMs = 3000)
+    {
+        var wait = Stopwatch.StartNew();
+        while (ModifierDown() && wait.ElapsedMilliseconds < 2000)
+            Pump(5);
+        if (ModifierDown() || (nint)PInvoke.GetForegroundWindow().Value != window)
+            return false;
+
+        OwnClipboardUse.Begin();
+        try
+        {
+            var before = Snapshot();
+            (offered, offeredTo, rendered, renderedForTarget) = (text, pid, false, false);
+            Open();
+            try
+            {
+                PInvoke.EmptyClipboard();
+                PInvoke.SetClipboardData(CF_UNICODETEXT, HANDLE.Null);
+                PInvoke.SetClipboardData(PInvoke.RegisterClipboardFormat(ClipboardReader.ExcludeFormat), Alloc([0]));
+                PInvoke.SetClipboardData(PInvoke.RegisterClipboardFormat(ClipboardReader.HistoryFormat), Alloc(BitConverter.GetBytes(0)));
+                PInvoke.SetClipboardData(PInvoke.RegisterClipboardFormat(ClipboardReader.CloudFormat), Alloc(BitConverter.GetBytes(0)));
+            }
+            finally
+            {
+                PInvoke.CloseClipboard();
+            }
+
+            if (SendChord(VIRTUAL_KEY.VK_CONTROL, VIRTUAL_KEY.VK_V))
+            {
+                wait.Restart();
+                while (!renderedForTarget && wait.ElapsedMilliseconds < timeoutMs)
+                    Pump(10);
+            }
+
+            // Some apps read the clipboard more than once for one paste.
+            Pump(100);
+            bool pasted = rendered;
+            offered = null;
+            try
+            {
+                Restore(before);
+            }
+            catch (InvalidOperationException)
+            {
+                // Another app kept the clipboard open: the words stay on it, and the paste still happened.
+                Discard(before);
+            }
+
+            return pasted;
+        }
+        finally
+        {
+            offered = null;
+            OwnClipboardUse.End();
         }
     }
 
