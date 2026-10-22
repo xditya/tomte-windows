@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Tomte.AI;
 using Tomte.AI.Automation;
@@ -109,6 +110,7 @@ internal static partial class Program
 
     /// <summary>
     /// A press on Home's mic: the voice hold, as the voice shortcut held down starts it, until the left button comes up.
+    /// A quick click instead keeps the microphone open until the next click, so a click does not end the take at once.
     /// Simplification: the island is never the foreground window and does not hear a release off its own area, so the
     /// button is looked at every 50 ms while the hold lasts, and at no other time.
     /// </summary>
@@ -120,21 +122,31 @@ internal static partial class Program
             return;
         }
 
-        if (holding is null)
+        var pressed = Stopwatch.StartNew();
+        bool latched = false, down = true;
+        holding?.Stop();
+        holding = island.Queue.CreateTimer();
+        holding.Interval = TimeSpan.FromMilliseconds(50);
+        holding.IsRepeating = true;
+        holding.Tick += (timer, _) =>
         {
-            holding = island.Queue.CreateTimer();
-            holding.Interval = TimeSpan.FromMilliseconds(50);
-            holding.IsRepeating = true;
-            holding.Tick += (timer, _) =>
+            bool now = (PInvoke.GetAsyncKeyState((int)Windows.Win32.UI.Input.KeyboardAndMouse.VIRTUAL_KEY.VK_LBUTTON) & 0x8000) != 0;
+            bool released = down && !now;
+            down = now;
+            if (triggers.Rambler is not { Recording: true })
             {
-                if ((PInvoke.GetAsyncKeyState((int)Windows.Win32.UI.Input.KeyboardAndMouse.VIRTUAL_KEY.VK_LBUTTON) & 0x8000) == 0)
-                {
-                    timer.Stop();
-                    triggers.Rambler?.End(keep: true);
-                }
-            };
-        }
-
+                timer.Stop();
+            }
+            else if (released && !latched && pressed.Elapsed < TimeSpan.FromMilliseconds(400))
+            {
+                latched = true;
+            }
+            else if (released)
+            {
+                timer.Stop();
+                triggers.Rambler.End(keep: true);
+            }
+        };
         holding.Start();
     }
 

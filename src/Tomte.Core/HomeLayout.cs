@@ -347,7 +347,7 @@ public sealed class HomeLayout(Vector2 body)
                 : new Target(id, box, Chip.Height / 2, TargetKind.Toggle, Tip: id == WindowId ? "Send the window in front with the question" : "Send what is on the shelf with the question", Checked: id == WindowId ? window : shelf));
         }
 
-        all.Add(new(MicId, MicButton, Mic / 2, TargetKind.Button, Tip: "Hold to talk", Draggable: true));
+        all.Add(new(MicId, MicButton, Mic / 2, TargetKind.Button, Tip: "Hold to talk, or click to start and stop", Draggable: true));
         return all;
     }
 
