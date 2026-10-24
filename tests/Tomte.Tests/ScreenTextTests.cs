@@ -97,6 +97,45 @@ public sealed class ScreenTextTests : IDisposable
         Assert.Equal("", new TomteSettings().TranslateScreenTextTo);
     }
 
+    [Theory]
+    [InlineData("https://example.com/a_b?c=1", true)]
+    [InlineData("HTTP://EXAMPLE.COM", true)]
+    [InlineData("WIFI:S:home;T:WPA;P:secret;;", false)]
+    [InlineData("javascript:alert(1)", false)]
+    [InlineData("file:///C:/Windows/notepad.exe", false)]
+    [InlineData("example.com", false)]
+    [InlineData("just some text", false)]
+    public void OnlyAWebLinkInAQrCodeCanBeOpened(string content, bool link)
+    {
+        var card = ScreenText.QrCode(content);
+        Assert.Equal("QR code", card.Title);
+        Assert.Equal(content, card.Body);
+        Assert.Equal(link, card.Choices.Contains(ScreenText.Open));
+        Assert.Contains(ScreenText.Copy, card.Choices);
+        // Close stays the default, so Enter never opens a link.
+        Assert.Equal(DropResult.Close, card.Choices[^1]);
+    }
+
+    [Fact]
+    public void AQrCodeInThePixelsIsRead()
+    {
+        // Drawn 4 pixels a module with a quiet zone, as BGRA on white.
+        var matrix = new ZXing.QrCode.QRCodeWriter().encode("https://example.com/hello", ZXing.BarcodeFormat.QR_CODE, 200, 200);
+        var pixels = new byte[4 * matrix.Width * matrix.Height];
+        for (int y = 0; y < matrix.Height; y++)
+        {
+            for (int x = 0; x < matrix.Width; x++)
+            {
+                byte v = matrix[x, y] ? (byte)0 : (byte)255;
+                pixels.AsSpan(4 * (y * matrix.Width + x), 3).Fill(v);
+                pixels[(4 * (y * matrix.Width + x)) + 3] = 255;
+            }
+        }
+
+        Assert.Equal("https://example.com/hello", ScreenText.DecodeQr(pixels, matrix.Width, matrix.Height));
+        Assert.Null(ScreenText.DecodeQr([.. Enumerable.Repeat((byte)255, 4 * 64 * 64)], 64, 64));
+    }
+
     [Fact]
     public void TheCardsSayWhereTheTextWentAndMarkTheAIsText()
     {

@@ -12,7 +12,8 @@ namespace Tomte.Shell;
 /// With the cleanup on in Settings and a provider set up, the text alone then goes to that provider, and the card shows
 /// the cleaned text, marked as AI's, copied in its place, with the text as read one click away. With a provider set up
 /// the card also offers Translate, which sends the text shown, and only on that click, for a translation into the
-/// language picked in Settings, shown and copied the same way. The card holds the
+/// language picked in Settings, shown and copied the same way. A QR code in the region takes the text's place: its
+/// content is copied and shown whole, and a web link gets Open link, which is the only way it opens. The card holds the
 /// island until Close or Esc; once something was sent, Undo can bring it back for a while, as for a drop zone's result.
 /// On the island's thread.
 /// </summary>
@@ -35,40 +36,44 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
     public static async Task StartAsync(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log, CaptureOverlay overlay, PixelRect crop)
     {
         var engine = ScreenText.Engine();
-        using var bitmap = engine is null ? null : await ScreenText.CaptureAsync(overlay.Monitor, crop, overlay.Lasso.Scale, CancellationToken.None);
+        // Taken with no text language too: a QR code needs none.
+        using var bitmap = await ScreenText.CaptureAsync(overlay.Monitor, crop, overlay.Lasso.Scale, CancellationToken.None);
         // Esc, another hotkey or the lock screen ended the capture meanwhile.
         if (triggers.Machine.State != IslandState.Capture || Program.Text is not { } text || Jobs.Shelf is not { } shelf)
         {
             return;
         }
 
-        log?.Invoke($"screen text: px={crop} scaled to {bitmap?.PixelWidth}x{bitmap?.PixelHeight} language={engine?.RecognizerLanguage.LanguageTag ?? "none"}");
+        log?.Invoke($"screen text: px={crop} scaled to {bitmap.PixelWidth}x{bitmap.PixelHeight} language={engine?.RecognizerLanguage.LanguageTag ?? "none"}");
         triggers.PaletteFromCapture();
         await new ScreenTextRun(island, triggers, shelf, text, store, log).RunAsync(engine, bitmap);
     }
 
-    private async Task RunAsync(OcrEngine? engine, SoftwareBitmap? bitmap)
+    private async Task RunAsync(OcrEngine? engine, SoftwareBitmap bitmap)
     {
         Open();
         Show(ScreenText.Reading, busy: true);
         island.Mascot.Set(face);
         try
         {
-            if (engine is null || bitmap is null)
-            {
-                Finish(ScreenText.NoLanguage, ok: false);
-                return;
-            }
-
-            read = await ScreenText.ReadAsync(engine, bitmap);
+            // Both on this PC: the QR decoder on a worker thread while Windows reads the text.
+            var qr = Task.Run(() => ScreenText.FindQr(bitmap));
+            read = engine is null ? "" : await ScreenText.ReadAsync(engine, bitmap);
+            string? code = await qr;
             if (!Live)
             {
                 return;
             }
 
+            if (code is not null)
+            {
+                Finish(Copied(ScreenText.QrCode(code), Copy(code)), ok: true);
+                return;
+            }
+
             if (read.Length == 0)
             {
-                Finish(ScreenText.NoText, ok: false);
+                Finish(engine is null ? ScreenText.NoLanguage : ScreenText.NoText, ok: false);
                 return;
             }
 
@@ -223,6 +228,11 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
             return;
         }
 
+        if (choice == ScreenText.Open && !OpenLink(last.Body))
+        {
+            return;
+        }
+
         if (choice is ScreenText.Copy or ScreenText.CopyOriginal && !Copy(choice == ScreenText.Copy ? last.Body : original))
         {
             Show(last with { Line = ScreenText.ClipboardBusy }, busy: false);
@@ -230,6 +240,21 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         }
 
         triggers.Hide();
+    }
+
+    private bool OpenLink(string url)
+    {
+        try
+        {
+            DesktopEffects.OpenUrl(url);
+            return true;
+        }
+        catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            log?.Invoke($"screen text: link did not open ({e.Message})");
+            Show(last with { Line = "Windows could not open the link. It is copied, so you can paste it into a browser." }, busy: false);
+            return false;
+        }
     }
 
     private bool Copy(string words)

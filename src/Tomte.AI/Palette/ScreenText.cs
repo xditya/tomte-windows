@@ -1,8 +1,10 @@
 using System.Globalization;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using Tomte.Core;
 using Windows.Graphics.Imaging;
 using Windows.Media.Ocr;
+using ZXing;
 
 namespace Tomte.AI.Palette;
 
@@ -17,6 +19,9 @@ public static class ScreenText
 
     /// <summary>The choices on a result card besides Close: copy the text shown, or the text as read before the AI changed it.</summary>
     public const string Copy = "Copy", CopyOriginal = "Copy original";
+
+    /// <summary>The choice on a QR code's card whose content is a web link: it opens in the default browser, never by itself.</summary>
+    public const string Open = "Open link";
 
     /// <summary>The choice that sends the text shown to the provider for a translation; offered only with a provider set up.</summary>
     public const string Translate = "Translate";
@@ -77,6 +82,21 @@ public static class ScreenText
             (l.Text, l.Words.Min(w => (double)w.BoundingRect.Y), l.Words.Max(w => (double)(w.BoundingRect.Y + w.BoundingRect.Height))))]);
     }
 
+    /// <summary>What a QR code in the region says, read on this PC; null when there is none.</summary>
+    public static string? FindQr(SoftwareBitmap bitmap)
+    {
+        var pixels = new byte[4 * bitmap.PixelWidth * bitmap.PixelHeight];
+        bitmap.CopyToBuffer(pixels.AsBuffer());
+        return DecodeQr(pixels, bitmap.PixelWidth, bitmap.PixelHeight);
+    }
+
+    /// <summary>The content of a QR code in BGRA pixels, or null.</summary>
+    public static string? DecodeQr(byte[] bgra, int width, int height)
+    {
+        var reader = new BarcodeReaderGeneric { Options = { PossibleFormats = [BarcodeFormat.QR_CODE], TryHarder = true } };
+        return reader.Decode(new RGBLuminanceSource(bgra, width, height, RGBLuminanceSource.BitmapFormat.BGRA32))?.Text is { Length: > 0 } text ? text : null;
+    }
+
     /// <summary>
     /// The recognised lines, top to bottom, one to a line. A gap taller than the line above it is a blank line, which is
     /// how paragraphs come out of the engine.
@@ -134,7 +154,7 @@ public static class ScreenText
 
     public static DropResult Reading { get; } = new(Title, "Nothing sent", "Reading the text on this PC", false, "", [], []);
 
-    public static DropResult NoText { get; } = new(Title, "Nothing sent", "No text found there. Try a larger area, or text with more contrast.", true, "", [], []);
+    public static DropResult NoText { get; } = new(Title, "Nothing sent", "No text or QR code found there. Try a larger area, or text with more contrast.", true, "", [], []);
 
     public static DropResult NoLanguage { get; } = new(Title, "Nothing sent",
         "Windows cannot read text in any language on this PC. Add a language with optical character recognition in Windows Settings, Time & language.", true, "", [], []);
@@ -154,6 +174,14 @@ public static class ScreenText
     /// <summary>The cleanup failed or brought nothing back: the text as read stays copied.</summary>
     public static DropResult NotCleaned(string text, string indicator, string? error) =>
         new(Title, indicator, $"{error ?? "AI cleanup brought nothing back."} The text as read is copied.", false, text, [], [Copy, DropResult.Close]);
+
+    /// <summary>
+    /// A QR code's content, copied, shown whole so the user sees where a link goes. Only an http or https link gets
+    /// <see cref="Open"/>; anything else is text to copy.
+    /// </summary>
+    public static DropResult QrCode(string content) => BuiltInTools.IsWebUrl(content)
+        ? new("QR code", "Nothing sent", "Copied · a web link · read on this PC, opens only if you press Open link", false, content, [], [Open, Copy, DropResult.Close])
+        : new("QR code", "Nothing sent", "Copied · read on this PC", false, content, [], [Copy, DropResult.Close]);
 
     /// <summary>A finished card with <see cref="Translate"/> as its first choice.</summary>
     public static DropResult WithTranslate(DropResult result) => result with { Choices = [Translate, .. result.Choices] };

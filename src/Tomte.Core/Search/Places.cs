@@ -21,7 +21,7 @@ public static class Places
     private static readonly (string Name, string Section, string Words)[] TomtePages =
     [
         ("Opening and closing", "Opening and closing", "edge push dwell reveal drag reveal retract delay open close"),
-        ("Hotkeys", "Hotkeys", "shortcut keys keyboard shortcuts key bindings hotkey circle to ask copy text from screen ocr"),
+        ("Hotkeys", "Hotkeys", "shortcut keys keyboard shortcuts key bindings hotkey circle to ask copy text from screen ocr qr code"),
         ("Search", "Search", "file search everything windows index whole disk files web search engine"),
         ("Shelf and shortcuts", "Shelf and shortcuts", "shelf tiles drag out remove after dragging pinned"),
         ("Clipboard", "Clipboard", "clipboard history keep history memory privacy"),
