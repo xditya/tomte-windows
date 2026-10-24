@@ -20,8 +20,11 @@ namespace Tomte.Shell;
 /// The note loads on a worker, so <see cref="Shown"/> returns at once and what is typed before the first load goes in
 /// once it lands. A load that fails says so in the card and keeps what was typed for the next show that can read the
 /// note. Leaving the tab saves what is unsaved and releases the text box.
+/// In Edit, "/" at the start of a line or after a space lists the saved snippets under the caret (<see cref="SnippetSlash"/>);
+/// the list is drawn over the card and never takes the keys from the note. The snippets are read on each show and each
+/// time the list opens, so ones added in Settings since are there.
 /// </summary>
-internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, TextRenderer text, TypingFocus focus, Action<string>? log) : IPanel, IInteractive
+internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, TextRenderer text, TypingFocus focus, SnippetStore snippets, Action<string>? log) : IPanel, IInteractive
 {
     private const string NoteId = "note";
     private const uint Char = 0x0102;
@@ -39,6 +42,13 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
     private float scroll;
     private int generation;
     private bool editing, pendingEdit;
+
+    // The snippets as last read, the list drawn for the note, and where its "/" is.
+    private IReadOnlyList<Snippet> saved = [];
+    private Parts? menuParts;
+    private int menuStart = -1;
+    private Vector2 menuAnchor;
+    private float menuLine;
 
     // The mode last chosen this session; null until the user picks one.
     private bool? chosen;
@@ -69,6 +79,7 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
         note.Changed += NoteChanged;
         focus.Typed = TypedInPreview;
         Load();
+        LoadSnippets();
         // Switched or come back to while the island has the keys for its targets (not on the tab labels, where the arrows
         // go on along the tabs): the note is the tab's first useful thing. The scratchpad hotkey that came before the tab
         // showed gets it too.
@@ -363,6 +374,12 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
         // Esc leaves the note for Preview, with focus on the tab's label; a second Esc closes the island as before.
         box.Escape = () =>
         {
+            // The snippet list closes first, and the "/word" stays as typed.
+            if (bound?.Dismiss() == true)
+            {
+                return true;
+            }
+
             if (!focus.TakeKeys())
             {
                 return false;
@@ -380,8 +397,78 @@ internal sealed class ScratchpadPanel(IslandWindow island, ScratchpadNote note, 
             return true;
         };
         // The note is styled once the Panels morph is at rest, never during it.
-        bound = new NoteEditor(box, note, island.Queue, kept) { Moving = () => island.Moving };
+        bound = new NoteEditor(box, note, island.Queue, kept) { Moving = () => island.Moving, Snippets = () => saved };
+        bound.MenuChanged += DrawMenu;
+        bound.SnippetUsed += Used;
         island.Settled += bound.Settled;
+    }
+
+    // The snippet list over the card, under the line of its "/" (or above it when there is more room there), in the search
+    // list's look. The "/" is placed once, as the list opens, so the list stays put while the word is typed.
+    private void DrawMenu(SnippetMenu? menu)
+    {
+        menuParts?.Dispose();
+        menuParts = null;
+        if (menu is null || host is null || layout is null || editor is null)
+        {
+            menuStart = -1;
+            return;
+        }
+
+        if (menu.Start != menuStart)
+        {
+            var (x, y, h, _) = editor.Services.Caret;
+            float scale = (float)island.Scale;
+            (menuStart, menuAnchor, menuLine) = (menu.Start, new Vector2(editor.Box.X + (x / scale), editor.Box.Y + (y / scale)), h / scale);
+            LoadSnippets();
+        }
+
+        var at = new SnippetMenuLayout(layout.Note, menuAnchor, menuLine, menu.Rows.Count);
+        var p = menuParts = new Parts(island.Compositor, text);
+        var v = p.Shapes(host, new RectangleF(0, 0, layout.Body.X, layout.Body.Y));
+        p.Box(v, at.Box, SnippetMenuLayout.Corner, p.Brush(SnippetMenuLayout.Fill), p.Brush(SnippetMenuLayout.Line), (float)(1 / island.Scale));
+        if (menu.Rows.Count == 0)
+        {
+            p.Text(host, at.HintSlot());
+            return;
+        }
+
+        p.Box(v, at.Row(menu.Selected), SnippetMenuLayout.RowCorner, p.Brush(SnippetMenuLayout.Selected));
+        for (int i = 0; i < menu.Rows.Count; i++)
+        {
+            var (name, detail) = at.Slots(i, menu.Rows[i]);
+            p.Text(host, name);
+            p.Text(host, detail);
+        }
+    }
+
+    // Read off the island's thread; a list showing takes them on its next paint.
+    private async void LoadSnippets()
+    {
+        try
+        {
+            var all = await Task.Run(snippets.Load);
+            island.Queue.TryEnqueue(() =>
+            {
+                saved = all;
+                if (bound?.Menu is not null)
+                {
+                    editor?.Repaint();
+                }
+            });
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"scratchpad panel: could not read the snippets ({e.GetType().Name})");
+        }
+    }
+
+    // The snippet went in now, so it leads among equals the next time.
+    private void Used(Snippet snippet)
+    {
+        var now = DateTimeOffset.UtcNow;
+        saved = [.. saved.Select(s => s.Id == snippet.Id ? s with { Used = now.UtcTicks } : s)];
+        Observe(Task.Run(() => snippets.Used(snippet.Id, now)), "note when a snippet was used");
     }
 
     // What was typed goes to the note. With keepKeys, a box that had the keys hands them to the targets rather than

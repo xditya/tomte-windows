@@ -42,6 +42,11 @@ internal sealed unsafe class NoteEditor : IDisposable
     private string? styled;
     private bool open, typed, applying, restyle, styling, disposed;
 
+    // A "/" was typed and the list may show while the word after it is typed; the carriage return of the Enter that
+    // chose a snippet, which the box must not get.
+    private bool armed, eatReturn;
+    private SnippetMenu? menu;
+
     public NoteEditor(EditorView editor, ScratchpadNote note, DispatcherQueue queue, StringBuilder kept)
     {
         this.editor = editor;
@@ -65,6 +70,11 @@ internal sealed unsafe class NoteEditor : IDisposable
             }
 
             Sync();
+            if (SnippetKey(message, wParam))
+            {
+                return true;
+            }
+
             var key = NoteKeys.Of(message, wParam, Down(VIRTUAL_KEY.VK_CONTROL), Down(VIRTUAL_KEY.VK_SHIFT), Down(VIRTUAL_KEY.VK_MENU));
             if (key == NoteKey.Pass)
             {
@@ -82,11 +92,42 @@ internal sealed unsafe class NoteEditor : IDisposable
 
             return true;
         };
-        editor.BeforePaint = Restyle;
+        editor.BeforePaint = () =>
+        {
+            Restyle();
+            RefreshMenu();
+        };
+        editor.FocusChanged += OnFocusChanged;
         editor.Services.Changed += OnTyped;
         editor.Services.Composed += OnComposed;
         note.Changed += OnNoteChanged;
         Open();
+    }
+
+    /// <summary>The saved snippets, as last read; typing "/" lists them. Unset, there are none.</summary>
+    public Func<IReadOnlyList<Snippet>>? Snippets { get; set; }
+
+    /// <summary>The snippet list opened, changed or closed (null); the panel draws it under the caret.</summary>
+    public event Action<SnippetMenu?>? MenuChanged;
+
+    /// <summary>A snippet went into the note.</summary>
+    public event Action<Snippet>? SnippetUsed;
+
+    /// <summary>The snippet list as it shows; null when closed.</summary>
+    public SnippetMenu? Menu => menu;
+
+    /// <summary>Esc while the snippet list shows: it closes and the "/word" stays as typed. False when there was no list.</summary>
+    public bool Dismiss()
+    {
+        armed = false;
+        if (menu is null)
+        {
+            return false;
+        }
+
+        menu = null;
+        MenuChanged?.Invoke(null);
+        return true;
     }
 
     /// <summary>Whether the box shows the note; false until the note has been read once.</summary>
@@ -130,6 +171,8 @@ internal sealed unsafe class NoteEditor : IDisposable
         }
 
         disposed = true;
+        Dismiss();
+        editor.FocusChanged -= OnFocusChanged;
         note.Changed -= OnNoteChanged;
         editor.Services.Changed -= OnTyped;
         editor.Services.Composed -= OnComposed;
@@ -283,6 +326,93 @@ internal sealed unsafe class NoteEditor : IDisposable
         finally
         {
             styling = false;
+        }
+    }
+
+    // The list's own keys while it shows: Up and Down choose, Enter and Tab put the snippet in. A typed "/" arms it.
+    private bool SnippetKey(uint message, nuint wParam)
+    {
+        int key = (int)(wParam & 0xFFFF);
+        if (message == Char)
+        {
+            if (eatReturn && key == '\r')
+            {
+                eatReturn = false;
+                return true;
+            }
+
+            eatReturn = false;
+            if (key == '/')
+            {
+                armed = true;
+            }
+
+            return false;
+        }
+
+        if (message != NoteKeys.KeyDown || menu is null || Down(VIRTUAL_KEY.VK_CONTROL) || Down(VIRTUAL_KEY.VK_MENU))
+        {
+            return false;
+        }
+
+        switch ((VIRTUAL_KEY)key)
+        {
+            case VIRTUAL_KEY.VK_UP or VIRTUAL_KEY.VK_DOWN when menu.Rows.Count > 0:
+                menu = menu.Move(key == (int)VIRTUAL_KEY.VK_UP ? -1 : 1);
+                MenuChanged?.Invoke(menu);
+                return true;
+            case VIRTUAL_KEY.VK_RETURN or VIRTUAL_KEY.VK_TAB when menu.Rows.Count > 0 && !Down(VIRTUAL_KEY.VK_SHIFT):
+                eatReturn = key == (int)VIRTUAL_KEY.VK_RETURN;
+                Choose(menu, menu.Rows[menu.Selected]);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // The "/word" becomes the snippet's text as the user's own edit, so one Ctrl+Z brings the word back.
+    private void Choose(SnippetMenu shown, Snippet snippet)
+    {
+        Dismiss();
+        var change = shown.Insert(snippet);
+        var services = editor.Services;
+        services.Selection = (change.Start, change.End);
+        services.Insert(change.Text);
+        SnippetUsed?.Invoke(snippet);
+    }
+
+    // Once per paint, after the text or the caret moved: the list follows the word typed after the "/", and closes when
+    // the caret leaves it or there is nothing to list.
+    private void RefreshMenu()
+    {
+        if (!armed || !open || disposed || editor.Services.Composing)
+        {
+            return;
+        }
+
+        var services = editor.Services;
+        var (start, end) = services.Selection;
+        var now = start == end ? SnippetSlash.Menu(services.Text, end, Snippets?.Invoke() ?? [], menu) : null;
+        if (now is null && SnippetSlash.Find(services.Text, end) is null)
+        {
+            // Off the word: the list closes for good until the next "/".
+            armed = false;
+        }
+
+        if (now == menu || (now is not null && menu is not null && now.Start == menu.Start && now.Query == menu.Query && now.Selected == menu.Selected && now.Rows.SequenceEqual(menu.Rows)))
+        {
+            return;
+        }
+
+        menu = now;
+        MenuChanged?.Invoke(menu);
+    }
+
+    private void OnFocusChanged()
+    {
+        if (!editor.Focused)
+        {
+            Dismiss();
         }
     }
 

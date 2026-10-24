@@ -515,7 +515,7 @@ internal static partial class Program
             OpenSettings(Tomte.Panels.SettingsWindow.ShortcutsHeader);
         }, text, log));
         panels.Register(new MediaPanel(island, media, text, () => DateTimeOffset.UtcNow, log));
-        var scratchpad = new ScratchpadPanel(island, Scratchpad, text, typing, log);
+        var scratchpad = new ScratchpadPanel(island, Scratchpad, text, typing, new Tomte.Core.Text.SnippetStore(db), log);
         panels.Register(scratchpad);
         triggers.ScratchpadOpened = () => scratchpad.TakeKeys();
         // Panels opened on the Scratchpad tab gives the note the keys when it is being edited, as its own hotkey does; a
