@@ -210,7 +210,20 @@ public sealed record HotkeySettings
 
     public string Search { get; init; } = "Win+Alt+Space";
 
-    public string TextCapture { get; init; } = "Win+Alt+T";
+    /// <summary>
+    /// X, a key no Windows 11 or Game Bar shortcut documents with Win+Alt. It was Win+Alt+T until Game Bar's recording
+    /// timer turned out to own that one, so a file still holding the old default reads as the new default.
+    /// </summary>
+    public string TextCapture
+    {
+        get => textCapture;
+        init => textCapture = value == OldTextCapture ? "Win+Alt+X" : value;
+    }
+
+    private readonly string textCapture = "Win+Alt+X";
+
+    /// <summary>Game Bar's show or hide recording timer; never a Tomte shortcut.</summary>
+    public const string OldTextCapture = "Win+Alt+T";
 
     /// <summary>E for eyedropper. Win+Alt+K, the obvious pick, mutes the microphone in calls on Windows 11.</summary>
     public string ColourPick { get; init; } = "Win+Alt+E";

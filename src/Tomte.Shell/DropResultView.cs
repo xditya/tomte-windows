@@ -71,6 +71,9 @@ internal sealed class DropResultView : IInteractive
     /// <summary>A choice of the size question was clicked, by its index.</summary>
     public event Action<int>? Chose;
 
+    /// <summary>A row of <see cref="DropResult.Values"/> was clicked or took Enter, by its index.</summary>
+    public event Action<int>? ValueChosen;
+
     public event Action? TargetsChanged;
 
     public IReadOnlyList<Target> Targets => targets;
@@ -150,7 +153,7 @@ internal sealed class DropResultView : IInteractive
     /// </summary>
     private void Shapes(DropResultLayout next, DropResult result)
     {
-        string key = string.Join(';', next.Choices.Concat(next.Tiles).Select(r => $"{r.X},{r.Y},{r.Width},{r.Height}")) + string.Join(';', result.Tiles.Select(t => t.Color)) + $";{result.Swatch}";
+        string key = string.Join(';', next.Choices.Concat(next.Tiles).Append(next.SwatchBox).Select(r => $"{r.X},{r.Y},{r.Width},{r.Height}")) + string.Join(';', result.Tiles.Select(t => t.Color)) + $";{result.Swatch}";
         if (key == shapesKey)
         {
             return;
@@ -171,8 +174,8 @@ internal sealed class DropResultView : IInteractive
 
         if (result.Swatch is uint swatch)
         {
-            // A hairline keeps a colour close to the panel's own visible.
-            p.Box(canvas, next.SwatchBand, DropResultLayout.Corner, p.Brush(ShelfColors.Rgb(swatch)), p.Brush(ShelfColors.Line));
+            // A hairline keeps white, black and a colour close to the panel's own visible.
+            p.Box(canvas, next.SwatchBox, DropResultLayout.SwatchCorner, p.Brush(ShelfColors.Rgb(swatch)), p.Brush(ShelfColors.Line));
         }
 
         for (int i = 0; i < next.Tiles.Count; i++)
@@ -184,7 +187,7 @@ internal sealed class DropResultView : IInteractive
 
     public void Activate(string id) => Activate(id, ActivateBy.Click);
 
-    /// <summary>A choice answers on a click or a key; a tile opens its file on a double click or Enter, as on the shelf.</summary>
+    /// <summary>A choice or a value row answers on a click or a key; a tile opens its file on a double click or Enter, as on the shelf.</summary>
     public void Activate(string id, ActivateBy by)
     {
         if (!Live)
@@ -193,7 +196,11 @@ internal sealed class DropResultView : IInteractive
         }
 
         var (tile, choice) = DropResultLayout.Of(id);
-        if (choice >= 0)
+        if (DropResultLayout.ValueOf(id) is int value and >= 0)
+        {
+            ValueChosen?.Invoke(value);
+        }
+        else if (choice >= 0)
         {
             Chose?.Invoke(choice);
         }

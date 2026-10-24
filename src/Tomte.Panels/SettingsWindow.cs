@@ -136,7 +136,7 @@ public sealed partial class SettingsWindow : Window
                             Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } })),
                         Row("Clean up copied text", Note("After Copy text from screen, send the text it read to the provider to fix reading mistakes. Only the text is sent, never the picture, and the result is marked as cleaned up by AI."),
                             Toggle(s => s.CleanUpScreenText, (s, v) => s with { CleanUpScreenText = v })),
-                        Row("Translate copied text into", Note("The language Translate on the Copy text from screen card asks for. Only the text is sent, and only when you press Translate."),
+                        Row("Translate copied text into", Note("The language Translate on the Copy text from screen card asks for. Only the text is sent, and only when you press Translate: to the provider, or with none set up, to the free MyMemory service by Translated, which keeps what it is sent. Text over 5,000 characters, or a translation that failed, can go to Google Translate in your browser."),
                             TranslateTo())),
                     Header("Always allowed"),
                     Card(grantsList),

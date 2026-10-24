@@ -45,28 +45,30 @@ public readonly record struct PickedColour(byte R, byte G, byte B)
 
     public const string Title = "Colour from screen";
 
-    /// <summary>The choices on the card: each format on its own, then Close.</summary>
-    public const string CopyHex = "Copy HEX", CopyRgb = "Copy RGB", CopyHsl = "Copy HSL";
-
-    /// <summary>What a choice on the card copies; null for Close.</summary>
-    public string? Copies(string choice) => choice switch
-    {
-        CopyHex => Hex,
-        CopyRgb => RgbText,
-        CopyHsl => HslText,
-        _ => null,
-    };
-
-    /// <summary>The card: a swatch, the three formats, a Copy for each. The hex is already on the clipboard.</summary>
-    public DropResult Card(bool copied) => new(
+    /// <summary>
+    /// The card: the colour as a square beside its hex, RGB and HSL, each a row that copies itself, then Close. The hex
+    /// is put on the clipboard first; <paramref name="copied"/> is what the clipboard last took, null when nothing did.
+    /// </summary>
+    public DropResult Card(string? copied) => new(
         Title,
         "Nothing sent",
-        copied ? $"Copied {Hex} · picked on this PC" : "Another app has the clipboard open, so nothing was copied. Press Copy HEX to try again.",
+        copied is not null ? $"Copied {copied} · click a value to copy it" : "Another app has the clipboard open, so nothing was copied. Click the hex to try again.",
         false,
-        $"HEX  {Hex}\nRGB  {RgbText}\nHSL  {HslText}",
+        "",
         [],
-        [CopyHex, CopyRgb, CopyHsl, DropResult.Close])
-    { Swatch = Rgb };
+        [DropResult.Close])
+    { Swatch = Rgb, Values = [Hex, RgbText, HslText] };
+
+    /// <summary>
+    /// Black or white as 0xAARRGGBB, whichever has more contrast on <paramref name="rgb"/> by WCAG's relative luminance:
+    /// black wins once (L + 0.05)² passes 1.05 × 0.05, at L of about 0.18.
+    /// </summary>
+    public static uint TextOn(uint rgb)
+    {
+        static double Channel(uint c) => c / 255.0 is var v && v <= 0.04045 ? v / 12.92 : Math.Pow((v + 0.055) / 1.055, 2.4);
+        double l = (0.2126 * Channel((rgb >> 16) & 0xFF)) + (0.7152 * Channel((rgb >> 8) & 0xFF)) + (0.0722 * Channel(rgb & 0xFF));
+        return (l + 0.05) * (l + 0.05) > 1.05 * 0.05 ? 0xFF000000 : 0xFFFFFFFF;
+    }
 }
 
 /// <summary>

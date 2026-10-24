@@ -81,11 +81,11 @@ public sealed class ScreenTextTests : IDisposable
     }
 
     [Fact]
-    public void TranslateIsOfferedOnlyWithAProviderAndMarksTheAIsText()
+    public void TranslateIsOfferedWithAProviderAndMarksTheAIsText()
     {
-        Assert.False(ScreenText.CanTranslate(new TomteSettings()));
-        Assert.True(ScreenText.CanTranslate(new TomteSettings { Provider = Provider }));
-        Assert.Equal([ScreenText.Translate, ScreenText.Copy, DropResult.Close], ScreenText.WithTranslate(ScreenText.Copied("one")).Choices);
+        var offered = ScreenText.Offer(new TomteSettings { Provider = Provider }, ScreenText.Copied("one"));
+        Assert.Equal([ScreenText.Translate, ScreenText.Copy, DropResult.Close], offered.Choices);
+        Assert.Equal(ScreenText.Copied("one").Line, offered.Line);
 
         var translated = ScreenText.Translated("eins", "German", "Sent to p · m");
         Assert.Equal("Text from screen · AI translated", translated.Title);
@@ -95,6 +95,68 @@ public sealed class ScreenTextTests : IDisposable
         Assert.Equal("German", ScreenText.LanguageName("de"));
         Assert.Equal(System.Globalization.CultureInfo.CurrentUICulture.EnglishName, ScreenText.LanguageName(""));
         Assert.Equal("", new TomteSettings().TranslateScreenTextTo);
+    }
+
+    [Fact]
+    public void WithoutAProviderTranslateGoesToMyMemoryAndTheCardSaysSoFirst()
+    {
+        var offered = ScreenText.Offer(new TomteSettings(), ScreenText.Copied("Guten Tag"));
+        Assert.Equal([ScreenText.Translate, ScreenText.Copy, DropResult.Close], offered.Choices);
+        Assert.EndsWith("· Translate sends it to MyMemory", offered.Line);
+        Assert.Equal("Nothing sent", offered.Indicator);
+
+        Assert.Equal(ScreenText.Translator.Provider, ScreenText.TranslatorFor(new TomteSettings { Provider = Provider }, new string('a', 9000)));
+        Assert.Equal(ScreenText.Translator.MyMemory, ScreenText.TranslatorFor(new TomteSettings(), new string('a', MyMemory.DailyChars)));
+        Assert.Equal(ScreenText.Translator.Browser, ScreenText.TranslatorFor(new TomteSettings(), new string('a', MyMemory.DailyChars + 1)));
+
+        // Past MyMemory's daily allowance the browser is offered instead, and the card says what goes to Google.
+        var longer = ScreenText.Offer(new TomteSettings(), ScreenText.Copied(new string('a', MyMemory.DailyChars + 1)));
+        Assert.Equal([ScreenText.TranslateInBrowser, ScreenText.Copy, DropResult.Close], longer.Choices);
+        Assert.Contains("· Translate in browser sends the first part to Google", longer.Line);
+
+        var failed = ScreenText.NotTranslated("Guten Tag", "Sent to MyMemory", MyMemory.QuotaUsed);
+        Assert.Equal([ScreenText.TranslateInBrowser, ScreenText.Copy, DropResult.Close], failed.Choices);
+        Assert.Contains("Google", failed.Line);
+
+        var translated = ScreenText.Translated("Good day", "English", "Sent to MyMemory", MyMemory.Name);
+        Assert.Equal("Text from screen · translated by MyMemory", translated.Title);
+        Assert.Contains("translated into English by MyMemory", translated.Line);
+        Assert.Contains("keeps the text", ScreenText.TranslatingWithMyMemory("Guten Tag", "English").Line);
+    }
+
+    [Fact]
+    public void TheBrowserAddressCarriesTheLanguageAndTheEscapedText()
+    {
+        var (url, cut) = ScreenText.BrowserTranslation("Fish & chips = 5 €?\nYes #1", "de");
+        Assert.False(cut);
+        Assert.Equal("https://translate.google.com/?sl=auto&tl=de&text=Fish%20%26%20chips%20%3D%205%20%E2%82%AC%3F%0AYes%20%231&op=translate", url);
+        Assert.Contains("&tl=zh-CN&", ScreenText.BrowserTranslation("x", "zh-Hans").Url);
+        Assert.Contains("&tl=zh-TW&", ScreenText.BrowserTranslation("x", "zh-Hant").Url);
+        Assert.Contains("&tl=no&", ScreenText.BrowserTranslation("x", "nb").Url);
+        Assert.Contains("&tl=pt&", ScreenText.BrowserTranslation("x", "pt").Url);
+    }
+
+    [Fact]
+    public void LongTextIsCutForTheBrowserAtAWordAndTheCardSaysSo()
+    {
+        // 6,000 characters of words: cut before 5,000, at the end of a word.
+        string text = string.Concat(Enumerable.Repeat("word ", 1200));
+        var (url, cut) = ScreenText.BrowserTranslation(text, "fr");
+        Assert.True(cut);
+        string sent = Uri.UnescapeDataString(url.Split("&text=")[1].Split("&op=")[0]);
+        Assert.True(sent.Length <= ScreenText.BrowserMaxChars);
+        Assert.EndsWith("word", sent);
+        Assert.StartsWith("word word", sent);
+        Assert.Contains("sends the first part to Google", ScreenText.Offer(new TomteSettings(), ScreenText.Copied(text)).Line);
+
+        // Without spaces, as in Chinese, the cut is at the limit of the escaped address, never inside a character.
+        string chinese = new('你', 3000);
+        (url, cut) = ScreenText.BrowserTranslation(chinese, "en");
+        sent = Uri.UnescapeDataString(url.Split("&text=")[1].Split("&op=")[0]);
+        Assert.True(cut);
+        Assert.Equal(ScreenText.BrowserMaxEscaped / 9, sent.Length);
+
+        Assert.False(ScreenText.BrowserTranslation(new string('a', ScreenText.BrowserMaxChars), "en").Cut);
     }
 
     [Theory]

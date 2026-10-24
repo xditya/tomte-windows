@@ -12,7 +12,9 @@ namespace Tomte.Shell;
 /// With the cleanup on in Settings and a provider set up, the text alone then goes to that provider, and the card shows
 /// the cleaned text, marked as AI's, copied in its place, with the text as read one click away. With a provider set up
 /// the card also offers Translate, which sends the text shown, and only on that click, for a translation into the
-/// language picked in Settings, shown and copied the same way. A QR code in the region takes the text's place: its
+/// language picked in Settings, shown and copied the same way. Without a provider Translate sends it to MyMemory,
+/// which needs no key, and the card says so; text too long for MyMemory, or a translation that failed, gets Translate
+/// in browser, which opens Google Translate with the text shown, and only on that click. A QR code in the region takes the text's place: its
 /// content is copied and shown whole, and a web link gets Open link, which is the only way it opens. The card holds the
 /// island until Close or Esc; once something was sent, Undo can bring it back for a while, as for a drop zone's result.
 /// On the island's thread.
@@ -27,6 +29,10 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
     private bool busy = true, parked;
     private string read = "", original = "";
     private PaletteSession? session;
+    private CancellationTokenSource? keyless;
+
+    // One client for MyMemory; a request that takes longer than this ends the translation with an error.
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private MascotState face = MascotState.Thinking;
 
     private bool Live => view.Open || parked;
@@ -125,12 +131,18 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         return running;
     }
 
-    private DropResult Offer(DropResult result) => ScreenText.CanTranslate(store.Current) ? ScreenText.WithTranslate(result) : result;
+    private DropResult Offer(DropResult result) => ScreenText.Offer(store.Current, result);
 
-    // The text shown goes to the provider, and only now, on the click.
+    // The text shown goes to the provider, or without one to MyMemory, and only now, on the click.
     private async Task TranslateAsync()
     {
         string source = last.Body, language = ScreenText.LanguageName(store.Current.TranslateScreenTextTo);
+        if (ScreenText.TranslatorFor(store.Current, source) == ScreenText.Translator.MyMemory)
+        {
+            await TranslateWithMyMemoryAsync(source, language);
+            return;
+        }
+
         if (Program.Configured(store, log) is not { } configured)
         {
             Show(last with { Line = "The provider in Settings cannot be used right now. Nothing was sent." }, busy: false);
@@ -166,6 +178,43 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         Finish(Copied(ScreenText.Translated(translated, language, running.ProviderIndicator), Copy(translated)), ok: true);
     }
 
+    private async Task TranslateWithMyMemoryAsync(string source, string language)
+    {
+        original = source;
+        var sending = keyless = new CancellationTokenSource();
+        face = MascotState.Thinking;
+        island.Mascot.Set(face);
+        Show(ScreenText.TranslatingWithMyMemory(source, language), busy: true);
+        MyMemory.Answer answer;
+        try
+        {
+            answer = await MyMemory.TranslateAsync(Http, source, ScreenText.ServiceLanguage(store.Current.TranslateScreenTextTo), sending.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"screen text: MyMemory failed: {e}");
+            answer = new(null, "MyMemory could not translate it.");
+        }
+
+        if (!Live)
+        {
+            return;
+        }
+
+        string indicator = $"Sent to {MyMemory.Name}";
+        if (answer.Text is not { Length: > 0 } translated)
+        {
+            Finish(ScreenText.NotTranslated(source, indicator, answer.SameLanguage ? $"{MyMemory.Name} says it is already in {language}." : answer.Error), ok: answer.SameLanguage);
+            return;
+        }
+
+        Finish(Copied(ScreenText.Translated(translated, language, indicator, MyMemory.Name), Copy(translated)), ok: true);
+    }
+
     private static DropResult Copied(DropResult result, bool copied) => copied ? result : result with { Line = ScreenText.ClipboardBusy };
 
     private void Open()
@@ -177,8 +226,8 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
 
     private void Closed()
     {
-        // Once something went to the provider, Undo can bring the card back for a while.
-        if (session is not null)
+        // Once something went to the provider or MyMemory, Undo can bring the card back for a while.
+        if (session is not null || keyless is not null)
         {
             parked = true;
             float height = view.Height, scroll = view.Scroll;
@@ -194,6 +243,7 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
     {
         parked = false;
         session?.Cancel();
+        keyless?.Cancel();
     }
 
     // Undo: the card in the pill's place, showing what the run has now, scrolled as it was.
@@ -212,8 +262,8 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         return true;
     }
 
-    // Copy puts the text shown on the clipboard again, Copy original the text before the AI changed it; either, and
-    // Close, then close. Translate keeps the card and fills it with the translation.
+    // Copy puts the text shown on the clipboard again, Copy original the text before the AI changed it; either, Open
+    // link, Translate in browser and Close, then close. Translate keeps the card and fills it with the translation.
     private void Chose(int i)
     {
         if (busy || i >= last.Choices.Count)
@@ -228,7 +278,13 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
             return;
         }
 
-        if (choice == ScreenText.Open && !OpenLink(last.Body))
+        if (choice == ScreenText.Open && !OpenLink(last.Body, "Windows could not open the link. It is copied, so you can paste it into a browser."))
+        {
+            return;
+        }
+
+        if (choice == ScreenText.TranslateInBrowser
+            && !OpenLink(ScreenText.BrowserTranslation(last.Body, store.Current.TranslateScreenTextTo).Url, "Windows could not open the browser. Nothing was sent."))
         {
             return;
         }
@@ -242,7 +298,7 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         triggers.Hide();
     }
 
-    private bool OpenLink(string url)
+    private bool OpenLink(string url, string failed)
     {
         try
         {
@@ -252,7 +308,7 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             log?.Invoke($"screen text: link did not open ({e.Message})");
-            Show(last with { Line = "Windows could not open the link. It is copied, so you can paste it into a browser." }, busy: false);
+            Show(last with { Line = failed }, busy: false);
             return false;
         }
     }

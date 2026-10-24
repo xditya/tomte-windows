@@ -159,7 +159,7 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
         // Without Win a global shortcut takes a key other apps use: Ctrl+C, Alt+F4, AltGr's Ctrl+Alt.
         if (!hotkey.Modifiers.HasFlag(HotkeyModifiers.Win))
         {
-            return "Add Win, for example Win+Alt+K, so the shortcut does not take a key other apps use.";
+            return "Add Win, for example Win+Alt+J, so the shortcut does not take a key other apps use.";
         }
 
         // Registered while a voice command waits for a yes; bound here, it could not be registered then and every ask would be a no.
@@ -172,6 +172,12 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
         if (hotkey == Triggers.UndoClose.Chord)
         {
             return "Win+Alt+Z brings back a closed AI answer. Pick another shortcut.";
+        }
+
+        // A stored Win+Alt+T reads as the new Copy text from screen default, so it could never be kept.
+        if (TryParse(HotkeySettings.OldTextCapture, out var timer, out _) && hotkey == timer)
+        {
+            return "Win+Alt+T shows the Game Bar recording timer. Pick another shortcut.";
         }
 
         foreach (var other in Enum.GetValues<HotkeyAction>())
