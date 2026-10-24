@@ -45,6 +45,11 @@ internal static partial class Program
             Result("zone-size-question", question),
             Result("zone-failed", failed),
             Result("zone-ask", ask),
+            ColourResult("colour-result", new PickedColour(58, 123, 213), ThemeScheme.Dark, hover: -1),
+            ColourResult("colour-result-hover-rgb", new PickedColour(58, 123, 213), ThemeScheme.Dark, hover: 1),
+            ColourResult("colour-result-near-panel", new PickedColour(0x1A, 0x1B, 0x1F), ThemeScheme.Dark, hover: -1),
+            ColourResult("colour-result-light", new PickedColour(255, 255, 255), ThemeScheme.Light, hover: 0),
+            ColourResult("colour-result-light-yellow", new PickedColour(0xF2, 0xB8, 0x4B), ThemeScheme.Light, hover: -1),
         ];
     }
 
@@ -132,6 +137,48 @@ internal static partial class Program
 
         Next steps are with the secretary.
         """;
+
+    // The colour picker's card as DropResultView builds it, in a scheme of its own: the square with its hairline, the rows
+    // right of it, one of them under the pointer when hover is its index.
+    private static Scene ColourResult(string name, PickedColour colour, ThemeScheme scheme, int hover)
+    {
+        const float width = (float)PanelSize.PaletteWidth;
+        var card = colour.Card(colour.Hex);
+        return new(name, IslandGeometry.Panel(width, new DropResultLayout(card, width, mascot: true).Height), c =>
+        {
+            Theme.UseScheme(scheme);
+            try
+            {
+                var layout = new DropResultLayout(card, width, mascot: true);
+                var host = new Vector2(-width / 2, 0);
+                c.Pill();
+                if (scheme != ThemeScheme.Dark)
+                {
+                    // The canvas's pill is the dark one; the scheme's own surface goes over it, near enough to its outline.
+                    c.RoundRect(new RectangleF(-width / 2, 0, width, layout.Height), 24, Theme.Island);
+                }
+
+                c.Mascot(shift: DropResultLayout.Seat.Shift);
+                c.RoundRect(Offset(layout.Choices[^1], host), DropResultLayout.Corner, Tomte.Core.Interaction.StateLook.Accent);
+                var swatch = Offset(layout.SwatchBox, host);
+                c.RoundRect(swatch, DropResultLayout.SwatchCorner, 0xFF000000 | colour.Rgb);
+                c.StrokeRect(swatch, DropResultLayout.SwatchCorner, Theme.Line);
+                if (hover >= 0)
+                {
+                    c.RoundRect(Offset(layout.Values[hover], host), DropResultLayout.Corner, Tomte.Core.Interaction.StateLook.Hover);
+                }
+
+                foreach (var line in layout.Slots)
+                {
+                    c.Text(line, host);
+                }
+            }
+            finally
+            {
+                Theme.UseScheme(ThemeScheme.Dark);
+            }
+        });
+    }
 
     // A zone's panel as DropResultView builds it, in the palette's width, the answer scrolled a fraction of the way down.
     private static Scene Result(string name, DropResult result, float scrolled = 0)

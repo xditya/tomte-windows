@@ -5,11 +5,12 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// Pick a colour from the screen, from the pick to its card: the hex is copied and the island opens in the Palette state
-/// on a drop result card with a swatch and the colour as HEX, RGB and HSL, each with its own Copy. Nothing leaves the PC.
-/// The card holds the island until a choice, Close or Esc. On the island's thread.
+/// on a drop result card with the colour as a square beside its hex, RGB and HSL, each row copying itself with the usual
+/// "Copied" at the row. Nothing leaves the PC. The card holds the island until Close or Esc. On the island's thread.
 /// </summary>
 internal sealed class ColourRun
 {
+    private readonly IslandWindow island;
     private readonly TriggerController triggers;
     private readonly DropResultView view;
     private readonly PickedColour colour;
@@ -18,10 +19,11 @@ internal sealed class ColourRun
 
     private ColourRun(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, PickedColour colour, Action<string>? log)
     {
-        (this.triggers, this.colour, this.log) = (triggers, colour, log);
+        (this.island, this.triggers, this.colour, this.log) = (island, triggers, colour, log);
         view = new DropResultView(island, triggers, shelf, text, log);
-        view.Chose += Chose;
-        card = colour.Card(Copy(colour.Hex));
+        view.Chose += _ => triggers.Hide();
+        view.ValueChosen += CopyValue;
+        card = colour.Card(Copy(colour.Hex) ? colour.Hex : null);
         Show();
         // After the change to the Palette state, which seats the tomte by the prompt box: this card's row is its head.
         island.Seat = DropResultLayout.Seat;
@@ -48,17 +50,19 @@ internal sealed class ColourRun
         triggers.ZonePalette(view.Height, busy: false);
     }
 
-    // Each Copy puts its format on the clipboard and closes the card; Close just closes it.
-    private void Chose(int i)
+    // A value row puts its text on the clipboard and the card stays, so another format can follow; Close is the only choice.
+    private void CopyValue(int i)
     {
-        if (i < card.Choices.Count && colour.Copies(card.Choices[i]) is { } words && !Copy(words))
+        string id = DropResultLayout.ValuePrefix + i;
+        if (i >= card.Values.Count || !Copy(card.Values[i]))
         {
-            card = card with { Line = ScreenText.ClipboardBusy };
-            Show();
+            island.Interaction.Acknowledge(view, id, "Another app has the clipboard open", tick: false);
             return;
         }
 
-        triggers.Hide();
+        card = colour.Card(card.Values[i]);
+        Show();
+        island.Interaction.Acknowledge(view, id);
     }
 
     private bool Copy(string words)

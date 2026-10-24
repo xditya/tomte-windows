@@ -1,4 +1,6 @@
 using Tomte.Core;
+using Tomte.Core.Interaction;
+using Tomte.Core.Text;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -29,22 +31,82 @@ public sealed class ColourPickTests
     }
 
     [Fact]
-    public void TheCardHasASwatchAndACopyForEachFormat()
+    public void TheCardShowsTheColourBesideRowsThatCopyEachFormat()
     {
-        var card = new PickedColour(58, 123, 213).Card(copied: true);
+        var colour = new PickedColour(58, 123, 213);
+        var card = colour.Card(colour.Hex);
         Assert.Equal(0x3A7BD5u, card.Swatch);
-        Assert.Equal("Copied #3A7BD5 · picked on this PC", card.Line);
-        Assert.Equal([PickedColour.CopyHex, PickedColour.CopyRgb, PickedColour.CopyHsl, DropResult.Close], card.Choices);
-        Assert.Equal(["#3A7BD5", "rgb(58, 123, 213)", "hsl(215, 65%, 53%)", null], card.Choices.Select(new PickedColour(58, 123, 213).Copies));
-
-        // The swatch sits above the values, which sit above the choices.
-        var layout = new DropResultLayout(card, (float)PanelSize.PaletteWidth, mascot: true);
-        Assert.Equal(DropResultLayout.SwatchHeight, layout.SwatchBand.Height);
-        Assert.True(layout.SwatchBand.Bottom <= layout.Band.Top);
-        Assert.True(layout.Band.Bottom <= layout.Choices[0].Y);
-        Assert.InRange(layout.Height, PanelSize.PaletteMinHeight, PanelSize.PaletteMaxHeight);
-        Assert.True(new DropResultLayout(ScreenTextCard, (float)PanelSize.PaletteWidth, mascot: true).SwatchBand.IsEmpty);
+        Assert.Equal("Copied #3A7BD5 · click a value to copy it", card.Line);
+        Assert.Equal(["#3A7BD5", "rgb(58, 123, 213)", "hsl(215, 65%, 53%)"], card.Values);
+        Assert.Equal([DropResult.Close], card.Choices);
+        Assert.Equal("", card.Body);
+        Assert.Contains("nothing was copied", colour.Card(null).Line);
+        Assert.Equal("Copied rgb(58, 123, 213) · click a value to copy it", colour.Card(colour.RgbText).Line);
     }
+
+    [Theory]
+    [InlineData(720f, true)]
+    [InlineData(720f, false)]
+    [InlineData(480f, true)]
+    [InlineData(400f, true)]
+    public void TheSwatchSitsLeftOfItsValuesAndBothFitAboveClose(float width, bool mascot)
+    {
+        var colour = new PickedColour(255, 255, 255);
+        var layout = new DropResultLayout(colour.Card(colour.Hex), width, mascot);
+        var swatch = layout.SwatchBox;
+        Assert.Equal((DropResultLayout.SwatchSide, DropResultLayout.SwatchSide), (swatch.Width, swatch.Height));
+        Assert.Equal(DropResultLayout.Pad, swatch.X);
+        Assert.Equal(3, layout.Values.Count);
+
+        // The rows stack right of the square, never over it, inside the card, and together are as tall as it.
+        Assert.Equal(swatch.Y, layout.Values[0].Y);
+        Assert.Equal(swatch.Bottom, layout.Values[^1].Bottom);
+        Assert.True(layout.Values[0].Height > layout.Values[1].Height);
+        for (int i = 0; i < layout.Values.Count; i++)
+        {
+            var row = layout.Values[i];
+            Assert.True(row.X >= swatch.Right + 8);
+            Assert.True(row.Right <= width - DropResultLayout.Pad);
+            Assert.True(row.Width <= DropResultLayout.ValueWidth);
+            Assert.True(i == 0 || row.Y >= layout.Values[i - 1].Bottom);
+            // Each value's text fits its row on one line.
+            var slot = layout.Slots.Single(s => s.Text == colour.Card(colour.Hex).Values[i]);
+            Assert.True(TextSlot.Measure(slot.Text, slot.Style, 1000) <= slot.Slot.Width);
+            Assert.True(row.Contains(slot.Slot));
+        }
+
+        Assert.True(swatch.Bottom < layout.Choices[0].Y);
+        Assert.True(layout.Band.IsEmpty);
+        Assert.InRange(layout.Height, PanelSize.PaletteMinHeight, PanelSize.PaletteMaxHeight);
+        Assert.True(layout.Choices[^1].Bottom <= layout.Height);
+
+        // The rows are one arrow group ahead of Close in Tab order; Enter on one copies it.
+        var targets = layout.Targets(0);
+        Assert.Equal(["value:0", "value:1", "value:2", "choice:0"], targets.Select(t => t.Id));
+        Assert.All(targets.Take(3), t => Assert.Equal((TargetKind.Row, 1, "Enter"), (t.Kind, t.Group, t.Key)));
+        Assert.Equal(3, Target.Next(targets, 0, 1));
+        Assert.Equal((1, -1), (DropResultLayout.ValueOf("value:1"), DropResultLayout.ValueOf("choice:0")));
+    }
+
+    [Fact]
+    public void OtherCardsHaveNoSwatchOrValueRows()
+    {
+        var layout = new DropResultLayout(ScreenTextCard, (float)PanelSize.PaletteWidth, mascot: true);
+        Assert.True(layout.SwatchBox.IsEmpty);
+        Assert.Empty(layout.Values);
+        Assert.Equal(["choice:0"], layout.Targets(0).Select(t => t.Id));
+    }
+
+    [Theory]
+    [InlineData(0xFFFFFFu, 0xFF000000u)]
+    [InlineData(0x000000u, 0xFFFFFFFFu)]
+    [InlineData(0xFFFF00u, 0xFF000000u)]
+    [InlineData(0x0000FFu, 0xFFFFFFFFu)]
+    [InlineData(0x3A7BD5u, 0xFF000000u)]
+    [InlineData(0x1F4E8Cu, 0xFFFFFFFFu)]
+    [InlineData(0x808080u, 0xFF000000u)]
+    public void TheSampleOnTheSwatchUsesTheTextColourWithMoreContrast(uint rgb, uint text) =>
+        Assert.Equal(text, PickedColour.TextOn(rgb));
 
     private static DropResult ScreenTextCard => new("t", "i", "l", false, "body", [], [DropResult.Close]);
 

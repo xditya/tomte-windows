@@ -32,8 +32,11 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
     /// <summary>The panel's last state, which stays until dismissed: with a Close row unless it already offers its own choices.</summary>
     public DropResult Closable() => Choices.Count == 0 ? this with { Choices = [Close] } : this;
 
-    /// <summary>A colour (RRGGBB) shown as a full-width band above the answer, as the colour picker's card does.</summary>
+    /// <summary>A colour (RRGGBB) shown as a square left of <see cref="Values"/>, as the colour picker's card does.</summary>
     public uint? Swatch { get; init; }
+
+    /// <summary>Beside <see cref="Swatch"/>: rows that each copy their own text, the first written large.</summary>
+    public IReadOnlyList<string> Values { get; init; } = [];
 }
 
 /// <summary>
@@ -48,7 +51,18 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 public sealed class DropResultLayout
 {
     public const float Pad = 16, HeadTop = 12, HeadHeight = 18, LineTop = 34, LineHeight = 14, BodyTop = 58;
-    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8, SwatchHeight = 40;
+    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8;
+
+    /// <summary>
+    /// A swatch's value rows: the first (the hex) tall, the others short, all no wider than <see cref="ValueWidth"/> so
+    /// they stay by the square. The square is as tall as three rows, so it lines up with a hex and two more.
+    /// </summary>
+    public const float HexRowHeight = 40, ValueRowHeight = 28, ValueRowGap = 2, ValueWidth = 300, ValueInset = 10, SwatchGap = 16, SwatchCorner = 12;
+
+    public const float SwatchSide = HexRowHeight + 2 * (ValueRowGap + ValueRowHeight);
+
+    public static TextStyle HexStyle => new(22, 600, Tabular: true, Family: TextStyle.Mono);
+    public static TextStyle ValueStyle => TextStyle.Figures with { Size = 13, Color = Theme.Ink2 };
 
     /// <summary>A choice is a rectangular button; a result file is a small tile with its kind's square.</summary>
     public const float Corner = 10, TileCorner = 12, IconCorner = 8;
@@ -87,7 +101,7 @@ public sealed class DropResultLayout
 
     public static TextStyle RestStyle => TextStyle.Secondary with { LineHeight = 19 };
 
-    private readonly List<RectangleF> tiles = [], choices = [];
+    private readonly List<RectangleF> tiles = [], choices = [], values = [];
     private readonly List<TextSlot> slots = [];
 
     /// <summary>The tomte beside the head row: centred on it, its art as far in from the left edge as the answer below.</summary>
@@ -110,10 +124,21 @@ public sealed class DropResultLayout
         int perRow = Math.Max(1, (int)((inner + Gap) / (TileWidth + Gap)));
         float below = result.Choices.Count * (ChoiceHeight + Gap) + (result.Tiles.Count == 0 ? 0 : (result.Tiles.Count + perRow - 1) / perRow * (TileHeight + Gap));
         float y = problem ? LineTop + 4 : BodyTop;
-        if (result.Swatch is not null)
+        if (result.Swatch is uint swatch)
         {
-            SwatchBand = new RectangleF(Pad, y, inner, SwatchHeight);
-            y += SwatchHeight + Gap + 4;
+            SwatchBox = new RectangleF(Pad, y, SwatchSide, SwatchSide);
+            // A sample of text in black or white, whichever reads better on the colour.
+            slots.Add(new("Aa", new TextStyle(13, 600, PickedColour.TextOn(swatch)), new(SwatchBox.X + 10, SwatchBox.Bottom - 28, SwatchSide - 20, 18)));
+            float x = SwatchBox.Right + SwatchGap, w = Math.Min(ValueWidth, width - Pad - x), row = y;
+            for (int i = 0; i < result.Values.Count; i++)
+            {
+                var r = new RectangleF(x, row, w, i == 0 ? HexRowHeight : ValueRowHeight);
+                values.Add(r);
+                slots.Add(new(result.Values[i], i == 0 ? HexStyle : ValueStyle, new(r.X + ValueInset, r.Y, r.Width - 2 * ValueInset, r.Height)));
+                row = r.Bottom + ValueRowGap;
+            }
+
+            y = Math.Max(SwatchBox.Bottom, row) + Gap + 4;
         }
         if (shown.Length > 0)
         {
@@ -148,7 +173,10 @@ public sealed class DropResultLayout
         Height = Math.Clamp(MathF.Ceiling(bottom + Pad - Gap), Math.Min((float)PanelSize.PaletteMinHeight, maxHeight), maxHeight);
     }
 
-    /// <summary>The head row, the line, each choice's sentence and each tile's name and line, in that order.</summary>
+    /// <summary>
+    /// The head row, the line, the swatch's sample and each value, each choice's sentence and each tile's name and line,
+    /// in that order.
+    /// </summary>
     public IReadOnlyList<TextSlot> Slots => slots;
 
     /// <summary>
@@ -171,7 +199,10 @@ public sealed class DropResultLayout
     public IReadOnlyList<RectangleF> Tiles => tiles;
 
     /// <summary>Where <see cref="DropResult.Swatch"/> is drawn; empty without one.</summary>
-    public RectangleF SwatchBand { get; }
+    public RectangleF SwatchBox { get; }
+
+    /// <summary>The rows of <see cref="DropResult.Values"/>, right of the swatch.</summary>
+    public IReadOnlyList<RectangleF> Values => values;
 
     public IReadOnlyList<RectangleF> Choices => choices;
 
@@ -263,16 +294,22 @@ public sealed class DropResultLayout
     }
 
     /// <summary>
-    /// What takes clicks and keys, in Tab order and the panel's own DIPs: each choice as a button ("choice:0" on), then
-    /// each tile ("tile:0" on), which a drag takes out of the island. A tile with no file behind it is disabled.
+    /// What takes clicks and keys, in Tab order and the panel's own DIPs: the value rows as one group the arrows move
+    /// through ("value:0" on), each choice as a button ("choice:0" on), then each tile ("tile:0" on), which a drag takes
+    /// out of the island. A tile with no file behind it is disabled.
     /// </summary>
     public IReadOnlyList<Target> Targets(int files) =>
     [
+        .. values.Select((r, i) => new Target($"{ValuePrefix}{i}", r, Corner, TargetKind.Row, Tip: "Copy", Group: 1, Key: "Enter")),
         .. choices.Select((r, i) => new Target($"{ChoicePrefix}{i}", r, Corner, TargetKind.Button)),
         .. tiles.Select((r, i) => new Target($"{TilePrefix}{i}", r, Corner, TargetKind.Tile, Enabled: i < files, Draggable: true)),
     ];
 
-    public const string ChoicePrefix = "choice:", TilePrefix = "tile:";
+    public const string ChoicePrefix = "choice:", TilePrefix = "tile:", ValuePrefix = "value:";
+
+    /// <summary>The value row's index in a target's id, -1 when it is not a value row.</summary>
+    public static int ValueOf(string id) =>
+        id.StartsWith(ValuePrefix, StringComparison.Ordinal) ? int.Parse(id.AsSpan(ValuePrefix.Length), CultureInfo.InvariantCulture) : -1;
 
     /// <summary>The choice's or the tile's index in a target's id, -1 for each when it is the other.</summary>
     public static (int Tile, int Choice) Of(string id) =>
