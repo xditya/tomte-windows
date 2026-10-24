@@ -67,8 +67,8 @@ public sealed class DeviceToolsTests : IDisposable
     {
         var deviceTools = BuiltInTools.Definitions.Select(d => d.Name).Where(BuiltInTools.IsDeviceTool).ToList();
         Assert.Equal(DeviceActionTiers.All.Count, deviceTools.Count);
-        // The five built-in tools and the timer next to the device actions; the note step and the shortcuts are for voice.
-        Assert.Equal(6 + DeviceActionTiers.All.Count, BuiltInTools.Definitions.Count);
+        // The five built-in tools, the timer and reminders next to the device actions; the note step and the shortcuts are for voice.
+        Assert.Equal(7 + DeviceActionTiers.All.Count, BuiltInTools.Definitions.Count);
         Assert.Equal(BuiltInTools.Definitions.Count + 2, BuiltInTools.All.Count);
         // The same tiers as the device table, one for one.
         Assert.Equal(DeviceActionTiers.All.Values.Order(), deviceTools.Select(t => BuiltInTools.Tiers[t]).Order());

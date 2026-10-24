@@ -1,10 +1,15 @@
+using System.Text.Json;
+using Tomte.AI;
+using Tomte.AI.Palette;
+using Tomte.Core;
+using Tomte.Core.Device;
 using Tomte.Core.Jobs;
 using Tomte.Core.Storage;
 using Xunit;
 
 namespace Tomte.Tests;
 
-/// <summary>Reminders: reading them from typed words, storing and ringing them.</summary>
+/// <summary>Reminders: reading them from typed words, storing and ringing them, and the model's set_reminder.</summary>
 public sealed class ReminderTests : IDisposable
 {
     private static readonly TimeZoneInfo India = TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
@@ -182,4 +187,73 @@ public sealed class ReminderTests : IDisposable
         _store.Dismiss(added.Id);
         Assert.Null(JobStore.ReadMarker(_store.MarkerPath));
     }
+
+    [Theory]
+    [InlineData("""{"text":"standup","time":"09:30","days":["mon","tue","wed","thu","fri"]}""")]
+    [InlineData("""{"text":"standup","time":"09:30","days":"mon, tue"}""")]
+    [InlineData("""{"text":"pay rent","time":"09:00","date":"2026-11-01","days":null}""")]
+    [InlineData("""{"text":"pay rent","time":"09:00","date":"2026-11-01","days":[]}""")]
+    public void SetReminderTakesGoodArguments(string json) =>
+        Assert.Null(BuiltInTools.Validate(BuiltInTools.SetReminder, JsonDocument.Parse(json).RootElement));
+
+    [Theory]
+    [InlineData("""{"time":"09:30","days":["mon"]}""", "set_reminder needs a non-empty string argument \"text\".")]
+    [InlineData("""{"text":"","time":"09:30","days":["mon"]}""", "set_reminder: \"text\" must be a non-empty string.")]
+    [InlineData("""{"text":"x","days":["mon"]}""", "set_reminder needs a non-empty string argument \"time\".")]
+    [InlineData("""{"text":"x","time":"half nine","days":["mon"]}""", "time must be a 24-hour time such as 09:00, not \"half nine\".")]
+    [InlineData("""{"text":"x","time":"09:30"}""", "Say when the job runs: days for a repeating job, or date for a one-off. Ask the user when that is unclear.")]
+    [InlineData("""{"text":"x","time":"09:30","days":["mon"],"date":"2026-11-01"}""", "Give days for a repeating job or date for a one-off, not both.")]
+    [InlineData("""{"text":"x","time":"09:30","days":["someday"]}""", "days takes mon, tue, wed, thu, fri, sat or sun, not \"someday\".")]
+    [InlineData("""{"text":"x","time":"09:30","days":5}""", "set_reminder: \"days\" must be a list.")]
+    public void SetReminderRefusesBadArguments(string json, string error) =>
+        Assert.Equal(error, BuiltInTools.Validate(BuiltInTools.SetReminder, JsonDocument.Parse(json).RootElement));
+
+    [Fact]
+    public void SetReminderRefusesTextTooLongToShow()
+    {
+        string json = JsonSerializer.Serialize(new { text = new string('a', ReminderStore.MaxText + 1), time = "09:00", date = "2026-11-01" });
+        Assert.Equal("text must be at most 200 characters.", BuiltInTools.Validate(BuiltInTools.SetReminder, JsonDocument.Parse(json).RootElement));
+    }
+
+    [Fact]
+    public void SetReminderStoresThroughTheShellAndSaysWhenItShows()
+    {
+        var set = new List<(string Text, string Schedule)>();
+        var tools = new BuiltInTools(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { })
+        {
+            Reminders = (text, schedule) =>
+            {
+                set.Add((text, schedule.Describe()));
+                return schedule.Date is null ? new DateTimeOffset(2026, 10, 23, 9, 30, 0, TimeSpan.Zero) : null;
+            },
+        };
+
+        var (done, undo) = tools.Run(Call("""{"text":" standup ","time":"09:30","days":["weekdays"]}"""));
+        Assert.False(done.IsError, done.Content);
+        Assert.StartsWith("Reminder set; it first shows Friday 23 October at ", done.Content);
+        Assert.Null(undo);
+        Assert.Equal([("standup", "Every weekday at 09:30")], set);
+        Assert.Equal("Remind you \"standup\": Every weekday at 09:30", BuiltInTools.Describe(BuiltInTools.SetReminder, Call("""{"text":"standup","time":"09:30","days":["weekdays"]}""").Input));
+
+        var (passed, _) = tools.Run(Call("""{"text":"pay rent","time":"09:00","date":"2026-01-01"}"""));
+        Assert.True(passed.IsError);
+        Assert.Equal("That time has already passed. Ask the user for a time in the future.", passed.Content);
+
+        var (missing, _) = new BuiltInTools(new InMemoryShelf(), new InMemoryScratchpad(), _ => { }, _ => { }).Run(Call("""{"text":"x","time":"09:00","days":["mon"]}"""));
+        Assert.Equal("Reminders are not available here.", missing.Content);
+    }
+
+    [Fact]
+    public void SetReminderOffersItsDaysAsAListOfStringsAndRunsOnThePool()
+    {
+        var schema = BuiltInTools.Definitions.Single(d => d.Name == BuiltInTools.SetReminder).InputSchema;
+        var days = schema.GetProperty("properties").GetProperty("days");
+        Assert.Equal("array", days.GetProperty("type").GetString());
+        Assert.Equal("string", days.GetProperty("items").GetProperty("type").GetString());
+        Assert.Equal(["text", "time"], schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(ActionTier.AppLocalWrite, BuiltInTools.Tiers[BuiltInTools.SetReminder]);
+        Assert.True(BuiltInTools.RunsOffThread(BuiltInTools.SetReminder));
+    }
+
+    private static ToolCallPart Call(string json) => new("id", BuiltInTools.SetReminder, JsonDocument.Parse(json).RootElement);
 }
