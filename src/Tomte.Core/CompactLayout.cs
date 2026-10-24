@@ -62,7 +62,23 @@ public static class CompactLayout
     public const float DotSize = 8, Halo = 4;
     public static TextStyle ElapsedStyle => new(13, Tabular: true, Family: TextStyle.Mono);
 
-    public const string PillId = "pill", TomteId = "tomte", AskTip = "Ask Tomte";
+    /// <summary>The round mic button during a call, as tall as the undo pill's button, and its glyph.</summary>
+    public const float MicSize = 28, MicGlyph = 16;
+
+    /// <summary>
+    /// How much wider the pill grows for the mic button: the button, its inset and a gap, less the end inset the content
+    /// keeps anyway. The content keeps its 220 wide frame at the leading end, so the tomte, the ring, the art and the
+    /// words sit where they always do from the left and the button takes the room after them.
+    /// </summary>
+    public static readonly float MicRoom = MathF.Ceiling(UndoInset + MicSize + Gap - EndInset);
+
+    public const string PillId = "pill", TomteId = "tomte", AskTip = "Ask Tomte", MicId = "mic";
+
+    /// <summary>The mic button in island space, at the trailing end of the pill grown by <see cref="MicRoom"/>, centred down it.</summary>
+    public static RectangleF MicButton => new(((Width + MicRoom) / 2) - UndoInset - MicSize, (Depth - MicSize) / 2, MicSize, MicSize);
+
+    /// <summary>The mic button's tooltip: what a click does now.</summary>
+    public static string MicTip(bool muted) => muted ? "Unmute the microphone" : "Mute the microphone";
 
     private static float Width => (float)IslandGeometry.Compact.Width;
 

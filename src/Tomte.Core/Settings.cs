@@ -100,6 +100,12 @@ public sealed record TomteSettings
     /// </summary>
     public bool KeepWhilePlaying { get; init; }
 
+    /// <summary>
+    /// While another app uses the microphone, the push pill carries a button that mutes it. On by default; on, Tomte
+    /// hears apps start and stop using the microphone while the island is hidden.
+    /// </summary>
+    public bool MuteDuringCalls { get; init; } = true;
+
     /// <summary>Skills the user turned on, by folder name. A skill not listed is off, so a new one starts off.</summary>
     public IReadOnlyList<string> EnabledSkills { get; init; } = [];
 
@@ -209,6 +215,8 @@ public sealed record HotkeySettings
     /// <summary>E for eyedropper. Win+Alt+K, the obvious pick, mutes the microphone in calls on Windows 11.</summary>
     public string ColourPick { get; init; } = "Win+Alt+E";
 
+    public string Mute { get; init; } = "Win+Alt+U";
+
     public string this[HotkeyAction action] => action switch
     {
         HotkeyAction.Summon => Summon,
@@ -219,6 +227,7 @@ public sealed record HotkeySettings
         HotkeyAction.Search => Search,
         HotkeyAction.TextCapture => TextCapture,
         HotkeyAction.ColourPick => ColourPick,
+        HotkeyAction.Mute => Mute,
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
@@ -232,6 +241,7 @@ public sealed record HotkeySettings
         HotkeyAction.Search => this with { Search = chord },
         HotkeyAction.TextCapture => this with { TextCapture = chord },
         HotkeyAction.ColourPick => this with { ColourPick = chord },
+        HotkeyAction.Mute => this with { Mute = chord },
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 }

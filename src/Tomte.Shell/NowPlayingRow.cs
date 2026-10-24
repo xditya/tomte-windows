@@ -133,7 +133,7 @@ internal sealed class NowPlayingRow
             // moves in them: no bars.
             bool mascot = island.Mascot.Enabled, bars = reason is not (CompactReason.Peek or CompactReason.Playing);
             // Without bars the art and its title end the pill as one group, so they go with its trailing end.
-            view = new View(island.Compositor, text, mascot && !bars ? island.Trailing : island.Dips, mascot, bars);
+            view = new View(island.Compositor, text, mascot && !bars ? island.Trailing : island.Pill, mascot, bars);
             view.Root.Opacity = 0;
             view.Root.StartAnimation("Opacity", fadeIn);
             ShowingChanged?.Invoke();

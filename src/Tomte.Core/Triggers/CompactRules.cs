@@ -28,6 +28,9 @@ public enum IslandEventSource
     Other,
     Timer,
     TrackChange,
+
+    /// <summary>The mute key's pill: whether the microphone is muted now, with the mic button.</summary>
+    Mic,
 }
 
 /// <summary>What fills the Compact pill's one line of live content.</summary>
@@ -194,6 +197,22 @@ public static class CompactRules
     /// </summary>
     public static PanelId? TabAfterClick(PanelId? beforeClick, PanelId? current) =>
         beforeClick is { } back && current == PanelId.Media ? back : null;
+
+    /// <summary>
+    /// Whether the pill carries the mic button: the mute key's own pill always, and while another app uses the
+    /// microphone (<paramref name="call"/>, which also means the setting is on and there is a microphone) the push pill and
+    /// the pill kept while music plays. Never desktop peek, which rests in shapes of its own, nor a pill that has a
+    /// button or no room of its own (undo, the rambler), the hint, the arrival or another feature's event.
+    /// </summary>
+    public static bool ShowsMic(CompactReason reason, IslandEventSource shown, bool call, bool peek) => reason switch
+    {
+        CompactReason.Event => shown == IslandEventSource.Mic,
+        CompactReason.Summary or CompactReason.Playing => call && !peek,
+        _ => false,
+    };
+
+    /// <summary>What the mute key's pill says.</summary>
+    public static string MicLine(bool muted) => muted ? "Microphone muted" : "Microphone on";
 
     /// <summary>The track-change pill shows when the user turned it on, except over the kept pill, whose row already shows the new track.</summary>
     public static bool AnnouncesTrack(bool on, CompactReason showing) => on && showing != CompactReason.Playing;

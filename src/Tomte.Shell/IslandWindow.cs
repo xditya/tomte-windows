@@ -205,18 +205,35 @@ internal sealed unsafe class IslandWindow : IDisposable
         Live = compositor.CreatePropertySet();
         Live.InsertScalar("RampW", 0);
         Live.InsertScalar("Depth", 0);
+        Live.InsertScalar("Room", 0);
+
+        // The body's right edge from the centre line, in pixels, in every frame.
+        string edge = FormattableString.Invariant($"((content.Size.X - {2 * Margin}) / 2 - live.RampW * dips.Scale.X)");
+        float half = (float)IslandGeometry.Compact.Width / 2;
+
+        // With room for a button at the trailing end, the pill's content keeps its 220 wide frame against the leading
+        // end: as the body grows past 220 it moves left with the left edge, by up to half the room, a whole number of pixels.
+        Pill = compositor.CreateContainerVisual();
+        var frame = compositor.CreateExpressionAnimation(FormattableString.Invariant(
+            $"Vector3(-Clamp(Round({edge} - {half} * dips.Scale.X), 0, Round(live.Room / 2 * dips.Scale.X)) / dips.Scale.X, 0, 0)"));
+        frame.SetReferenceParameter("content", Content);
+        frame.SetReferenceParameter("dips", Dips);
+        frame.SetReferenceParameter("live", Live);
+        Pill.StartAnimation("Offset", frame);
+        Dips.Children.InsertAtTop(Pill);
 
         // The body's trailing end in every frame, and the middle of the live top row against the pill's, each a whole
         // number of pixels from Dips' origin, so text placed in it lands on the pixel grid as it does there. At rest on
-        // the pill, both are exactly where Dips puts the pill's own right edge and middle.
+        // the pill, both are exactly where Dips puts the pill's own right edge and middle. With room for a button, the end
+        // is that of the content's frame instead.
         Trailing = compositor.CreateContainerVisual();
         var end = compositor.CreateExpressionAnimation(FormattableString.Invariant(
-            $"Vector3(Ceil((content.Size.X - {2 * Margin}) / 2 - live.RampW * dips.Scale.X) / dips.Scale.X, Floor((Min(content.Size.Y - {2 * Margin}, {PanelSpace.TabStripHeight} * dips.Scale.X) - Ceil({IslandGeometry.Compact.Depth} * dips.Scale.X)) / 2) / dips.Scale.X, 0)"));
+            $"Vector3((live.Room > 0 ? Round({half} * dips.Scale.X) : Ceil({edge})) / dips.Scale.X, Floor((Min(content.Size.Y - {2 * Margin}, {PanelSpace.TabStripHeight} * dips.Scale.X) - Ceil({IslandGeometry.Compact.Depth} * dips.Scale.X)) / 2) / dips.Scale.X, 0)"));
         end.SetReferenceParameter("content", Content);
         end.SetReferenceParameter("dips", Dips);
         end.SetReferenceParameter("live", Live);
         Trailing.StartAnimation("Offset", end);
-        Dips.Children.InsertAtTop(Trailing);
+        Pill.Children.InsertAtTop(Trailing);
 
         live = compositor.CreateContainerVisual();
         live.Children.InsertAtBottom(pill.Visual);
@@ -276,6 +293,23 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// pill still growing toward where it rests.
     /// </summary>
     public ContainerVisual Trailing { get; }
+
+    /// <summary>
+    /// Inside <see cref="Dips"/>, the Compact pill's content in island space, except while the pill has
+    /// <see cref="ButtonRoom"/>: then its 220 wide frame keeps to the leading end of the grown pill. <see cref="Trailing"/>
+    /// is inside it.
+    /// </summary>
+    public ContainerVisual Pill { get; }
+
+    /// <summary>
+    /// DIPs the Compact pill grows by at its trailing end for a button there; 0 for none. Set it before the morph that
+    /// grows the pill, while the pill is still 220 wide, and leave it while the pill shrinks back: at 220 it moves
+    /// nothing. Set it to 0 before a pill of another width opens.
+    /// </summary>
+    public float ButtonRoom
+    {
+        set => Live.InsertScalar("Room", value);
+    }
 
     /// <summary>
     /// Inside <see cref="Content"/>, in island space: DIPs, x = 0 on the island's centre line, y = 0 at the
@@ -632,8 +666,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         swell = swellAimed = false;
         double lead = heldLead;
         heldLead = 0;
-        // Trailing is always one of Dips' children, so only what is in it, or a second child, has anything to fade.
-        if (to.Depth <= 0.5 && (Dips.Children.Count > 1 || Trailing.Children.Count > 0))
+        // Pill is always one of Dips' children and Trailing one of Pill's, so only what is in them, or another child, has anything to fade.
+        if (to.Depth <= 0.5 && (Dips.Children.Count > 1 || Pill.Children.Count > 1 || Trailing.Children.Count > 0))
         {
             // Whatever shows inside fades out first; the shape follows.
             lead = Math.Max(lead, ContentFadeOutSeconds);
