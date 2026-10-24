@@ -446,6 +446,22 @@ public sealed partial class PaletteSession : IPaletteSession
 
     public void Cancel() => _userCancel?.Cancel();
 
+    /// <summary>
+    /// Typed words Tomte handled itself, such as a reminder it set: <paramref name="line"/> shows as the answer. Nothing is
+    /// sent or kept in the history. Ignored while a send is on its way.
+    /// </summary>
+    public void AnswerLocally(string prompt, string line)
+    {
+        if (Status == PaletteStatus.Sending)
+            return;
+        _answer.Clear();
+        ToolSteps = 0;
+        Error = null;
+        Prompt = prompt;
+        Note(line);
+        Finish(PaletteStatus.Done, null);
+    }
+
     // A card asks before a tool runs, and nothing is on its way while it waits: the provider line says so until the answer.
     private async Task<PermissionAnswer> AskAsync(ToolRequest request, CancellationToken ct)
     {

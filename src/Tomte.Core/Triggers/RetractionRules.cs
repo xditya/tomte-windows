@@ -31,6 +31,9 @@ public enum IslandActivity
     /// <see cref="RetractionRules.KeptAfterPlayback"/>.
     /// </summary>
     Playing = 512,
+
+    /// <summary>A reminder that rang, with Snooze and Dismiss: it holds the island until one is pressed, and a rest on it opens nothing.</summary>
+    Reminder = 1024,
 }
 
 /// <summary>What a pointer report does to the hover dwell: nothing, start it, or cancel it.</summary>
@@ -66,9 +69,9 @@ public static class RetractionRules
     /// </summary>
     public static IslandActivity DraggingOut(IslandActivity activity) => activity & ~IslandActivity.Pressing;
 
-    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler or the undo pill holds the pill, a drag is moving it or a press holds the mouse.</summary>
+    /// <summary>A hover dwell or a scroll on the pill opens Panels from Compact, unless the rambler, the undo pill or a reminder holds the pill, a drag is moving it or a press holds the mouse.</summary>
     public static bool OpensPanels(IslandState state, IslandActivity activity) =>
-        state == IslandState.Compact && (activity & (IslandActivity.Rambling | IslandActivity.Undo | IslandActivity.DragInProgress | IslandActivity.Pressing)) == 0;
+        state == IslandState.Compact && (activity & (IslandActivity.Rambling | IslandActivity.Undo | IslandActivity.Reminder | IslandActivity.DragInProgress | IslandActivity.Pressing)) == 0;
 
     /// <summary>
     /// What one pointer report does to the hover dwell that opens Panels from Compact: coming onto the pill starts it,
@@ -89,11 +92,11 @@ public static class RetractionRules
     /// <summary>
     /// What is left when a state the user asked for takes the island over: the peek pill's "retract when a window
     /// comes under" rule, the hold of the pill kept while music plays and the rambler's hold on the pill end, so a hold
-    /// that ends later cannot retract it, and a drop zone's result, which the new state replaces, no longer holds the
-    /// island.
+    /// that ends later cannot retract it, and a drop zone's result or a reminder's pill, which the new state replaces, no
+    /// longer holds the island.
     /// </summary>
     public static IslandActivity TakenOver(IslandActivity activity) =>
-        activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result | IslandActivity.Playing);
+        activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result | IslandActivity.Playing | IslandActivity.Reminder);
 
     /// <summary>How long the pill kept while music plays stays once playback pauses or stops, so it does not come and go between tracks.</summary>
     public static readonly TimeSpan KeptAfterPlayback = TimeSpan.FromSeconds(5);

@@ -176,7 +176,7 @@ public sealed record JobSchedule
         return new DateTimeOffset(local, offset);
     }
 
-    private static IEnumerable<DayOfWeek>? ParseDay(string day)
+    internal static IEnumerable<DayOfWeek>? ParseDay(string day)
     {
         string key = day.Trim().ToLowerInvariant();
         if (key is "weekday" or "weekdays")

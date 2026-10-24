@@ -47,7 +47,8 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
                 "into one call of schedule_job. Its prompt is the instruction Tomte follows at each run with nobody at the " +
                 "keyboard, so write it in full. Its tools lists every tool that instruction needs, and only those, by name. " +
                 "Tools that lock, sleep, restart or shut down the PC never run in a job. If such a request does not say when, " +
-                "or you are not sure, call no tool and ask one short question.";
+                "or you are not sure, call no tool and ask one short question. To be told something at a time, the user wants " +
+                "set_reminder, not schedule_job.";
         }
     }
 

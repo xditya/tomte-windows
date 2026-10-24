@@ -126,6 +126,7 @@ public sealed partial class SettingsWindow : Window
                     Row("When you finish speaking, Enter does", voiceNote, VoiceEnter()),
                     Row("Spoken replies", Note("Read the answer to a voice command aloud with Windows speech."), Toggle(s => s.SpokenReplies, (s, v) => s with { SpokenReplies = v })))]),
                 ("Scratchpad", "\uE70B", "Text you put in the note by typing a slash and its name.", [SnippetsSection()]),
+                ("Reminders", "", "What the island tells you at a time you chose.", [RemindersSection()]),
             ]),
             ("AI", [
                 (ProviderPage, "\uF4A5", "Tomte sends a request only when you ask, or when a job you made runs. With no provider set up, the AI layer stays off.", ProviderSection()),
@@ -209,6 +210,7 @@ public sealed partial class SettingsWindow : Window
         RenderMcpServers();
         _ = RenderSkillsAsync();
         _ = RenderJobsAsync();
+        _ = RenderRemindersAsync();
         _ = LoadStartupAsync();
         startup.Toggled += async (_, _) => await SetStartupAsync(startup.IsOn);
         Closed += (_, _) => store.Dispose();

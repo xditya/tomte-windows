@@ -60,7 +60,7 @@ public static class JobTask
     /// <summary>What a --run-job start posts to the running Tomte's island window, with the job id in wParam.</summary>
     public const uint MsgRunJob = PInvoke.WM_APP + 0x4A;
 
-    /// <summary>What the settings window posts to the running Tomte after removing a job: read the next-due file again.</summary>
+    /// <summary>What the settings window posts to the running Tomte after removing a job or a reminder: work out the next due again.</summary>
     public const uint MsgJobsChanged = PInvoke.WM_APP + 0x4B;
 
     /// <summary>What a second start of Tomte posts to the one already running on the same data folder: open the island.</summary>
