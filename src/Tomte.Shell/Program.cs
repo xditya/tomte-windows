@@ -281,6 +281,8 @@ internal static partial class Program
         triggers.Captured = captureQuestion is null
             ? (overlay, crop, foreground) => CaptureToPalette(island, triggers, store, logLine, overlay, crop, foreground)
             : (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
+        triggers.TextCaptured = (overlay, crop, _) => ScreenTextRun.StartAsync(island, triggers, store, logLine, overlay, crop);
+        triggers.ColourPicked = (overlay, _, _) => ColourRun.StartAsync(island, triggers, logLine, overlay);
 
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
@@ -996,7 +998,7 @@ internal static partial class Program
     }
 
     // Beside the settings file, so a run with its own settings file keeps its send log to itself too.
-    private static string SendLogPath => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsFile))!, "send-log.jsonl");
+    internal static string SendLogPath => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsFile))!, "send-log.jsonl");
 
     // What a driven run may say yes to with nobody at the keyboard: the app's own data, kept in the run's folder, and
     // reads. A device action only as a dry run (--dry), so a test never changes a setting on the PC, not even for a

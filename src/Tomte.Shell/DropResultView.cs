@@ -150,7 +150,7 @@ internal sealed class DropResultView : IInteractive
     /// </summary>
     private void Shapes(DropResultLayout next, DropResult result)
     {
-        string key = string.Join(';', next.Choices.Concat(next.Tiles).Select(r => $"{r.X},{r.Y},{r.Width},{r.Height}")) + string.Join(';', result.Tiles.Select(t => t.Color));
+        string key = string.Join(';', next.Choices.Concat(next.Tiles).Select(r => $"{r.X},{r.Y},{r.Width},{r.Height}")) + string.Join(';', result.Tiles.Select(t => t.Color)) + $";{result.Swatch}";
         if (key == shapesKey)
         {
             return;
@@ -167,6 +167,12 @@ internal sealed class DropResultView : IInteractive
         {
             bool cancel = i == next.Choices.Count - 1;
             p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Accent : ShelfColors.CardSelected));
+        }
+
+        if (result.Swatch is uint swatch)
+        {
+            // A hairline keeps a colour close to the panel's own visible.
+            p.Box(canvas, next.SwatchBand, DropResultLayout.Corner, p.Brush(ShelfColors.Rgb(swatch)), p.Brush(ShelfColors.Line));
         }
 
         for (int i = 0; i < next.Tiles.Count; i++)

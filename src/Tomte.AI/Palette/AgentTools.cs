@@ -422,7 +422,7 @@ public sealed class BuiltInTools(
     private static string Preview(string text) =>
         (text.Length > 40 ? text[..40] + "..." : text).ReplaceLineEndings(" ");
 
-    private static bool IsWebUrl(string url) =>
+    internal static bool IsWebUrl(string url) =>
         Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https";
 
     // CON, NUL, COM1 and the like are device names on Windows even with an extension (CON.txt).

@@ -27,6 +27,27 @@ public class CaptureTests
     }
 
     [Fact]
+    public void ARectangleIsItsFourCornersFromThePressToThePointer()
+    {
+        // Dragged up and left of the press: the box is the same rectangle, wherever the path went on the way.
+        var rect = Draw(new Lasso(1920, 1080, 1.0, rectangle: true), (400, 300), (900, 900), (100, 250));
+
+        Assert.Equal([(400, 300), (100, 300), (100, 250), (400, 250)], rect.Points);
+        Assert.Equal(new PixelRect(100, 250, 301, 51), rect.Box);
+        Assert.False(rect.Move(100, 250));
+        Assert.Equal(new PixelRect(100, 250, 301, 51), rect.Up());
+    }
+
+    [Fact]
+    public void ARectangleAsLowAsOneLineOfSmallTextIsKept()
+    {
+        // 12 DIPs: too low for a lasso, enough for a rectangle over a line of text. Lower than 8 is a slip.
+        Assert.NotNull(Draw(new Lasso(1920, 1080, 1.0, rectangle: true), (10, 10), (200, 21)).Up());
+        Assert.Null(Draw(new Lasso(1920, 1080, 1.0), (10, 10), (200, 21), (10, 21)).Up());
+        Assert.Null(Draw(new Lasso(1920, 1080, 1.0, rectangle: true), (10, 10), (200, 16)).Up());
+    }
+
+    [Fact]
     public void TheStrokeIsDottedInStrokeWidths()
     {
         // 1 on and 9 off in DIPs, as the dash array counts them in widths of the 3 DIP stroke: a dot every 10 DIPs.

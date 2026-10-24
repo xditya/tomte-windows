@@ -109,6 +109,18 @@ public sealed record TomteSettings
     /// <summary>The apps the AI's UI Automation tools may use; the tools themselves are off unless a run turns them on.</summary>
     public UiAutomationSettings UiAutomation { get; init; } = new();
 
+    /// <summary>
+    /// After Copy text from screen, send the recognised text (never the picture) to <see cref="Provider"/> to fix reading
+    /// mistakes. Off unless the user turns it on; with no provider nothing is sent either way.
+    /// </summary>
+    public bool CleanUpScreenText { get; init; }
+
+    /// <summary>
+    /// The language Translate on Copy text from screen's card asks the provider for, as a language tag such as "de".
+    /// Empty means the Windows display language.
+    /// </summary>
+    public string TranslateScreenTextTo { get; init; } = "";
+
     /// <summary>The AI provider the palette uses. Null keeps the AI layer off. Its key is in Credential Manager, never here.</summary>
     public ProviderConfig? Provider { get; init; }
 
@@ -192,6 +204,11 @@ public sealed record HotkeySettings
 
     public string Search { get; init; } = "Win+Alt+Space";
 
+    public string TextCapture { get; init; } = "Win+Alt+T";
+
+    /// <summary>E for eyedropper. Win+Alt+K, the obvious pick, mutes the microphone in calls on Windows 11.</summary>
+    public string ColourPick { get; init; } = "Win+Alt+E";
+
     public string this[HotkeyAction action] => action switch
     {
         HotkeyAction.Summon => Summon,
@@ -200,6 +217,8 @@ public sealed record HotkeySettings
         HotkeyAction.Rambler => Rambler,
         HotkeyAction.Scratchpad => Scratchpad,
         HotkeyAction.Search => Search,
+        HotkeyAction.TextCapture => TextCapture,
+        HotkeyAction.ColourPick => ColourPick,
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
@@ -211,6 +230,8 @@ public sealed record HotkeySettings
         HotkeyAction.Rambler => this with { Rambler = chord },
         HotkeyAction.Scratchpad => this with { Scratchpad = chord },
         HotkeyAction.Search => this with { Search = chord },
+        HotkeyAction.TextCapture => this with { TextCapture = chord },
+        HotkeyAction.ColourPick => this with { ColourPick = chord },
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 }
