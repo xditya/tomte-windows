@@ -131,7 +131,9 @@ public sealed partial class SettingsWindow : Window
                     Card(
                         Note("What the AI can do when you ask, once a provider is set up. A tool that asks each time can be always allowed from its prompt. By voice, every tool asks first, always allowed or not, and MCP server tools are not offered."),
                         Row("Desktop automation", Note("Let the typed palette list, click, type into and select controls in other apps. Every action asks first and none can be always allowed. Never by voice."),
-                            Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } }))),
+                            Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } })),
+                        Row("Clean up copied text", Note("After Copy text from screen, send the text it read to the provider to fix reading mistakes. Only the text is sent, never the picture, and the result is marked as cleaned up by AI."),
+                            Toggle(s => s.CleanUpScreenText, (s, v) => s with { CleanUpScreenText = v }))),
                     Header("Always allowed"),
                     Card(grantsList),
                     Header("All tools"),

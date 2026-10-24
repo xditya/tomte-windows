@@ -28,6 +28,8 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal("Win+Alt+V", s.Hotkeys.Rambler);
         Assert.Equal("Win+Alt+N", s.Hotkeys.Scratchpad);
         Assert.Equal("Win+Alt+Space", s.Hotkeys.Search);
+        Assert.Equal("Win+Alt+T", s.Hotkeys.TextCapture);
+        Assert.False(s.CleanUpScreenText);
         Assert.Equal(0.30, s.Reveal.ZoneFraction);
         Assert.Equal(60, s.Reveal.PushCounts);
         Assert.Equal(400, s.Reveal.PushWindowMs);
@@ -290,6 +292,7 @@ public sealed class SettingsTests : IDisposable
     [InlineData("Alt+Win+Z", "brings back a closed AI answer")]
     [InlineData("Alt+Win+N", "Scratchpad already uses Win+Alt+N.")]
     [InlineData("Win+Alt+Space", "Search already uses Win+Alt+Space.")]
+    [InlineData("Win+Alt+T", "Copy text from screen already uses Win+Alt+T.")]
     public void RebindingRejectsBadChords(string chord, string message)
     {
         string? error = Hotkey.Validate(new HotkeySettings(), HotkeyAction.Summon, chord);
@@ -307,6 +310,19 @@ public sealed class SettingsTests : IDisposable
     [InlineData("")]
     public void RebindingAcceptsGoodChordsAndBlank(string chord) =>
         Assert.Null(Hotkey.Validate(new HotkeySettings(), HotkeyAction.Summon, chord));
+
+    [Fact]
+    public void CopyTextFromScreenIsAppendedAndRebindsLikeTheOthers()
+    {
+        // Registered as its number plus one, so it comes after the actions that were there before.
+        Assert.Equal(HotkeyAction.TextCapture, Enum.GetValues<HotkeyAction>()[^1]);
+        Assert.Equal("Copy text from screen", Hotkey.Name(HotkeyAction.TextCapture));
+        var bindings = new HotkeySettings().With(HotkeyAction.TextCapture, "Win+Alt+Shift+T");
+        Assert.Equal("Win+Alt+Shift+T", bindings[HotkeyAction.TextCapture]);
+        Assert.Equal("Win+Alt+C", bindings[HotkeyAction.CircleToAsk]);
+        Assert.Null(Hotkey.Validate(bindings, HotkeyAction.Summon, "Win+Alt+T"));
+        Assert.Equal("Copy text from screen already uses Win+Alt+Shift+T.", Hotkey.Validate(bindings, HotkeyAction.Summon, "Win+Alt+Shift+T"));
+    }
 
     [Fact]
     public void AConflictNamesTheChordAndTheAction() =>

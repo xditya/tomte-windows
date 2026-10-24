@@ -183,6 +183,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
 
+    /// <summary>What a finished rectangle of Copy text from screen does, with what <see cref="Captured"/> gets. Null until the shell sets it.</summary>
+    public Func<CaptureOverlay, PixelRect, nint, Task>? TextCaptured { get; set; }
+
     /// <summary>The lasso is cropped: the Palette state at its smallest, as the palette hotkey opens it.</summary>
     internal void PaletteFromCapture() => Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
 
@@ -1150,19 +1153,22 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case HotkeyAction.CircleToAsk when Captured is null:
                 log?.Invoke("circle to ask: no question configured (start with --debug-capture)");
                 break;
-            case HotkeyAction.CircleToAsk when capturing:
+            case HotkeyAction.CircleToAsk or HotkeyAction.TextCapture when capturing:
                 break;
-            case HotkeyAction.CircleToAsk when watch.State.ExclusiveFullscreen:
+            case HotkeyAction.CircleToAsk or HotkeyAction.TextCapture when watch.State.ExclusiveFullscreen:
                 // Unlike the island the overlay takes the foreground, which would drop a game out of exclusive
                 // mode, so an allow rule for the app does not apply here.
-                log?.Invoke("circle to ask: exclusive fullscreen, nothing shown");
+                log?.Invoke($"{action}: exclusive fullscreen, nothing shown");
                 break;
             case HotkeyAction.CircleToAsk:
                 if (Allowed(RevealTrigger.Hotkey))
                 {
-                    _ = Capture(Captured);
+                    _ = Capture(Captured, rectangle: false);
                 }
 
+                break;
+            case HotkeyAction.TextCapture when TextCaptured is not null && Allowed(RevealTrigger.Hotkey):
+                _ = Capture(TextCaptured, rectangle: true);
                 break;
         }
     }
@@ -2040,9 +2046,10 @@ internal sealed partial class TriggerController
 {
     /// <summary>
     /// The overlay on the monitor under the cursor with the island hidden under it. The guard holds from the
-    /// overlay through the crop and the palette run, so a second press never lands under a running ask.
+    /// overlay through the crop and the palette run, so a second press never lands under a running ask. Copy text from
+    /// screen draws a <paramref name="rectangle"/> instead of the lasso.
     /// </summary>
-    private async Task Capture(Func<CaptureOverlay, PixelRect, nint, Task> captured)
+    private async Task Capture(Func<CaptureOverlay, PixelRect, nint, Task> captured, bool rectangle)
     {
         capturing = true;
         long triggered = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -2054,7 +2061,7 @@ internal sealed partial class TriggerController
             PInvoke.GetCursorPos(out var cursor);
             machine.TransitionTo(IslandState.Capture);
             island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);
-            var open = overlay = new CaptureOverlay(island.Compositor, cursor, Program.Text);
+            var open = overlay = new CaptureOverlay(island.Compositor, cursor, Program.Text, rectangle);
             log?.Invoke($"capture overlay shown in {System.Diagnostics.Stopwatch.GetElapsedTime(triggered).TotalMilliseconds:F1}ms monitor={open.Bounds} scale={open.Lasso.Scale} activated={open.Activated}");
             var box = await open.Result;
             overlay = null;

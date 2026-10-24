@@ -109,6 +109,12 @@ public sealed record TomteSettings
     /// <summary>The apps the AI's UI Automation tools may use; the tools themselves are off unless a run turns them on.</summary>
     public UiAutomationSettings UiAutomation { get; init; } = new();
 
+    /// <summary>
+    /// After Copy text from screen, send the recognised text (never the picture) to <see cref="Provider"/> to fix reading
+    /// mistakes. Off unless the user turns it on; with no provider nothing is sent either way.
+    /// </summary>
+    public bool CleanUpScreenText { get; init; }
+
     /// <summary>The AI provider the palette uses. Null keeps the AI layer off. Its key is in Credential Manager, never here.</summary>
     public ProviderConfig? Provider { get; init; }
 
@@ -192,6 +198,8 @@ public sealed record HotkeySettings
 
     public string Search { get; init; } = "Win+Alt+Space";
 
+    public string TextCapture { get; init; } = "Win+Alt+T";
+
     public string this[HotkeyAction action] => action switch
     {
         HotkeyAction.Summon => Summon,
@@ -200,6 +208,7 @@ public sealed record HotkeySettings
         HotkeyAction.Rambler => Rambler,
         HotkeyAction.Scratchpad => Scratchpad,
         HotkeyAction.Search => Search,
+        HotkeyAction.TextCapture => TextCapture,
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
@@ -211,6 +220,7 @@ public sealed record HotkeySettings
         HotkeyAction.Rambler => this with { Rambler = chord },
         HotkeyAction.Scratchpad => this with { Scratchpad = chord },
         HotkeyAction.Search => this with { Search = chord },
+        HotkeyAction.TextCapture => this with { TextCapture = chord },
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 }

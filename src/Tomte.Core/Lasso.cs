@@ -10,6 +10,9 @@ namespace Tomte.Core;
 public static class LassoHint
 {
     public const string Text = "Drag around what you want to ask about · Esc cancels";
+
+    /// <summary>The line for Copy text from screen, whose overlay draws a rectangle.</summary>
+    public const string TextCapture = "Drag over the text to copy · Esc cancels";
     public const float Height = 40, Side = 18;
     public static TextStyle Style => TextStyle.Primary;
 
@@ -31,12 +34,16 @@ public readonly record struct PixelRect(int X, int Y, int Width, int Height);
 /// The freehand stroke on the capture overlay of one monitor. Points arrive in the overlay's client
 /// coordinates, which under per-monitor DPI awareness are that monitor's physical pixels; points dragged
 /// past the edge (the mouse is captured) clamp to it. <paramref name="scale"/> is that monitor's own
-/// DPI scale, not the primary's, so DIP sizes stay right on mixed-scale setups.
+/// DPI scale, not the primary's, so DIP sizes stay right on mixed-scale setups. With <paramref name="rectangle"/> the
+/// stroke is the rectangle from the press to the pointer, as four corners, instead of the path the pointer took.
 /// </summary>
-public sealed class Lasso(int monitorWidth, int monitorHeight, double scale)
+public sealed class Lasso(int monitorWidth, int monitorHeight, double scale, bool rectangle = false)
 {
     /// <summary>Smaller than this in either direction is a slip, not a lasso.</summary>
     public const double MinSizeDips = 20;
+
+    /// <summary>The same for a rectangle, which may be as low as one line of small text.</summary>
+    public const double MinRectangleDips = 8;
 
     /// <summary>The stroke as it is drawn: the accent, this wide in DIPs, as round dots this long and this far apart.</summary>
     public const float StrokeDips = 3, DotDips = 1, DotGapDips = 9;
@@ -49,12 +56,15 @@ public sealed class Lasso(int monitorWidth, int monitorHeight, double scale)
 
     private readonly List<(int X, int Y)> points = [];
     private int left, top, right, bottom;
+    private (int X, int Y) anchor;
 
     public IReadOnlyList<(int X, int Y)> Points => points;
 
     public bool Drawing { get; private set; }
 
     public double Scale => scale;
+
+    public bool Rectangle => rectangle;
 
     /// <summary>The bounding box so far: inclusive of the outermost pixels.</summary>
     public PixelRect Box => points.Count == 0 ? default : new(left, top, right - left + 1, bottom - top + 1);
@@ -67,6 +77,7 @@ public sealed class Lasso(int monitorWidth, int monitorHeight, double scale)
         Drawing = true;
         (x, y) = Clamp(x, y);
         (left, top, right, bottom) = (x, y, x, y);
+        anchor = (x, y);
         points.Add((x, y));
     }
 
@@ -76,6 +87,16 @@ public sealed class Lasso(int monitorWidth, int monitorHeight, double scale)
         if (!Drawing)
             return false;
         (x, y) = Clamp(x, y);
+        if (rectangle)
+        {
+            if (points.Count == 4 && points[2] == (x, y))
+                return false;
+            points.Clear();
+            points.AddRange([anchor, (x, anchor.Y), (x, y), (anchor.X, y)]);
+            (left, top, right, bottom) = (Math.Min(anchor.X, x), Math.Min(anchor.Y, y), Math.Max(anchor.X, x), Math.Max(anchor.Y, y));
+            return true;
+        }
+
         if (points[^1] == (x, y))
             return false;
         points.Add((x, y));
@@ -90,7 +111,8 @@ public sealed class Lasso(int monitorWidth, int monitorHeight, double scale)
             return null;
         Drawing = false;
         var (w, h) = BoxDips;
-        if (w >= MinSizeDips && h >= MinSizeDips)
+        double min = rectangle ? MinRectangleDips : MinSizeDips;
+        if (w >= min && h >= min)
             return Box;
         points.Clear();
         return null;

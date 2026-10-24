@@ -18,7 +18,7 @@ using Windows.Win32.UI.WindowsAndMessaging;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The circle-to-ask overlay on one monitor: created on the trigger, destroyed on the way out, so nothing
+/// The capture overlay on one monitor, for circle to ask and, drawing a rectangle, for Copy text from screen: created on the trigger, destroyed on the way out, so nothing
 /// exists while idle. Unlike the island it takes focus (Esc has to reach it) but stays a tool window,
 /// topmost, out of the taskbar and Alt+Tab. It is excluded from capture, so the dim never shows in the
 /// circled image. Drawn on the island's compositor: a dim with the lasso cut out, the stroke, the
@@ -47,7 +47,7 @@ internal sealed unsafe class CaptureOverlay : IDisposable
     private readonly int height;
     private HWND hwnd;
 
-    public CaptureOverlay(Compositor compositor, System.Drawing.Point cursor, TextRenderer? text)
+    public CaptureOverlay(Compositor compositor, System.Drawing.Point cursor, TextRenderer? text, bool rectangle = false)
     {
         this.compositor = compositor;
         Monitor = PInvoke.MonitorFromPoint(cursor, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
@@ -61,7 +61,7 @@ internal sealed unsafe class CaptureOverlay : IDisposable
         var rc = info.rcMonitor;
         (width, height) = (rc.right - rc.left, rc.bottom - rc.top);
         double scale = PInvoke.GetDpiForMonitor(Monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpi, out _).Succeeded ? dpi / 96.0 : 1;
-        Lasso = new Lasso(width, height, scale);
+        Lasso = new Lasso(width, height, scale, rectangle);
         Bounds = new PixelRect(rc.left, rc.top, width, height);
 
         var hInstance = new HINSTANCE(Marshal.GetHINSTANCE(typeof(CaptureOverlay).Module));
@@ -210,7 +210,8 @@ internal sealed unsafe class CaptureOverlay : IDisposable
         }
 
         float monitor = width / scale;
-        var card = LassoHint.Card(monitor, TextSlot.Measure(LassoHint.Text, LassoHint.Style, monitor));
+        string says = Lasso.Rectangle ? LassoHint.TextCapture : LassoHint.Text;
+        var card = LassoHint.Card(monitor, TextSlot.Measure(says, LassoHint.Style, monitor));
         var shape = compositor.CreateRoundedRectangleGeometry();
         shape.Offset = new Vector2(card.X, card.Y);
         shape.Size = new Vector2(card.Width, card.Height);
@@ -225,7 +226,7 @@ internal sealed unsafe class CaptureOverlay : IDisposable
         back.Shapes.Add(capsule);
         hint.Children.InsertAtTop(back);
         words = text.Create(hint);
-        words.Show(LassoHint.Text, LassoHint.Style, LassoHint.Line(card));
+        words.Show(says, LassoHint.Style, LassoHint.Line(card));
         return hint;
     }
 
@@ -265,7 +266,8 @@ internal sealed unsafe class CaptureOverlay : IDisposable
             var b = Lasso.Box;
             boxGeometry.Offset = new Vector2(b.X, b.Y);
             boxGeometry.Size = new Vector2(b.Width, b.Height);
-            box.StrokeThickness = (float)Lasso.Scale;
+            // A rectangle is its own box.
+            box.StrokeThickness = Lasso.Rectangle ? 0 : (float)Lasso.Scale;
         }
         else
         {

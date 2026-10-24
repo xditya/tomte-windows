@@ -42,14 +42,39 @@ public static class WindowCapture
     /// <summary><paramref name="crop"/> is in the monitor's physical pixels, which is what the frame is in.</summary>
     public static async Task<byte[]> CaptureMonitorRegionPngAsync(nint hmonitor, PixelRect crop, CancellationToken ct)
     {
+        using var bitmap = await MonitorFrameAsync(hmonitor, ct);
+        return await EncodePngAsync(bitmap, crop);
+    }
+
+    /// <summary>
+    /// The region at full size, scaled by <paramref name="factor"/>, as a BGRA bitmap for text recognition. The crop is cut
+    /// from the frame before it is scaled, so a large factor costs only the crop's pixels.
+    /// </summary>
+    public static async Task<SoftwareBitmap> CaptureMonitorRegionAsync(nint hmonitor, PixelRect crop, double factor, CancellationToken ct)
+    {
+        using var stream = new InMemoryRandomAccessStream();
+        using (var frame = await MonitorFrameAsync(hmonitor, ct))
+            await EncodeAsync(frame, crop, int.MaxValue, BitmapEncoder.BmpEncoderId, stream);
+        stream.Seek(0);
+        var decoder = await BitmapDecoder.CreateAsync(stream);
+        var transform = new BitmapTransform
+        {
+            ScaledWidth = (uint)Math.Max(1, Math.Round(decoder.PixelWidth * factor)),
+            ScaledHeight = (uint)Math.Max(1, Math.Round(decoder.PixelHeight * factor)),
+            InterpolationMode = factor > 1 ? BitmapInterpolationMode.Cubic : BitmapInterpolationMode.Fant,
+        };
+        return await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, transform,
+            ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
+    }
+
+    private static async Task<SoftwareBitmap> MonitorFrameAsync(nint hmonitor, CancellationToken ct)
+    {
         if (!GraphicsCaptureSession.IsSupported())
             throw new InvalidOperationException("Screen capture is not available on this PC.");
         await RequestProgrammaticAsync();
         var item = GraphicsCaptureItem.TryCreateFromDisplayId(new DisplayId((ulong)hmonitor))
             ?? throw new InvalidOperationException("The screen cannot be captured.");
-
-        using var bitmap = await FirstFrameAsync(item, ct);
-        return await EncodePngAsync(bitmap, crop);
+        return await FirstFrameAsync(item, ct);
     }
 
     /// <summary>
@@ -171,9 +196,19 @@ public static class WindowCapture
     private static async Task<byte[]> EncodePngAsync(SoftwareBitmap bitmap, PixelRect crop)
     {
         using var stream = new InMemoryRandomAccessStream();
-        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        await EncodeAsync(bitmap, crop, MaxWidth, BitmapEncoder.PngEncoderId, stream);
+        var bytes = new byte[stream.Size];
+        using var reader = new DataReader(stream.GetInputStreamAt(0));
+        await reader.LoadAsync((uint)stream.Size);
+        reader.ReadBytes(bytes);
+        return bytes;
+    }
+
+    private static async Task EncodeAsync(SoftwareBitmap bitmap, PixelRect crop, int maxWidth, Guid encoderId, IRandomAccessStream stream)
+    {
+        var encoder = await BitmapEncoder.CreateAsync(encoderId, stream);
         encoder.SetSoftwareBitmap(bitmap);
-        var (sw, sh, b) = Fit(bitmap.PixelWidth, bitmap.PixelHeight, crop, MaxWidth);
+        var (sw, sh, b) = Fit(bitmap.PixelWidth, bitmap.PixelHeight, crop, maxWidth);
         if (sw != bitmap.PixelWidth)
         {
             encoder.BitmapTransform.ScaledWidth = (uint)sw;
@@ -184,10 +219,5 @@ public static class WindowCapture
         encoder.BitmapTransform.Bounds = new BitmapBounds { X = (uint)b.X, Y = (uint)b.Y, Width = (uint)b.Width, Height = (uint)b.Height };
 
         await encoder.FlushAsync();
-        var bytes = new byte[stream.Size];
-        using var reader = new DataReader(stream.GetInputStreamAt(0));
-        await reader.LoadAsync((uint)stream.Size);
-        reader.ReadBytes(bytes);
-        return bytes;
     }
 }

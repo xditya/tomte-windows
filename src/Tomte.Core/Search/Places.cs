@@ -21,13 +21,13 @@ public static class Places
     private static readonly (string Name, string Section, string Words)[] TomtePages =
     [
         ("Opening and closing", "Opening and closing", "edge push dwell reveal drag reveal retract delay open close"),
-        ("Hotkeys", "Hotkeys", "shortcut keys keyboard shortcuts key bindings hotkey"),
+        ("Hotkeys", "Hotkeys", "shortcut keys keyboard shortcuts key bindings hotkey circle to ask copy text from screen ocr"),
         ("Search", "Search", "file search everything windows index whole disk files web search engine"),
         ("Shelf and shortcuts", "Shelf and shortcuts", "shelf tiles drag out remove after dragging pinned"),
         ("Clipboard", "Clipboard", "clipboard history keep history memory privacy"),
         ("Voice", "Voice", "rambler speech dictation spoken replies microphone"),
         ("Provider and spend", "Provider and spend", "ai provider api key model openai anthropic claude gemini ollama spend cost daily cap"),
-        ("Tools and permissions", "Tools and permissions", "ai tools permissions always allowed desktop automation"),
+        ("Tools and permissions", "Tools and permissions", "ai tools permissions always allowed desktop automation clean up copied text ocr"),
         ("Scheduled jobs", "Jobs", "ai jobs schedule recurring"),
         ("MCP servers", "MCP servers", "ai mcp server"),
         ("Skills", "Skills", "ai agent skills custom drop zone"),
