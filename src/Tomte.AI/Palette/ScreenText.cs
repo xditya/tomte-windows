@@ -26,6 +26,15 @@ public static class ScreenText
     /// <summary>The choice that sends the text shown to the provider for a translation; offered only with a provider set up.</summary>
     public const string Translate = "Translate";
 
+    /// <summary>The choice without a provider: Google Translate opens in the default browser with the text shown, never by itself.</summary>
+    public const string TranslateInBrowser = "Translate in browser";
+
+    /// <summary>
+    /// The most text Google Translate takes, and the most the text may grow to once escaped in the address, which
+    /// Google's server refuses somewhere between 16,000 and 20,000 characters.
+    /// </summary>
+    public const int BrowserMaxChars = 5000, BrowserMaxEscaped = 15000;
+
     /// <summary>
     /// Text recognition misses text much under 20 pixels tall, so the crop is scaled up by up to this much: twice at 100%
     /// scale, less on a monitor whose scale already makes text bigger.
@@ -35,8 +44,65 @@ public static class ScreenText
     /// <summary>Whether the text goes to the provider after it is read. Only with the setting on and a provider set up.</summary>
     public static bool CleansUp(TomteSettings settings) => settings.CleanUpScreenText && settings.Provider is not null;
 
-    /// <summary>Whether a card offers <see cref="Translate"/>. Nothing is sent until it is pressed.</summary>
-    public static bool CanTranslate(TomteSettings settings) => settings.Provider is not null;
+    /// <summary>
+    /// A finished card with a way to translate it as its first choice: <see cref="Translate"/> with a provider set up,
+    /// else <see cref="TranslateInBrowser"/>, with the line saying where the text would go. Nothing is sent until it is pressed.
+    /// </summary>
+    public static DropResult Offer(TomteSettings settings, DropResult result)
+    {
+        if (settings.Provider is not null)
+            return result with { Choices = [Translate, .. result.Choices] };
+        string where = BrowserTranslation(result.Body, settings.TranslateScreenTextTo).Cut
+            ? $"Translate in browser sends the first part to Google, which takes up to {BrowserMaxChars:N0} characters"
+            : "Translate in browser sends it to Google";
+        return result with { Line = result.Line is { Length: > 0 } line ? $"{line} · {where}" : where, Choices = [TranslateInBrowser, .. result.Choices] };
+    }
+
+    /// <summary>
+    /// The Google Translate address for <paramref name="text"/> into the language <paramref name="tag"/> (empty is the
+    /// Windows display language), and whether the text had to be cut to fit: at the last space before the limit, or
+    /// at the limit itself in a script without spaces.
+    /// </summary>
+    public static (string Url, bool Cut) BrowserTranslation(string text, string tag)
+    {
+        int end = 0, chars = 0, escaped = 0;
+        foreach (var rune in text.EnumerateRunes())
+        {
+            int width = rune.IsAscii && (char.IsAsciiLetterOrDigit((char)rune.Value) || "-._~".Contains((char)rune.Value)) ? 1 : 3 * rune.Utf8SequenceLength;
+            if (chars + rune.Utf16SequenceLength > BrowserMaxChars || escaped + width > BrowserMaxEscaped)
+                break;
+            (end, chars, escaped) = (end + rune.Utf16SequenceLength, chars + rune.Utf16SequenceLength, escaped + width);
+        }
+
+        bool cut = end < text.Length;
+        if (cut && !char.IsWhiteSpace(text[end]) && text.AsSpan(0, end).LastIndexOfAny(" \n\t") is > 0 and var space)
+            end = space;
+        string shown = cut ? text[..end].TrimEnd() : text;
+        return ($"https://translate.google.com/?sl=auto&tl={ServiceLanguage(tag)}&text={Uri.EscapeDataString(shown)}&op=translate", cut);
+    }
+
+    /// <summary>
+    /// The code web translators take for the language <paramref name="tag"/> (empty is the Windows display language):
+    /// the two letters, or zh-CN and zh-TW for Chinese in simplified and traditional script, and "no" for Norwegian.
+    /// </summary>
+    public static string ServiceLanguage(string tag)
+    {
+        CultureInfo culture;
+        try
+        {
+            culture = tag.Length == 0 ? CultureInfo.CurrentUICulture : CultureInfo.GetCultureInfo(tag);
+        }
+        catch (CultureNotFoundException)
+        {
+            return tag;
+        }
+
+        string name = culture.Name;
+        if (name.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
+            return name.Contains("Hant", StringComparison.OrdinalIgnoreCase) || name.EndsWith("TW", StringComparison.OrdinalIgnoreCase)
+                || name.EndsWith("HK", StringComparison.OrdinalIgnoreCase) || name.EndsWith("MO", StringComparison.OrdinalIgnoreCase) ? "zh-TW" : "zh-CN";
+        return culture.TwoLetterISOLanguageName is "nb" or "nn" ? "no" : culture.TwoLetterISOLanguageName;
+    }
 
     /// <summary>The languages Settings offers to translate into, besides the Windows display language.</summary>
     public static readonly IReadOnlyList<string> Languages =
@@ -183,9 +249,6 @@ public static class ScreenText
         ? new("QR code", "Nothing sent", "Copied · a web link · read on this PC, opens only if you press Open link", false, content, [], [Open, Copy, DropResult.Close])
         : new("QR code", "Nothing sent", "Copied · read on this PC", false, content, [], [Copy, DropResult.Close]);
 
-    /// <summary>A finished card with <see cref="Translate"/> as its first choice.</summary>
-    public static DropResult WithTranslate(DropResult result) => result with { Choices = [Translate, .. result.Choices] };
-
     /// <summary>The text shown, still copied as it was, while the provider translates it.</summary>
     public static DropResult Translating(string text, string indicator, string language) =>
         new(Title, indicator, $"AI is translating it into {language}, only the text is sent", false, text, [], []);
@@ -196,7 +259,7 @@ public static class ScreenText
 
     /// <summary>The translation failed or brought nothing back: the text shown stays copied.</summary>
     public static DropResult NotTranslated(string text, string indicator, string? error) =>
-        new(Title, indicator, $"{error ?? "AI translation brought nothing back."} The text is copied as it was.", false, text, [], [Copy, DropResult.Close]);
+        new(Title, indicator, $"{error ?? "AI translation brought nothing back."} The text is copied as it was. Translate in browser sends it to Google.", false, text, [], [TranslateInBrowser, Copy, DropResult.Close]);
 
     /// <summary>What the line under the title says when the clipboard would not take the text.</summary>
     public const string ClipboardBusy = "Another app has the clipboard open, so nothing was copied. Press Copy to try again.";

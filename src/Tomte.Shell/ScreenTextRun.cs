@@ -12,7 +12,8 @@ namespace Tomte.Shell;
 /// With the cleanup on in Settings and a provider set up, the text alone then goes to that provider, and the card shows
 /// the cleaned text, marked as AI's, copied in its place, with the text as read one click away. With a provider set up
 /// the card also offers Translate, which sends the text shown, and only on that click, for a translation into the
-/// language picked in Settings, shown and copied the same way. A QR code in the region takes the text's place: its
+/// language picked in Settings, shown and copied the same way. Without a provider it offers Translate in browser
+/// instead, which opens Google Translate with the text shown, and only on that click. A QR code in the region takes the text's place: its
 /// content is copied and shown whole, and a web link gets Open link, which is the only way it opens. The card holds the
 /// island until Close or Esc; once something was sent, Undo can bring it back for a while, as for a drop zone's result.
 /// On the island's thread.
@@ -125,7 +126,7 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         return running;
     }
 
-    private DropResult Offer(DropResult result) => ScreenText.CanTranslate(store.Current) ? ScreenText.WithTranslate(result) : result;
+    private DropResult Offer(DropResult result) => ScreenText.Offer(store.Current, result);
 
     // The text shown goes to the provider, and only now, on the click.
     private async Task TranslateAsync()
@@ -212,8 +213,8 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         return true;
     }
 
-    // Copy puts the text shown on the clipboard again, Copy original the text before the AI changed it; either, and
-    // Close, then close. Translate keeps the card and fills it with the translation.
+    // Copy puts the text shown on the clipboard again, Copy original the text before the AI changed it; either, Open
+    // link, Translate in browser and Close, then close. Translate keeps the card and fills it with the translation.
     private void Chose(int i)
     {
         if (busy || i >= last.Choices.Count)
@@ -228,7 +229,13 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
             return;
         }
 
-        if (choice == ScreenText.Open && !OpenLink(last.Body))
+        if (choice == ScreenText.Open && !OpenLink(last.Body, "Windows could not open the link. It is copied, so you can paste it into a browser."))
+        {
+            return;
+        }
+
+        if (choice == ScreenText.TranslateInBrowser
+            && !OpenLink(ScreenText.BrowserTranslation(last.Body, store.Current.TranslateScreenTextTo).Url, "Windows could not open the browser. Nothing was sent."))
         {
             return;
         }
@@ -242,7 +249,7 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         triggers.Hide();
     }
 
-    private bool OpenLink(string url)
+    private bool OpenLink(string url, string failed)
     {
         try
         {
@@ -252,7 +259,7 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             log?.Invoke($"screen text: link did not open ({e.Message})");
-            Show(last with { Line = "Windows could not open the link. It is copied, so you can paste it into a browser." }, busy: false);
+            Show(last with { Line = failed }, busy: false);
             return false;
         }
     }
