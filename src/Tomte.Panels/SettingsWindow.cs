@@ -517,13 +517,17 @@ public sealed partial class SettingsWindow : Window
         return reset;
     }
 
-    private NumberBox Number(double min, double max, Func<RevealSettings, double> get, Func<RevealSettings, double, RevealSettings> set)
+    private NumberBox Number(double min, double max, Func<RevealSettings, double> get, Func<RevealSettings, double, RevealSettings> set) =>
+        Number(min, max, get(store.Current.Reveal), value => Save(s => s with { Reveal = set(s.Reveal, value) }));
+
+    // A whole number held to its range; a cleared box goes back to the value it had.
+    private static NumberBox Number(double min, double max, double value, Action<double> save)
     {
         var box = new NumberBox
         {
             Minimum = min,
             Maximum = max,
-            Value = Math.Round(get(store.Current.Reveal)),
+            Value = Math.Round(value),
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             SmallChange = max >= 1000 ? 10 : 1,
             ValidationMode = NumberBoxValidationMode.InvalidInputOverwritten,
@@ -537,7 +541,7 @@ public sealed partial class SettingsWindow : Window
                 return;
             }
 
-            Save(s => s with { Reveal = set(s.Reveal, Math.Round(e.NewValue)) });
+            save(Math.Round(e.NewValue));
         };
         return box;
     }

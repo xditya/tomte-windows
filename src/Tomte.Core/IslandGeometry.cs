@@ -88,6 +88,7 @@ public static class PanelSize
     public static readonly (double W, double H) Shelf = (Width, 500);
     public static readonly (double W, double H) Clipboard = (Width, 480);
     public static readonly (double W, double H) History = (Width, 410);
+    public static readonly (double W, double H) Jobs = (Width, PanelSpace.Head + JobsPanelLayout.Height);
     public static readonly (double W, double H) Call = (Width, PanelSpace.Head + CallPanelLayout.Height);
     public const double PaletteWidth = 720;
 
@@ -109,6 +110,7 @@ public static class PanelSize
         PanelId.Scratchpad => Scratchpad,
         PanelId.Clipboard => Clipboard,
         PanelId.History => History,
+        PanelId.Jobs => Jobs,
         PanelId.Call => Call,
         _ => throw new ArgumentOutOfRangeException(nameof(id)),
     };

@@ -161,8 +161,8 @@ public sealed class SearchPlacesTests
     {
         var shelf = Search("shelf").First(r => r.Detail == "Tomte island");
         Assert.Equal(PanelId.Shelf, Places.Tab(shelf.Target));
-        // Every tab but Call, which is there only during a call.
-        Assert.Equal(Enum.GetValues<PanelId>().Length - 1, Places.Rows([]).Count(r => Places.Tab(r.Target) is not null));
+        // Every tab but Call and Jobs, which are there only during a call and near a job's run.
+        Assert.Equal(Enum.GetValues<PanelId>().Length - 2, Places.Rows([]).Count(r => Places.Tab(r.Target) is not null));
         Assert.Null(Places.Tab("tomte:tab:9"));
         Assert.Null(Places.Tab("ms-settings:display"));
     }

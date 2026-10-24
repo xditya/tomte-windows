@@ -26,17 +26,20 @@ internal sealed class CompactLine
     private readonly TextRenderer text;
     private readonly NowPlayingRow row;
     private readonly Action<string>? log;
+    private readonly Func<TimeSpan> jobAhead;
     private readonly ScalarKeyFrameAnimation fadeIn, fadeOut;
     private readonly Windows.System.DispatcherQueueTimer release, tick;
     private View? view, leaving;
     private bool ready, shelfAsked, readingJob;
 
-    // The job due soonest, as read for the one-shot's time in jobFor; null when nothing is due within the hour.
+    // The job due soonest, as read for the one-shot's time in jobFor; null when nothing is due within jobAhead.
     private (string Name, DateTimeOffset At)? job;
     private DateTimeOffset? jobFor;
 
-    public CompactLine(IslandWindow island, TriggerController triggers, TextRenderer text, NowPlayingRow row, Action<string>? log = null)
+    /// <param name="jobAhead">How long before its run the job due next is named: the Jobs tab's setting.</param>
+    public CompactLine(IslandWindow island, TriggerController triggers, TextRenderer text, NowPlayingRow row, Func<TimeSpan> jobAhead, Action<string>? log = null)
     {
+        this.jobAhead = jobAhead;
         this.island = island;
         this.triggers = triggers;
         this.text = text;
@@ -163,7 +166,7 @@ internal sealed class CompactLine
 
     /// <summary>
     /// What the push pill may mention, as it is now. The shelf loads the first time the line shows and the job's name
-    /// is read when one is due within the hour; neither holds the line up, which updates when they come in.
+    /// is read when one is due within the Jobs tab's time; neither holds the line up, which updates when they come in.
     /// </summary>
     private GlanceFacts Facts(DateTimeOffset now)
     {
@@ -174,7 +177,8 @@ internal sealed class CompactLine
             _ = shelf.Load();
         }
 
-        if (Jobs.NextDue is not { } due || due - now > CompactRules.JobSoon)
+        var ahead = jobAhead();
+        if (Jobs.NextDue is not { } due || due - now > ahead)
         {
             (job, jobFor) = (null, null);
         }
@@ -183,7 +187,7 @@ internal sealed class CompactLine
             _ = ReadJob(due);
         }
 
-        return new GlanceFacts { Job = job, Waiting = triggers.Waiting, Quiet = triggers.Quiet, Paused = triggers.Paused, Battery = Battery(), ShelfCount = Jobs.Shelf?.Items.Count ?? 0 };
+        return new GlanceFacts { Job = job, JobAhead = ahead, Waiting = triggers.Waiting, Quiet = triggers.Quiet, Paused = triggers.Paused, Battery = Battery(), ShelfCount = Jobs.Shelf?.Items.Count ?? 0 };
     }
 
     private async Task ReadJob(DateTimeOffset due)
