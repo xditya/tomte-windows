@@ -52,6 +52,12 @@ public sealed record JobRunRecord(long JobId, string JobName, DateTimeOffset Due
 public sealed record JobClaim(ScheduledJob Job, DateTimeOffset Due, bool Missed);
 
 /// <summary>
+/// A job for the Jobs tab: its latest kept result, if any, and whether a run of it is claimed with no result yet, which
+/// holds while it runs, in the resident app or in a --run-job start.
+/// </summary>
+public sealed record JobStatus(ScheduledJob Job, JobRunRecord? Last, bool Running);
+
+/// <summary>
 /// The jobs and their results in tomte.db (feature "jobs"). Every method opens, works and closes, and blocks: call it
 /// from a worker thread only. Beside the database a small file holds the next due time over all jobs, rewritten after
 /// every change, so a start can arm the runner without opening the database. A claimed run with no result counts in it
@@ -275,6 +281,29 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
     {
         using var connection = db.Open(Feature, Schema);
         return Runs(connection, $"SELECT {RunColumns} FROM jobs_runs ORDER BY id DESC LIMIT $limit", limit);
+    }
+
+    /// <summary>Every job with its latest result and whether it runs now (see <see cref="JobStatus"/>), in the order they were made.</summary>
+    public IReadOnlyList<JobStatus> Statuses(DateTimeOffset now)
+    {
+        using var connection = db.Open(Feature, Schema);
+        var last = Runs(connection, $"SELECT {RunColumns} FROM jobs_runs WHERE id IN (SELECT MAX(id) FROM jobs_runs GROUP BY job)", null)
+            .ToDictionary(r => r.JobId);
+        var running = new HashSet<long>();
+        using (var command = connection.CreateCommand())
+        {
+            // A claim past its limit is a run that did not finish, recorded so at the next look; it is not running.
+            command.CommandText = "SELECT job FROM jobs_claims WHERE claimed + $limit > $now";
+            command.Parameters.AddWithValue("$limit", (long)RunLimit.TotalMilliseconds);
+            command.Parameters.AddWithValue("$now", now.ToUnixTimeMilliseconds());
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                running.Add(reader.GetInt64(0));
+            }
+        }
+
+        return [.. Jobs(connection, $"SELECT {JobColumns} FROM jobs_list ORDER BY id", null).Jobs.Select(j => new JobStatus(j, last.GetValueOrDefault(j.Id), running.Contains(j.Id)))];
     }
 
     /// <summary>

@@ -15,6 +15,9 @@ public enum PanelId
     Clipboard,
     History,
 
+    /// <summary>Scheduled jobs; a tab only while one runs or is due soon (<see cref="JobsPanelLayout.Shows"/>).</summary>
+    Jobs,
+
     /// <summary>Call controls; a tab only while another app uses the microphone (<see cref="PanelTabs.Show"/>).</summary>
     Call,
 }
@@ -137,6 +140,7 @@ public static class TabStrip
         PanelId.Media => "Media",
         PanelId.Scratchpad => "Scratchpad",
         PanelId.History => "History",
+        PanelId.Jobs => "Jobs",
         PanelId.Call => "Call",
         _ => "Clipboard",
     };
@@ -149,6 +153,7 @@ public static class TabStrip
         PanelId.Media => Glyphs.Media,
         PanelId.Scratchpad => Glyphs.Scratchpad,
         PanelId.History => Glyphs.History,
+        PanelId.Jobs => Glyphs.Timer,
         PanelId.Call => Glyphs.Mic,
         _ => Glyphs.Clipboard,
     };

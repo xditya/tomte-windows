@@ -144,10 +144,13 @@ public class GlanceTests
     }
 
     [Fact]
-    public void AJobCountsOnlyWithinTheHourAhead()
+    public void AJobCountsOnlyWithinTheJobsTabsTimeAhead()
     {
-        Assert.Equal("18:41 · Weekly report at 19:41", Glance(All with { Job = ("Weekly report", Now.AddHours(1)) }));
-        Assert.Equal("18:41 · Summary ready", Glance(All with { Job = ("Weekly report", Now.AddMinutes(61)) }));
+        // Half an hour unless changed in Settings, as for the Jobs tab.
+        Assert.Equal("18:41 · Weekly report at 19:11", Glance(All with { Job = ("Weekly report", Now.AddMinutes(30)) }));
+        Assert.Equal("18:41 · Summary ready", Glance(All with { Job = ("Weekly report", Now.AddMinutes(31)) }));
+        Assert.Equal("18:41 · Weekly report at 19:41", Glance(All with { Job = ("Weekly report", Now.AddHours(1)), JobAhead = TimeSpan.FromHours(1) }));
+        Assert.Equal("18:41 · Summary ready", Glance(All with { Job = ("Weekly report", Now.AddMinutes(61)), JobAhead = TimeSpan.FromHours(1) }));
         Assert.Equal("18:41 · Summary ready", Glance(All with { Job = ("Weekly report", Now) }));
         Assert.Equal("18:41 · Summary ready", Glance(All with { Job = ("Weekly report", Now.AddMinutes(-3)) }));
     }

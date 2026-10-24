@@ -52,6 +52,9 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
     /// <summary>Raised on the caller's context for each run as it starts and ends, each device action a run made, and each kept result.</summary>
     public event Action<IslandEvent>? Raised;
 
+    /// <summary>How the line raised as a run starts begins; the job's name follows.</summary>
+    public const string Starting = "Running job: ";
+
     /// <summary>The event line for a kept result.</summary>
     public static string EventText(JobRunRecord run) =>
         (run.Ok ? "Job done: " : run.Text == JobStore.Missed ? "Job missed: " : "Job failed: ") + run.JobName;
@@ -77,7 +80,7 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
             }
             else
             {
-                Raised?.Invoke(new IslandEvent("Running job: " + job.Name, Now()));
+                Raised?.Invoke(new IslandEvent(Starting + job.Name, Now()));
                 run = await RunAsync(job, due);
             }
 

@@ -106,6 +106,18 @@ public sealed record TomteSettings
     /// </summary>
     public bool MuteDuringCalls { get; init; } = true;
 
+    public const int JobsAheadMinMinutes = 5, JobsAheadMaxMinutes = 240;
+
+    /// <summary>
+    /// How many minutes before a job's run the Jobs tab shows and the push pill names the job. The tab also shows while a
+    /// job runs; otherwise it is not on the strip.
+    /// </summary>
+    public int JobsAheadMinutes { get; init; } = 30;
+
+    /// <summary>The time as used: held to its range, so a hand-edited file cannot show the tab always or never.</summary>
+    [JsonIgnore]
+    public TimeSpan JobsAhead => TimeSpan.FromMinutes(Math.Clamp(JobsAheadMinutes, JobsAheadMinMinutes, JobsAheadMaxMinutes));
+
     /// <summary>Skills the user turned on, by folder name. A skill not listed is off, so a new one starts off.</summary>
     public IReadOnlyList<string> EnabledSkills { get; init; } = [];
 

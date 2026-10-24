@@ -28,7 +28,7 @@ namespace TextCaptures;
 /// pill's real outline, gradient and hairline and the mascot's real paths; art, buttons, bars and ring are drawn
 /// from the numbers the island's composition shapes use. The drop shadow is left out. Also prints what the text
 /// costs in time and memory.
-/// Usage: TextCaptures &lt;output folder&gt;
+/// Usage: TextCaptures &lt;output folder&gt; [the start of the scenes' names, to draw only those]
 /// </summary>
 internal static unsafe partial class Program
 {
@@ -84,9 +84,10 @@ internal static unsafe partial class Program
         again->Release();
         d3dAgain->Release();
 
+        var scenes = Scenes().Where(s => args.Length < 2 || s.Name.StartsWith(args[1], StringComparison.Ordinal)).ToList();
         foreach (double scale in Scales)
         {
-            foreach (var scene in Scenes())
+            foreach (var scene in scenes)
             {
                 var canvas = new Canvas(dc, scene.Geometry, scale);
                 scene.Draw(canvas);
@@ -96,7 +97,7 @@ internal static unsafe partial class Program
             }
         }
 
-        report.Add(Memory($"after {Scales.Length * Scenes().Count} captures"));
+        report.Add(Memory($"after {Scales.Length * scenes.Count} captures"));
         report.Add($"per run: layout {Stats(LayoutMs)}, draw {Stats(DrawMs)} ({LayoutMs.Count} runs)");
         report.Add($"runs whose surface does not start on a whole pixel: {OffGrid} of {DrawMs.Count}");
         report.Add($"a two-line run cut with an ellipsis draws nothing below its second line: {TwoLinesOnly(dc)}");
@@ -374,6 +375,7 @@ internal static unsafe partial class Program
             new("palette-ai-off-back", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0, back: true)),
             .. DropZoneScenes(),
             .. HistoryScenes(),
+            .. JobsScenes(),
             .. SearchScenes(),
             .. VoiceScenes(),
             CaptureHint(),

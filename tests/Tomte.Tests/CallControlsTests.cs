@@ -180,6 +180,8 @@ public class CallControlsTests
             tabs.Register(id);
         }
 
+        // No job near, so the Jobs tab is off the strip too.
+        tabs.Show(PanelId.Jobs, false);
         tabs.Show(PanelId.Call, false);
         Assert.DoesNotContain(PanelId.Call, tabs.Order);
         Assert.False(tabs.Select(PanelId.Call));

@@ -544,11 +544,12 @@ internal static partial class Program
             entry => shelf.Add([entry]), log));
         // Continue opens the AI box on the next turn, after the click that asked for it.
         panels.Register(new HistoryPanel(island, History!, text, item => island.Queue.TryEnqueue(() => ContinueInPalette(triggers, item)), answer => CopyAnswer(answer, log), log));
+        panels.Register(new JobsPanel(island, panels, store, text, log));
         triggers.Panels = panels;
         // The row and the line live on the state changes and ContentReady they listen to.
         var row = new NowPlayingRow(island, triggers, media, text, log);
         triggers.NowPlayingShows = () => row.Showing;
-        _ = new CompactLine(island, triggers, text, row, log);
+        _ = new CompactLine(island, triggers, text, row, () => store.Current.JobsAhead, log);
         var calls = new CallMute(island, triggers, panels, store, log);
         panels.Register(new CallPanel(island, calls, text, triggers.Hide, log));
 

@@ -467,7 +467,7 @@ internal sealed class PanelHost
         }
 
         /// <summary>
-        /// Ctrl+1 to Ctrl+7 pick the tab in that place (an eighth, Call, has no key), and leave the current one's to
+        /// Ctrl+1 to Ctrl+7 pick the tab in that place (a tab past the seventh, Jobs or Call, has no key), and leave the current one's to
         /// whoever has the keys there (the note keeps them); Ctrl+K and "/" ask, as the Ask bar does.
         /// </summary>
         public bool Command(NavKey key)
