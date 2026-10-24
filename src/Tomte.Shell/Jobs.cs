@@ -286,7 +286,7 @@ internal static class Jobs
     private static JobRunner NewRunner(TomteDb db, ScratchpadNote note, IShelf shelf, IslandTimer? timer, string sendLog, string settings, bool resident, Action<string>? log)
     {
         var http = ProviderSetup.NewHttp();
-        var tools = new BuiltInTools(shelf, note, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, timer: timer);
+        var tools = new BuiltInTools(shelf, note, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, timer: timer, web: WebTools.Http);
         // The settings file is read at each run, so a cap lowered since a job was made applies to its next run.
         return new JobRunner(new JobStore(db, log), NoJobTasks.For(Environment.ProcessPath!, settings), config => ProviderSetup.Load(config, http), tools,
             new SendLog(sendLog), config => ProviderSetup.OptionsFor(SettingsStore.Load(settings), config))

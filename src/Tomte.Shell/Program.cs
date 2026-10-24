@@ -814,8 +814,8 @@ internal static partial class Program
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
             var tools = dry
                 ? new BuiltInTools(shelf, scratchpad, text => log.WriteLine($"palette dry: would copy {text.Length} characters"), url => log.WriteLine($"palette dry: would open {url}"),
-                    (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true), triggers.Timer)
-                : new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, null, triggers.Timer);
+                    (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true), triggers.Timer, web: WebTools.Http)
+                : new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, null, triggers.Timer, web: WebTools.Http);
             // Servers start on the send; disposing at the end of the run stops them, as closing the palette does.
             await using var mcp = McpTools.For(store.Current.McpServers);
             // --automation offers the UI Automation tools in this run; without it nothing of them is made.
@@ -952,7 +952,7 @@ internal static partial class Program
         // The real shelf, so a file made by voice is still there after a restart. The tiles open by name; that way
         // never runs a script tile.
         var tools = new BuiltInTools((IShelf?)Jobs.Shelf ?? new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
-            args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
+            args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName, web: WebTools.Http);
         async Task<PaletteSession?> Voice()
         {
             var now = named is null ? Configured(store, log.WriteLine)
