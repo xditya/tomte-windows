@@ -137,6 +137,44 @@ public sealed class SearchTests
     }
 
     [Fact]
+    public void APinnedClipShowsItsFirstLineWithTheTilesAndShelf()
+    {
+        var clip = Clip.Row(7, "\n  Release checklist  \r\n- bump the version\n- tag it");
+        Assert.Equal("Release checklist", clip.Name);
+        Assert.Equal(Clip.Detail, clip.Detail);
+        Assert.Equal("7", clip.Target);
+        Assert.Equal(2, clip.Group);
+        Assert.Same(Glyphs.Clipboard, SearchLayout.BadgeGlyph(clip).Glyph);
+        Assert.Equal(SearchKind.Web + 1, SearchKind.Clip);
+
+        var items = new[] { File("release notes.txt"), clip, new SearchItem(SearchKind.Shortcut, "Release folder", "3"), App("Release Manager") };
+        Assert.Equal([SearchKind.App, SearchKind.Shortcut, SearchKind.Clip, SearchKind.File], SearchRank.Order(items, "release", None).Select(i => i.Kind));
+    }
+
+    [Theory]
+    [InlineData("release", true)]
+    [InlineData("bump version", true)]
+    [InlineData("tag", true)]
+    [InlineData("bmpvrs", false)]
+    [InlineData("deploy", false)]
+    public void APinnedClipMatchesOnItsWholeTextAtWordStarts(string query, bool found)
+    {
+        var clip = Clip.Row(7, "Release checklist\n- bump the version\n- tag it");
+        Assert.Equal(found, SearchRank.Order([clip], query, None).Count == 1);
+    }
+
+    [Fact]
+    public void APinnedClipOpenedBeforeLeadsItsTier()
+    {
+        var a = Clip.Row(1, "invoice template A");
+        var b = Clip.Row(2, "invoice template B");
+        Assert.Equal("invoice template A", SearchRank.Order([a, b], "invoice", None)[0].Name);
+        var launches = new Dictionary<string, Launches> { [b.Key] = new(3, 1) };
+        Assert.Equal("invoice template B", SearchRank.Order([a, b], "invoice", launches)[0].Name);
+        Assert.Equal(30, SearchRank.Boost(launches, b));
+    }
+
+    [Fact]
     public void GroupsAreCappedSoFilesStillShow()
     {
         var items = Enumerable.Range(0, 9).Select(i => App($"Code tool {i}"))
@@ -591,6 +629,32 @@ public sealed class SearchHistoryTests : IDisposable
     }
 
     [Fact]
+    public void OnlyPinnedTextBecomesSearchRowsAndItsTextIsNeverCounted()
+    {
+        var db = new Tomte.Core.Storage.TomteDb(Path.Combine(dir, "tomte.db"));
+        var clipboard = new Tomte.Core.Clipboard.ClipboardHistory(db);
+        var start = new DateTimeOffset(2026, 10, 15, 9, 0, 0, TimeSpan.Zero);
+        clipboard.Add("my bank password 1234", start);
+        clipboard.Add("Dear team,\nthe build is green.", start.AddMinutes(1));
+        clipboard.AddImage(new Tomte.Core.Clipboard.KeptImage([1], 4, 3, [2]), start.AddMinutes(2));
+        foreach (var row in clipboard.Rows(start.AddMinutes(3)).Where(r => r.IsImage || r.Display.StartsWith("Dear", StringComparison.Ordinal)))
+        {
+            clipboard.Pin(row.Id, true);
+        }
+
+        var pin = Assert.Single(clipboard.Pins());
+        Assert.Equal("Dear team,\nthe build is green.", pin.Text);
+        var item = Clip.Row(pin.Id, pin.Text);
+        Assert.Equal("Dear team,", item.Name);
+
+        var history = new SearchHistory(db);
+        history.Record(item, start);
+        var (items, launches) = history.Load();
+        Assert.Equal("", Assert.Single(items).Name);
+        Assert.Equal(1, launches[item.Key].Count);
+    }
+
+    [Fact]
     public void OpeningARowCountsItAndKeepsTheNewestRows()
     {
         var history = new SearchHistory(new Tomte.Core.Storage.TomteDb(Path.Combine(dir, "tomte.db")));
@@ -707,7 +771,7 @@ public sealed class AiSearchRowTests
 
     [Theory]
     [InlineData(false, false, SearchEnter.Open)]
-    [InlineData(false, true, SearchEnter.Open)]
+    [InlineData(false, true, SearchEnter.Copy)]
     [InlineData(true, false, SearchEnter.SearchWithAi)]
     [InlineData(true, true, SearchEnter.ShowInFolder)]
     public void CtrlEnterSearchesWithAiAndCtrlShiftEnterShowsTheFolder(bool ctrl, bool shift, SearchEnter does) =>

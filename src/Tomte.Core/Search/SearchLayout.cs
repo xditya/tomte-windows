@@ -9,12 +9,15 @@ namespace Tomte.Core.Search;
 /// </summary>
 public readonly record struct SearchLine(float Top, float Height, string? Heading, int Row, bool Rule = false, bool Hit = false);
 
-/// <summary>What Enter does in the search box: open the row, show its file in its folder, or search with AI.</summary>
+/// <summary>What Enter does in the search box: open the row, show its file in its folder, search with AI, or copy a pinned clip without pasting it.</summary>
 public enum SearchEnter
 {
     Open,
     ShowInFolder,
     SearchWithAi,
+
+    /// <summary>Shift+Enter: a pinned clip is copied, not pasted; any other row opens as with Enter.</summary>
+    Copy,
 }
 
 /// <summary>
@@ -102,8 +105,8 @@ public sealed class SearchLayout(float width, bool mascot, float height)
             : firsts[(at - 1 + firsts.Count) % firsts.Count];
     }
 
-    /// <summary>Enter opens; Ctrl+Shift+Enter shows the row in its folder; Ctrl+Enter searches with AI from any row.</summary>
-    public static SearchEnter Enter(bool ctrl, bool shift) => !ctrl ? SearchEnter.Open : shift ? SearchEnter.ShowInFolder : SearchEnter.SearchWithAi;
+    /// <summary>Enter opens; Shift+Enter copies a pinned clip; Ctrl+Shift+Enter shows the row in its folder; Ctrl+Enter searches with AI from any row.</summary>
+    public static SearchEnter Enter(bool ctrl, bool shift) => !ctrl ? (shift ? SearchEnter.Copy : SearchEnter.Open) : shift ? SearchEnter.ShowInFolder : SearchEnter.SearchWithAi;
 
     /// <summary>The keys that work in the box, in the order the footer names them, and Esc's, which stands at its right end.</summary>
     public static (IReadOnlyList<(string Keys, string Word)> Left, (string Keys, string Word) Right) Keys(bool ai, bool typed, bool back)
@@ -273,7 +276,7 @@ public sealed class SearchLayout(float width, bool mascot, float height)
     {
         0 => "APPS",
         1 => "SETTINGS",
-        2 => "SHORTCUTS AND SHELF",
+        2 => "SHORTCUTS, SHELF AND CLIPS",
         3 => "FILES",
         4 => "WEB",
         _ => null,
@@ -331,6 +334,7 @@ public sealed class SearchLayout(float width, bool mascot, float height)
         SearchKind.Place => (Glyphs.Settings, Theme.Ink2),
         SearchKind.GetEverything => (Glyphs.Search, Theme.Ink2),
         SearchKind.Shortcut => (Glyphs.Shortcuts, Theme.Ink2),
+        SearchKind.Clip => (Glyphs.Clipboard, Theme.Ink2),
         _ => (Glyphs.File, Theme.Ink2),
     };
 

@@ -461,6 +461,7 @@ internal static partial class Program
         // Search shares tomte.db for what was opened from it, and the tiles; nothing of it loads before its first open.
         search = new SearchHost(island, triggers, text, typing, store, db, shortcuts, log)
         {
+            Clipboard = clipboard,
             Ask = words => AskFromSearch(island, triggers, store, log, words),
             Back = () => island.Queue.TryEnqueue(() => GoBack(island, triggers)),
             Tab = id => island.Queue.TryEnqueue(() =>
