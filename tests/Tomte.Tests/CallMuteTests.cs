@@ -26,6 +26,16 @@ public class CallMuteTests
         Assert.True(MicUseWatch.OthersCapture([(Own, true), (1200, true)], Own));
     }
 
+    [Fact]
+    public void NvidiaBroadcastIsNeverACall()
+    {
+        Assert.True(MicUseWatch.AlwaysOn("NVIDIA Broadcast"));
+        Assert.True(MicUseWatch.AlwaysOn("NVIDIA Broadcast UI"));
+        Assert.True(MicUseWatch.AlwaysOn("NvBroadcast.Container"));
+        Assert.False(MicUseWatch.AlwaysOn("ms-teams"));
+        Assert.False(MicUseWatch.AlwaysOn("Discord"));
+    }
+
     [Theory]
     // In a call the push pill and the kept pill carry the button; without one they do not.
     [InlineData(CompactReason.Summary, IslandEventSource.Other, true, false, true)]
