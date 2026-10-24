@@ -6,7 +6,7 @@ using Windows.Win32.System.Com;
 
 namespace Tomte.Core.Device;
 
-public sealed record OutputDevice(string Id, string Name, bool IsDefault);
+public sealed record AudioDevice(string Id, string Name, bool IsDefault);
 
 // Core Audio on the default endpoints. Each call creates its own enumerator, so nothing is
 // held between calls.
@@ -37,7 +37,7 @@ public static class Audio
 
     public static ActionResult ListOutputDevices()
     {
-        var devices = OutputDevices();
+        var devices = Devices(EDataFlow.eRender);
         return devices.Count == 0
             ? ActionResult.Fail("No active output devices.")
             : ActionResult.Done(string.Join("\n", devices.Select(d => d.IsDefault ? d.Name + " (default)" : d.Name)));
@@ -48,7 +48,7 @@ public static class Audio
     {
         if (string.IsNullOrWhiteSpace(name)) return ActionResult.Fail("Name an output device.");
         if (dryRun) return ActionResult.DryRun($"switch output to the device matching \"{name}\".");
-        var devices = OutputDevices();
+        var devices = Devices(EDataFlow.eRender);
         var (device, error) = PickDevice(devices, name);
         if (device is null) return ActionResult.Fail(error!);
         if (device.IsDefault) return ActionResult.Done($"{device.Name} is already the output device.");
@@ -63,7 +63,7 @@ public static class Audio
     }
 
     // Exact name (ignoring case) wins; otherwise the query must match exactly one name.
-    public static (OutputDevice? Device, string? Error) PickDevice(IReadOnlyList<OutputDevice> devices, string query)
+    public static (AudioDevice? Device, string? Error) PickDevice(IReadOnlyList<AudioDevice> devices, string query)
     {
         var exact = devices.FirstOrDefault(d => string.Equals(d.Name, query, StringComparison.OrdinalIgnoreCase));
         if (exact is not null) return (exact, null);
@@ -106,13 +106,20 @@ public static class Audio
     private static unsafe void SetMuted(IAudioEndpointVolume volume, bool muted) =>
         volume.SetMute(muted, null);
 
-    private static unsafe List<OutputDevice> OutputDevices()
+    /// <summary>
+    /// The active microphones (<paramref name="capture"/>) or outputs, in Windows' order, with the default communications
+    /// device marked, which is the one call apps use; empty when there are none.
+    /// </summary>
+    public static List<AudioDevice> CallDevices(bool capture) => Devices(capture ? EDataFlow.eCapture : EDataFlow.eRender, ERole.eCommunications);
+
+    // The active endpoints of one direction in Windows' order, the default for the role marked.
+    private static unsafe List<AudioDevice> Devices(EDataFlow flow, ERole role = ERole.eMultimedia)
     {
         var enumerator = Enumerator();
         string? defaultId = null;
         try
         {
-            enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out var current);
+            enumerator.GetDefaultAudioEndpoint(flow, role, out var current);
             current.GetId(out var id);
             defaultId = Take(id);
         }
@@ -121,9 +128,9 @@ public static class Audio
             // No default device: every device is listed as not default.
         }
 
-        enumerator.EnumAudioEndpoints(EDataFlow.eRender, DEVICE_STATE.DEVICE_STATE_ACTIVE, out var collection);
+        enumerator.EnumAudioEndpoints(flow, DEVICE_STATE.DEVICE_STATE_ACTIVE, out var collection);
         collection.GetCount(out var count);
-        var devices = new List<OutputDevice>((int)count);
+        var devices = new List<AudioDevice>((int)count);
         for (uint i = 0; i < count; i++)
         {
             collection.Item(i, out var device);
@@ -133,8 +140,9 @@ public static class Audio
             store.GetValue(PInvoke.PKEY_Device_FriendlyName, out var value);
             PInvoke.PropVariantToStringAlloc(value, out var name);
             PInvoke.PropVariantClear(ref value);
-            devices.Add(new OutputDevice(deviceId, Take(name), deviceId == defaultId));
+            devices.Add(new AudioDevice(deviceId, Take(name), deviceId == defaultId));
         }
+
         return devices;
     }
 
@@ -145,33 +153,5 @@ public static class Audio
         return s;
     }
 
-    private static void SetDefault(string deviceId)
-    {
-        var config = (IPolicyConfig)new PolicyConfigClient();
-        foreach (var role in new[] { ERole.eConsole, ERole.eMultimedia, ERole.eCommunications })
-            Marshal.ThrowExceptionForHR(config.SetDefaultEndpoint(deviceId, role));
-    }
-
-    // IPolicyConfig is undocumented, so it is not in the Win32 metadata CsWin32 generates from.
-    // It is the interface the Sound control panel uses to change the default device (also used by
-    // EarTrumpet and SoundSwitch). Only SetDefaultEndpoint is called; the earlier methods are
-    // declared only to keep the vtable slots in order.
-    [ComImport, Guid("870AF99C-171D-4F9E-AF0D-E63DF40C2BC9")]
-    private class PolicyConfigClient;
-
-    [ComImport, Guid("F8679F50-850A-41CF-9C72-430F290290C8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-    private interface IPolicyConfig
-    {
-        [PreserveSig] int GetMixFormat(string deviceId, nint format);
-        [PreserveSig] int GetDeviceFormat(string deviceId, int useDefault, nint format);
-        [PreserveSig] int ResetDeviceFormat(string deviceId);
-        [PreserveSig] int SetDeviceFormat(string deviceId, nint endpointFormat, nint mixFormat);
-        [PreserveSig] int GetProcessingPeriod(string deviceId, int useDefault, nint defaultPeriod, nint minimumPeriod);
-        [PreserveSig] int SetProcessingPeriod(string deviceId, nint period);
-        [PreserveSig] int GetShareMode(string deviceId, nint mode);
-        [PreserveSig] int SetShareMode(string deviceId, nint mode);
-        [PreserveSig] int GetPropertyValue(string deviceId, nint key, nint value);
-        [PreserveSig] int SetPropertyValue(string deviceId, nint key, nint value);
-        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceId, ERole role);
-    }
+    private static void SetDefault(string deviceId) => Marshal.ThrowExceptionForHR(DefaultDevice.Set(deviceId));
 }

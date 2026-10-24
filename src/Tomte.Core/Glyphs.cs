@@ -61,6 +61,10 @@ public static class Glyphs
 
     public static readonly GlyphFigure[] Printer = Line("M6 9V3h12v6M6 18H4v-7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v7h-2", Rect(6, 14, 12, 7, 0));
     public static readonly GlyphFigure[] ChevronDown = Line("m6 9 6 6 6-6");
+    public static readonly GlyphFigure[] ChevronLeft = Line("m15 6-6 6 6 6");
+    public static readonly GlyphFigure[] Speaker = Line("M4 9h4l5-4v14l-5-4H4z", "M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12");
+    public static readonly GlyphFigure[] SpeakerOff = Line("M4 9h4l5-4v14l-5-4H4z", "M16 9.5l5 5M21 9.5l-5 5");
+    public static readonly GlyphFigure[] Camera = Line(Rect(3, 6, 13, 12, 2), "M16 10.5l5-3v9l-5-3");
     public static readonly GlyphFigure[] ArrowUp = Line("M12 20V9M8 13l4-4 4 4");
     public static readonly GlyphFigure[] Minus = Line("M5 12h14");
     public static readonly GlyphFigure[] File = Line("M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z", "M14 3v5h5M9 13h6M9 17h4");
@@ -108,6 +112,10 @@ public static class Glyphs
         [nameof(Next)] = Next,
         [nameof(Printer)] = Printer,
         [nameof(ChevronDown)] = ChevronDown,
+        [nameof(ChevronLeft)] = ChevronLeft,
+        [nameof(Speaker)] = Speaker,
+        [nameof(SpeakerOff)] = SpeakerOff,
+        [nameof(Camera)] = Camera,
         [nameof(ArrowUp)] = ArrowUp,
         [nameof(Minus)] = Minus,
         [nameof(File)] = File,

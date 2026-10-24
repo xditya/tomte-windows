@@ -21,7 +21,8 @@ public sealed class MicUseWatch : IAudioSessionNotification, IMMNotificationClie
     private readonly List<Session> sessions = [];
     private readonly uint ownPid = (uint)Environment.ProcessId;
     private IAudioSessionManager2? manager;
-    private bool capturing, disposed;
+    private uint caller;
+    private bool disposed;
 
     private MicUseWatch()
     {
@@ -29,7 +30,7 @@ public sealed class MicUseWatch : IAudioSessionNotification, IMMNotificationClie
         lock (gate)
         {
             Attach();
-            capturing = OthersCapture(sessions.Select(s => (s.Pid, s.Active)), ownPid);
+            caller = Caller(sessions.Select(s => (s.Pid, s.Active)), ownPid);
         }
 
         enumerator.RegisterEndpointNotificationCallback(this);
@@ -42,7 +43,19 @@ public sealed class MicUseWatch : IAudioSessionNotification, IMMNotificationClie
         {
             lock (gate)
             {
-                return capturing;
+                return caller != 0;
+            }
+        }
+    }
+
+    /// <summary>The process recording at the last change, the call app; 0 while none is.</summary>
+    public uint CallerPid
+    {
+        get
+        {
+            lock (gate)
+            {
+                return caller;
             }
         }
     }
@@ -60,8 +73,11 @@ public sealed class MicUseWatch : IAudioSessionNotification, IMMNotificationClie
     /// Whether an app other than Tomte records now: one of its sessions is active. Tomte's own recording (the rambler)
     /// does not count, nor a session with no single process behind it (0).
     /// </summary>
-    public static bool OthersCapture(IEnumerable<(uint Pid, bool Active)> sessions, uint ownPid) =>
-        sessions.Any(s => s.Active && s.Pid != 0 && s.Pid != ownPid);
+    public static bool OthersCapture(IEnumerable<(uint Pid, bool Active)> sessions, uint ownPid) => Caller(sessions, ownPid) != 0;
+
+    /// <summary>The first such app's process, or 0 when <see cref="OthersCapture"/> is false.</summary>
+    public static uint Caller(IEnumerable<(uint Pid, bool Active)> sessions, uint ownPid) =>
+        sessions.FirstOrDefault(s => s.Active && s.Pid != 0 && s.Pid != ownPid).Pid;
 
     public void Dispose()
     {
@@ -189,19 +205,20 @@ public sealed class MicUseWatch : IAudioSessionNotification, IMMNotificationClie
 
     private void Raise()
     {
-        bool now;
+        uint now;
         lock (gate)
         {
-            now = OthersCapture(sessions.Select(s => (s.Pid, s.Active)), ownPid);
-            if (disposed || now == capturing)
+            now = Caller(sessions.Select(s => (s.Pid, s.Active)), ownPid);
+            if (disposed || now == caller)
             {
                 return;
             }
 
-            capturing = now;
+            caller = now;
         }
 
-        Changed?.Invoke(now);
+        // Also raised when another app takes over the microphone, so the call app is the one recording now.
+        Changed?.Invoke(now != 0);
     }
 
     /// <summary>One app's session on the microphone: its process and whether it records now, followed through its events.</summary>

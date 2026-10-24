@@ -14,6 +14,9 @@ public enum PanelId
     Scratchpad,
     Clipboard,
     History,
+
+    /// <summary>Call controls; a tab only while another app uses the microphone (<see cref="PanelTabs.Show"/>).</summary>
+    Call,
 }
 
 /// <summary>
@@ -25,11 +28,29 @@ public enum PanelId
 public sealed class PanelTabs
 {
     private readonly SortedSet<PanelId> registered = [];
+    private readonly HashSet<PanelId> hidden = [];
     private PanelId? selected;
 
-    public IReadOnlyCollection<PanelId> Order => registered;
+    /// <summary>The tabs on the strip: those registered and not hidden.</summary>
+    public IReadOnlyCollection<PanelId> Order => [.. registered.Where(id => !hidden.Contains(id))];
 
-    public PanelId? Current => selected ?? (registered.Count > 0 ? registered.Min : null);
+    public PanelId? Current => selected is { } s && !hidden.Contains(s) ? s : registered.Where(id => !hidden.Contains(id)).Cast<PanelId?>().FirstOrDefault();
+
+    /// <summary>
+    /// Puts a registered tab on the strip or takes it off. A hidden tab cannot be selected; while the selected tab is
+    /// hidden the first tab is current, and the selection comes back with the tab.
+    /// </summary>
+    public void Show(PanelId id, bool on)
+    {
+        if (on)
+        {
+            hidden.Remove(id);
+        }
+        else
+        {
+            hidden.Add(id);
+        }
+    }
 
     public void Register(PanelId id)
     {
@@ -42,7 +63,7 @@ public sealed class PanelTabs
     /// <summary>False when the panel is not registered or is already current; nothing changes then.</summary>
     public bool Select(PanelId id)
     {
-        if (!registered.Contains(id) || Current == id)
+        if (!registered.Contains(id) || hidden.Contains(id) || Current == id)
         {
             return false;
         }
@@ -57,12 +78,12 @@ public sealed class PanelTabs
     /// <summary>The next tab (+1) or the previous one (-1), wrapping at both ends. False with fewer than two panels.</summary>
     public bool Step(int direction)
     {
-        if (registered.Count < 2 || direction == 0)
+        var order = Order.ToArray();
+        if (order.Length < 2 || direction == 0)
         {
             return false;
         }
 
-        var order = registered.ToArray();
         int i = Array.IndexOf(order, Current!.Value) + Math.Sign(direction);
         selected = order[(i + order.Length) % order.Length];
         return true;
@@ -116,6 +137,7 @@ public static class TabStrip
         PanelId.Media => "Media",
         PanelId.Scratchpad => "Scratchpad",
         PanelId.History => "History",
+        PanelId.Call => "Call",
         _ => "Clipboard",
     };
 
@@ -127,6 +149,7 @@ public static class TabStrip
         PanelId.Media => Glyphs.Media,
         PanelId.Scratchpad => Glyphs.Scratchpad,
         PanelId.History => Glyphs.History,
+        PanelId.Call => Glyphs.Mic,
         _ => Glyphs.Clipboard,
     };
 

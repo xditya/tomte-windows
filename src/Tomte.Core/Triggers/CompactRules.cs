@@ -185,18 +185,19 @@ public static class CompactRules
         shown is [var only] ? only.Source : IslandEventSource.Other;
 
     /// <summary>
-    /// The tab a click on the pill opens Panels on: Media when the now-playing row shows on it, else the tab last open
-    /// (null). A hover, a scroll and the hotkeys always open the tab last open.
+    /// The tab a click on the pill opens Panels on: Call during a call, Media when the now-playing row shows on it, else
+    /// the tab last open (null). A hover, a scroll and the hotkeys always open the tab last open.
     /// </summary>
-    public static PanelId? ClickOpens(bool nowPlayingShows) => nowPlayingShows ? PanelId.Media : null;
+    public static PanelId? ClickOpens(bool nowPlayingShows, bool onCall = false) =>
+        onCall ? PanelId.Call : nowPlayingShows ? PanelId.Media : null;
 
     /// <summary>
-    /// The tab to put back when the island hides after a click on the track opened Media: the one current before the
+    /// The tab to put back when the island hides after a click on the pill opened Media or Call: the one current before the
     /// click, so hover and the hotkeys keep opening the tab the user chose. Null when the user went on to another tab
     /// by hand, or nothing was clicked.
     /// </summary>
     public static PanelId? TabAfterClick(PanelId? beforeClick, PanelId? current) =>
-        beforeClick is { } back && current == PanelId.Media ? back : null;
+        beforeClick is { } back && current is PanelId.Media or PanelId.Call ? back : null;
 
     /// <summary>
     /// Whether the pill carries the mic button: the mute key's own pill always, and while another app uses the

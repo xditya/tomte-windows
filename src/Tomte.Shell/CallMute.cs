@@ -11,27 +11,34 @@ namespace Tomte.Shell;
 /// The microphone during calls. While another app has the microphone open (<see cref="MicUseWatch"/>) and the setting is
 /// on, the push pill and the pill kept while music plays grow a round mic button at their trailing end; a click mutes or
 /// unmutes the default communications microphone, and while it is muted the button shows a struck mic in the warning
-/// colour. The mute key does the same whenever there is a microphone, call or not, and shows the new state on a pill of
-/// its own when no button is up. The island takes no focus, so the call app keeps it. Nothing runs between changes: the
-/// watch and the mute both wait on Core Audio callbacks, and the microphone is held only during a call.
+/// colour. The Call tab shows too, and a click on the pill opens it. The mute key does the same whenever there is a
+/// microphone, call or not, and shows the new state on a pill of its own when no button is up. The island takes no focus,
+/// so the call app keeps it. Nothing runs between changes: the watch and the mute both wait on Core Audio callbacks, and
+/// the microphone is held only during a call.
 /// </summary>
 internal sealed class CallMute
 {
     private readonly IslandWindow island;
     private readonly TriggerController triggers;
+    private readonly PanelHost panels;
     private readonly Action<string>? log;
     private MicUseWatch? watch;
     private CommsMic? mic;
     private Button? button;
     private bool listening, call, muted;
 
-    public CallMute(IslandWindow island, TriggerController triggers, SettingsStore store, Action<string>? log)
+    public CallMute(IslandWindow island, TriggerController triggers, PanelHost panels, SettingsStore store, Action<string>? log)
     {
         this.island = island;
         this.triggers = triggers;
+        this.panels = panels;
         this.log = log;
         triggers.MicClicked = Toggle;
         triggers.MuteKey = Toggle;
+        triggers.OnCall = () => call;
+        panels.ShowTab(PanelId.Call, false);
+        // A call that ended while its tab was open leaves the tab until the island goes.
+        island.WentHidden += () => panels.ShowTab(PanelId.Call, call);
         // Why the pill is up is settled only after the change that raised these, so they are read on the next turn. A
         // pill that goes takes its button at once, so the button fades with the rest of the content.
         triggers.CompactChanged += () => island.Queue.TryEnqueue(Update);
@@ -57,6 +64,23 @@ internal sealed class CallMute
         // Changed arrives on a pool thread.
         store.Changed += s => island.Queue.TryEnqueue(() => Apply(s));
     }
+
+    /// <summary>The app on the call, kept after the call ends for the Call tab still open on it; null before any call.</summary>
+    public CallApp? App { get; private set; }
+
+    /// <summary>When the current or last call started.</summary>
+    public DateTimeOffset Since { get; private set; }
+
+    /// <summary>A call is on now.</summary>
+    public bool Calling => call;
+
+    public bool Muted => muted;
+
+    /// <summary>The call started, ended or changed hands, or the microphone's mute changed. On the island's thread.</summary>
+    public event Action? Changed;
+
+    /// <summary>The Call tab's mute button: as the pill's.</summary>
+    public void ToggleMute() => Toggle();
 
     private void Apply(TomteSettings settings)
     {
@@ -92,8 +116,24 @@ internal sealed class CallMute
             log?.Invoke($"mic: {(now ? "another app has the microphone open" : "no other app has the microphone open")}{(now && mic is null ? ", but there is no communications microphone" : "")}");
         }
 
+        bool was = call;
         call = now;
+        if (now && watch?.CallerPid is { } pid and not 0 && (!was || App?.Pid != pid) && CallApp.Of(pid) is { } next)
+        {
+            // Another process of the same app taking over the microphone is the same call.
+            Since = was && next.Process == App?.Process ? Since : DateTimeOffset.Now;
+            App = next;
+            log?.Invoke($"call: {next.Name} ({next.Process}, {pid})");
+        }
+
+        bool open = triggers.State == IslandState.Panels && panels.Current == PanelId.Call;
+        if (now || !open)
+        {
+            panels.ShowTab(PanelId.Call, now);
+        }
+
         Update();
+        Changed?.Invoke();
     }
 
     /// <summary>The default communications microphone, its mute read and followed, or null when there is none.</summary>
@@ -109,6 +149,7 @@ internal sealed class CallMute
                 {
                     muted = value;
                     Update();
+                    Changed?.Invoke();
                 }
             });
         }
@@ -150,6 +191,7 @@ internal sealed class CallMute
         }
 
         Update();
+        Changed?.Invoke();
     }
 
     private void Update()
