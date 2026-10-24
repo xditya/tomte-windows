@@ -948,6 +948,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     finished = run;
                     log?.Invoke($"timer: done, ended {run!.EndsAt:O}");
+                    // Heard at once, through Focus and fullscreen too: the user set this timer to be told.
+                    Alarm.Play();
                     Raise(new IslandEvent(CompactRules.TimerDone(run!.Duration), DateTimeOffset.Now) { Source = IslandEventSource.Timer });
                 }
                 else

@@ -313,3 +313,4 @@ UnregisterClass
 SetProcessWorkingSetSize
 WM_SETTINGCHANGE
 EnumDisplayMonitors
+PlaySound

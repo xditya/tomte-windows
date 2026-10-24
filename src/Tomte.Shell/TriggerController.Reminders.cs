@@ -31,6 +31,12 @@ internal sealed partial class TriggerController
         }
 
         log?.Invoke($"reminders: {ringing.Count} ringing");
+        // Heard as it rings even while the pill waits for Focus or a fullscreen app to end.
+        if (rung.Count > 0)
+        {
+            Alarm.Play();
+        }
+
         UpdateLipDot();
         watch.ReadNotificationState(ShowReminder);
     }
