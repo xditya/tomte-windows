@@ -103,6 +103,20 @@ public sealed class JobPlanTests : IDisposable
     }
 
     [Fact]
+    public async Task AnAppThePcLacksIsSentBackBeforeTheCard()
+    {
+        var planner = new JobPlanner(_store, new NoTasks()) { Installed = app => app != "Telegram" };
+        bool asked = false;
+        var (_, result, isError) = await planner.ScheduleAsync(new ToolCallPart("1", JobPlanner.Tool, Call(SubCountSteps, new[] { "youtube.com" }, new[] { "Telegram" })),
+            Haiku, (_, _) => { asked = true; return Task.FromResult(PermissionAnswer.AllowOnce); }, CancellationToken.None);
+
+        Assert.True(isError);
+        Assert.False(asked);
+        Assert.Equal("Telegram is not installed on this PC. Ask the user which installed app to use instead, then call schedule_job again.", result);
+        Assert.Empty(_store.All());
+    }
+
+    [Fact]
     public void TheCardShowsThePlanSitesAppsToolsAndProviderWhole()
     {
         var draft = _planner.Read(Call(SubCountSteps, new[] { "youtube.com" }, new[] { "Telegram" })).Draft!;

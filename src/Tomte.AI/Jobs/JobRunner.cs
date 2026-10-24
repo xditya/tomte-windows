@@ -182,7 +182,9 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
         await session.SendAsync();
         var steps = session.Answer.OfType<ToolStepSegment>().Select(s => $"{s.Summary}: {(s.IsError ? "error: " : "")}{s.Result}");
         string text = session.Status == PaletteStatus.Done ? session.AnswerText.Trim() : session.Error ?? $"The run ended: {session.Status}.";
-        return Record(job, due, session.Status == PaletteStatus.Done, text, string.Join("\n", [.. steps, session.ProviderIndicator]));
+        // A model whose last step failed still finishes with an answer, one that says it could not do the work.
+        bool ok = session.Status == PaletteStatus.Done && session.Answer.OfType<ToolStepSegment>().LastOrDefault() is not { IsError: true };
+        return Record(job, due, ok, text, string.Join("\n", [.. steps, session.ProviderIndicator]));
     }
 
     private JobRunRecord Record(ScheduledJob job, DateTimeOffset due, bool ok, string text, string details) =>

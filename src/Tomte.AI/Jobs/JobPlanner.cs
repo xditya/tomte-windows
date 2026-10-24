@@ -32,6 +32,9 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
 
     public TimeZoneInfo Zone { get; init; } = TimeZoneInfo.Local;
 
+    /// <summary>Whether an app a plan names is on this PC, asked off the session's thread; null checks nothing.</summary>
+    public Func<string, bool>? Installed { get; init; }
+
     /// <summary>Raised on the session's context after a job was stored, with the earliest next run over all jobs.</summary>
     public event Action<DateTimeOffset?>? Scheduled;
 
@@ -237,6 +240,14 @@ public sealed class JobPlanner(JobStore store, IJobTasks tasks)
         if (draft is null)
         {
             return (Tool, error!, true);
+        }
+
+        // A job that names an app the PC lacks would only fail at each run; ask now, while the user is here.
+        if (Installed is not null && draft.Apps.Count > 0
+            && await Task.Run(() => draft.Apps.Where(a => !Installed(a)).ToList(), ct) is { Count: > 0 } missing)
+        {
+            return (Tool, $"{JobSchedule.JoinWords(missing)} {(missing.Count == 1 ? "is" : "are")} not installed on this PC. " +
+                "Ask the user which installed app to use instead, then call schedule_job again.", true);
         }
 
         string summary = Confirmation(draft, provider);

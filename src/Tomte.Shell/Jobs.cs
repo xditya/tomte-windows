@@ -5,6 +5,7 @@ using Tomte.AI.Automation;
 using Tomte.AI.Jobs;
 using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Device;
 using Tomte.Core.Jobs;
 using Tomte.Core.Storage;
 using Windows.System;
@@ -124,7 +125,7 @@ internal static class Jobs
 
     private static JobPlanner NewPlanner(JobContext c)
     {
-        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
+        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath)) { Installed = Apps.IsInstalled };
         planner.Scheduled += next => Arm(c, next);
         return planner;
     }

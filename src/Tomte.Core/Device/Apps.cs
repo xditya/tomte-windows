@@ -38,6 +38,17 @@ public static class Apps
         name.IndexOfAny(['\\', '/', ':']) >= 0 ? null
             : AppList.Load().FirstOrDefault(app => string.Equals(app.Name, name.Trim(), StringComparison.CurrentCultureIgnoreCase));
 
+    /// <summary>
+    /// Whether open_app can find this app: it runs, or Start lists it by this name and its program is still there. Reads
+    /// Start's list: a worker thread only.
+    /// </summary>
+    public static bool IsInstalled(string name)
+    {
+        var running = Process.GetProcessesByName(name);
+        foreach (var process in running) process.Dispose();
+        return running.Length > 0 || StartApp(name) is { } app && !ShortcutTarget.Read(app.Target).Missing;
+    }
+
     // "notepad" and "C:\Tools\app.exe" name a process; a .lnk shortcut or an AUMID does not, so those only launch.
     public static string? ProcessNameFor(string target)
     {

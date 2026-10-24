@@ -809,6 +809,23 @@ public sealed class JobTests : IDisposable
     }
 
     [Fact]
+    public async Task ARunWhoseLastStepFailedIsKeptAsFailed()
+    {
+        // The model answers in words after the error, as it did when Telegram was not installed.
+        AddJob("Read the shelf item gone.txt and summarise it in one sentence.", "read_shelf_item");
+        var runner = Runner("runmissing", 2, out _);
+        var events = new List<IslandEvent>();
+        runner.Raised += events.Add;
+
+        await runner.RunDueAsync();
+
+        var run = Assert.Single(_store.Results());
+        Assert.False(run.Ok);
+        Assert.Equal("I could not find gone.txt on the shelf, so there is nothing to summarise.", run.Text);
+        Assert.Equal(["Running job: Morning notes", "Job failed: Morning notes"], events.Select(e => e.Text));
+    }
+
+    [Fact]
     public async Task ADestructiveCallDuringARunEndsItAndNothingRuns()
     {
         AddJob("Use the lock_pc tool to lock the PC now.", "read_shelf_item");
