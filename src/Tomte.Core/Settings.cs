@@ -101,8 +101,8 @@ public sealed record TomteSettings
     public bool KeepWhilePlaying { get; init; }
 
     /// <summary>
-    /// While another app uses the microphone, the push pill carries a button that mutes it. On by default; on, Tomte
-    /// hears apps start and stop using the microphone while the island is hidden.
+    /// While another app uses the microphone, the push pill carries a button that mutes it and the Call tab shows. On by
+    /// default; on, Tomte hears apps start and stop using the microphone while the island is hidden.
     /// </summary>
     public bool MuteDuringCalls { get; init; } = true;
 

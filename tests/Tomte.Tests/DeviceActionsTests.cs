@@ -134,7 +134,7 @@ public class DeviceActionsTests
         Assert.StartsWith(@"shell:AppsFolder\windows.immersivecontrolpanel_", settings.Target, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static readonly OutputDevice[] Devices =
+    private static readonly AudioDevice[] Devices =
     [
         new("a", "Speakers (Realtek Audio)", true),
         new("b", "Headphones (WH-1000XM4)", false),

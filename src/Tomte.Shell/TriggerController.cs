@@ -340,6 +340,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>Whether the now-playing row is on the Compact pill now; a click on the pill then opens the Media tab.</summary>
     public Func<bool>? NowPlayingShows { get; set; }
 
+    /// <summary>Whether a call is on (the Call tab shows); a click on the pill then opens it.</summary>
+    internal Func<bool>? OnCall { get; set; }
+
     /// <summary>A click on the mic button, and the mute key: whoever holds the microphone answers them.</summary>
     internal Action? MicClicked { get; set; }
 
@@ -791,7 +794,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             }
             else
             {
-                owner.OpenPanelsNextTurn(CompactRules.ClickOpens(owner.NowPlayingShows?.Invoke() == true));
+                owner.OpenPanelsNextTurn(CompactRules.ClickOpens(owner.NowPlayingShows?.Invoke() == true, owner.OnCall?.Invoke() == true));
             }
         }
 
