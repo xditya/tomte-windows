@@ -269,23 +269,26 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
 
     // After the change is committed, and only a hint: a crash in between, or a disk that says no, leaves the file early
     // (the runner looks and finds nothing due) or late, when the Task Scheduler entry still starts the run.
-    private void WriteMarker(SqliteConnection connection)
+    private void WriteMarker(SqliteConnection connection) =>
+        // A result that waits to be shown makes the next start look at once.
+        WriteMarker(MarkerPath, Scalar(connection, "SELECT EXISTS (SELECT 1 FROM jobs_runs WHERE shown = 0)") is 1L
+            ? DateTimeOffset.UnixEpoch
+            : Earliest(connection));
+
+    /// <summary>Writes a next-due file <see cref="ReadMarker"/> reads, or deletes it for none. A disk that says no is ignored.</summary>
+    public static void WriteMarker(string path, DateTimeOffset? next)
     {
         try
         {
-            // A result that waits to be shown makes the next start look at once.
-            DateTimeOffset? next = Scalar(connection, "SELECT EXISTS (SELECT 1 FROM jobs_runs WHERE shown = 0)") is 1L
-                ? DateTimeOffset.UnixEpoch
-                : Earliest(connection);
             if (next is { } at)
             {
-                string temp = MarkerPath + ".tmp";
+                string temp = path + ".tmp";
                 File.WriteAllText(temp, at.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture));
-                File.Move(temp, MarkerPath, overwrite: true);
+                File.Move(temp, path, overwrite: true);
             }
             else
             {
-                File.Delete(MarkerPath);
+                File.Delete(path);
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
