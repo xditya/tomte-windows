@@ -4,6 +4,7 @@ using System.Diagnostics;
 using Tomte.AI;
 using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Clipboard;
 using Tomte.Core.Device;
 using Tomte.Core.Search;
 using Tomte.Core.Shortcuts;
@@ -16,10 +17,10 @@ using Windows.Win32;
 namespace Tomte.Shell;
 
 /// <summary>
-/// Runs the search box: what it searches and what opening a row does. Apps, places, tiles and shelf items are ranked on
+/// Runs the search box: what it searches and what opening a row does. Apps, places, tiles, shelf items and pinned clips are ranked on
 /// the island's thread at each keystroke, so they show at once; files come from Everything when it runs, else the Windows
 /// index, off the island's thread after a short pause in typing, and a newer keystroke cancels an older search. Nothing
-/// loads before the first search: the app list, the tiles, the shelf and what was opened before are read each time the
+/// loads before the first search: the app list, the tiles, the shelf, the pins and what was opened before are read each time the
 /// box opens (the last ones show meanwhile). Opening a row hides the island and lets what opens come to the front.
 /// Island thread only.
 /// </summary>
@@ -56,7 +57,7 @@ internal sealed class SearchHost
     private readonly Action<string>? log;
 
     // Kept for the session: the next search shows them at once while they are read again.
-    private IReadOnlyList<SearchItem> apps = [], places = [], tiles = [], shelf = [], opened = [];
+    private IReadOnlyList<SearchItem> apps = [], places = [], tiles = [], shelf = [], pins = [], opened = [];
     private IReadOnlyDictionary<string, Launches> launches = new Dictionary<string, Launches>();
     private FileSource source = FileSource.Index;
     private bool startedEverything, offerDismissed;
@@ -123,6 +124,9 @@ internal sealed class SearchHost
     /// that picks files through the local file search. Null when no provider can be used. Made only when the row is chosen.
     /// </summary>
     public Func<string, PaletteSession?>? AiSearch { get; set; }
+
+    /// <summary>The clipboard history its pinned items come from, and go back on the clipboard through; null for none.</summary>
+    public ClipboardWatch? Clipboard { get; set; }
 
     /// <summary>The latest AI search, for the debug driver to wait on.</summary>
     public Task AiRun { get; private set; } = Task.CompletedTask;
@@ -238,7 +242,8 @@ internal sealed class SearchHost
             return;
         }
 
-        bool folder = how == SearchEnter.ShowInFolder;
+        // A pinned clip has no folder: Ctrl+Shift+Enter copies it, as Shift+Enter does.
+        bool folder = how == SearchEnter.ShowInFolder || (how == SearchEnter.Copy && view?.Selected?.Kind == SearchKind.Clip);
         if (appsPending && !aiShowing)
         {
             held = folder;
@@ -294,8 +299,9 @@ internal sealed class SearchHost
             Load(Tiles, list => tiles = list, "tiles"),
             Load(history.Load, seen => (opened, launches) = seen, "history"),
             Load(EverythingNow, now => source = now, "file source"),
-            Shelf());
-        log?.Invoke($"search: loaded {apps.Count} apps, {places.Count} places, {tiles.Count} tiles, {shelf.Count} shelf items, {opened.Count} opened before, files from {source}, in {watch.ElapsedMilliseconds} ms");
+            Shelf(),
+            Pins());
+        log?.Invoke($"search: loaded {apps.Count} apps, {places.Count} places, {tiles.Count} tiles, {shelf.Count} shelf items, {pins.Count} pins, {opened.Count} opened before, files from {source}, in {watch.ElapsedMilliseconds} ms");
 
         // Start's apps. Once read (or failed), an Enter that waited for them opens the top row of the list ranked with them.
         async Task Apps()
@@ -337,6 +343,28 @@ internal sealed class SearchHost
                 {
                     Refresh();
                 }
+            }
+        }
+
+        // Pinned text only, through the history's own queue; with history off there are none.
+        async Task Pins()
+        {
+            if (Clipboard is not { } clipboard)
+            {
+                return;
+            }
+
+            try
+            {
+                pins = [.. (await clipboard.PinsAsync()).Select(p => Clip.Row(p.Id, p.Text))];
+                if (view == shown)
+                {
+                    Refresh();
+                }
+            }
+            catch (Exception e) when (e is DbException or IOException or UnauthorizedAccessException)
+            {
+                log?.Invoke($"search: pins not read ({e.GetType().Name})");
             }
         }
 
@@ -424,7 +452,7 @@ internal sealed class SearchHost
         var still = files.Where(f => words.All(w => f.Name.Contains(w, StringComparison.CurrentCultureIgnoreCase)));
         // Programs opened before are listed even when the file search did not return them: one letter finds too many files.
         var programs = Known().Where(i => SearchRank.LaunchedProgram(i, launches) && SearchMatch.Score(i.Name, query) > 0);
-        var candidates = apps.Concat(places).Concat(tiles).Concat(shelf).Concat(still.Concat(programs).DistinctBy(i => i.Key));
+        var candidates = apps.Concat(places).Concat(tiles).Concat(shelf).Concat(pins).Concat(still.Concat(programs).DistinctBy(i => i.Key));
         if (EverythingSetup.Offers(source, offerDismissed || store.Current.EverythingOfferDismissed) && installing is null)
         {
             candidates = candidates.Append(new SearchItem(SearchKind.GetEverything, "Search every drive", "", "Get Everything, free, from voidtools"));
@@ -440,15 +468,15 @@ internal sealed class SearchHost
 
         long ranking = Stopwatch.GetTimestamp();
         var ranked = SearchRank.AiFirst(SearchRank.Order(candidates, query, launches), query);
-        log?.Invoke($"search: ranked {apps.Count + places.Count + tiles.Count + shelf.Count + files.Count} candidates in {Stopwatch.GetElapsedTime(ranking).TotalMilliseconds:F2} ms");
+        log?.Invoke($"search: ranked {apps.Count + places.Count + tiles.Count + shelf.Count + pins.Count + files.Count} candidates in {Stopwatch.GetElapsedTime(ranking).TotalMilliseconds:F2} ms");
         shown.Show(ranked, Source(), SearchLayout.NoResults);
     }
 
     // What was opened before, as it is now: an app still installed, a tile still there with its current name, a shelf
-    // item still on the shelf; files as they were stored.
+    // item still on the shelf, a clip still pinned; files as they were stored.
     private IEnumerable<SearchItem> Known()
     {
-        var now = apps.Concat(places).Concat(tiles).Concat(shelf).DistinctBy(i => i.Key).ToDictionary(i => i.Key, StringComparer.Ordinal);
+        var now = apps.Concat(places).Concat(tiles).Concat(shelf).Concat(pins).DistinctBy(i => i.Key).ToDictionary(i => i.Key, StringComparer.Ordinal);
         foreach (var seen in opened)
         {
             if (now.TryGetValue(seen.Key, out var current))
@@ -628,8 +656,17 @@ internal sealed class SearchHost
 
         if (Dry)
         {
-            log?.Invoke($"search: would open {item.Kind} \"{item.Name}\"{(folder ? " in its folder" : "")}{(item.Kind is SearchKind.Place or SearchKind.Web ? $" at {item.Target}" : "")}");
+            log?.Invoke($"search: would {(item.Kind == SearchKind.Clip ? folder ? "copy" : "paste" : "open")} {item.Kind} \"{item.Name}\"{(folder && item.Location is not null ? " in its folder" : "")}{(item.Kind is SearchKind.Place or SearchKind.Web ? $" at {item.Target}" : "")}");
             triggers.Hide();
+            return;
+        }
+
+        if (item.Kind == SearchKind.Clip)
+        {
+            // The island goes as the clipboard tab's Paste does, handing the keys back to the app that had them before the
+            // search opened, which the paste goes to.
+            triggers.Hide();
+            _ = ClipAsync(item, paste: !folder);
             return;
         }
 
@@ -657,6 +694,41 @@ internal sealed class SearchHost
         {
             await CountAsync(item);
         }
+    }
+
+    // The pin goes back on the clipboard, then Ctrl+V goes to the app the keys went back to, after the wait the clipboard
+    // tab's Paste takes. When it cannot be pasted (a modifier still held), or only a copy was asked for, it says Copied.
+    private async Task ClipAsync(SearchItem item, bool paste)
+    {
+        log?.Invoke(paste ? "search: pasting a pinned clip" : "search: copying a pinned clip");
+        bool picked;
+        try
+        {
+            picked = Clipboard is { } clipboard && await clipboard.PickAsync(long.Parse(item.Target, System.Globalization.CultureInfo.InvariantCulture));
+        }
+        catch (Exception e) when (e is DbException or IOException or UnauthorizedAccessException)
+        {
+            log?.Invoke($"search: the clip was not picked ({e.GetType().Name})");
+            picked = false;
+        }
+
+        if (!picked)
+        {
+            triggers.Raise(new IslandEvent("That clip is no longer in the clipboard history.", DateTimeOffset.Now));
+            return;
+        }
+
+        if (paste)
+        {
+            await Task.Delay(150);
+        }
+
+        if (!paste || !Tomte.AI.Palette.DesktopEffects.Paste())
+        {
+            triggers.Raise(new IslandEvent("Copied", DateTimeOffset.Now));
+        }
+
+        await CountAsync(item);
     }
 
     private async Task CountAsync(SearchItem item)
