@@ -291,6 +291,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         machine.State != IslandState.Compact ? CompactReason.None
         : activity.HasFlag(IslandActivity.Rambling) ? CompactReason.Rambler
         : activity.HasFlag(IslandActivity.Undo) ? CompactReason.Undo
+        : activity.HasFlag(IslandActivity.Reminder) ? CompactReason.Reminder
         : firstRunShowing ? CompactReason.Hint
         : arrivalShowing ? CompactReason.Arrival
         : eventShowing ? CompactReason.Event
@@ -758,7 +759,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         public void Changed()
         {
-            Targets = owner.machine.State == IslandState.Compact && (owner.activity & (IslandActivity.Rambling | IslandActivity.Undo)) == 0
+            Targets = owner.machine.State == IslandState.Compact && (owner.activity & (IslandActivity.Rambling | IslandActivity.Undo | IslandActivity.Reminder)) == 0
                 ? CompactLayout.Targets(owner.island.Heading, owner.island.Mascot.Enabled)
                 : [];
             if (owner.micOn && Targets.Count > 0)
@@ -1269,9 +1270,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// One digest for everything that waited, once nothing holds events back; its content is the panel work's. Then the
-    /// pill kept while music plays, which waits for the island to come free in the same way. Called when the suppression
-    /// changes, when the island hides and when a pause ends, the ways a wait can end.
+    /// One digest for everything that waited, once nothing holds events back; its content is the panel work's. Then a
+    /// reminder that rang, and the pill kept while music plays, which wait for the island to come free in the same way.
+    /// Called when the suppression changes, when the island hides and when a pause ends, the ways a wait can end.
     /// </summary>
     private void ReleaseEvents()
     {
@@ -1287,6 +1288,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             ShowEvent(waited);
         }
 
+        ShowReminder();
         KeepWhilePlaying();
     }
 
@@ -1429,7 +1431,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private void ReadThenRelease()
     {
-        if (events.Count > 0)
+        if (events.Count > 0 || ringing.Count > 0)
         {
             watch.ReadNotificationState(ReleaseEvents);
         }
@@ -1492,7 +1494,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         rambler?.ForegroundChanged();
         SchedulePeek();
-        if (events.Count > 0)
+        if (events.Count > 0 || ringing.Count > 0)
         {
             // Focus and quiet hours end with no event to hear, and the notification state was last read when the
             // waiting event was raised. A window change is the next sign of the user doing something, so the
@@ -1539,7 +1541,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     // back, events held back.
     private void UpdateLipDot()
     {
-        bool waiting = timer.Run is not null || finished is not null || undo.Live(DateTimeOffset.Now) || events.Count > 0;
+        bool waiting = timer.Run is not null || finished is not null || undo.Live(DateTimeOffset.Now) || events.Count > 0 || ringing.Count > 0;
         bool show = PeekResting && peekStyle == PeekStyle.Lip && waiting;
         if (show && lipDot is null)
         {

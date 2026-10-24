@@ -221,6 +221,25 @@ public static class CompactLayout
         return (width, new RectangleF(left, 0, box.X - Gap - left, Depth), box);
     }
 
+    /// <summary>The widest a reminder's text grows its pill; longer text ends in an ellipsis.</summary>
+    public const float ReminderLineMax = 320;
+
+    /// <summary>The reminder pill's buttons: Snooze's words on a raised fill, Dismiss's on the accent.</summary>
+    public const string SnoozeLabel = "Snooze 10 min", DismissLabel = "Dismiss";
+    public static TextStyle SnoozeStyle => new(12, 600, Color: Theme.Ink);
+    public static TextStyle DismissStyle => new(12, 600, Color: Theme.OnAccent);
+
+    /// <summary>
+    /// The reminder pill in island space: its width, the text's slot, then Snooze and Dismiss at the right end, each laid
+    /// out as the undo button is and <see cref="UndoKeyGap"/> apart. <paramref name="line"/> is the text's width.
+    /// </summary>
+    public static (float Width, RectangleF Line, RectangleF Snooze, RectangleF Dismiss) Reminder(bool mascot, float line, float snooze, float dismiss)
+    {
+        float first = snooze + (2 * UndoPadX), second = dismiss + (2 * UndoPadX);
+        var (width, slot, box) = Undo(mascot, Math.Min(line, ReminderLineMax), first + UndoKeyGap + second - (2 * UndoPadX));
+        return (width, slot, box with { Width = first }, box with { X = box.Right - second, Width = second });
+    }
+
     /// <summary>What the undo button says: Undo and the whole seconds left, rounded up so it never reads 0 while it still works.</summary>
     public static string UndoLabel(TimeSpan left) => $"Undo · {Math.Max(1, (int)Math.Ceiling(left.TotalSeconds))}s";
 

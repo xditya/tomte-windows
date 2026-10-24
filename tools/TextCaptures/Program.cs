@@ -300,6 +300,10 @@ internal static unsafe partial class Program
             UndoPill("compact-undo-transcript", "Transcript closed", key: true),
             // Another app holds Win+Alt+Z: the button alone.
             UndoPill("compact-undo-no-key", "AI answer closed", key: false),
+            ReminderPill("compact-reminder", "Check the oven"),
+            ReminderPill("compact-reminder-missed", "Missed at 09:30: standup"),
+            ReminderPill("compact-reminder-long", "Call mum about the trip to the coast next weekend and ask about the train times"),
+            ReminderPill("compact-off-reminder", "Check the oven", mascot: false),
             new("compact-peek", IslandGeometry.Peek, c =>
             {
                 c.Pill();
@@ -587,6 +591,32 @@ internal static unsafe partial class Program
             if (key)
             {
                 c.Text(chord, keyStyle, new RectangleF(x + lw + CompactLayout.UndoKeyGap, box.Y, kw + 1, box.Height), Vector2.Zero);
+            }
+        });
+    }
+
+    // A reminder that rang, as ReminderPill lays it out: its text, then Snooze 10 min on a raised fill and Dismiss.
+    private static Scene ReminderPill(string name, string line, bool mascot = true)
+    {
+        var (width, slot, snooze, dismiss) = CompactLayout.Reminder(mascot, TextSlot.Measure(line, CompactLayout.LineStyle, CompactLayout.ReminderLineMax),
+            TextSlot.Measure(CompactLayout.SnoozeLabel, CompactLayout.SnoozeStyle, 200), TextSlot.Measure(CompactLayout.DismissLabel, CompactLayout.DismissStyle, 200));
+        return new(name, IslandGeometry.Compact with { Width = width }, c =>
+        {
+            c.Pill();
+            if (mascot)
+            {
+                c.Mascot();
+            }
+
+            c.Text(line, CompactLayout.LineStyle, slot, Vector2.Zero);
+            foreach (var (box, fill, says, style) in new[]
+            {
+                (snooze, Theme.Raised, CompactLayout.SnoozeLabel, CompactLayout.SnoozeStyle),
+                (dismiss, Theme.Accent, CompactLayout.DismissLabel, CompactLayout.DismissStyle),
+            })
+            {
+                c.RoundRect(box, box.Height / 2, fill);
+                c.Text(says, style, new RectangleF(box.X + CompactLayout.UndoPadX, box.Y, box.Width - (2 * CompactLayout.UndoPadX), box.Height), Vector2.Zero);
             }
         });
     }

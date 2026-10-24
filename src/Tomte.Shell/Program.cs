@@ -216,6 +216,7 @@ internal static partial class Program
         var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         StartPanels(island, triggers, store, db, shortcuts, clipboard, logLine);
         _ = Jobs.StartAsync(new JobContext(island, triggers, store, db, timer, Scratchpad, SendLogPath, log, logLine), args);
+        _ = Reminders.StartAsync(island, triggers, db, logLine);
 
         if (rambler)
         {
@@ -952,7 +953,10 @@ internal static partial class Program
         // The real shelf, so a file made by voice is still there after a restart. The tiles open by name; that way
         // never runs a script tile.
         var tools = new BuiltInTools((IShelf?)Jobs.Shelf ?? new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
-            args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
+            args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName)
+        {
+            Reminders = Reminders.Set,
+        };
         async Task<PaletteSession?> Voice()
         {
             var now = named is null ? Configured(store, log.WriteLine)

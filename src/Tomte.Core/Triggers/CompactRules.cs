@@ -20,6 +20,9 @@ public enum CompactReason
 
     /// <summary>The pill kept while music plays, when the user turned that on: what plays, as long as it plays.</summary>
     Playing,
+
+    /// <summary>A reminder that rang: its text, Snooze and Dismiss, all its own, so the pill's line shows nothing.</summary>
+    Reminder,
 }
 
 /// <summary>Which feature raised an event, so its pill can show that feature's content.</summary>
