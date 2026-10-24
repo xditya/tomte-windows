@@ -10,9 +10,10 @@ namespace Tomte.AI.Automation;
 
 /// <summary>
 /// What one automation call came to: the step line, the text the model gets, the line for the Compact event when an
-/// action ran, and the name the send log records when screen content went to the provider.
+/// action ran, and the name the send log records when screen content went to the provider. Stop ends a job's run: it
+/// reached for an app it was not approved for, or the PC was locked.
 /// </summary>
-public sealed record AutomationStep(string Summary, string Result, bool IsError, string? Done = null, string? Sent = null);
+public sealed record AutomationStep(string Summary, string Result, bool IsError, string? Done = null, string? Sent = null, bool Stop = false);
 
 /// <summary>
 /// The UI Automation tools of one palette: list a window's controls, then click, type into or select one of them
@@ -20,7 +21,9 @@ public sealed record AutomationStep(string Summary, string Result, bool IsError,
 /// (its result is another app's screen content, and it goes to the provider) and every action, each time, with no
 /// "always allow". Tomte itself, elevated windows, secure surfaces and the apps the lists refuse are never touched.
 /// Every UI Automation call runs on one thread of its own with a time limit; that thread and the UI Automation
-/// object start with the first call, not before, and end with <see cref="Dispose"/>.
+/// object start with the first call, not before, and end with <see cref="Dispose"/>. In a scheduled job nobody is
+/// asked (the job's yes covered it) and every call must name a window of an app the job was approved for: any other
+/// app, or a locked PC, ends the run. A job brings the app's window to the front before it acts there.
 /// </summary>
 public sealed class AutomationTools : IDisposable
 {
@@ -28,6 +31,7 @@ public sealed class AutomationTools : IDisposable
     public const string ClickControl = "click_control";
     public const string TypeInControl = "type_in_control";
     public const string SelectControl = "select_control";
+    public const string PressKeys = "press_keys";
 
     internal const int MaxElements = 150;
     private const int MaxName = 80;
@@ -51,6 +55,10 @@ public sealed class AutomationTools : IDisposable
         new(SelectControl,
             "Select an item from the last list, such as a list item, a tab or an option. The user confirms first.",
             Schema("""{"id":{"type":"string"}}""", "id")),
+        new(PressKeys,
+            "Bring an app's window to the front and press keys in it, such as Enter to send or Ctrl+F to search. keys is one or more " +
+            "chords separated by spaces, for example \"Ctrl+K\" or \"Ctrl+A Delete\". The user confirms first.",
+            Schema("""{"app":{"type":"string","description":"The app or window title."},"keys":{"type":"string"}}""", "app", "keys")),
     ];
 
     private readonly UiAutomationSettings _settings;
@@ -59,6 +67,7 @@ public sealed class AutomationTools : IDisposable
     private readonly Func<bool> _onSecureSurface;
     private readonly Func<IUiAutomation> _create;
     private readonly TimeSpan _limit;
+    private readonly IReadOnlyList<string>? _apps;
     private UiaWorker? _worker;
 
     // Made and used on the automation thread only.
@@ -68,8 +77,10 @@ public sealed class AutomationTools : IDisposable
     private Snapshot? _snapshot;
     private int _lists;
 
-    internal AutomationTools(UiAutomationSettings settings, IReadOnlyList<AppRule> appRules, nint foreground, Func<bool> onSecureSurface, Func<IUiAutomation> create, TimeSpan? limit = null)
+    internal AutomationTools(UiAutomationSettings settings, IReadOnlyList<AppRule> appRules, nint foreground, Func<bool> onSecureSurface, Func<IUiAutomation> create, TimeSpan? limit = null,
+        IReadOnlyList<string>? apps = null)
     {
+        _apps = apps;
         _settings = settings;
         _appRules = appRules;
         _foreground = foreground;
@@ -87,7 +98,27 @@ public sealed class AutomationTools : IDisposable
     public static AutomationTools? For(bool on, UiAutomationSettings settings, IReadOnlyList<AppRule> appRules, nint foreground, Func<bool> onSecureSurface) =>
         on ? new(settings, appRules, foreground, onSecureSurface, () => new UiaClient()) : null;
 
-    public static bool Owns(string name) => name is ListControls or ClickControl or TypeInControl or SelectControl;
+    /// <summary>The tools for a scheduled job's run: only the windows of <paramref name="apps"/>, with nobody to ask.</summary>
+    public static AutomationTools ForJob(UiAutomationSettings settings, IReadOnlyList<AppRule> appRules, IReadOnlyList<string> apps) =>
+        new(settings, appRules, 0, KeyPress.Locked, () => new UiaClient(), apps: apps);
+
+    public static bool Owns(string name) => name is ListControls or ClickControl or TypeInControl or SelectControl or PressKeys;
+
+    /// <summary>
+    /// True when <paramref name="exe"/> is one of a job's <paramref name="apps"/>: the same file name, ".exe" and case
+    /// aside, or a name that goes on after a dot (WhatsApp for WhatsApp.Root.exe).
+    /// </summary>
+    public static bool Approved(IReadOnlyList<string> apps, string exe)
+    {
+        string name = AppRules.Normalize(exe);
+        return apps.Select(AppRules.Normalize).Any(app => app.Length > 0 && (name == app || name.StartsWith(app + ".", StringComparison.Ordinal)));
+    }
+
+    /// <summary>Brings a window to the front; false when Windows would not. Tests set it.</summary>
+    internal Func<nint, bool> Front { get; init; } = KeyPress.Bring;
+
+    /// <summary>Sends key chords to whatever is in front; false when Windows did not take them. Tests set it.</summary>
+    internal Func<IReadOnlyList<ushort[]>, bool> Send { get; init; } = KeyPress.Send;
 
     /// <summary>For the system prompt while the tools are offered: what a list returns is someone else's text.</summary>
     public static string Prompt =>
@@ -100,7 +131,12 @@ public sealed class AutomationTools : IDisposable
     {
         try
         {
-            return call.Name == ListControls ? await ListAsync(call.Input, confirm, ct) : await ActAsync(call, confirm, ct);
+            return call.Name switch
+            {
+                ListControls => await ListAsync(call.Input, confirm, ct),
+                PressKeys => await PressAsync(call.Input, confirm, ct),
+                _ => await ActAsync(call, confirm, ct),
+            };
         }
         catch (Exception e) when (e is not (OperationCanceledException or OutOfMemoryException))
         {
@@ -124,14 +160,14 @@ public sealed class AutomationTools : IDisposable
         string named = Arg(input, "window").Trim();
         string summary = named.Length == 0 ? "List the controls of the window in front" : $"List the controls of \"{Screen(named, 60)}\"";
         if (_onSecureSurface())
-            return Refused(summary, SecureSurface);
+            return Secure(summary, named);
 
         // Read here, sent only after the user's yes: the prompt can then say which app it is and how much goes out.
         var listing = await Call(c => Read(c, named), ct);
         if (_onSecureSurface())
-            return Refused(summary, SecureSurface);
+            return Secure(summary, named);
         if (listing.Problem is not null)
-            return Refused(summary, listing.Problem);
+            return new(summary, listing.Problem, IsError: true, Stop: listing.Stop);
         if (listing.Elements.Count == 0)
             return new(summary, $"UI Automation found no control in {listing.App} that can be clicked, typed into or selected.", IsError: false);
 
@@ -139,7 +175,7 @@ public sealed class AutomationTools : IDisposable
         if (await confirm(new ToolRequest(ListControls, summary, ActionTier.ExternalEffect, OfferAlwaysAllow: false), ct) == PermissionAnswer.Deny)
             return new(summary, PaletteSession.NotAllowed, IsError: true);
         if (_onSecureSurface())
-            return Refused(summary, SecureSurface);
+            return Secure(summary, listing.App);
 
         var snapshot = _snapshot = new Snapshot(++_lists, listing.Window, listing.App, listing.Elements);
         var text = new StringBuilder();
@@ -185,7 +221,7 @@ public sealed class AutomationTools : IDisposable
         if (problem is not null)
             return Refused(summary, $"{Label(element)} {problem}");
         if (_onSecureSurface())
-            return Refused(summary, SecureSurface);
+            return Secure(summary, snapshot.App);
 
         // Asked every time, whatever "always allow" says anywhere: an answer of always is taken as once. The window is
         // named because the app may have several, and the action goes to the one that was listed.
@@ -193,7 +229,10 @@ public sealed class AutomationTools : IDisposable
         if (await confirm(new ToolRequest(call.Name, summary, ActionTier.ExternalEffect, OfferAlwaysAllow: false), ct) == PermissionAnswer.Deny)
             return new(summary, PaletteSession.NotAllowed, IsError: true);
         if (_onSecureSurface())
-            return Refused(summary, SecureSurface);
+            return Secure(summary, snapshot.App);
+        // Nobody is at the PC during a job: the app comes to the front, as it would for a person using it.
+        if (_apps is not null)
+            await Call(_ => Front(snapshot.Window.Handle), ct);
 
         string? why;
         try
@@ -313,12 +352,9 @@ public sealed class AutomationTools : IDisposable
     /// </summary>
     private Listing Read(IUiAutomation c, string named)
     {
-        var window = named.Length == 0 ? c.Window(_foreground) : Find(c, named);
-        if (window is null)
-            return Listing.No(named.Length == 0 ? "The window that was in front when the palette opened has closed. Name the window to use." : $"No open window matches \"{Screen(named, 60)}\".");
-        var process = c.Process(window.ProcessId);
-        if (Refusal(window.ProcessId, process) is { } refused)
-            return Listing.No(refused);
+        var (window, process, problem, stop) = Locate(c, named);
+        if (window is null || process is null)
+            return Listing.No(problem!, stop);
 
         var (elements, total) = c.Elements(window.Handle, MaxElements);
         string? hosted = null;
@@ -333,13 +369,77 @@ public sealed class AutomationTools : IDisposable
         bool frame = AppRules.Normalize(process.Exe!) == UiAutomationRules.FrameHost;
         if (frame && hosted is null)
             return Listing.No("This is a Store app's frame with nothing of the app in it; the app may be minimized or suspended. Restore it and list again.");
+        if (_apps is not null)
+            Front(window.Handle);
         return new(null, window, frame ? hosted! : AppName(process.Exe!), elements, total);
     }
 
-    /// <summary>The window the user named: an app's file name first, then a window title that contains the words, in z-order.</summary>
-    private static UiaWindow? Find(IUiAutomation c, string named)
+    /// <summary>
+    /// The window a call names, and its process, once nothing refuses it; else why not, and whether that ends a job's
+    /// run. A job looks only at the windows of its approved apps, and a name that fits another app's window stops it.
+    /// </summary>
+    private (UiaWindow? Window, UiaProcess? Process, string? Problem, bool Stop) Locate(IUiAutomation c, string named)
     {
-        var windows = c.Windows();
+        UiaWindow? window;
+        if (_apps is null)
+        {
+            window = named.Length == 0 ? c.Window(_foreground) : Find(c, named, approvedOnly: false);
+            if (window is null)
+                return (null, null, named.Length == 0 ? "The window that was in front when the palette opened has closed. Name the window to use." : $"No open window matches \"{Screen(named, 60)}\".", false);
+        }
+        else
+        {
+            if (named.Length == 0)
+                return (null, null, "Name the app whose window to use.", false);
+            window = Find(c, named, approvedOnly: true);
+            if (window is null)
+            {
+                return Find(c, named, approvedOnly: false) is { } other
+                    ? (null, null, NotApproved(c.Process(other.ProcessId).Exe ?? named), true)
+                    : (null, null, $"No window of {string.Join(", ", _apps)} matches \"{Screen(named, 60)}\". Open the app first.", false);
+            }
+        }
+
+        var process = c.Process(window.ProcessId);
+        return Refusal(window.ProcessId, process) is { } refused ? (null, null, refused, false) : (window, process, null, false);
+    }
+
+    private string NotApproved(string exe) =>
+        $"{AppName(exe)} is not one of the apps this job may use ({string.Join(", ", _apps ?? [])}), so the run stopped.";
+
+    /// <summary>press_keys: the window found as a list finds it, brought to the front, then the keys.</summary>
+    private async Task<AutomationStep> PressAsync(JsonElement input, Func<ToolRequest, CancellationToken, Task<PermissionAnswer>> confirm, CancellationToken ct)
+    {
+        string named = Arg(input, "app").Trim(), keys = Arg(input, "keys").Trim();
+        string summary = $"Press {Screen(keys, 60)} in \"{Screen(named, 60)}\"";
+        var (chords, bad) = KeyPress.Parse(keys);
+        if (bad is not null)
+            return Refused(summary, bad);
+        if (_onSecureSurface())
+            return Secure(summary, named);
+        var (window, process, problem, stop) = await Call(c => Locate(c, named), ct);
+        if (window is null || process is null)
+            return new(summary, problem!, IsError: true, Stop: stop);
+
+        string app = AppName(process.Exe!);
+        summary = $"Press {Screen(keys, 60)} in {app} (\"{Screen(window.Title, 60)}\")";
+        if (await confirm(new ToolRequest(PressKeys, summary, ActionTier.ExternalEffect, OfferAlwaysAllow: false), ct) == PermissionAnswer.Deny)
+            return new(summary, PaletteSession.NotAllowed, IsError: true);
+        if (_onSecureSurface())
+            return Secure(summary, app);
+        // Keys go to whatever is in front, so none is sent unless the window got there.
+        if (!await Call(_ => Front(window.Handle), ct))
+            return Refused(summary, $"Windows did not let Tomte bring {app} to the front, so no keys were pressed.");
+        if (!Send(chords))
+            return Refused(summary, "Windows did not take the keys.");
+        string line = $"Pressed {Screen(keys, 60)} in {app}.";
+        return new(summary, line, IsError: false, Done: line);
+    }
+
+    /// <summary>The window the user named: an app's file name first, then a window title that contains the words, in z-order.</summary>
+    private UiaWindow? Find(IUiAutomation c, string named, bool approvedOnly)
+    {
+        var windows = c.Windows().Where(w => !approvedOnly || c.Process(w.ProcessId).Exe is { } path && Approved(_apps!, path)).ToList();
         string exe = AppRules.Normalize(named);
         return windows.FirstOrDefault(w => c.Process(w.ProcessId).Exe is { } path && AppRules.Normalize(path) == exe)
             ?? windows.FirstOrDefault(w => w.Title.Contains(named, StringComparison.OrdinalIgnoreCase));
@@ -352,9 +452,15 @@ public sealed class AutomationTools : IDisposable
 
     private static AutomationStep Refused(string summary, string why) => new(summary, why, IsError: true);
 
+    // A job finds the PC locked: nobody unlocks it, so the run ends.
+    private AutomationStep Secure(string summary, string app) =>
+        _apps is null ? Refused(summary, SecureSurface)
+            : new(summary, $"Your PC was locked, so the job could not use {(app.Length == 0 ? "the app" : Screen(app, 40))}.", IsError: true, Stop: true);
+
     private static string Describe(ToolCallPart call) => call.Name switch
     {
         ListControls => "List the controls of a window",
+        PressKeys => $"Press {Screen(Arg(call.Input, "keys"), 60)} in \"{Screen(Arg(call.Input, "app"), 60)}\"",
         ClickControl => $"Click control {Screen(Arg(call.Input, "id"), 20)}",
         TypeInControl => $"Type into control {Screen(Arg(call.Input, "id"), 20)}",
         _ => $"Select control {Screen(Arg(call.Input, "id"), 20)}",
@@ -459,8 +565,8 @@ public sealed class AutomationTools : IDisposable
 
     private sealed record Snapshot(int Number, UiaWindow Window, string App, IReadOnlyList<UiaElement> Elements);
 
-    private sealed record Listing(string? Problem, UiaWindow? Window, string App, IReadOnlyList<UiaElement> Elements, int Total)
+    private sealed record Listing(string? Problem, UiaWindow? Window, string App, IReadOnlyList<UiaElement> Elements, int Total, bool Stop = false)
     {
-        public static Listing No(string problem) => new(problem, null, "", [], 0);
+        public static Listing No(string problem, bool stop = false) => new(problem, null, "", [], 0, stop);
     }
 }

@@ -43,8 +43,8 @@ public sealed partial class PaletteSession
     // A job run has the unattended rule instead of skills and automation. A session that can make a job gets the
     // planner's guidance. Each gets the file paragraph once a file is in the send: a job only through read_shelf_item,
     // which it is offered only when the user approved it for that job.
-    private string SystemText => (FileSearch is not null ? FileFinder.Prompt(Now()) : Voice ? VoicePrompt : Job is not null ? SystemPrompt + JobPrompt
-        : SystemPrompt + Skills?.Prompt + (Automation is null ? null : AutomationTools.Prompt) + (Browser is null ? null : BrowserTools.Prompt))
+    private string SystemText => (FileSearch is not null ? FileFinder.Prompt(Now()) : Voice ? VoicePrompt
+        : (Job is not null ? SystemPrompt + JobPrompt : SystemPrompt + Skills?.Prompt) + (Automation is null ? null : AutomationTools.Prompt) + (Browser is null ? null : BrowserTools.Prompt))
         + Scheduling?.Guidance + (_filesInPlay || _fileReads.Count > 0 ? FileAttachments.Prompt : "");
 
     /// <summary>

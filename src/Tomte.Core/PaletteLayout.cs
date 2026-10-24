@@ -123,9 +123,10 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     /// <summary>
     /// The most lines a job's summary may take at the full palette width. A job's card shows its summary whole, never
-    /// cut, since the stored prompt is what runs; the planner refuses a job whose summary would need more.
+    /// cut, since the stored prompt and plan are what runs; the planner refuses a job whose summary would need more.
+    /// Thirteen is as many as the tallest palette holds under a one-line prompt: a plan of seven steps fits.
     /// </summary>
-    public const int JobLines = 8;
+    public const int JobLines = 13;
 
     /// <summary>A wheel notch scrolls the answer three of its lines, as Windows scrolls by default.</summary>
     public const float WheelStep = 3 * 21;

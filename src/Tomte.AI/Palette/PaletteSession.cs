@@ -195,7 +195,10 @@ public sealed partial class PaletteSession : IPaletteSession
     /// <summary>The skills the user turned on, found when the palette opened. Their text reaches the provider only with a send.</summary>
     public SkillSet? Skills { get; init; }
 
-    /// <summary>The UI Automation tools, when this run turned them on; never offered to a transcript. The owner disposes them.</summary>
+    /// <summary>
+    /// The UI Automation tools, when this run turned them on; never offered to a transcript. A job's are held to its
+    /// approved apps and offered only as its tools say. The owner disposes them.
+    /// </summary>
     public AutomationTools? Automation { get; init; }
 
     /// <summary>
@@ -330,7 +333,7 @@ public sealed partial class PaletteSession : IPaletteSession
                 attached.Add($"text of {Conversation.Count} earlier turn{(Conversation.Count == 1 ? "" : "s")}");
             // A transcript reaches the device tools and the shell's own actions only: no skill and no MCP server.
             IReadOnlyList<ToolDefinition> tools = FileSearch is not null ? FileFinder.Definitions
-                : Job is not null ? [.. BuiltInTools.Definitions.Where(d => Job.Tools.Contains(d.Name) && BuiltInTools.AllowedInScheduledJobs(d.Name))]
+                : Job is not null ? [.. JobPlanner.JobTools.Where(d => Job.Tools.Contains(d.Name) && JobPlanner.IsJobTool(d.Name))]
                 : Voice ? _tools.VoiceDefinitions
                 : Skills?.Tool is { } read ? [.. BuiltInTools.Definitions, read] : BuiltInTools.Definitions;
             if (Scheduling is not null)
@@ -610,7 +613,11 @@ public sealed partial class PaletteSession : IPaletteSession
                 _skillFiles.Add(step.Sent); // the send log's list of what was read and sent besides the chips
             if (step.Done is not null)
                 DeviceActionExecuted?.Invoke(new DeviceEvent(step.Done, null));
-            return Step(call, step.Summary, step.Result, step.IsError);
+            var part = Step(call, step.Summary, step.Result, step.IsError);
+            // Another app than the job's, or a locked PC: nobody is there to ask, so the run ends.
+            if (step.Stop && Job is not null)
+                throw new InvalidOperationException(step.Result);
+            return part;
         }
 
         // Tomte's browser: an external effect, asked as one in the palette; a job's yes covered its own.
@@ -630,6 +637,11 @@ public sealed partial class PaletteSession : IPaletteSession
                 throw new InvalidOperationException(step.Result);
             return part;
         }
+
+        // A job that names its apps opens only those.
+        if (Job is { Apps.Count: > 0 } withApps && call.Name == BuiltInTools.OpenApp
+            && !(call.Input.TryGetProperty("name", out var app) && app.ValueKind == JsonValueKind.String && AutomationTools.Approved(withApps.Apps, app.GetString()!)))
+            throw new InvalidOperationException($"The job tried to open an app that is not one of {JobSchedule.JoinWords(withApps.Apps)}, so the run stopped.");
 
         // A skill's own files are a read and run without asking. Nothing a skill says reaches a tier or a grant.
         if (Skills is not null && call.Name == SkillSet.ReadTool)
