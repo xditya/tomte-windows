@@ -22,6 +22,18 @@ public static class IslandPlace
         return lo > hi ? screenWidth / 2 : Math.Clamp(screenWidth / 2 + (int)Math.Round(offset * scale), lo, hi);
     }
 
+    /// <summary>The pixel column the shape's centre goes on, on a monitor anywhere in the virtual screen.</summary>
+    public static int Column(double offset, in IslandGeometry shape, double scale, System.Drawing.Rectangle monitor, bool attached) =>
+        monitor.Left + Center(offset, shape, scale, monitor.Width, attached);
+
+    /// <summary>The window rectangle the shape takes at <paramref name="offset"/> on a monitor, in virtual-screen pixels, hung from the monitor's top edge.</summary>
+    public static System.Drawing.Rectangle Window(double offset, in IslandGeometry shape, double scale, System.Drawing.Rectangle monitor, bool attached)
+    {
+        var window = IslandOutline.WindowBounds(shape, scale, Column(offset, shape, scale, monitor, attached), attached);
+        window.Offset(0, monitor.Top);
+        return window;
+    }
+
     /// <summary>
     /// The <see cref="IslandGeometry.Shift"/> that takes <paramref name="shape"/> from the place at <paramref name="offset"/>
     /// to the left or right end of the top edge, as far as <see cref="Center"/> lets it go, in DIPs. One DIP more than the

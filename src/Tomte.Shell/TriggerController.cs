@@ -6,6 +6,8 @@ using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
+using Windows.Win32.UI.HiDpi;
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
@@ -103,6 +105,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             island.Swell(false);
         };
         island.Moved += OnMoved;
+        island.PickMonitor = NextMonitor;
         island.LayoutChanged += () =>
         {
             PushZone();
@@ -111,7 +114,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         };
         PushZone();
 
-        watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0);
+        watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0, () => island.Monitor);
         watch.Changed += OnSuppressionChanged;
         watch.WindowsChanged += OnWindowsChanged;
         dropTarget = new DropTarget(island.Hwnd, () => island.Moving, log);
@@ -124,7 +127,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         store.Changed += s => island.Queue.TryEnqueue(() => OnSettingsChanged(s));
         // Events wait out a pause; a resume from the tray, or the hour running out, shows them.
         pause.Ended += ReadThenRelease;
-        log?.Invoke($"input: mouse hook {(InputThread.HookInstalled ? "on" : "off")}, ui thread {Environment.CurrentManagedThreadId}, all monitors={settings.AllMonitors} (primary only until the island window can move)");
+        log?.Invoke($"input: mouse hook {(InputThread.HookInstalled ? "on" : "off")}, ui thread {Environment.CurrentManagedThreadId}, all monitors={settings.AllMonitors}");
 
         SchedulePeek();
         // Quiet hours and presenting are known only once the notification state has been read.
@@ -498,8 +501,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var reveal = settings.Reveal;
         // The silhouette is a setting too; the window takes it up with its next morph.
         island.Attached = settings.AttachToTopEdge;
-        // Centred under the island, wherever along the edge it has been moved.
-        InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), island.CenterX, reveal.ZoneFraction, reveal.DragApproachDip, island.Scale));
+        // One zone per monitor the island may open on, each centred under where the island rests on it, wherever along
+        // the edge it has been moved, and measured at that monitor's scale.
+        InputThread.SetEdges(RevealEdges.For(Monitors(), settings.AllMonitors, island.CenterOn, reveal.ZoneFraction, reveal.DragApproachDip));
         if (machine.State != IslandState.Hidden)
         {
             InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(reveal.RetractMarginDip * island.Scale));
@@ -515,7 +519,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         // in what PushZone reads: records compare by value, so the first-run flag, a tool grant or the media switch
         // leaves it as it is.
         InputThread.ApplySettings();
-        if (next.Reveal != previous.Reveal || next.AttachToTopEdge != previous.AttachToTopEdge)
+        if (next.Reveal != previous.Reveal || next.AttachToTopEdge != previous.AttachToTopEdge || next.AllMonitors != previous.AllMonitors)
         {
             PushZone();
         }
@@ -1603,6 +1607,40 @@ internal sealed unsafe partial class TriggerController : IDisposable
         return true;
     }
 
+    // A show from hidden, or over what shows without being asked for (peek, the pill kept while music plays, the launch
+    // arrival), opens on the monitor the pointer is on, as an edge push there would. Anything the user opened stays
+    // where it is as it changes.
+    private bool OpensOnAnotherMonitor => RetractionRules.PushShows(machine.State, activity, Compact);
+
+    /// <summary>The monitor under the pointer with "Every monitor" on, else the primary one. A hotkey opens there too.</summary>
+    private HMONITOR NextMonitor()
+    {
+        if (!settings.AllMonitors || !PInvoke.GetCursorPos(out var cursor))
+        {
+            return PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
+        }
+
+        return PInvoke.MonitorFromPoint(cursor, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+    }
+
+    // Every monitor's bounds in virtual-screen pixels and its scale. Filled on this thread only.
+    private static readonly List<(System.Drawing.Rectangle Bounds, double Scale)> Found = [];
+
+    private static List<(System.Drawing.Rectangle Bounds, double Scale)> Monitors()
+    {
+        Found.Clear();
+        PInvoke.EnumDisplayMonitors(HDC.Null, null, &AddMonitor, 0);
+        return [.. Found];
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvStdcall)])]
+    private static BOOL AddMonitor(HMONITOR monitor, HDC dc, RECT* bounds, LPARAM data)
+    {
+        double scale = PInvoke.GetDpiForMonitor(monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpi, out _).Succeeded ? dpi / 96.0 : 1;
+        Found.Add((System.Drawing.Rectangle.FromLTRB(bounds->left, bounds->top, bounds->right, bounds->bottom), scale));
+        return true;
+    }
+
     private bool Allowed(RevealTrigger trigger, bool ignorePause = false)
     {
         // Nothing opens over a recording; the voice key's own press checks CanBegin before it gets here.
@@ -1618,9 +1656,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return false;
         }
 
-        if (!Suppression.Allows(trigger, watch.State, settings.AppRules))
+        // Judged on the monitor it would open on: a fullscreen app on another one does not hold it back.
+        var state = watch.On(OpensOnAnotherMonitor ? NextMonitor() : island.Monitor);
+        if (!Suppression.Allows(trigger, state, settings.AppRules))
         {
-            log?.Invoke($"{trigger}: suppressed ({watch.State})");
+            log?.Invoke($"{trigger}: suppressed ({state})");
             return false;
         }
 
@@ -1682,6 +1722,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private void Go(IslandState state, (double W, double H) size = default, bool peek = false, bool resting = false)
     {
+        if (state != IslandState.Hidden && OpensOnAnotherMonitor)
+        {
+            island.ShowOn(NextMonitor());
+            watch.Follow();
+        }
+
         // The corner pill opens the island at its place, away from the pointer, which has not left the island by that.
         bool fromCorner = PeekInCorner;
         peekOpen = false;

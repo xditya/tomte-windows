@@ -7,7 +7,6 @@ using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
-using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.Input;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -81,7 +80,7 @@ internal static unsafe class InputThread
     private static readonly Stopwatch clock = Stopwatch.StartNew();
 
     // Shared with the UI thread. Written there, read here; a torn read costs one wrong pointer sample.
-    private static int zoneLeft, zoneRight, zoneTop, bandBottom;
+    private static RevealEdges edges = RevealEdges.None;
     private static int boundsLeft, boundsTop, boundsRight, boundsBottom, boundsMargin, boundsVersion;
     private static int trackPointer, dragArmed;
 
@@ -121,13 +120,8 @@ internal static unsafe class InputThread
     /// <summary>The store changed; the input thread re-reads it where it runs.</summary>
     public static void ApplySettings() => PInvoke.PostMessage(window, MsgApplySettings, 0, 0);
 
-    public static void SetZone(RevealZone zone)
-    {
-        Volatile.Write(ref zoneLeft, zone.Left);
-        Volatile.Write(ref zoneRight, zone.Right);
-        Volatile.Write(ref zoneTop, zone.Top);
-        Volatile.Write(ref bandBottom, zone.DragBandBottom);
-    }
+    /// <summary>The reveal zones of the monitors the island may show on, swapped in whole.</summary>
+    public static void SetEdges(RevealEdges next) => Volatile.Write(ref edges, next);
 
     /// <summary>Island bounds in physical pixels to track the pointer against; the next sample reports inside or outside.</summary>
     public static void TrackPointer(System.Drawing.Rectangle bounds, int margin)
@@ -510,16 +504,14 @@ internal static unsafe class InputThread
     {
         System.Drawing.Point cursor;
         PInvoke.GetCursorPos(&cursor);
-        int top = Volatile.Read(ref zoneTop);
-        bool atTop = cursor.Y == top;
-        bool inZone = atTop && cursor.X >= Volatile.Read(ref zoneLeft) && cursor.X <= Volatile.Read(ref zoneRight)
-            // Asked only on the top row: a monitor above this x means there is no edge to push against.
-            && PInvoke.MonitorFromPoint(new System.Drawing.Point(cursor.X, top - 1), MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONULL) == HMONITOR.Null;
+        // On a zone's top row with no monitor above it: an edge to push against. The island then opens on the monitor
+        // under the pointer, which is this one.
+        bool atEdge = Volatile.Read(ref edges).EdgeAt(cursor.X, cursor.Y) >= 0;
         // Absolute devices (pen, RDP) carry no push; they still get the dwell.
         int dy = (mouse.usFlags & MOUSE_STATE.MOUSE_MOVE_ABSOLUTE) != 0 ? 0 : mouse.lLastY;
         if (reveal.EdgePush)
         {
-            switch (detector.Feed(clock.Elapsed.TotalMilliseconds, dy, atTop, inZone, touchpad))
+            switch (detector.Feed(clock.Elapsed.TotalMilliseconds, dy, atEdge, atEdge, touchpad))
             {
                 case EdgePushDetector.Event.EnterZone:
                     if (reveal.DwellMs > 0)
@@ -596,8 +588,7 @@ internal static unsafe class InputThread
                             candidate = true;
                             PInvoke.PostMessage(island, MsgDragCandidate, 0, Pack(downX, downY));
                         }
-                        else if (candidate && Volatile.Read(ref dragArmed) == 1 && y >= Volatile.Read(ref zoneTop) && y <= Volatile.Read(ref bandBottom)
-                            && x >= Volatile.Read(ref zoneLeft) && x <= Volatile.Read(ref zoneRight))
+                        else if (candidate && Volatile.Read(ref dragArmed) == 1 && Volatile.Read(ref edges).InDragBand(x, y))
                         {
                             // Once per drag: a retract must not re-show the surface for the rest of it.
                             Volatile.Write(ref dragArmed, 0);

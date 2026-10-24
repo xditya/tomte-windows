@@ -14,11 +14,12 @@ using Windows.Win32.UI.WindowsAndMessaging;
 namespace Tomte.Shell;
 
 /// <summary>
-/// What is happening on the primary monitor, from events only: the shell's own fullscreen notification through
+/// What is happening on the island's monitor, from events only: the shell's own fullscreen notification through
 /// a space-free appbar, foreground and location changes through WinEvent hooks, lock and unlock through WTS,
 /// the secure desktop through the desktop-switch event. SHQueryUserNotificationState is read on a pool thread
 /// after the appbar notification, never inside a callback, because it blocks for up to a second during a
-/// D3D mode switch. Everything runs on the UI thread, which owns the island window.
+/// D3D mode switch. Everything runs on the UI thread, which owns the island window. A fullscreen app counts on the
+/// monitor its window is on, whichever signal reported it: it is the foreground window then.
 /// </summary>
 internal sealed unsafe class DesktopWatch : IDisposable
 {
@@ -32,6 +33,7 @@ internal sealed unsafe class DesktopWatch : IDisposable
     private static DesktopWatch? instance;
     private readonly HWND island;
     private readonly Func<bool> needsForegroundExe;
+    private readonly Func<HMONITOR> islandMonitor;
     private readonly Windows.System.DispatcherQueue queue;
     private readonly HWINEVENTHOOK[] hooks;
     private APPBARDATA appBar;
@@ -40,13 +42,15 @@ internal sealed unsafe class DesktopWatch : IDisposable
     private bool shellFullscreen, rectFullscreen, qunsBusy, qunsExclusive, qunsQuiet, locked, secureDesktop;
     private string? foregroundExe;
     private HWND lastApp;
+    private HMONITOR foregroundMonitor;
 
-    public DesktopWatch(HWND island, Windows.System.DispatcherQueue queue, Func<bool> needsForegroundExe)
+    public DesktopWatch(HWND island, Windows.System.DispatcherQueue queue, Func<bool> needsForegroundExe, Func<HMONITOR> islandMonitor)
     {
         instance = this;
         this.island = island;
         this.queue = queue;
         this.needsForegroundExe = needsForegroundExe;
+        this.islandMonitor = islandMonitor;
 
         // ABM_NEW with no ABM_SETPOS reserves no space; it only subscribes to ABN_FULLSCREENAPP.
         appBar = new APPBARDATA { cbSize = (uint)sizeof(APPBARDATA), hWnd = island, uCallbackMessage = MsgAppBar };
@@ -82,6 +86,26 @@ internal sealed unsafe class DesktopWatch : IDisposable
 
     /// <summary>Re-reads the foreground window, for example after the app rules changed.</summary>
     public void Refresh() => OnForeground(PInvoke.GetForegroundWindow());
+
+    /// <summary>The state as it would be for the island on <paramref name="monitor"/>: a fullscreen app on another monitor does not count.</summary>
+    public SuppressionState On(HMONITOR monitor)
+    {
+        bool here = foregroundMonitor == monitor;
+        return new SuppressionState
+        {
+            Fullscreen = here && (shellFullscreen || rectFullscreen || qunsBusy || qunsExclusive),
+            ExclusiveFullscreen = here && qunsExclusive,
+            Secure = locked || secureDesktop,
+            Quiet = qunsQuiet,
+            ForegroundExe = foregroundExe,
+        };
+    }
+
+    /// <summary>
+    /// The island moved to another monitor: <see cref="State"/> is read for it from now on, without raising
+    /// <see cref="Changed"/>, since what the island just opened over was allowed there.
+    /// </summary>
+    public void Follow() => State = On(islandMonitor());
 
     /// <summary>Appbar and session messages arrive on the island window; the owner routes them here.</summary>
     public bool HandleMessage(uint message, nuint wParam, nint lParam)
@@ -262,33 +286,30 @@ internal sealed unsafe class DesktopWatch : IDisposable
     }
 
     /// <summary>
-    /// The client rect equals the primary monitor: borderless games and fullscreen video. Equality, never
+    /// The client rect equals the monitor the window is on: borderless games and fullscreen video. Equality, never
     /// containment: a maximized window overhangs the monitor. The desktop itself is monitor-sized and comes to
     /// the front after Win+D; it is not a fullscreen app.
     /// </summary>
     private void SetRectFullscreen(HWND foreground)
     {
+        foregroundMonitor = PInvoke.MonitorFromWindow(foreground, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+        var info = new MONITORINFO { cbSize = (uint)sizeof(MONITORINFO) };
+        PInvoke.GetMonitorInfo(foregroundMonitor, ref info);
+        var screen = info.rcMonitor;
         PInvoke.GetClientRect(foreground, out var client);
         var origin = default(System.Drawing.Point);
         PInvoke.ClientToScreen(foreground, &origin);
         var className = stackalloc char[64];
-        rectFullscreen = origin.X == 0 && origin.Y == 0
-            && client.right == PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN)
-            && client.bottom == PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYSCREEN)
+        rectFullscreen = origin.X == screen.left && origin.Y == screen.top
+            && client.right == screen.right - screen.left
+            && client.bottom == screen.bottom - screen.top
             && !IsDesktop(new ReadOnlySpan<char>(className, PInvoke.GetClassName(foreground, className, 64)));
         Publish();
     }
 
     private void Publish()
     {
-        var next = new SuppressionState
-        {
-            Fullscreen = shellFullscreen || rectFullscreen || qunsBusy || qunsExclusive,
-            ExclusiveFullscreen = qunsExclusive,
-            Secure = locked || secureDesktop,
-            Quiet = qunsQuiet,
-            ForegroundExe = foregroundExe,
-        };
+        var next = On(islandMonitor());
         if (next == State)
         {
             return;
