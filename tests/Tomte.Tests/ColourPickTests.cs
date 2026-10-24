@@ -95,9 +95,9 @@ public sealed class ColourPickTests
     }
 
     [Fact]
-    public void PickAColourIsAppendedWithAFreeDefault()
+    public void PickAColourComesBeforeMuteWithAFreeDefault()
     {
-        Assert.Equal(HotkeyAction.ColourPick, Enum.GetValues<HotkeyAction>()[^1]);
+        Assert.Equal(HotkeyAction.ColourPick, Enum.GetValues<HotkeyAction>()[^2]);
         Assert.Equal("Pick a colour from the screen", Hotkey.Name(HotkeyAction.ColourPick));
         var bindings = new HotkeySettings();
         Assert.Equal("Win+Alt+E", bindings[HotkeyAction.ColourPick]);
