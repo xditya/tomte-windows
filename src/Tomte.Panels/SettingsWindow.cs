@@ -133,7 +133,9 @@ public sealed partial class SettingsWindow : Window
                         Row("Desktop automation", Note("Let the typed palette list, click, type into and select controls in other apps. Every action asks first and none can be always allowed. Never by voice."),
                             Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } })),
                         Row("Clean up copied text", Note("After Copy text from screen, send the text it read to the provider to fix reading mistakes. Only the text is sent, never the picture, and the result is marked as cleaned up by AI."),
-                            Toggle(s => s.CleanUpScreenText, (s, v) => s with { CleanUpScreenText = v }))),
+                            Toggle(s => s.CleanUpScreenText, (s, v) => s with { CleanUpScreenText = v })),
+                        Row("Translate copied text into", Note("The language Translate on the Copy text from screen card asks for. Only the text is sent, and only when you press Translate."),
+                            TranslateTo())),
                     Header("Always allowed"),
                     Card(grantsList),
                     Header("All tools"),
@@ -369,6 +371,23 @@ public sealed partial class SettingsWindow : Window
 
     private ToggleSwitch RevealToggle(Func<RevealSettings, bool> get, Func<RevealSettings, bool, RevealSettings> set) =>
         Toggle(s => get(s.Reveal), (s, v) => s with { Reveal = set(s.Reveal, v) });
+
+    // The Windows display language first, then the languages by their English names; a tag from a hand-edited file stays listed.
+    private ComboBox TranslateTo()
+    {
+        string held = store.Current.TranslateScreenTextTo;
+        string[] tags = ["", .. ScreenText.Languages.Append(held).Where(t => t.Length > 0).Distinct().OrderBy(ScreenText.LanguageName, StringComparer.CurrentCulture)];
+        var names = tags.Select(t => t.Length == 0 ? $"Windows display language ({ScreenText.LanguageName(t)})" : ScreenText.LanguageName(t)).ToArray();
+        var box = new ComboBox { ItemsSource = names, SelectedIndex = Array.IndexOf(tags, held), MinWidth = 200 };
+        box.SelectionChanged += (_, _) =>
+        {
+            if (box.SelectedIndex >= 0)
+            {
+                Save(s => s with { TranslateScreenTextTo = tags[box.SelectedIndex] });
+            }
+        };
+        return box;
+    }
 
     private ComboBox Monitors()
     {

@@ -63,6 +63,41 @@ public sealed class ScreenTextTests : IDisposable
     }
 
     [Fact]
+    public async Task TheTranslationSendsOnlyTheTextWithNoTools()
+    {
+        var provider = new ScriptedProvider();
+        provider.Turns.Add(ScriptedProvider.Text(10, 5, "Hallo Welt"));
+        var session = ScreenText.Session("Hello world", provider, Provider, new PaletteOptions(), new SendLog(logPath), translateTo: "German");
+
+        await session.SendAsync();
+
+        var request = Assert.Single(provider.Requests);
+        Assert.Empty(request.Tools ?? []);
+        var part = Assert.IsType<TextPart>(Assert.Single(Assert.Single(request.Messages).Parts));
+        Assert.StartsWith("Translate the text below", part.Text);
+        Assert.Contains("into German", part.Text);
+        Assert.EndsWith("<text>\nHello world\n</text>", part.Text);
+        Assert.Equal("Hallo Welt", ScreenText.Cleaned(session.AnswerText));
+    }
+
+    [Fact]
+    public void TranslateIsOfferedOnlyWithAProviderAndMarksTheAIsText()
+    {
+        Assert.False(ScreenText.CanTranslate(new TomteSettings()));
+        Assert.True(ScreenText.CanTranslate(new TomteSettings { Provider = Provider }));
+        Assert.Equal([ScreenText.Translate, ScreenText.Copy, DropResult.Close], ScreenText.WithTranslate(ScreenText.Copied("one")).Choices);
+
+        var translated = ScreenText.Translated("eins", "German", "Sent to p · m");
+        Assert.Equal("Text from screen · AI translated", translated.Title);
+        Assert.Contains("translated into German by AI", translated.Line);
+        Assert.Equal([ScreenText.CopyOriginal, ScreenText.Copy, DropResult.Close], translated.Choices);
+
+        Assert.Equal("German", ScreenText.LanguageName("de"));
+        Assert.Equal(System.Globalization.CultureInfo.CurrentUICulture.EnglishName, ScreenText.LanguageName(""));
+        Assert.Equal("", new TomteSettings().TranslateScreenTextTo);
+    }
+
+    [Fact]
     public void TheCardsSayWhereTheTextWentAndMarkTheAIsText()
     {
         var copied = ScreenText.Copied("one\n\ntwo").Closable();

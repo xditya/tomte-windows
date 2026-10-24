@@ -27,7 +27,7 @@ public static class Places
         ("Clipboard", "Clipboard", "clipboard history keep history memory privacy"),
         ("Voice", "Voice", "rambler speech dictation spoken replies microphone"),
         ("Provider and spend", "Provider and spend", "ai provider api key model openai anthropic claude gemini ollama spend cost daily cap"),
-        ("Tools and permissions", "Tools and permissions", "ai tools permissions always allowed desktop automation clean up copied text ocr"),
+        ("Tools and permissions", "Tools and permissions", "ai tools permissions always allowed desktop automation clean up copied text ocr translate translation language"),
         ("Scheduled jobs", "Jobs", "ai jobs schedule recurring"),
         ("MCP servers", "MCP servers", "ai mcp server"),
         ("Skills", "Skills", "ai agent skills custom drop zone"),

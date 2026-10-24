@@ -10,7 +10,9 @@ namespace Tomte.Shell;
 /// Copy text from screen, from the rectangle to its card: the region is taken, the island opens in the Palette state on a
 /// drop result card that says it is reading, and the text Windows reads there is copied and shown with Copy and Close.
 /// With the cleanup on in Settings and a provider set up, the text alone then goes to that provider, and the card shows
-/// the cleaned text, marked as AI's, copied in its place, with the text as read one click away. The card holds the
+/// the cleaned text, marked as AI's, copied in its place, with the text as read one click away. With a provider set up
+/// the card also offers Translate, which sends the text shown, and only on that click, for a translation into the
+/// language picked in Settings, shown and copied the same way. The card holds the
 /// island until Close or Esc; once something was sent, Undo can bring it back for a while, as for a drop zone's result.
 /// On the island's thread.
 /// </summary>
@@ -22,7 +24,7 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
     private DropResultView view = null!;
     private DropResult last = ScreenText.Reading;
     private bool busy = true, parked;
-    private string read = "";
+    private string read = "", original = "";
     private PaletteSession? session;
     private MascotState face = MascotState.Thinking;
 
@@ -70,23 +72,16 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
                 return;
             }
 
+            original = read;
             bool copied = Copy(read);
             // Sent only with the setting on and a provider that can be used; otherwise nothing leaves the PC.
             if ((ScreenText.CleansUp(store.Current) ? Program.Configured(store, log) : null) is not { } configured)
             {
-                Finish(Copied(ScreenText.Copied(read, noProvider: store.Current.CleanUpScreenText), copied), ok: true);
+                Finish(Offer(Copied(ScreenText.Copied(read, noProvider: store.Current.CleanUpScreenText), copied)), ok: true);
                 return;
             }
 
-            var running = session = ScreenText.Session(read, configured.Provider, configured.Config, configured.Options, new SendLog(Program.SendLogPath));
-            // The provider line follows the send: sending to, then sent to.
-            running.Changed += () =>
-            {
-                if (Live && running.Status == PaletteStatus.Sending && running.ProviderIndicator != last.Indicator)
-                {
-                    Show(last with { Indicator = running.ProviderIndicator }, busy: true);
-                }
-            };
+            var running = Follow(ScreenText.Session(read, configured.Provider, configured.Config, configured.Options, new SendLog(Program.SendLogPath)));
             Show(Copied(ScreenText.Cleaning(read, running.ProviderIndicator), copied), busy: true);
             await running.SendAsync();
             if (!Live)
@@ -97,11 +92,11 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
             string cleaned = running.Status == PaletteStatus.Done ? ScreenText.Cleaned(running.AnswerText) : "";
             if (cleaned.Length == 0)
             {
-                Finish(Copied(ScreenText.NotCleaned(read, running.ProviderIndicator, running.Error), copied), ok: false);
+                Finish(Offer(Copied(ScreenText.NotCleaned(read, running.ProviderIndicator, running.Error), copied)), ok: false);
                 return;
             }
 
-            Finish(Copied(ScreenText.CleanedUp(cleaned, running.ProviderIndicator), Copy(cleaned)), ok: true);
+            Finish(Offer(Copied(ScreenText.CleanedUp(cleaned, running.ProviderIndicator), Copy(cleaned))), ok: true);
         }
         catch (Exception e)
         {
@@ -109,6 +104,61 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
             log?.Invoke($"screen text: failed: {e}");
             Finish(read.Length == 0 ? ScreenText.NoText with { Line = "The text could not be read. Nothing was sent." } : ScreenText.Copied(read), ok: false);
         }
+    }
+
+    // A session for the card: its provider line follows the send, sending to, then sent to.
+    private PaletteSession Follow(PaletteSession running)
+    {
+        session = running;
+        running.Changed += () =>
+        {
+            if (Live && running.Status == PaletteStatus.Sending && running.ProviderIndicator != last.Indicator)
+            {
+                Show(last with { Indicator = running.ProviderIndicator }, busy: true);
+            }
+        };
+        return running;
+    }
+
+    private DropResult Offer(DropResult result) => ScreenText.CanTranslate(store.Current) ? ScreenText.WithTranslate(result) : result;
+
+    // The text shown goes to the provider, and only now, on the click.
+    private async Task TranslateAsync()
+    {
+        string source = last.Body, language = ScreenText.LanguageName(store.Current.TranslateScreenTextTo);
+        if (Program.Configured(store, log) is not { } configured)
+        {
+            Show(last with { Line = "The provider in Settings cannot be used right now. Nothing was sent." }, busy: false);
+            return;
+        }
+
+        original = source;
+        var running = Follow(ScreenText.Session(source, configured.Provider, configured.Config, configured.Options, new SendLog(Program.SendLogPath), language));
+        face = MascotState.Thinking;
+        island.Mascot.Set(face);
+        Show(ScreenText.Translating(source, running.ProviderIndicator, language), busy: true);
+        try
+        {
+            await running.SendAsync();
+        }
+        catch (Exception e)
+        {
+            log?.Invoke($"screen text: translation failed: {e}");
+        }
+
+        if (!Live)
+        {
+            return;
+        }
+
+        string translated = running.Status == PaletteStatus.Done ? ScreenText.Cleaned(running.AnswerText) : "";
+        if (translated.Length == 0)
+        {
+            Finish(ScreenText.NotTranslated(source, running.ProviderIndicator, running.Error), ok: false);
+            return;
+        }
+
+        Finish(Copied(ScreenText.Translated(translated, language, running.ProviderIndicator), Copy(translated)), ok: true);
     }
 
     private static DropResult Copied(DropResult result, bool copied) => copied ? result : result with { Line = ScreenText.ClipboardBusy };
@@ -157,7 +207,8 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         return true;
     }
 
-    // Copy puts the text shown on the clipboard again, Copy original the text as read; either, and Close, then close.
+    // Copy puts the text shown on the clipboard again, Copy original the text before the AI changed it; either, and
+    // Close, then close. Translate keeps the card and fills it with the translation.
     private void Chose(int i)
     {
         if (busy || i >= last.Choices.Count)
@@ -166,7 +217,13 @@ internal sealed class ScreenTextRun(IslandWindow island, TriggerController trigg
         }
 
         string choice = last.Choices[i];
-        if (choice is ScreenText.Copy or ScreenText.CopyOriginal && !Copy(choice == ScreenText.Copy ? last.Body : read))
+        if (choice == ScreenText.Translate)
+        {
+            _ = TranslateAsync();
+            return;
+        }
+
+        if (choice is ScreenText.Copy or ScreenText.CopyOriginal && !Copy(choice == ScreenText.Copy ? last.Body : original))
         {
             Show(last with { Line = ScreenText.ClipboardBusy }, busy: false);
             return;

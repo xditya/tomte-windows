@@ -115,6 +115,12 @@ public sealed record TomteSettings
     /// </summary>
     public bool CleanUpScreenText { get; init; }
 
+    /// <summary>
+    /// The language Translate on Copy text from screen's card asks the provider for, as a language tag such as "de".
+    /// Empty means the Windows display language.
+    /// </summary>
+    public string TranslateScreenTextTo { get; init; } = "";
+
     /// <summary>The AI provider the palette uses. Null keeps the AI layer off. Its key is in Credential Manager, never here.</summary>
     public ProviderConfig? Provider { get; init; }
 
