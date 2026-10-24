@@ -157,7 +157,7 @@ public sealed class PaletteLayout(float width, bool mascot, float text = 0, IRea
 
     public const string Hint = "Ask about what is in front of you…";
     public const string Off = "The AI layer is off";
-    public const string Setup = "Add a provider key to use the palette.";
+    public const string Setup = "Add a provider key to use the palette. Reminders work without one: remind me in 20 minutes to check the oven.";
     public const string Run = "Run", Schedule = "Schedule", Cancel = "Cancel", AlwaysAllow = "Always allow";
     public const string SendTip = "Send";
 

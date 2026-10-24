@@ -221,7 +221,7 @@ internal static partial class Program
 
     /// <summary>
     /// What the palette hotkey shows: a session against the provider set up in settings, read at each open, or, with
-    /// none, the line that says the AI layer is off, which takes no keys. --debug-palette makes each open a session
+    /// none, the line that says the AI layer is off, whose box takes only reminders. --debug-palette makes each open a session
     /// against local Ollama instead, as the --palette driver uses, whose device tools only pretend. The selection in the
     /// app in front is read through UI Automation, off the island's thread, before the prompt takes the keys; a read
     /// slower than <see cref="SelectionWait"/> offers no selection. Circle-to-ask passes its region and the window that
@@ -247,7 +247,7 @@ internal static partial class Program
         bool debug = Environment.GetCommandLineArgs().Contains("--debug-palette");
         if ((debug ? DebugProvider() : Configured(store, log)) is not { } configured)
         {
-            // No prompt to take the keys; asked by a key, the island holds them for the back arrow and Esc.
+            // The box takes reminders only; asked by a key, the island holds the keys for it, the back arrow and Esc.
             hotkeyPalette.Type(null, back);
             return;
         }
@@ -333,6 +333,8 @@ internal static partial class Program
         new(island, triggers.Machine, line => log?.Invoke(line), text!, focus, triggers.FocusLost)
         {
             Triggers = triggers,
+            // "remind me ..." and "reminders" are answered here, with or without a provider.
+            Local = Reminders.CommandAsync,
             OpenHistory = () => island.Queue.TryEnqueue(() =>
             {
                 triggers.OpenPanel(PanelId.History);
@@ -393,7 +395,10 @@ internal static partial class Program
         _ = Scratchpad.LoadAsync();
         // One per store for the process: each holds a handler on the store.
         paletteGrants ??= new PermissionGrants(store);
-        var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, triggers.Timer);
+        var tools = new BuiltInTools(shelf, Scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, dry ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, triggers.Timer)
+        {
+            Reminders = dry ? null : Reminders.Set,
+        };
         var chips = ContextChips.For(lasso, selection, app, title, ct => WindowCapture.CapturePngAsync(foreground, ct), shelf, Scratchpad, product);
         var settings = store.Current;
         var session = new PaletteSession(configured.Provider, configured.Config, configured.Options, new SendLog(SendLogPath), tools, paletteGrants, chips)
