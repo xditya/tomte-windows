@@ -23,9 +23,11 @@ public static class Apps
         var opened = Launch(new ProcessStartInfo(target) { UseShellExecute = true }, target, out int failed);
         // "Settings" and other names Start shows are no file the shell finds by name: open those as Start does. Only
         // then: a start refused at its UAC prompt, or failing any other way, must not be tried again.
-        return failed != (int)WIN32_ERROR.ERROR_FILE_NOT_FOUND || StartApp(target) is not { } app
-            ? opened
-            : Launch(new ProcessStartInfo(app.Target) { UseShellExecute = true }, target);
+        if (failed != (int)WIN32_ERROR.ERROR_FILE_NOT_FOUND || StartApp(target) is not { } app) return opened;
+        // A Start shortcut left behind by an uninstall would open Windows' "Problem with Shortcut" box, which nobody
+        // answers in a scheduled job.
+        if (ShortcutTarget.Read(app.Target).Missing) return ActionResult.Fail($"{target} is not installed: its Start menu shortcut points to a program that is gone.");
+        return Launch(new ProcessStartInfo(app.Target) { UseShellExecute = true }, target);
     }
 
     /// <summary>
