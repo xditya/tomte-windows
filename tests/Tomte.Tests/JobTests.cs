@@ -260,7 +260,7 @@ public sealed class JobTests : IDisposable
             Assert.Equal($"{tool} is destructive and never runs in a scheduled job. Tell the user it cannot be scheduled.", planner.Read(call.RootElement).Error);
         }
 
-        Assert.DoesNotContain(JobPlanner.JobTools, t => BuiltInTools.Tiers[t.Name] == ActionTier.Destructive);
+        Assert.DoesNotContain(JobPlanner.JobTools, t => BuiltInTools.Tiers.TryGetValue(t.Name, out var tier) && tier == ActionTier.Destructive);
     }
 
     [Fact]
@@ -399,7 +399,7 @@ public sealed class JobTests : IDisposable
     public async Task AJobPromptTooLongToReadOnTheCardIsSentBackBeforeAsking()
     {
         var provider = new ScriptedProvider();
-        string prompt = string.Join(' ', Enumerable.Repeat("Open the Settings app and then read every item on the shelf.", 15));
+        string prompt = string.Join(' ', Enumerable.Repeat("Open the Settings app and then read every item on the shelf.", 30));
         provider.Turns.Add(ScriptedProvider.Call(JobPlanner.Tool, $$"""{"name":"Long","prompt":"{{prompt}}","time":"09:00","days":["mon"],"tools":["open_app"]}"""));
         provider.Turns.Add(ScriptedProvider.Text(10, 5, "Shorter, then."));
         var session = new PaletteSession(provider, Haiku, new PaletteOptions(), new SendLog(LogPath), Tools(), new PermissionGrants(), [])

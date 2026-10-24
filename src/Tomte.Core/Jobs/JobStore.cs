@@ -6,12 +6,31 @@ using Tomte.Core.Storage;
 
 namespace Tomte.Core.Jobs;
 
-/// <summary>What the user confirmed: a name, the prompt each run sends, when it runs, and the only tools it may use.</summary>
-public sealed record JobDraft(string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools);
+/// <summary>
+/// What the user confirmed: a name, the prompt each run sends, when it runs, and the only tools it may use; for a job
+/// that works in the browser or in apps, the plan's steps and the only sites and apps it may reach.
+/// </summary>
+public sealed record JobDraft(string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools)
+{
+    public IReadOnlyList<string> Steps { get; init; } = [];
+
+    public IReadOnlyList<string> Sites { get; init; } = [];
+
+    public IReadOnlyList<string> Apps { get; init; } = [];
+}
 
 /// <summary>A stored job. <see cref="NextDue"/> is null once a one-off has run.</summary>
 public sealed record ScheduledJob(long Id, string Name, string Prompt, JobSchedule Schedule, IReadOnlyList<string> Tools, ProviderConfig Provider, DateTimeOffset? NextDue)
 {
+    /// <summary>The plan the user approved, one step a line; empty for a job made before plans.</summary>
+    public IReadOnlyList<string> Steps { get; init; } = [];
+
+    /// <summary>The sites the browser may load, with their subdomains.</summary>
+    public IReadOnlyList<string> Sites { get; init; } = [];
+
+    /// <summary>The apps whose windows the job may work in.</summary>
+    public IReadOnlyList<string> Apps { get; init; } = [];
+
     /// <summary>
     /// The job in plain words for the settings window: "Every weekday at 09:00. Next run Thursday 15 October at 09:00.
     /// Uses read_shelf_item."
@@ -19,7 +38,8 @@ public sealed record ScheduledJob(long Id, string Name, string Prompt, JobSchedu
     public string Describe(TimeZoneInfo zone) =>
         $"{Schedule.Describe()}. " +
         (NextDue is { } next ? $"Next run {TimeZoneInfo.ConvertTime(next, zone).ToString("dddd d MMMM 'at' HH:mm", CultureInfo.InvariantCulture)}. " : "No run left. ") +
-        $"Uses {(Tools.Count == 0 ? "no tools" : JobSchedule.JoinWords(Tools))}.";
+        $"Uses {(Tools.Count == 0 ? "no tools" : JobSchedule.JoinWords(Tools))}." +
+        (Sites.Count == 0 ? "" : $" Sites: {string.Join(", ", Sites)}.") + (Apps.Count == 0 ? "" : $" Apps: {string.Join(", ", Apps)}.");
 }
 
 /// <summary>
@@ -79,9 +99,14 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         CREATE TABLE jobs_claims(job INTEGER NOT NULL REFERENCES jobs_list(id) ON DELETE CASCADE, name TEXT NOT NULL,
             due INTEGER NOT NULL, claimed INTEGER NOT NULL);
         """,
+        """
+        ALTER TABLE jobs_list ADD COLUMN steps TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE jobs_list ADD COLUMN sites TEXT NOT NULL DEFAULT '[]';
+        ALTER TABLE jobs_list ADD COLUMN apps TEXT NOT NULL DEFAULT '[]';
+        """,
     ];
 
-    private const string JobColumns = "id, name, prompt, schedule, tools, provider, next_due";
+    private const string JobColumns = "id, name, prompt, schedule, tools, provider, next_due, steps, sites, apps";
     private const string RunColumns = "job, name, due, finished, ok, text, details, shown";
 
     // The last instant DateTimeOffset can hold, in Unix milliseconds.
@@ -128,8 +153,8 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         using var connection = db.Open(Feature, Schema);
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO jobs_list(name, prompt, schedule, tools, provider, created, next_due)
-            VALUES ($name, $prompt, $schedule, $tools, $provider, $created, $next) RETURNING id
+            INSERT INTO jobs_list(name, prompt, schedule, tools, provider, created, next_due, steps, sites, apps)
+            VALUES ($name, $prompt, $schedule, $tools, $provider, $created, $next, $steps, $sites, $apps) RETURNING id
             """;
         command.Parameters.AddWithValue("$name", draft.Name);
         command.Parameters.AddWithValue("$prompt", draft.Prompt);
@@ -138,9 +163,12 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         command.Parameters.AddWithValue("$provider", JsonSerializer.Serialize(provider, Json));
         command.Parameters.AddWithValue("$created", now.ToUnixTimeMilliseconds());
         command.Parameters.AddWithValue("$next", Ms(next));
+        command.Parameters.AddWithValue("$steps", JsonSerializer.Serialize(draft.Steps, Json));
+        command.Parameters.AddWithValue("$sites", JsonSerializer.Serialize(draft.Sites, Json));
+        command.Parameters.AddWithValue("$apps", JsonSerializer.Serialize(draft.Apps, Json));
         long id = (long)command.ExecuteScalar()!;
         WriteMarker(connection);
-        return new ScheduledJob(id, draft.Name, draft.Prompt, draft.Schedule, draft.Tools, provider, next);
+        return new ScheduledJob(id, draft.Name, draft.Prompt, draft.Schedule, draft.Tools, provider, next) { Steps = draft.Steps, Sites = draft.Sites, Apps = draft.Apps };
     }
 
     /// <summary>Removes a job and its results. False when there was no such job.</summary>
@@ -320,7 +348,12 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
                     JobSchedule.FromJson(reader.GetString(3)),
                     JsonSerializer.Deserialize<string[]>(reader.GetString(4), Json) ?? throw new JsonException("no tools"),
                     JsonSerializer.Deserialize<ProviderConfig>(reader.GetString(5), Json) ?? throw new JsonException("no provider"),
-                    reader.IsDBNull(6) ? null : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(6))));
+                    reader.IsDBNull(6) ? null : DateTimeOffset.FromUnixTimeMilliseconds(reader.GetInt64(6)))
+                {
+                    Steps = Strings(reader.GetString(7)),
+                    Sites = Strings(reader.GetString(8)),
+                    Apps = Strings(reader.GetString(9)),
+                });
             }
             // One damaged or hand-edited row must not stop every other job.
             catch (Exception e) when (e is FormatException or JsonException or InvalidCastException or ArgumentException)
@@ -332,6 +365,8 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
 
         return (jobs, unreadable);
     }
+
+    private static string[] Strings(string json) => JsonSerializer.Deserialize<string[]>(json, Json) ?? throw new JsonException("not a list");
 
     private static List<JobRunRecord> Runs(SqliteConnection connection, string sql, int? limit)
     {

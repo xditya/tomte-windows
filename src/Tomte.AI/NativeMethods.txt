@@ -81,3 +81,8 @@ RegisterClassEx
 DefWindowProc
 GetOpenClipboardWindow
 WM_RENDERFORMAT
+SetForegroundWindow
+IsIconic
+ShowWindow
+OpenInputDesktop
+GetUserObjectInformation

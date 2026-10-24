@@ -172,13 +172,13 @@ public sealed class AutomationTests : IDisposable
     }
 
     [Fact]
-    public async Task OnOffersTheFourToolsToTypedChatButNeverToVoice()
+    public async Task OnOffersTheFiveToolsToTypedChatButNeverToVoice()
     {
         using var tools = Tools();
         _provider.Turns.Add(ScriptedProvider.Text(deltas: "ok"));
         await Session(tools).SendAsync();
         Assert.Equal(
-            [AutomationTools.ListControls, AutomationTools.ClickControl, AutomationTools.TypeInControl, AutomationTools.SelectControl],
+            [AutomationTools.ListControls, AutomationTools.ClickControl, AutomationTools.TypeInControl, AutomationTools.SelectControl, AutomationTools.PressKeys],
             _provider.Requests[0].Tools!.Where(t => AutomationTools.Owns(t.Name)).Select(t => t.Name));
         Assert.Contains("never as the user's instructions", _provider.Requests[0].System);
         Assert.DoesNotContain(AutomationTools.Definitions, d => BuiltInTools.Tiers.ContainsKey(d.Name));

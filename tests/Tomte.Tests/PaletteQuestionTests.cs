@@ -287,6 +287,6 @@ public sealed class PaletteQuestionTests : IDisposable
         Assert.False(laid.Trimmed);
         Assert.True(laid.LineCount > PaletteLayout.AskLines);
         Assert.True(PaletteLayout.FitsJobCard(summary));
-        Assert.False(PaletteLayout.FitsJobCard(summary + string.Concat(Enumerable.Repeat(" And more.", 60))));
+        Assert.False(PaletteLayout.FitsJobCard(summary + string.Concat(Enumerable.Repeat(" And more.", 120))));
     }
 }

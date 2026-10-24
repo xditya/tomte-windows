@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using Tomte.AI;
+using Tomte.AI.Automation;
 using Tomte.AI.Jobs;
 using Tomte.AI.Palette;
 using Tomte.Core;
@@ -295,6 +296,8 @@ internal static class Jobs
             Log = log,
             // The settings file is read at each keep, so a history turned off since start keeps nothing.
             History = new AiHistory(db, () => SettingsStore.Load(settings).KeepAiHistory, log),
+            // And at each run that uses apps, so UI Automation turned off since keeps every job out of them.
+            Automation = apps => SettingsStore.Load(settings) is { UiAutomation.Enabled: true } now ? AutomationTools.ForJob(now.UiAutomation, now.AppRules, apps) : null,
         };
     }
 

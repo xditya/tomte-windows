@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using Tomte.AI;
 using Tomte.AI.Automation;
+using Tomte.AI.Browser;
 using Tomte.AI.Mcp;
 using Tomte.AI.Palette;
 using Tomte.AI.Skills;
@@ -411,6 +412,8 @@ internal static partial class Program
             Scheduling = dry ? null : Jobs.Planner(),
             // With no window to point them at (the tray's Ask AI with none remembered) the tools are not offered.
             Automation = AutomationTools.For(settings.UiAutomation.Enabled && foreground != 0, settings.UiAutomation, settings.AppRules, foreground, () => triggers.OnSecureSurface),
+            // Edge starts only when the model first calls a browser tool, and the user confirms each call.
+            Browser = dry ? null : new BrowserTools(headless: false),
         };
         // The palette is up, so the event waits in the triggers' queue and shows once it hides.
         session.DeviceActionExecuted += e => triggers.Raise(new IslandEvent(e.Line, DateTimeOffset.Now));

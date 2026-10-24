@@ -1456,6 +1456,7 @@ internal sealed partial class PaletteHost
         {
             await sending;
             session.Automation?.Dispose();
+            session.Browser?.Dispose();
         }
         catch (Exception e)
         {

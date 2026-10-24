@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Tomte.AI.Automation;
+using Tomte.AI.Browser;
 using Tomte.AI.Jobs;
 using Tomte.AI.Mcp;
 using Tomte.AI.Skills;
@@ -194,8 +195,17 @@ public sealed partial class PaletteSession : IPaletteSession
     /// <summary>The skills the user turned on, found when the palette opened. Their text reaches the provider only with a send.</summary>
     public SkillSet? Skills { get; init; }
 
-    /// <summary>The UI Automation tools, when this run turned them on; never offered to a transcript. The owner disposes them.</summary>
+    /// <summary>
+    /// The UI Automation tools, when this run turned them on; never offered to a transcript. A job's are held to its
+    /// approved apps and offered only as its tools say. The owner disposes them.
+    /// </summary>
     public AutomationTools? Automation { get; init; }
+
+    /// <summary>
+    /// Tomte's browser: in the palette every call is confirmed as an external effect; a job's is held to its approved
+    /// sites and offered only as its tools say. Never offered to a transcript. The owner disposes it.
+    /// </summary>
+    public BrowserTools? Browser { get; init; }
 
     public IReadOnlyList<SkillCommand> Commands => Skills?.Commands ?? [];
 
@@ -323,13 +333,15 @@ public sealed partial class PaletteSession : IPaletteSession
                 attached.Add($"text of {Conversation.Count} earlier turn{(Conversation.Count == 1 ? "" : "s")}");
             // A transcript reaches the device tools and the shell's own actions only: no skill and no MCP server.
             IReadOnlyList<ToolDefinition> tools = FileSearch is not null ? FileFinder.Definitions
-                : Job is not null ? [.. BuiltInTools.Definitions.Where(d => Job.Tools.Contains(d.Name) && BuiltInTools.AllowedInScheduledJobs(d.Name))]
+                : Job is not null ? [.. JobPlanner.JobTools.Where(d => Job.Tools.Contains(d.Name) && JobPlanner.IsJobTool(d.Name))]
                 : Voice ? _tools.VoiceDefinitions
                 : Skills?.Tool is { } read ? [.. BuiltInTools.Definitions, read] : BuiltInTools.Definitions;
             if (Scheduling is not null)
                 tools = [.. tools, Scheduling.Definition];
             if (Automation is not null && !Voice && Job is null)
                 tools = [.. tools, .. AutomationTools.Definitions];
+            if (Browser is not null && !Voice && Job is null)
+                tools = [.. tools, .. BrowserTools.Definitions];
             if (Mcp is not null && !Voice && Job is null)
             {
                 // Starting or connecting a server sends it data (an HTTP server gets its header), so the user sees which ones.
@@ -617,8 +629,35 @@ public sealed partial class PaletteSession : IPaletteSession
                 _skillFiles.Add(step.Sent); // the send log's list of what was read and sent besides the chips
             if (step.Done is not null)
                 DeviceActionExecuted?.Invoke(new DeviceEvent(step.Done, null));
-            return Step(call, step.Summary, step.Result, step.IsError);
+            var part = Step(call, step.Summary, step.Result, step.IsError);
+            // Another app than the job's, or a locked PC: nobody is there to ask, so the run ends.
+            if (step.Stop && Job is not null)
+                throw new InvalidOperationException(step.Result);
+            return part;
         }
+
+        // Tomte's browser: an external effect, asked as one in the palette; a job's yes covered its own.
+        if (Browser is not null && BrowserTools.Owns(call.Name))
+        {
+            if (BrowserTools.Validate(call.Name, call.Input) is { } wrong)
+                return Step(call, call.Name, wrong, isError: true);
+            var asked = BrowserTools.Describe(call.Name, call.Input);
+            if (!await AllowedAsync(call.Name, asked, ActionTier.ExternalEffect, ct))
+                return Step(call, asked, NotAllowed, isError: true);
+            var step = await Browser.RunAsync(call, ct);
+            if (step.Sent is not null)
+                _skillFiles.Add(step.Sent);
+            var part = Step(call, step.Summary, step.Result, step.IsError);
+            // A page outside the job's sites: the run ends there, naming it.
+            if (step.Stop && Job is not null)
+                throw new InvalidOperationException(step.Result);
+            return part;
+        }
+
+        // A job that names its apps opens only those.
+        if (Job is { Apps.Count: > 0 } withApps && call.Name == BuiltInTools.OpenApp
+            && !(call.Input.TryGetProperty("name", out var app) && app.ValueKind == JsonValueKind.String && AutomationTools.Approved(withApps.Apps, app.GetString()!)))
+            throw new InvalidOperationException($"The job tried to open an app that is not one of {JobSchedule.JoinWords(withApps.Apps)}, so the run stopped.");
 
         // A skill's own files are a read and run without asking. Nothing a skill says reaches a tier or a grant.
         if (Skills is not null && call.Name == SkillSet.ReadTool)
@@ -643,16 +682,8 @@ public sealed partial class PaletteSession : IPaletteSession
         var tier = mcp ? Mcp!.TierOf(call.Name) : BuiltInTools.Tiers[call.Name];
         // An MCP tool is allowed as what it was when the user said so: its key changes when the tool or its server does.
         string grant = mcp ? Mcp!.KeyOf(call.Name) : call.Name;
-        if (Voice ? call.Name != BuiltInTools.SaveNote : _grants.NeedsConfirmation(grant, tier))
-        {
-            var request = new ToolRequest(call.Name, summary, tier, !Voice && PermissionGrants.CanAlwaysAllow(tier));
-            var answer = await AskAsync(request, ct);
-            // The grant is a settings.json write that can wait on the settings process; the pool takes it, not the island's thread.
-            if (answer == PermissionAnswer.AlwaysAllow && request.OfferAlwaysAllow)
-                await Task.Run(() => _grants.AlwaysAllow(grant));
-            if (answer == PermissionAnswer.Deny)
-                return Step(call, summary, NotAllowed, isError: true);
-        }
+        if (!await AllowedAsync(grant, summary, tier, ct, call.Name))
+            return Step(call, summary, NotAllowed, isError: true);
 
         if (mcp)
         {
@@ -679,6 +710,20 @@ public sealed partial class PaletteSession : IPaletteSession
         if (!result.IsError && tier != ActionTier.Read && (Voice || BuiltInTools.IsDeviceTool(call.Name)))
             DeviceActionExecuted?.Invoke(new DeviceEvent(result.Content, undo));
         return Step(call, summary, result.Content, result.IsError, undo);
+    }
+
+    // Asks before a tool runs unless its tier or a grant says it need not; a transcript asks for all but save_note.
+    private async Task<bool> AllowedAsync(string grant, string summary, ActionTier tier, CancellationToken ct, string? tool = null)
+    {
+        tool ??= grant;
+        if (Voice ? tool == BuiltInTools.SaveNote : !_grants.NeedsConfirmation(grant, tier))
+            return true;
+        var request = new ToolRequest(tool, summary, tier, !Voice && PermissionGrants.CanAlwaysAllow(tier));
+        var answer = await AskAsync(request, ct);
+        // The grant is a settings.json write that can wait on the settings process; the pool takes it, not the island's thread.
+        if (answer == PermissionAnswer.AlwaysAllow && request.OfferAlwaysAllow)
+            await Task.Run(() => _grants.AlwaysAllow(grant));
+        return answer != PermissionAnswer.Deny;
     }
 
     private ToolResultPart Step(ToolCallPart call, string summary, string result, bool isError, Func<ActionResult>? undo = null)
