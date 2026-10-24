@@ -967,7 +967,7 @@ public sealed class ShelfTests : IDisposable
         static List<Target> In(IReadOnlyList<Target> all, int group) => [.. all.Where(t => t.Group == group)];
 
         // Nothing hovered: the page's eight tiles, Tab and arrows in group 1, each dragged out by a press; then the
-        // filter's four segments in group 3 with the current one checked, and Clear shelf.
+        // Sets button and the filter's four segments in group 3 with the current one checked, and Clear shelf.
         var all = ShelfLayout.Targets(Body, 0, items, null, [], false, ShelfFilter.Text);
         var tiles = In(all, 1);
         Assert.Equal(Enumerable.Range(1, 8).Select(i => $"tile:{i}"), tiles.Select(t => t.Id));
@@ -975,8 +975,8 @@ public sealed class ShelfTests : IDisposable
         Assert.Equal(Enumerable.Range(0, 8).Select(s => ShelfLayout.Tile(s, Body)), tiles.Select(t => t.Bounds));
         Assert.Equal("file 1.pdf\nC:\\docs", tiles[0].Tip);
         Assert.Equal("file 3.pdf\nKept on the shelf", tiles[2].Tip);
-        Assert.Equal([.. tiles.Select(t => t.Id), "filter:All", "filter:Files", "filter:Text", "filter:Links", "clear"], all.Select(t => t.Id));
-        Assert.Equal([false, false, true, false], In(all, 3).Select(t => t.Checked));
+        Assert.Equal([.. tiles.Select(t => t.Id), ShelfLayout.SetsId, "filter:All", "filter:Files", "filter:Text", "filter:Links", "clear"], all.Select(t => t.Id));
+        Assert.Equal([false, false, false, true, false], In(all, 3).Select(t => t.Checked));
         Assert.Equal(ShelfLayout.Foot(Body, false).Clear, all[^1].Bounds);
         // Clear shelf only while there is something to clear; asking, it is wider.
         Assert.DoesNotContain(ShelfLayout.Targets(Body, 0, [], null, [], false), t => t.Id == ShelfLayout.ClearId);
@@ -1249,6 +1249,195 @@ public sealed class ShelfTests : IDisposable
         Assert.All(ShelfLayout.PageSketch(preview.Size), bar => Assert.True(new System.Drawing.RectangleF(default, preview.Size).Contains(bar.Bar)));
         Assert.All(ShelfLayout.SheetSketch(preview.Size), cell => Assert.True(new System.Drawing.RectangleF(default, preview.Size).Contains(cell.Cell)));
         Assert.Equal(3, ShelfLayout.SheetSketch(preview.Size).Count(c => c.Header));
+    }
+
+    [Fact]
+    public async Task ASetSavesTheShelfAndBringsItBackAfterARestart()
+    {
+        string mine = Write(user, "mine.txt", "mine");
+        string stick = Write(usb, "stick.txt", "stick");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([mine, stick], [], "a note", KeepCopy: false));
+        var before = shelf.Items.Select(i => (i.Name, i.Path, i.Kind)).ToList();
+
+        var saved = await shelf.SaveSet("  Tax docs ", shelf.Items);
+        Assert.Equal(("Tax docs", 3, 0), (saved!.Name, saved.Count, saved.Missing));
+        await shelf.Remove(shelf.Items);
+        Assert.Empty(shelf.Items);
+
+        var next = Store();
+        await next.Load();
+        var set = Assert.Single(next.Sets);
+        Assert.Equal(("Tax docs", 3, 0), (set.Name, set.Count, set.Missing));
+        var back = await next.BringBack(set.Id);
+        Assert.Equal(before, back.Select(i => (i.Name, i.Path, i.Kind)));
+        Assert.Equal(before, next.Items.Select(i => (i.Name, i.Path, i.Kind)));
+        Assert.All(next.Items, i => Assert.False(i.Missing));
+        Assert.Equal("a note", File.ReadAllText(next.Items.Single(i => i.Kind == ShelfKind.Content).Path));
+
+        // The set stays a set after it is brought back.
+        Assert.Single(next.Sets);
+    }
+
+    [Fact]
+    public async Task ASetOfTheSelectionHoldsOnlyThose()
+    {
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([Write(user, "a.txt", "a"), Write(user, "b.txt", "b"), Write(user, "c.txt", "c")], [], null, KeepCopy: false));
+
+        var saved = await shelf.SaveSet("Two", [.. shelf.Items.Where(i => i.Name != "b.txt")]);
+        Assert.Equal(2, saved!.Count);
+        await shelf.Remove(shelf.Items);
+        await shelf.BringBack(saved.Id);
+        Assert.Equal(["a.txt", "c.txt"], shelf.ItemNames.Order());
+
+        // Nothing still on the shelf: no set.
+        Assert.Null(await shelf.SaveSet("Gone", [Item(ShelfKind.Reference)]));
+        Assert.Single(shelf.Sets);
+    }
+
+    [Fact]
+    public async Task BringingASetBackSkipsWhatIsOnTheShelfAlready()
+    {
+        string a = Write(user, "a.txt", "a"), b = Write(user, "b.txt", "b");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([a, b], [], "a note", KeepCopy: false));
+        var set = (await shelf.SaveSet("All", shelf.Items))!;
+        await shelf.Remove([shelf.Items.Single(i => i.Path == b)]);
+        var before = shelf.Items.ToList();
+
+        var back = await shelf.BringBack(set.Id);
+        Assert.Equal([b], back.Select(i => i.Path));
+        Assert.Equal(3, shelf.Items.Count);
+        // What stayed is untouched: the same rows, not brought to the front.
+        Assert.Equal(before.Select(i => i.Id), shelf.Items.Skip(1).Select(i => i.Id));
+
+        Assert.Empty(await shelf.BringBack(set.Id));
+        Assert.Equal(3, shelf.Items.Count);
+    }
+
+    [Fact]
+    public async Task ASetCountsItsMissingFilesAndBringsThemBackMarkedMissing()
+    {
+        string gone = Write(user, "gone.txt", "gone"), here = Write(user, "here.txt", "here");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([gone, here], [], null, KeepCopy: false));
+        var set = (await shelf.SaveSet("Some", shelf.Items))!;
+        await shelf.Remove(shelf.Items);
+        File.Delete(gone);
+
+        await shelf.Check();
+        Assert.Equal((2, 1), (shelf.Sets[0].Count, shelf.Sets[0].Missing));
+
+        var back = await shelf.BringBack(set.Id);
+        Assert.True(back.Single(i => i.Path == gone).Missing);
+        Assert.False(back.Single(i => i.Path == here).Missing);
+        Assert.Equal("File moved or deleted", ShelfLayout.Meta(back.Single(i => i.Path == gone)));
+    }
+
+    [Fact]
+    public async Task SetsAreRenamedAndDeletedAndKeepTheirNamesApart()
+    {
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([Write(user, "a.txt", "a")], [], null, KeepCopy: false));
+        var first = (await shelf.SaveSet("Tax docs", shelf.Items))!;
+        var second = (await shelf.SaveSet("tax docs", shelf.Items))!;
+        var third = (await shelf.SaveSet("", shelf.Items))!;
+        Assert.Equal(("tax docs (2)", ShelfStore.DefaultSetName), (second.Name, third.Name));
+        Assert.Equal([third.Id, second.Id, first.Id], shelf.Sets.Select(s => s.Id));
+
+        await shelf.RenameSet(second.Id, " Receipts ");
+        await shelf.RenameSet(third.Id, "   ");
+        Assert.Equal(["Shelf set", "Receipts", "Tax docs"], shelf.Sets.Select(s => s.Name));
+        await shelf.RenameSet(third.Id, "Receipts");
+        Assert.Equal("Receipts (2)", shelf.Sets[0].Name);
+        // Its own name again is no clash.
+        await shelf.RenameSet(first.Id, "TAX DOCS");
+        Assert.Equal("TAX DOCS", shelf.Sets[2].Name);
+
+        await shelf.DeleteSet(second.Id);
+        var next = Store();
+        await next.Load();
+        Assert.Equal(["Receipts (2)", "TAX DOCS"], next.Sets.Select(s => s.Name));
+        Assert.Single(next.Items);
+    }
+
+    [Fact]
+    public async Task TheSweepKeepsAFolderASetNamesUntilTheLastSuchSetIsDeleted()
+    {
+        string stick = Write(usb, "stick.txt", "stick");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([stick], [Received(shelf, "img.png", [1, 2, 3])], "a note", KeepCopy: false));
+        var own = shelf.Items.Where(i => i.Kind != ShelfKind.Reference).ToList();
+        Assert.Equal(3, own.Count);
+        var set = (await shelf.SaveSet("Mine", shelf.Items))!;
+        var other = (await shelf.SaveSet("Also mine", [.. own.Where(i => i.Name == "img.png")]))!;
+        await shelf.Remove(shelf.Items);
+
+        // Off the shelf, across two restarts: every file stays.
+        for (int restart = 0; restart < 2; restart++)
+        {
+            var next = Store();
+            await next.Load();
+            Assert.Empty(next.Items);
+            Assert.All(own, i => Assert.True(File.Exists(i.Path), i.Name));
+        }
+
+        // Brought back, off the shelf again, and both sets deleted in that same process: the next start takes them.
+        var later = Store();
+        await later.Load();
+        Assert.All(await later.BringBack(set.Id), i => Assert.False(i.Missing));
+        await later.Remove(later.Items);
+        await later.DeleteSet(set.Id);
+        await Store().Load();
+        // The other set still names the picture: it stays, the rest go.
+        Assert.True(File.Exists(own.Single(i => i.Name == "img.png").Path));
+        Assert.All(own.Where(i => i.Name != "img.png"), i => Assert.False(Directory.Exists(Path.GetDirectoryName(i.Path)), i.Name));
+
+        var last = Store();
+        await last.Load();
+        await last.DeleteSet(other.Id);
+        Assert.True(File.Exists(own.Single(i => i.Name == "img.png").Path));
+        await Store().Load();
+        Assert.All(own, i => Assert.False(Directory.Exists(Path.GetDirectoryName(i.Path)), i.Name));
+        Assert.True(File.Exists(stick));
+    }
+
+    [Fact]
+    public async Task ASetDeletedWhileItsItemsAreOnTheShelfLeavesThemToTheUsualSweep()
+    {
+        var shelf = Store();
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, "note.txt", Content: "note"u8.ToArray())]);
+        var item = shelf.Items.Single();
+        var set = (await shelf.SaveSet("Note", shelf.Items))!;
+        await shelf.DeleteSet(set.Id);
+        await Store().Load();
+        Assert.True(File.Exists(item.Path));
+
+        await shelf.Remove([item]);
+        await Store().Load();
+        Assert.False(Directory.Exists(Path.GetDirectoryName(item.Path)));
+    }
+
+    [Fact]
+    public void ASetRowsIdsAndWordsReadBack()
+    {
+        Assert.Equal((42L, "rename"), ShelfLayout.SetPart(ShelfLayout.SetId(42, "rename")));
+        Assert.Null(ShelfLayout.SetPart("tile:42"));
+        Assert.Equal("3 items · 1 missing", ShelfLayout.SetMeta(new ShelfSet(1, "x", 3, 1)));
+        Assert.Equal("1 item", ShelfLayout.SetMeta(new ShelfSet(1, "x", 1, 0)));
+        Assert.Equal("Save 2 selected", ShelfLayout.SaveLabel(2, selection: true));
+
+        // The rows fit between the save row and the footer, and their buttons stay inside them.
+        var body = new System.Numerics.Vector2(560, 400);
+        var sets = Enumerable.Range(1, 20).Select(i => new ShelfSet(i, $"Set {i}", i, 0)).ToList();
+        var slots = ShelfLayout.SetSlots(body, sets, 0, confirming: 2);
+        Assert.Equal(ShelfLayout.SetRows(body), slots.Count);
+        Assert.True(slots[^1].Row.Bottom <= ShelfLayout.GridBottom(body));
+        Assert.All(slots, s => Assert.True(s.Row.Contains(s.Back) && s.Row.Contains(s.Rename) && s.Row.Contains(s.Delete) && s.Back.Left > s.Row.Left));
+        Assert.NotNull(slots[1].DeleteLabel);
+        Assert.Equal(20 - slots.Count, ShelfLayout.ScrollSets(0, -100, 20, body));
+        Assert.True(ShelfLayout.SetsButton(body).Right < ShelfLayout.Filter(body, ShelfFilter.All).Track.Left);
     }
 
     private static bool InsideRoundedBottom(float x, float y, System.Numerics.Vector2 body, float radius)
