@@ -485,7 +485,7 @@ internal static partial class Program
         };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
-        panels.Register(StartShelf(island, triggers, store, db, text, log, out var shelf));
+        panels.Register(StartShelf(island, triggers, store, db, text, typing, log, out var shelf));
         panels.ShelfCount = () => shelf.Items.Count;
         shelf.Changed += panels.ShelfChanged;
         panels.Register(new HomePanel(island, text, typing, shelf, media, Scratchpad, shortcuts, new HomeActions
@@ -594,7 +594,7 @@ internal static partial class Program
     /// The shelf takes what is dropped on the island and is the Shelf tab. Its database and its folder sit next to
     /// the settings file, and neither is opened before the first drop or the first time the shelf shows.
     /// </summary>
-    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, TextRenderer text, Action<string>? log, out ShelfStore shelfStore)
+    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, TextRenderer text, TypingFocus typing, Action<string>? log, out ShelfStore shelfStore)
     {
         string dir = Path.GetDirectoryName(store.FilePath)!;
         var shelf = shelfStore = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log)
@@ -606,7 +606,7 @@ internal static partial class Program
         triggers.Drops.Receive = shelf.Receive;
         triggers.Dropped += drop => shelf.Accept(drop);
         zones = new DropZones(island, triggers, shelf, text, store, db, log);
-        return new ShelfPanel(island, triggers, shelf, text, log);
+        return new ShelfPanel(island, triggers, shelf, text, typing, log);
     }
 
     /// <summary>

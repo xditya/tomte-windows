@@ -56,6 +56,9 @@ public sealed record ShelfItem(long Id, string Name, string Path, ShelfKind Kind
     public bool Pinned { get; init; }
 }
 
+/// <summary>A saved set of shelf items: how many it holds and how many of those are moved or deleted now.</summary>
+public sealed record ShelfSet(long Id, string Name, int Count, int Missing);
+
 /// <summary>
 /// Something to put on the shelf: a path for a reference or a copy, and for content either its bytes or a file already
 /// in the shelf folder (a virtual file received during a drop).
@@ -77,10 +80,16 @@ public sealed record DroppedItems(IReadOnlyList<string> Paths, IReadOnlyList<(st
 /// them minutes later. The first load in the next process deletes the folders of marked rows, then the rows. Nothing
 /// else in the shelf folder is ever deleted: a folder no row names may be the only copy the user has, for example after
 /// a damaged database was set aside.
+/// A set is a saved list of items' names, paths and kinds, to put them back on the shelf later. It keeps alive the
+/// shelf's own folders it names: a marked row whose folder a set names keeps its folder and its mark while any set names
+/// it, and the first sweep after the last such set is deleted takes it.
 /// </summary>
 public sealed class ShelfStore : IShelf
 {
     public const string FallbackName = "Item";
+
+    /// <summary>The name of a set saved with none.</summary>
+    public const string DefaultSetName = "Shelf set";
 
     /// <summary>
     /// A temporary folder's file up to this size is copied inside the drop, which holds the island and the source for
@@ -101,6 +110,11 @@ public sealed class ShelfStore : IShelf
     [
         "CREATE TABLE shelf_items(id INTEGER PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL, kind INTEGER NOT NULL, added INTEGER NOT NULL, removed INTEGER NOT NULL DEFAULT 0)",
         "ALTER TABLE shelf_items ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+        """
+        CREATE TABLE shelf_sets(id INTEGER PRIMARY KEY, name TEXT NOT NULL, added INTEGER NOT NULL);
+        CREATE TABLE shelf_set_items(set_id INTEGER NOT NULL REFERENCES shelf_sets(id) ON DELETE CASCADE, position INTEGER NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL, kind INTEGER NOT NULL);
+        CREATE INDEX shelf_set_items_set ON shelf_set_items(set_id);
+        """,
     ];
 
     // Names Windows keeps for devices, with or without an extension.
@@ -126,8 +140,10 @@ public sealed class ShelfStore : IShelf
     // Made inside a drop on the island's thread and on the worker, so under its own lock.
     private readonly HashSet<string> unclaimed = new(StringComparer.OrdinalIgnoreCase);
 
-    // Worker only.
+    // Worker only. setPaths holds every path each set names, read with the rows and again after each change of a set.
     private List<ShelfItem> rows = [];
+    private List<ShelfSet> sets = [];
+    private Dictionary<long, List<string>> setPaths = [];
     private bool loaded;
 
     /// <param name="post">Runs an action on the island's thread; tests pass one that runs it at once.</param>
@@ -161,6 +177,9 @@ public sealed class ShelfStore : IShelf
 
     public IReadOnlyList<string> ItemNames { get; private set; } = [];
 
+    /// <summary>The saved sets, newest first, as last published; read on the island's thread.</summary>
+    public IReadOnlyList<ShelfSet> Sets { get; private set; } = [];
+
     /// <summary>Raised through <c>post</c> after every change of <see cref="Items"/>.</summary>
     public event Action? Changed;
 
@@ -171,7 +190,165 @@ public sealed class ShelfStore : IShelf
     public Task Check() => Run(() =>
     {
         rows = rows.ConvertAll(Probe);
+        sets = sets.ConvertAll(s => s with { Missing = setPaths.GetValueOrDefault(s.Id, []).Count(p => !Exists(p)) });
         log?.Invoke($"shelf: checked {rows.Count} items, {rows.Count(r => r.Missing)} missing");
+    });
+
+    /// <summary>
+    /// Saves those of the items still on the shelf as a new set, in the shelf's order. A name another set has gets
+    /// " (2)" and so on; an empty one is <see cref="DefaultSetName"/>. Null when none of the items is on the shelf.
+    /// </summary>
+    public async Task<ShelfSet?> SaveSet(string name, IReadOnlyList<ShelfItem> items)
+    {
+        var ids = items.Select(i => i.Id).ToHashSet();
+        ShelfSet? saved = null;
+        await Run(() =>
+        {
+            var members = rows.Where(r => ids.Contains(r.Id)).ToList();
+            if (members.Count == 0)
+            {
+                return;
+            }
+
+            long id;
+            using (var connection = db.Open(Feature, Schema))
+            {
+                using (var transaction = connection.BeginTransaction())
+                {
+                    using (var insert = connection.CreateCommand())
+                    {
+                        insert.CommandText = "INSERT INTO shelf_sets(name, added) VALUES ($name, $added) RETURNING id";
+                        insert.Parameters.AddWithValue("$name", SetName(name, null));
+                        insert.Parameters.AddWithValue("$added", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                        id = (long)insert.ExecuteScalar()!;
+                    }
+
+                    for (int i = 0; i < members.Count; i++)
+                    {
+                        using var item = connection.CreateCommand();
+                        item.CommandText = "INSERT INTO shelf_set_items(set_id, position, name, path, kind) VALUES ($set, $position, $name, $path, $kind)";
+                        item.Parameters.AddWithValue("$set", id);
+                        item.Parameters.AddWithValue("$position", i);
+                        item.Parameters.AddWithValue("$name", members[i].Name);
+                        item.Parameters.AddWithValue("$path", members[i].Path);
+                        item.Parameters.AddWithValue("$kind", (int)members[i].Kind);
+                        item.ExecuteNonQuery();
+                    }
+
+                    transaction.Commit();
+                }
+
+                ReadSets(connection);
+            }
+
+            saved = sets.FirstOrDefault(s => s.Id == id);
+            log?.Invoke($"shelf: saved a set of {members.Count} items");
+        });
+        return saved;
+    }
+
+    /// <summary>
+    /// Puts a set's items back on the shelf, in front and in the set's order. An item whose path is on the shelf already
+    /// is skipped; one whose file is gone comes back marked missing. Nothing is copied or moved on disk. Gives the items
+    /// it added.
+    /// </summary>
+    public async Task<IReadOnlyList<ShelfItem>> BringBack(long setId)
+    {
+        IReadOnlyList<ShelfItem> back = [];
+        await Run(() =>
+        {
+            var present = rows.Select(r => Normal(r.Path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var taken = rows.Select(r => r.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var now = DateTimeOffset.FromUnixTimeMilliseconds(Math.Max(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), rows.Count == 0 ? 0 : rows.Max(r => r.Added.ToUnixTimeMilliseconds()) + 1));
+            var added = new List<ShelfItem>();
+            using (var connection = db.Open(Feature, Schema))
+            {
+                var members = new List<(string Name, string Path, ShelfKind Kind)>();
+                using (var read = connection.CreateCommand())
+                {
+                    read.CommandText = "SELECT name, path, kind FROM shelf_set_items WHERE set_id = $set ORDER BY position";
+                    read.Parameters.AddWithValue("$set", setId);
+                    using var reader = read.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        members.Add((reader.GetString(0), reader.GetString(1), (ShelfKind)reader.GetInt32(2)));
+                    }
+                }
+
+                var fresh = members.Where(m => present.Add(Normal(m.Path))).ToList();
+                using var transaction = connection.BeginTransaction();
+                // Last first: at one time the newer id sorts first, so the set's first item leads the shelf.
+                for (int i = fresh.Count - 1; i >= 0; i--)
+                {
+                    var (name, path, kind) = fresh[i];
+                    string unique = Unique(name, taken);
+                    taken.Add(unique);
+                    using var insert = connection.CreateCommand();
+                    insert.CommandText = "INSERT INTO shelf_items(name, path, kind, added) VALUES ($name, $path, $kind, $added) RETURNING id";
+                    insert.Parameters.AddWithValue("$name", unique);
+                    insert.Parameters.AddWithValue("$path", path);
+                    insert.Parameters.AddWithValue("$kind", (int)kind);
+                    insert.Parameters.AddWithValue("$added", now.ToUnixTimeMilliseconds());
+                    added.Insert(0, Probe(new ShelfItem((long)insert.ExecuteScalar()!, unique, path, kind, now)));
+                }
+
+                transaction.Commit();
+            }
+
+            rows.InsertRange(0, added);
+            back = added;
+            log?.Invoke($"shelf: brought back {added.Count} items, {added.Count(a => a.Missing)} missing");
+        });
+        return back;
+    }
+
+    /// <summary>Renames a set; an empty name changes nothing, one another set has gets " (2)" and so on. Queued.</summary>
+    public Task RenameSet(long setId, string name) => Run(() =>
+    {
+        if (name.Trim().Length == 0)
+        {
+            return;
+        }
+
+        using var connection = db.Open(Feature, Schema);
+        using (var update = connection.CreateCommand())
+        {
+            update.CommandText = "UPDATE shelf_sets SET name = $name WHERE id = $id";
+            update.Parameters.AddWithValue("$name", SetName(name, setId));
+            update.Parameters.AddWithValue("$id", setId);
+            update.ExecuteNonQuery();
+        }
+
+        ReadSets(connection);
+    });
+
+    /// <summary>
+    /// Deletes a set; the items on the shelf stay. The folder of a removed item that no other set names goes with the next
+    /// process's sweep. Queued.
+    /// </summary>
+    public Task DeleteSet(long setId) => Run(() =>
+    {
+        using var connection = db.Open(Feature, Schema);
+        using (var transaction = connection.BeginTransaction())
+        {
+            using (var items = connection.CreateCommand())
+            {
+                items.CommandText = "DELETE FROM shelf_set_items WHERE set_id = $id";
+                items.Parameters.AddWithValue("$id", setId);
+                items.ExecuteNonQuery();
+            }
+
+            using (var set = connection.CreateCommand())
+            {
+                set.CommandText = "DELETE FROM shelf_sets WHERE id = $id";
+                set.Parameters.AddWithValue("$id", setId);
+                set.ExecuteNonQuery();
+            }
+
+            transaction.Commit();
+        }
+
+        ReadSets(connection);
     });
 
     /// <summary>
@@ -634,10 +811,12 @@ public sealed class ShelfStore : IShelf
             work();
             var snapshot = rows.ToArray();
             var names = Array.ConvertAll(snapshot, r => r.Name);
+            var setSnapshot = sets.ToArray();
             post(() =>
             {
                 Items = snapshot;
                 ItemNames = names;
+                Sets = setSnapshot;
                 Changed?.Invoke();
             });
         }
@@ -664,6 +843,8 @@ public sealed class ShelfStore : IShelf
                 }
             }
 
+            // The sets first: the sweep must know every folder they name before it deletes any.
+            ReadSets(connection);
             Sweep(connection, loadedRows);
         }
 
@@ -676,7 +857,8 @@ public sealed class ShelfStore : IShelf
     /// Deletes what items removed in an earlier process left behind, then their rows. Only on that evidence: a marked
     /// row's folder, when <see cref="OwnSlot"/> accepts it and the shelf folder itself is no link. A folder that is in
     /// use keeps its row for the next process. A folder that a <paramref name="live"/> row still names stays: a shelf
-    /// file Ctrl-dropped back onto the shelf is kept at its path, so two items can name one folder. Two processes
+    /// file Ctrl-dropped back onto the shelf is kept at its path, so two items can name one folder. A folder a set
+    /// names stays and its row stays marked, so the first sweep after the last such set is deleted takes it. Two processes
     /// sweeping at once delete the same folders; the second finds them gone.
     /// </summary>
     private void Sweep(SqliteConnection connection, List<ShelfItem> live)
@@ -698,9 +880,15 @@ public sealed class ShelfStore : IShelf
         }
 
         bool folderIsLink = Directory.Exists(Folder) && new DirectoryInfo(Folder).Attributes.HasFlag(FileAttributes.ReparsePoint);
+        var kept = setPaths.Values.SelectMany(p => p).Select(Normal).ToList();
         var done = new List<long>();
         foreach (var (id, path, kind) in marked)
         {
+            if (OwnSlot(Folder, path) is { } slotNamed && Normal(slotNamed) is var named && kept.Any(p => Same(p, named) || IsUnder(p, named)))
+            {
+                continue;
+            }
+
             if (kind != ShelfKind.Reference && !folderIsLink && OwnSlot(Folder, path) is { } slot && Directory.Exists(slot)
                 && !live.Any(r => Same(r.Path, slot) || IsUnder(r.Path, slot)))
             {
@@ -729,6 +917,57 @@ public sealed class ShelfStore : IShelf
 
         transaction.Commit();
     }
+
+    /// <summary>The sets and the paths they name, from the database, with each set's missing items counted on disk.</summary>
+    private void ReadSets(SqliteConnection connection)
+    {
+        var paths = new Dictionary<long, List<string>>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT set_id, path FROM shelf_set_items ORDER BY set_id, position";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                long set = reader.GetInt64(0);
+                if (!paths.TryGetValue(set, out var list))
+                {
+                    paths[set] = list = [];
+                }
+
+                list.Add(reader.GetString(1));
+            }
+        }
+
+        var read = new List<ShelfSet>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id, name FROM shelf_sets ORDER BY added DESC, id DESC";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                var members = paths.GetValueOrDefault(reader.GetInt64(0), []);
+                read.Add(new ShelfSet(reader.GetInt64(0), reader.GetString(1), members.Count, members.Count(p => !Exists(p))));
+            }
+        }
+
+        (sets, setPaths) = (read, paths);
+    }
+
+    /// <summary>The name trimmed, or <see cref="DefaultSetName"/>, with " (2)" and so on when another set has it.</summary>
+    private string SetName(string name, long? renaming)
+    {
+        string wanted = name.Trim() is { Length: > 0 } trimmed ? trimmed : DefaultSetName;
+        var taken = sets.Where(s => s.Id != renaming).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string candidate = wanted;
+        for (int n = 2; taken.Contains(candidate); n++)
+        {
+            candidate = FormattableString.Invariant($"{wanted} ({n})");
+        }
+
+        return candidate;
+    }
+
+    private static bool Exists(string path) => File.Exists(path) || Directory.Exists(path);
 
     private List<ShelfItem> AddAll(IReadOnlyList<ShelfEntry> entries, bool refuseDuplicates = true)
     {
