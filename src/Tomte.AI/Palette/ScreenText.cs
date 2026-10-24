@@ -44,18 +44,35 @@ public static class ScreenText
     /// <summary>Whether the text goes to the provider after it is read. Only with the setting on and a provider set up.</summary>
     public static bool CleansUp(TomteSettings settings) => settings.CleanUpScreenText && settings.Provider is not null;
 
+    /// <summary>What Translate uses for <paramref name="text"/>; see <see cref="TranslatorFor"/>.</summary>
+    public enum Translator { Provider, MyMemory, Browser }
+
     /// <summary>
-    /// A finished card with a way to translate it as its first choice: <see cref="Translate"/> with a provider set up,
-    /// else <see cref="TranslateInBrowser"/>, with the line saying where the text would go. Nothing is sent until it is pressed.
+    /// The provider when one is set up; else MyMemory, which needs no key; else, for text past MyMemory's free daily
+    /// allowance, Google Translate in the browser.
+    /// </summary>
+    public static Translator TranslatorFor(TomteSettings settings, string text) =>
+        settings.Provider is not null ? Translator.Provider : text.Length > MyMemory.DailyChars ? Translator.Browser : Translator.MyMemory;
+
+    /// <summary>
+    /// A finished card with a way to translate it as its first choice, <see cref="Translate"/> or
+    /// <see cref="TranslateInBrowser"/>, with the line saying where the text would go unless it is the user's own
+    /// provider. Nothing is sent until it is pressed.
     /// </summary>
     public static DropResult Offer(TomteSettings settings, DropResult result)
     {
-        if (settings.Provider is not null)
+        var translator = TranslatorFor(settings, result.Body);
+        if (translator == Translator.Provider)
             return result with { Choices = [Translate, .. result.Choices] };
-        string where = BrowserTranslation(result.Body, settings.TranslateScreenTextTo).Cut
-            ? $"Translate in browser sends the first part to Google, which takes up to {BrowserMaxChars:N0} characters"
-            : "Translate in browser sends it to Google";
-        return result with { Line = result.Line is { Length: > 0 } line ? $"{line} · {where}" : where, Choices = [TranslateInBrowser, .. result.Choices] };
+        string where = translator == Translator.MyMemory ? $"Translate sends it to {MyMemory.Name}"
+            : BrowserTranslation(result.Body, settings.TranslateScreenTextTo).Cut
+                ? $"Translate in browser sends the first part to Google, which takes up to {BrowserMaxChars:N0} characters"
+                : "Translate in browser sends it to Google";
+        return result with
+        {
+            Line = result.Line is { Length: > 0 } line ? $"{line} · {where}" : where,
+            Choices = [translator == Translator.MyMemory ? Translate : TranslateInBrowser, .. result.Choices],
+        };
     }
 
     /// <summary>
@@ -253,9 +270,14 @@ public static class ScreenText
     public static DropResult Translating(string text, string indicator, string language) =>
         new(Title, indicator, $"AI is translating it into {language}, only the text is sent", false, text, [], []);
 
-    /// <summary>The translation, copied, marked as AI's. The text it came from can still be copied.</summary>
-    public static DropResult Translated(string text, string language, string indicator) =>
-        new($"{Title} · AI translated", indicator, $"Copied · {Lines(text)} · translated into {language} by AI, check it before you use it", false, text, [], [CopyOriginal, Copy, DropResult.Close]);
+    /// <summary>The text shown, still copied as it was, while MyMemory translates it.</summary>
+    public static DropResult TranslatingWithMyMemory(string text, string language) =>
+        new(Title, $"Sending to {MyMemory.Name}", $"Translating it into {language} with {MyMemory.Name}, which keeps the text it is sent", false, text, [], []);
+
+    /// <summary>The translation, copied, marked as made by <paramref name="by"/>. The text it came from can still be copied.</summary>
+    public static DropResult Translated(string text, string language, string indicator, string by = "AI") =>
+        new($"{Title} · {(by == "AI" ? "AI translated" : $"translated by {by}")}", indicator,
+            $"Copied · {Lines(text)} · translated into {language} by {by}, check it before you use it", false, text, [], [CopyOriginal, Copy, DropResult.Close]);
 
     /// <summary>The translation failed or brought nothing back: the text shown stays copied.</summary>
     public static DropResult NotTranslated(string text, string indicator, string? error) =>

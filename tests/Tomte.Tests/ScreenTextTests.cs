@@ -98,15 +98,30 @@ public sealed class ScreenTextTests : IDisposable
     }
 
     [Fact]
-    public void WithoutAProviderTheCardOffersTheBrowserAndSaysTheTextGoesToGoogle()
+    public void WithoutAProviderTranslateGoesToMyMemoryAndTheCardSaysSoFirst()
     {
         var offered = ScreenText.Offer(new TomteSettings(), ScreenText.Copied("Guten Tag"));
-        Assert.Equal([ScreenText.TranslateInBrowser, ScreenText.Copy, DropResult.Close], offered.Choices);
-        Assert.EndsWith("· Translate in browser sends it to Google", offered.Line);
+        Assert.Equal([ScreenText.Translate, ScreenText.Copy, DropResult.Close], offered.Choices);
+        Assert.EndsWith("· Translate sends it to MyMemory", offered.Line);
+        Assert.Equal("Nothing sent", offered.Indicator);
 
-        var failed = ScreenText.NotTranslated("Guten Tag", "Sent to p · m", "The provider said no.");
-        Assert.Equal(ScreenText.TranslateInBrowser, failed.Choices[0]);
+        Assert.Equal(ScreenText.Translator.Provider, ScreenText.TranslatorFor(new TomteSettings { Provider = Provider }, new string('a', 9000)));
+        Assert.Equal(ScreenText.Translator.MyMemory, ScreenText.TranslatorFor(new TomteSettings(), new string('a', MyMemory.DailyChars)));
+        Assert.Equal(ScreenText.Translator.Browser, ScreenText.TranslatorFor(new TomteSettings(), new string('a', MyMemory.DailyChars + 1)));
+
+        // Past MyMemory's daily allowance the browser is offered instead, and the card says what goes to Google.
+        var longer = ScreenText.Offer(new TomteSettings(), ScreenText.Copied(new string('a', MyMemory.DailyChars + 1)));
+        Assert.Equal([ScreenText.TranslateInBrowser, ScreenText.Copy, DropResult.Close], longer.Choices);
+        Assert.Contains("· Translate in browser sends the first part to Google", longer.Line);
+
+        var failed = ScreenText.NotTranslated("Guten Tag", "Sent to MyMemory", MyMemory.QuotaUsed);
+        Assert.Equal([ScreenText.TranslateInBrowser, ScreenText.Copy, DropResult.Close], failed.Choices);
         Assert.Contains("Google", failed.Line);
+
+        var translated = ScreenText.Translated("Good day", "English", "Sent to MyMemory", MyMemory.Name);
+        Assert.Equal("Text from screen · translated by MyMemory", translated.Title);
+        Assert.Contains("translated into English by MyMemory", translated.Line);
+        Assert.Contains("keeps the text", ScreenText.TranslatingWithMyMemory("Guten Tag", "English").Line);
     }
 
     [Fact]
