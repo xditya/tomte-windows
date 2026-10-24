@@ -283,7 +283,10 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
         return Runs(connection, $"SELECT {RunColumns} FROM jobs_runs ORDER BY id DESC LIMIT $limit", limit);
     }
 
-    /// <summary>Every job with its latest result and whether it runs now (see <see cref="JobStatus"/>), in the order they were made.</summary>
+    /// <summary>
+    /// Every job with its latest result and whether it runs now (see <see cref="JobStatus"/>), in the order they were made;
+    /// a one-off that has run is done and left out. Its row stays, so its result and History do.
+    /// </summary>
     public IReadOnlyList<JobStatus> Statuses(DateTimeOffset now)
     {
         using var connection = db.Open(Feature, Schema);
@@ -303,7 +306,9 @@ public sealed class JobStore(TomteDb db, Action<string>? log = null)
             }
         }
 
-        return [.. Jobs(connection, $"SELECT {JobColumns} FROM jobs_list ORDER BY id", null).Jobs.Select(j => new JobStatus(j, last.GetValueOrDefault(j.Id), running.Contains(j.Id)))];
+        return [.. Jobs(connection, $"SELECT {JobColumns} FROM jobs_list ORDER BY id", null).Jobs
+            .Select(j => new JobStatus(j, last.GetValueOrDefault(j.Id), running.Contains(j.Id)))
+            .Where(s => s.Running || s.Job.NextDue is not null)];
     }
 
     /// <summary>

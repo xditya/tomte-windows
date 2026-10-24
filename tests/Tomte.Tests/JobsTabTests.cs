@@ -189,6 +189,20 @@ public sealed class JobsTabTests : IDisposable
     }
 
     [Fact]
+    public void AOneOffThatRanIsDoneAndLeavesTheTab()
+    {
+        var store = new JobStore(new TomteDb(Path.Combine(dir, "tomte.db")));
+        var at = new DateTimeOffset(2026, 10, 21, 21, 0, 0, Ist);
+        var once = store.Add(new JobDraft("Sub count", "Send it", new JobSchedule { Time = new TimeOnly(21, 0), Date = new DateOnly(2026, 10, 21) }, []), Ollama, Now, India);
+
+        var claim = Assert.Single(store.ClaimDue(at, India));
+        Assert.True(Assert.Single(store.Statuses(at)).Running);
+
+        store.Record(new JobRunRecord(once.Id, once.Name, claim.Due, at.AddMinutes(1), true, "Sent.", ""));
+        Assert.Empty(store.Statuses(at.AddMinutes(2)));
+    }
+
+    [Fact]
     public void TheJobsTabIsNotOnTheStripUntilItIsShown()
     {
         var tabs = new PanelTabs();
