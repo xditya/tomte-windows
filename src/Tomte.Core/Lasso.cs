@@ -13,6 +13,10 @@ public static class LassoHint
 
     /// <summary>The line for Copy text from screen, whose overlay draws a rectangle.</summary>
     public const string TextCapture = "Drag over the text to copy · Esc cancels";
+
+    /// <summary>The line for Pick a colour from the screen, whose overlay shows a magnifier instead.</summary>
+    public const string ColourPick = "Click to pick a colour · Arrow keys move one pixel · Esc cancels";
+
     public const float Height = 40, Side = 18;
     public static TextStyle Style => TextStyle.Primary;
 

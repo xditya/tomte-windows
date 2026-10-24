@@ -29,6 +29,7 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal("Win+Alt+N", s.Hotkeys.Scratchpad);
         Assert.Equal("Win+Alt+Space", s.Hotkeys.Search);
         Assert.Equal("Win+Alt+T", s.Hotkeys.TextCapture);
+        Assert.Equal("Win+Alt+E", s.Hotkeys.ColourPick);
         Assert.False(s.CleanUpScreenText);
         Assert.Equal(0.30, s.Reveal.ZoneFraction);
         Assert.Equal(60, s.Reveal.PushCounts);
@@ -315,7 +316,7 @@ public sealed class SettingsTests : IDisposable
     public void CopyTextFromScreenIsAppendedAndRebindsLikeTheOthers()
     {
         // Registered as its number plus one, so it comes after the actions that were there before.
-        Assert.Equal(HotkeyAction.TextCapture, Enum.GetValues<HotkeyAction>()[^1]);
+        Assert.Equal(HotkeyAction.Search + 1, HotkeyAction.TextCapture);
         Assert.Equal("Copy text from screen", Hotkey.Name(HotkeyAction.TextCapture));
         var bindings = new HotkeySettings().With(HotkeyAction.TextCapture, "Win+Alt+Shift+T");
         Assert.Equal("Win+Alt+Shift+T", bindings[HotkeyAction.TextCapture]);

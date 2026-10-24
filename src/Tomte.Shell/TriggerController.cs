@@ -186,6 +186,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// <summary>What a finished rectangle of Copy text from screen does, with what <see cref="Captured"/> gets. Null until the shell sets it.</summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? TextCaptured { get; set; }
 
+    /// <summary>What a pick of Pick a colour from the screen does: the overlay holds the colour, the rectangle is its pixel. Null until the shell sets it.</summary>
+    public Func<CaptureOverlay, PixelRect, nint, Task>? ColourPicked { get; set; }
+
     /// <summary>The lasso is cropped: the Palette state at its smallest, as the palette hotkey opens it.</summary>
     internal void PaletteFromCapture() => Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
 
@@ -1153,9 +1156,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case HotkeyAction.CircleToAsk when Captured is null:
                 log?.Invoke("circle to ask: no question configured (start with --debug-capture)");
                 break;
-            case HotkeyAction.CircleToAsk or HotkeyAction.TextCapture when capturing:
+            case HotkeyAction.CircleToAsk or HotkeyAction.TextCapture or HotkeyAction.ColourPick when capturing:
                 break;
-            case HotkeyAction.CircleToAsk or HotkeyAction.TextCapture when watch.State.ExclusiveFullscreen:
+            case HotkeyAction.CircleToAsk or HotkeyAction.TextCapture or HotkeyAction.ColourPick when watch.State.ExclusiveFullscreen:
                 // Unlike the island the overlay takes the foreground, which would drop a game out of exclusive
                 // mode, so an allow rule for the app does not apply here.
                 log?.Invoke($"{action}: exclusive fullscreen, nothing shown");
@@ -1163,12 +1166,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case HotkeyAction.CircleToAsk:
                 if (Allowed(RevealTrigger.Hotkey))
                 {
-                    _ = Capture(Captured, rectangle: false);
+                    _ = Capture(Captured, CaptureMode.Lasso);
                 }
 
                 break;
             case HotkeyAction.TextCapture when TextCaptured is not null && Allowed(RevealTrigger.Hotkey):
-                _ = Capture(TextCaptured, rectangle: true);
+                _ = Capture(TextCaptured, CaptureMode.Rectangle);
+                break;
+            case HotkeyAction.ColourPick when ColourPicked is not null && Allowed(RevealTrigger.Hotkey):
+                _ = Capture(ColourPicked, CaptureMode.Colour);
                 break;
         }
     }
@@ -2047,9 +2053,9 @@ internal sealed partial class TriggerController
     /// <summary>
     /// The overlay on the monitor under the cursor with the island hidden under it. The guard holds from the
     /// overlay through the crop and the palette run, so a second press never lands under a running ask. Copy text from
-    /// screen draws a <paramref name="rectangle"/> instead of the lasso.
+    /// screen draws a rectangle instead of the lasso, and the colour picker a magnifier (<paramref name="mode"/>).
     /// </summary>
-    private async Task Capture(Func<CaptureOverlay, PixelRect, nint, Task> captured, bool rectangle)
+    private async Task Capture(Func<CaptureOverlay, PixelRect, nint, Task> captured, CaptureMode mode)
     {
         capturing = true;
         long triggered = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -2061,12 +2067,18 @@ internal sealed partial class TriggerController
             PInvoke.GetCursorPos(out var cursor);
             machine.TransitionTo(IslandState.Capture);
             island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);
-            var open = overlay = new CaptureOverlay(island.Compositor, cursor, Program.Text, rectangle);
+            var open = overlay = new CaptureOverlay(island.Compositor, cursor, Program.Text, mode);
             log?.Invoke($"capture overlay shown in {System.Diagnostics.Stopwatch.GetElapsedTime(triggered).TotalMilliseconds:F1}ms monitor={open.Bounds} scale={open.Lasso.Scale} activated={open.Activated}");
             var box = await open.Result;
             overlay = null;
             if (box is not PixelRect crop)
             {
+                // The colour picker's grab failed: handled below like any capture that Windows refused.
+                if (open.Grabbed is { } failed)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failed).Throw();
+                }
+
                 log?.Invoke("capture cancelled");
                 ToHiddenFromCapture();
                 return;

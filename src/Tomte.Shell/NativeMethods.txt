@@ -57,6 +57,7 @@ PostMessage
 SetTimer
 KillTimer
 GetCursorPos
+SetCursorPos
 UnregisterHotKey
 GetAsyncKeyState
 SendInput

@@ -206,6 +206,9 @@ public sealed record HotkeySettings
 
     public string TextCapture { get; init; } = "Win+Alt+T";
 
+    /// <summary>E for eyedropper. Win+Alt+K, the obvious pick, mutes the microphone in calls on Windows 11.</summary>
+    public string ColourPick { get; init; } = "Win+Alt+E";
+
     public string this[HotkeyAction action] => action switch
     {
         HotkeyAction.Summon => Summon,
@@ -215,6 +218,7 @@ public sealed record HotkeySettings
         HotkeyAction.Scratchpad => Scratchpad,
         HotkeyAction.Search => Search,
         HotkeyAction.TextCapture => TextCapture,
+        HotkeyAction.ColourPick => ColourPick,
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
@@ -227,6 +231,7 @@ public sealed record HotkeySettings
         HotkeyAction.Scratchpad => this with { Scratchpad = chord },
         HotkeyAction.Search => this with { Search = chord },
         HotkeyAction.TextCapture => this with { TextCapture = chord },
+        HotkeyAction.ColourPick => this with { ColourPick = chord },
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 }

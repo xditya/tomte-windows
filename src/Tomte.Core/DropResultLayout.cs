@@ -31,6 +31,9 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 
     /// <summary>The panel's last state, which stays until dismissed: with a Close row unless it already offers its own choices.</summary>
     public DropResult Closable() => Choices.Count == 0 ? this with { Choices = [Close] } : this;
+
+    /// <summary>A colour (RRGGBB) shown as a full-width band above the answer, as the colour picker's card does.</summary>
+    public uint? Swatch { get; init; }
 }
 
 /// <summary>
@@ -45,7 +48,7 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
 public sealed class DropResultLayout
 {
     public const float Pad = 16, HeadTop = 12, HeadHeight = 18, LineTop = 34, LineHeight = 14, BodyTop = 58;
-    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8;
+    public const float TileWidth = 240, TileHeight = 44, TileIcon = 24, ChoiceHeight = 32, Gap = 8, SwatchHeight = 40;
 
     /// <summary>A choice is a rectangular button; a result file is a small tile with its kind's square.</summary>
     public const float Corner = 10, TileCorner = 12, IconCorner = 8;
@@ -107,6 +110,11 @@ public sealed class DropResultLayout
         int perRow = Math.Max(1, (int)((inner + Gap) / (TileWidth + Gap)));
         float below = result.Choices.Count * (ChoiceHeight + Gap) + (result.Tiles.Count == 0 ? 0 : (result.Tiles.Count + perRow - 1) / perRow * (TileHeight + Gap));
         float y = problem ? LineTop + 4 : BodyTop;
+        if (result.Swatch is not null)
+        {
+            SwatchBand = new RectangleF(Pad, y, inner, SwatchHeight);
+            y += SwatchHeight + Gap + 4;
+        }
         if (shown.Length > 0)
         {
             // A cut never splits a character in two.
@@ -161,6 +169,9 @@ public sealed class DropResultLayout
     public float Scrolled(float scroll, int delta) => Math.Clamp(scroll - delta / 120f * WheelStep, 0, MaxScroll);
 
     public IReadOnlyList<RectangleF> Tiles => tiles;
+
+    /// <summary>Where <see cref="DropResult.Swatch"/> is drawn; empty without one.</summary>
+    public RectangleF SwatchBand { get; }
 
     public IReadOnlyList<RectangleF> Choices => choices;
 

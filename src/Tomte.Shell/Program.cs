@@ -282,6 +282,7 @@ internal static partial class Program
             ? (overlay, crop, foreground) => CaptureToPalette(island, triggers, store, logLine, overlay, crop, foreground)
             : (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
         triggers.TextCaptured = (overlay, crop, _) => ScreenTextRun.StartAsync(island, triggers, store, logLine, overlay, crop);
+        triggers.ColourPicked = (overlay, _, _) => ColourRun.StartAsync(island, triggers, logLine, overlay);
 
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;

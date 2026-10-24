@@ -67,6 +67,15 @@ public static class WindowCapture
             ExifOrientationMode.IgnoreExifOrientation, ColorManagementMode.DoNotColorManage);
     }
 
+    /// <summary>The whole monitor once, as BGRA bytes in its physical pixels, for the colour picker to read from.</summary>
+    public static async Task<(byte[] Pixels, int Width, int Height)> CaptureMonitorPixelsAsync(nint hmonitor, CancellationToken ct)
+    {
+        using var frame = await MonitorFrameAsync(hmonitor, ct);
+        var pixels = new byte[4 * frame.PixelWidth * frame.PixelHeight];
+        frame.CopyToBuffer(System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.AsBuffer(pixels));
+        return (pixels, frame.PixelWidth, frame.PixelHeight);
+    }
+
     private static async Task<SoftwareBitmap> MonitorFrameAsync(nint hmonitor, CancellationToken ct)
     {
         if (!GraphicsCaptureSession.IsSupported())
