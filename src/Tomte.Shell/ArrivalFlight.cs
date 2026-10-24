@@ -68,8 +68,9 @@ internal sealed unsafe class ArrivalFlight
         double scale = island.Scale;
         tomte = (float)(MascotArt.SizeDips * scale);
         var info = new MONITORINFO { cbSize = (uint)sizeof(MONITORINFO) };
-        PInvoke.GetMonitorInfo(PInvoke.MonitorFromWindow(island.Hwnd, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY), ref info);
+        PInvoke.GetMonitorInfo(island.Monitor, ref info);
         var work = info.rcWork;
+        int top = info.rcMonitor.top;
         var start = new Vector2((work.left + work.right) / 2f, (work.top + work.bottom) / 2f);
         double half = tomte * Arrival.PopScale / 2 + Room * scale;
         // Its popped size at both ends, since it lines up under its place before it has shrunk.
@@ -77,10 +78,10 @@ internal sealed unsafe class ArrivalFlight
         int right = (int)Math.Ceiling(Math.Max(start.X, land.X + tomte / 2) + half);
         int bottom = (int)Math.Ceiling(start.Y + half);
 
-        // The springs work on the tomte's centre in window pixels; the window's top is the screen's.
+        // The springs work on the tomte's centre in window pixels; the window's top is the monitor's.
         x.Jump(start.X - left);
-        y.Jump(start.Y);
-        (toX, toY) = (land.X - left + tomte / 2, land.Y + tomte / 2);
+        y.Jump(start.Y - top);
+        (toX, toY) = (land.X - left + tomte / 2, land.Y - top + tomte / 2);
         size.Jump(0);
         size.Target = Arrival.PopScale;
 
@@ -106,9 +107,9 @@ internal sealed unsafe class ArrivalFlight
                 null,
                 WINDOW_STYLE.WS_POPUP,
                 left,
-                0,
+                top,
                 right - left,
-                bottom,
+                bottom - top,
                 island.Hwnd,
                 HMENU.Null,
                 hInstance,
