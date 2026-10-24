@@ -42,16 +42,16 @@ internal static unsafe class InputThread
     // in another app can never say yes.
     public const int ConfirmHotkeyId = 101;
 
-    // While the rambler's card offers its choices, between the release and a pick: Alt+I, Alt+A and Alt+N from the first
-    // id on, in VoiceChoice order, and Enter alone on its own id, which a card that refused Insert does not take.
-    public const int ChoiceHotkeyId = 102, ChoiceEnterHotkeyId = 105;
+    // While the rambler's card offers its choices, between the release and a pick: Alt+I, Alt+A, Alt+N and Alt+C from
+    // the first id on, in VoiceChoice order, and Enter alone on its own id, which a card that refused Insert does not take.
+    public const int ChoiceHotkeyId = 102, ChoiceEnterHotkeyId = 106;
 
     // Win+Alt+Z, only while the pill after a closed AI view offers Undo.
-    public const int UndoHotkeyId = 106;
+    public const int UndoHotkeyId = 107;
 
     // E alone while the rambler's card offers its choices and can edit its words; never once Insert was refused, when
     // the user may be typing in another app.
-    public const int EditHotkeyId = 107;
+    public const int EditHotkeyId = 108;
 
     // Posted to the input window by the UI thread.
     private const uint MsgSetEscape = PInvoke.WM_APP + 10;      // wParam 1 registers Esc, 0 releases it
@@ -63,7 +63,7 @@ internal static unsafe class InputThread
     private const uint MsgSetUndo = PInvoke.WM_APP + 17;        // wParam 1 registers Win+Alt+Z, 0 releases it
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B, VkReturn = 0x0D, VkMenu = 0x12;
-    private static readonly ushort[] ChoiceLetters = ['I', 'A', 'N'];
+    private static readonly ushort[] ChoiceLetters = ['I', 'A', 'N', 'C'];
     private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, which CsWin32 does not emit
 
     private static HWND island, window;
@@ -312,8 +312,9 @@ internal static unsafe class InputThread
         PInvoke.RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE));
     }
 
-    // Alt+I, Alt+A or Alt+N picked on the card, with Alt still down: a tap of a key assigned to nothing, so the app in
-    // front takes Alt as used in a chord. Letting Alt go then opens no menu, and letters typed after are not menu keys.
+    // Alt+I, Alt+A, Alt+N or Alt+C picked on the card, with Alt still down: a tap of a key assigned to nothing, so the
+    // app in front takes Alt as used in a chord. Letting Alt go then opens no menu, and letters typed after are not menu
+    // keys.
     private static void MaskAlt()
     {
         const VIRTUAL_KEY Unassigned = (VIRTUAL_KEY)0xE8;
@@ -325,7 +326,7 @@ internal static unsafe class InputThread
         PInvoke.SendInput(tap, sizeof(INPUT));
     }
 
-    // Win+Alt+Enter, or the card's three Alt keys and its Enter: an id that is not registered is ignored.
+    // Win+Alt+Enter, or the card's four Alt keys and its Enter: an id that is not registered is ignored.
     private static void UnregisterConfirm(HWND hwnd)
     {
         for (int id = ConfirmHotkeyId; id <= ChoiceEnterHotkeyId; id++)

@@ -11,9 +11,10 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// The rambler's pill grown into a card once the words are text (<see cref="VoiceCardLayout"/>): a header with how long
-/// the take was and where it was turned into text, the take's waveform, the words, then Insert, Ask Tomte and Add to note,
-/// the highlighted one in the accent with Enter. A line under the row says why Ask is off, or why Insert could not type,
-/// which turns Insert into Copy (Alt+I) and leaves nothing highlighted, since Enter then goes back to the app in front.
+/// the take was and where it was turned into text, the take's waveform, the words, then Insert, Copy, Ask Tomte and Add
+/// to note, the highlighted one in the accent with Enter (on the button where it fits, else in the footer). A line under
+/// the row says why Ask is off, or why Insert could not type, which turns Insert off and puts the accent on Copy for the
+/// mouse, with no Enter, since Enter then goes back to the app in front.
 /// The buttons are the interaction host's targets, so a click picks too, and the island takes no keys until the words
 /// are edited: E, or a click on them, puts them in a text box that takes the keys, where Enter picks the highlighted
 /// choice with the words as edited and Esc throws them away.
@@ -22,7 +23,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
 {
     internal const string WordsId = "words";
 
-    private static readonly VoiceChoice[] Order = [VoiceChoice.Insert, VoiceChoice.Ask, VoiceChoice.Note];
+    private static readonly VoiceChoice[] Order = VoiceCardLayout.Order;
 
     /// <summary>The tomte beside the header.</summary>
     public static readonly MascotSeat Seat = VoiceCardLayout.Seat;
@@ -124,7 +125,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
         island.Interaction.Register(this, p => p - corner, p => p + corner);
     }
 
-    /// <summary>A button was clicked: Insert (Copy once Insert was refused), Ask or Add to note.</summary>
+    /// <summary>A button was clicked: Insert, Copy, Ask or Add to note.</summary>
     public event Action<VoiceChoice>? Picked;
 
     /// <summary>Enter in the edited words: the highlighted choice, with the words as they are now.</summary>
@@ -146,7 +147,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
     /// <summary>The choice Enter picks while Insert has not been refused.</summary>
     public VoiceChoice Highlighted => highlighted;
 
-    /// <summary>Insert could not type: Copy is in its place, and Enter picks nothing.</summary>
+    /// <summary>Insert could not type: it is off, and Enter picks nothing.</summary>
     public bool Refused => refused is not null;
 
     /// <summary>A provider could be used when the card opened, so Ask is on.</summary>
@@ -164,7 +165,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
     /// <summary>The island's shape around the card.</summary>
     public IslandGeometry Shape => new(width, layout.Height, VoiceCardLayout.Corner);
 
-    /// <summary>Insert could not type, for this reason: Copy takes its place, and nothing is highlighted.</summary>
+    /// <summary>Insert could not type, for this reason: it turns off, and Copy takes the accent but not Enter.</summary>
     public void Refuse(string why)
     {
         refused = why;
@@ -314,39 +315,56 @@ internal sealed class VoiceCard : IInteractive, IDisposable
 
         var targets = new List<Target>();
         var at = layout.Actions;
+        bool enterInFoot = false;
         for (int i = 0; i < Order.Length; i++)
         {
             var choice = Order[i];
             var b = buttons[i];
             var r = at[i];
-            bool on = refused is null && choice == highlighted, enabled = choice != VoiceChoice.Ask || askOff is null;
+            // After a refusal the accent goes to Copy, the way left for the words, but Enter stays off the card.
+            bool enter = refused is null && choice == highlighted, on = refused is null ? enter : choice == VoiceChoice.Copy;
+            string? off = choice switch
+            {
+                VoiceChoice.Ask => askOff,
+                VoiceChoice.Insert => refused,
+                _ => null,
+            };
+            bool enabled = off is null;
             b.Pill.Offset = new Vector2(r.X, r.Y);
             b.Pill.Size = new Vector2(r.Width, r.Height);
             b.Fill.Color = Argb(on ? Theme.Accent : Theme.Raised);
             b.Layer.Opacity = enabled ? 1 : StateLook.DisabledOpacity;
             uint ink = on ? Theme.OnAccent : Theme.Ink;
-            string label = choice == VoiceChoice.Insert && refused is not null ? "Copy" : VoiceChoices.Label(choice);
+            string label = VoiceChoices.Label(choice);
             float x = r.X + VoiceCardLayout.ActionPadX, right = r.Right - VoiceCardLayout.ActionPadX;
 
-            // The highlighted choice carries Enter at its right end.
-            string cap = on ? "Enter" : "";
-            var capBox = on ? Keycap.EndingAt(cap, right, r) : RectangleF.Empty;
-            b.Cap.Offset = new Vector2(capBox.X, capBox.Y);
-            b.Cap.Size = new Vector2(capBox.Width, capBox.Height);
-            b.CapFill.Color = Argb(VoiceCardLayout.PrimaryKeyFill);
-            b.Key.Show(cap, VoiceCardLayout.PrimaryKey, capBox);
-            if (on)
-            {
-                right = capBox.X - VoiceCardLayout.GlyphGap;
-            }
-
-            // Ask Tomte and Add to note lead with their glyph; Insert says where it types when that is known.
+            // Copy, Ask Tomte and Add to note lead with their glyph; Insert says where it types when that is known.
             var glyph = choice switch
             {
+                VoiceChoice.Copy => Glyphs.Clipboard,
                 VoiceChoice.Ask => Glyphs.Sparkle,
                 VoiceChoice.Note => Glyphs.Pencil,
                 _ => null,
             };
+
+            // The highlighted choice carries Enter at its right end, or in the footer when its button is too narrow.
+            if (enter && !VoiceCardLayout.Fits(r, label, glyph is not null, enter: true))
+            {
+                enter = false;
+                enterInFoot = true;
+            }
+
+            string cap = enter ? "Enter" : "";
+            var capBox = enter ? Keycap.EndingAt(cap, right, r) : RectangleF.Empty;
+            b.Cap.Offset = new Vector2(capBox.X, capBox.Y);
+            b.Cap.Size = new Vector2(capBox.Width, capBox.Height);
+            b.CapFill.Color = Argb(VoiceCardLayout.PrimaryKeyFill);
+            b.Key.Show(cap, VoiceCardLayout.PrimaryKey, capBox);
+            if (enter)
+            {
+                right = capBox.X - VoiceCardLayout.GlyphGap;
+            }
+
             b.Glyph.Shapes.Clear();
             if (glyph is not null)
             {
@@ -372,7 +390,7 @@ internal sealed class VoiceCard : IInteractive, IDisposable
                 b.Into.Show("", TextStyle.Small, RectangleF.Empty);
             }
 
-            targets.Add(new Target(choice.ToString(), r, VoiceCardLayout.ActionCorner, TargetKind.Button, enabled, enabled ? null : askOff, Key: VoiceChoices.Key(choice)));
+            targets.Add(new Target(choice.ToString(), r, VoiceCardLayout.ActionCorner, TargetKind.Button, enabled, off, Key: VoiceChoices.Key(choice)));
         }
 
         // A click on the words edits them.
@@ -382,10 +400,17 @@ internal sealed class VoiceCard : IInteractive, IDisposable
         }
 
         reason.Show(layout.ReasonLine with { Style = refused is null ? VoiceCardLayout.Reason : VoiceCardLayout.Reason with { Color = Theme.Warn } });
-        // The hold chord again at the left, E and Esc at the right; while the words are edited, Enter and Esc.
+        // The hold chord again at the left, E and Esc at the right, after Enter when its button had no room for it; while
+        // the words are edited, Enter and Esc.
         keys.Begin();
+        string enterDoes = VoiceChoices.Label(highlighted).ToLowerInvariant();
         (string, string)[] end = editor is null && focus is not null ? [("E", "edit words"), ("Esc", "discard")] : [("Esc", "discard")];
-        (string, string)? first = editor is null ? (hold, "hold to talk again") : refused is null ? ("Enter", VoiceChoices.Label(highlighted).ToLowerInvariant()) : null;
+        if (editor is null && enterInFoot)
+        {
+            end = [("Enter", enterDoes), .. end];
+        }
+
+        (string, string)? first = editor is null ? (hold, "hold to talk again") : refused is null ? ("Enter", enterDoes) : null;
         foreach (var (capAt, capKeys, word) in layout.Footer(first, end))
         {
             keys.Add(capAt, capKeys, word);

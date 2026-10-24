@@ -1,7 +1,10 @@
 namespace Tomte.Core.Rambler;
 
-/// <summary>What the words do once the voice key is released: typed into the app, asked of Tomte, or added to the note.</summary>
-public enum VoiceChoice { Insert, Ask, Note }
+/// <summary>
+/// What the words do once the voice key is released: typed into the app, asked of Tomte, added to the note, or copied.
+/// Settings stores one by name and the card's Alt keys take hotkey ids in this order, so a new choice goes at the end.
+/// </summary>
+public enum VoiceChoice { Insert, Ask, Note, Copy }
 
 /// <summary>The rules of the card the words show on after a hold, before anything is typed, sent or saved.</summary>
 public static class VoiceChoices
@@ -11,18 +14,24 @@ public static class VoiceChoices
         setting == VoiceChoice.Ask && !canAsk ? VoiceChoice.Insert : setting;
 
     /// <summary>
-    /// What a key on the card picks: Enter (<paramref name="alt"/> null) the highlighted choice, Alt+I, Alt+A and Alt+N
-    /// their own. Null for Ask while there is no provider: it is disabled, and the card stays. Null for Enter once Insert
-    /// was <paramref name="refused"/>: the user may be typing in another app by then, so Enter never copies.
+    /// What a key on the card picks: Enter (<paramref name="alt"/> null) the highlighted choice, Alt+I, Alt+A, Alt+N and
+    /// Alt+C their own. Null for Ask while there is no provider, and for Insert once it was <paramref name="refused"/>:
+    /// those are disabled, and the card stays. Null for Enter after a refusal too: the user may be typing in another app
+    /// by then, so Enter never copies.
     /// </summary>
-    public static VoiceChoice? Pick(VoiceChoice? alt, VoiceChoice setting, bool canAsk, bool refused = false) =>
-        alt is null && refused ? null
-        : (alt ?? Default(setting, canAsk)) is var picked && (picked != VoiceChoice.Ask || canAsk) ? picked : null;
+    public static VoiceChoice? Pick(VoiceChoice? alt, VoiceChoice setting, bool canAsk, bool refused = false)
+    {
+        if (alt is null && refused)
+            return null;
+        var picked = alt ?? Default(setting, canAsk);
+        return (picked == VoiceChoice.Ask && !canAsk) || (picked == VoiceChoice.Insert && refused) ? null : picked;
+    }
 
     public static string Label(VoiceChoice choice) => choice switch
     {
         VoiceChoice.Insert => "Insert",
         VoiceChoice.Ask => "Ask Tomte",
+        VoiceChoice.Copy => "Copy",
         _ => "Add to note",
     };
 
@@ -30,6 +39,7 @@ public static class VoiceChoices
     {
         VoiceChoice.Insert => "Alt+I",
         VoiceChoice.Ask => "Alt+A",
+        VoiceChoice.Copy => "Alt+C",
         _ => "Alt+N",
     };
 

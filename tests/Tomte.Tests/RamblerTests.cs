@@ -167,11 +167,14 @@ public class VoiceCardTests
         Assert.Equal(VoiceCardLayout.Side, layout.Mic.X);
         Assert.Equal(layout.Wave.Bottom + VoiceCardLayout.Gap, layout.Text.Y);
         var actions = layout.Actions;
-        Assert.Equal(3, actions.Count);
+        Assert.Equal([VoiceChoice.Insert, VoiceChoice.Copy, VoiceChoice.Ask, VoiceChoice.Note], VoiceCardLayout.Order);
+        Assert.Equal(4, actions.Count);
         Assert.All(actions, a => Assert.Equal(VoiceCardLayout.ActionHeight, a.Height));
-        Assert.Equal(VoiceCardLayout.InsertShare, actions[0].Width / actions[1].Width, 3);
-        Assert.Equal(actions[1].Width, actions[2].Width, 3);
-        Assert.Equal(620 - VoiceCardLayout.Side, actions[2].Right, 3);
+        Assert.Equal(VoiceCardLayout.InsertShare, actions[0].Width / actions[2].Width, 3);
+        Assert.Equal(VoiceCardLayout.CopyShare, actions[1].Width / actions[2].Width, 3);
+        Assert.Equal(actions[2].Width, actions[3].Width, 3);
+        Assert.Equal(actions[0].Right + VoiceCardLayout.ActionGap, actions[1].X, 3);
+        Assert.Equal(620 - VoiceCardLayout.Side, actions[3].Right, 3);
         Assert.Equal(layout.Text.Bottom + VoiceCardLayout.Gap, actions[0].Y);
 
         // A reason line takes room under the row; the card grows by it.
@@ -188,6 +191,29 @@ public class VoiceCardTests
         // The privacy line is on the right, the lock before it.
         var (lockAt, where) = layout.Where(VoiceCardLayout.PrivacyLine(null));
         Assert.True(lockAt.Right < where.Slot.X && where.Slot.Right <= 620 - VoiceCardLayout.Side + 0.01f);
+    }
+
+    // The card's full width, and its width on a monitor 1024 DIPs wide (60% of it).
+    [Theory]
+    [InlineData(620f)]
+    [InlineData(614.4f)]
+    public void EveryActionHoldsItsGlyphAndNameAndEnterFindsRoom(float width)
+    {
+        var layout = new VoiceCardLayout(width, mascot: true, words: 58);
+        var actions = layout.Actions;
+        for (int i = 0; i < actions.Count; i++)
+        {
+            var choice = VoiceCardLayout.Order[i];
+            Assert.True(VoiceCardLayout.Fits(actions[i], VoiceChoices.Label(choice), glyph: choice != VoiceChoice.Insert, enter: false), $"{choice} at {width}");
+        }
+
+        // Insert, the widest, carries Enter on its button; the narrower ones hand it to the footer, where it fits with the
+        // hold chord, E and Esc.
+        Assert.True(VoiceCardLayout.Fits(actions[0], VoiceChoices.Label(VoiceChoice.Insert), glyph: false, enter: true));
+        Assert.False(VoiceCardLayout.Fits(actions[3], VoiceChoices.Label(VoiceChoice.Note), glyph: true, enter: true));
+        var foot = layout.Footer(("Win Alt V", "hold to talk again"), [("Enter", "add to note"), ("E", "edit words"), ("Esc", "discard")]);
+        Assert.Equal(["Win Alt V", "Enter", "E", "Esc"], foot.Select(f => f.Keys));
+        Assert.True(foot[0].Word.Slot.Right < foot[1].Cap.X);
     }
 
     [Theory]
