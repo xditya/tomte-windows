@@ -375,13 +375,13 @@ public sealed partial class SettingsWindow : Window
         return box;
     }
 
-    // Insert, Ask Tomte or Add to note, in VoiceChoice order. Ask is off while no provider is set up, and the box shows
+    // Insert, Ask Tomte, Add to note or Copy, in VoiceChoice order. Ask is off while no provider is set up, and the box shows
     // Insert then without changing what is saved, so Ask comes back with a provider. It follows a provider set up or
     // removed while the window is open.
     private ComboBox VoiceEnter()
     {
         var ask = new ComboBoxItem { Content = VoiceChoices.Label(VoiceChoice.Ask) };
-        var box = new ComboBox { MinWidth = 200, Items = { VoiceChoices.Label(VoiceChoice.Insert), ask, VoiceChoices.Label(VoiceChoice.Note) } };
+        var box = new ComboBox { MinWidth = 200, Items = { VoiceChoices.Label(VoiceChoice.Insert), ask, VoiceChoices.Label(VoiceChoice.Note), VoiceChoices.Label(VoiceChoice.Copy) } };
         bool showing = false;
         void Show(TomteSettings s)
         {
@@ -391,7 +391,7 @@ public sealed partial class SettingsWindow : Window
             box.SelectedIndex = (int)VoiceChoices.Default(s.VoiceEnter, canAsk);
             showing = false;
             voiceNote.Text = (canAsk ? "" : VoiceChoices.NoProvider + $" Set one up on the {ProviderPage} page. ")
-                + "After you speak, Alt+I, Alt+A and Alt+N pick Insert, Ask Tomte and Add to note, and Esc throws the words away.";
+                + "After you speak, Alt+I, Alt+C, Alt+A and Alt+N pick Insert, Copy, Ask Tomte and Add to note, and Esc throws the words away.";
             voiceNote.Visibility = Visibility.Visible;
         }
 

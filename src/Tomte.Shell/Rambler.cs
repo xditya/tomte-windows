@@ -12,8 +12,8 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// Hold the chord, speak, release: the recording becomes a transcript, and the pill grows into a card that shows it
-/// with three choices (<see cref="VoiceCard"/>). Insert types it into the window that had the keys when the hold
-/// started; Add to note puts it on the scratchpad; Ask Tomte turns the card into the palette, where the model reads it
+/// with four choices (<see cref="VoiceCard"/>). Insert types it into the window that had the keys when the hold
+/// started; Copy puts it on the clipboard; Add to note puts it on the scratchpad; Ask Tomte turns the card into the palette, where the model reads it
 /// as a command or a note and asks before anything runs; Ask keeps the raw words as a note only when nothing could be
 /// sent, not after an answer. Nothing is typed, sent or saved before a choice. Runs on the
 /// UI thread. The microphone is open only between the press and the release; the hold is the visible user action that
@@ -90,8 +90,8 @@ internal sealed class Rambler(
     public Func<nint, nint, string, string?> Insert { get; init; } = DesktopEffects.TypeInto;
 
     /// <summary>
-    /// A key on the card: Enter (null) picks the highlighted choice, Alt+I, Alt+A and Alt+N their own. Enter does nothing
-    /// once Insert was refused, even one already on its way, so it never copies. False when no card waits.
+    /// A key on the card: Enter (null) picks the highlighted choice, Alt+I, Alt+A, Alt+N and Alt+C their own. Enter does
+    /// nothing once Insert was refused, even one already on its way, so it never copies. False when no card waits.
     /// </summary>
     public bool Choose(VoiceChoice? alt)
     {
@@ -104,12 +104,12 @@ internal sealed class Rambler(
 
     /// <summary>
     /// The window in front changed. While the card waits, any window but the one spoken into (or the island) in front
-    /// means Insert would type nowhere: the card says so and offers Copy, and Enter goes back to the app in front, so
-    /// pressing it there neither picks nor copies.
+    /// means Insert would type nowhere: the card says so, turns Insert off and points to Copy, and Enter goes back to the
+    /// app in front, so pressing it there neither picks nor copies.
     /// </summary>
     public void ForegroundChanged()
     {
-        // A pick that already landed keeps its choice: a window change in the gap before it runs must not turn it to Copy.
+        // A pick that already landed keeps its choice: a window change in the gap before it runs must not refuse it.
         if (choosing is not { Task.IsCompleted: false } || card is not { Refused: false } shown)
             return;
         nint front = WindowContext.Foreground();
@@ -334,7 +334,7 @@ internal sealed class Rambler(
 
             if (takenDown)
                 RemoveCard();
-            if (picked == VoiceChoice.Insert && shown.Refused)
+            if (picked == VoiceChoice.Copy)
             {
                 await CopyAsync(transcript);
                 break;
@@ -346,7 +346,7 @@ internal sealed class Rambler(
             log($"{DateTime.Now:HH:mm:ss.fff} voice: not typed: {refused}");
             if (card is null)
             {
-                // The card was taken down with the pick, so there is no Copy to offer: the words go to the note.
+                // The card was taken down with the pick, so Copy cannot be offered: the words go to the note.
                 await KeepAsync(transcript);
                 break;
             }
@@ -477,7 +477,7 @@ internal sealed class Rambler(
         return command;
     }
 
-    /// <summary>Copy, in Insert's place once it could not type. A clipboard another app keeps open sends the words to the note instead.</summary>
+    /// <summary>Copy on the card. A clipboard another app keeps open sends the words to the note instead.</summary>
     private async Task CopyAsync(string words)
     {
         try

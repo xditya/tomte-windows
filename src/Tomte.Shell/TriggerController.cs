@@ -1078,7 +1078,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         if (id is >= InputThread.ChoiceHotkeyId and <= InputThread.ChoiceEnterHotkeyId)
         {
-            // Enter, Alt+I, Alt+A or Alt+N on the rambler's card.
+            // Enter, Alt+I, Alt+A, Alt+N or Alt+C on the rambler's card.
             rambler?.Choose(id == InputThread.ChoiceEnterHotkeyId ? null : (VoiceChoice)(id - InputThread.ChoiceHotkeyId));
             return;
         }

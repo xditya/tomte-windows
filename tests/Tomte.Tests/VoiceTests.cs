@@ -590,12 +590,37 @@ public sealed class VoiceTests : IDisposable
         Assert.Equal(VoiceChoice.Note, VoiceChoices.Pick(VoiceChoice.Note, VoiceChoice.Ask, canAsk: false));
         Assert.Equal(VoiceChoice.Ask, VoiceChoices.Pick(VoiceChoice.Ask, VoiceChoice.Insert, canAsk: true));
         Assert.Null(VoiceChoices.Pick(VoiceChoice.Ask, VoiceChoice.Insert, canAsk: false));
-        // Once Insert was refused, Enter picks nothing, so a second Enter typed in another app never copies; the Alt keys
-        // still pick (Alt+I is Copy then).
+        // Once Insert was refused, Enter picks nothing, so a second Enter typed in another app never copies, even with Copy
+        // in settings. Insert is off then, so Alt+I does nothing; Alt+C and the others still pick.
         Assert.Null(VoiceChoices.Pick(null, VoiceChoice.Insert, canAsk: true, refused: true));
         Assert.Null(VoiceChoices.Pick(null, VoiceChoice.Ask, canAsk: true, refused: true));
-        Assert.Equal(VoiceChoice.Insert, VoiceChoices.Pick(VoiceChoice.Insert, VoiceChoice.Insert, canAsk: true, refused: true));
+        Assert.Null(VoiceChoices.Pick(null, VoiceChoice.Copy, canAsk: true, refused: true));
+        Assert.Null(VoiceChoices.Pick(VoiceChoice.Insert, VoiceChoice.Insert, canAsk: true, refused: true));
+        Assert.Equal(VoiceChoice.Copy, VoiceChoices.Pick(VoiceChoice.Copy, VoiceChoice.Insert, canAsk: true, refused: true));
         Assert.Equal(VoiceChoice.Note, VoiceChoices.Pick(VoiceChoice.Note, VoiceChoice.Insert, canAsk: true, refused: true));
+    }
+
+    [Fact]
+    public void CopyIsAFourthChoiceOnAltC()
+    {
+        // Appended, so the Alt keys' ids and the settings box keep their order: Alt+I, Alt+A, Alt+N, then Alt+C.
+        Assert.Equal([VoiceChoice.Insert, VoiceChoice.Ask, VoiceChoice.Note, VoiceChoice.Copy], Enum.GetValues<VoiceChoice>());
+        Assert.Equal("Copy", VoiceChoices.Label(VoiceChoice.Copy));
+        Assert.Equal("Alt+C", VoiceChoices.Key(VoiceChoice.Copy));
+        Assert.Equal(4, Enum.GetValues<VoiceChoice>().Select(VoiceChoices.Key).Distinct().Count());
+
+        // Enter copies when settings says so, with or without a provider; Alt+C copies whatever settings says.
+        Assert.Equal(VoiceChoice.Copy, VoiceChoices.Pick(null, VoiceChoice.Copy, canAsk: false));
+        Assert.Equal(VoiceChoice.Copy, VoiceChoices.Pick(VoiceChoice.Copy, VoiceChoice.Ask, canAsk: true));
+
+        // Saved by name, and read back; files from before Copy still read as they did.
+        Directory.CreateDirectory(_dir);
+        string file = Path.Combine(_dir, "settings.json");
+        File.WriteAllText(file, SettingsStore.Serialize(new TomteSettings { VoiceEnter = VoiceChoice.Copy }));
+        Assert.Contains("\"Copy\"", File.ReadAllText(file));
+        Assert.Equal(VoiceChoice.Copy, SettingsStore.Load(file).VoiceEnter);
+        File.WriteAllText(file, """{"voiceEnter":"Note"}""");
+        Assert.Equal(VoiceChoice.Note, SettingsStore.Load(file).VoiceEnter);
     }
 
     [Fact]
@@ -661,7 +686,7 @@ public sealed class VoiceTests : IDisposable
         Assert.Equal("", _pad.Text);
         Assert.Equal(default, await VoiceCommand.PickedAsync(VoiceChoice.Note, "buy milk", Type, Keep, Start, Run));
         Assert.Contains("buy milk", _pad.Text);
-        // A refused Insert comes back for the card to say, with Copy in its place.
+        // A refused Insert comes back for the card to say, which turns Insert off and leaves Copy.
         var refused = await VoiceCommand.PickedAsync(VoiceChoice.Insert, "buy milk", _ => "The window you spoke into has closed.", Keep, Start, Run);
         Assert.Equal(("The window you spoke into has closed.", (PaletteSession?)null), refused);
         Assert.Equal(0, starts);

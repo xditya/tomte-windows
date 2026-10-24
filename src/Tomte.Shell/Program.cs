@@ -898,7 +898,7 @@ internal static partial class Program
     /// one for the run instead. Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or the
     /// provider's /audio/transcriptions with --stt-provider and --stt-model, read at the first hold;
     /// --debug-transcript "text" or --debug-wav file.wav stands in for what the microphone heard. The words show on the
-    /// card with Insert, Ask Tomte and Add to note; Ask, offered only with a provider, makes them a voice command the
+    /// card with Insert, Copy, Ask Tomte and Add to note; Ask, offered only with a provider, makes them a voice command the
     /// model reads with the voice tools, shown and asked in the palette. --dry keeps device tools from changing anything
     /// and Insert from typing. Null when there is no speech to text.
     /// </summary>
