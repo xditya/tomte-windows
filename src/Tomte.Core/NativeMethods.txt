@@ -106,3 +106,10 @@ DispatchMessage
 MsgWaitForMultipleObjectsEx
 COPYDATASTRUCT
 WM_COPYDATA
+IAudioEndpointVolumeCallback
+IAudioSessionManager2
+IAudioSessionControl2
+IAudioSessionEnumerator
+IAudioSessionNotification
+IAudioSessionEvents
+IMMNotificationClient

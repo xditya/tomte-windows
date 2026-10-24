@@ -47,6 +47,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, pointerOn, peekWanted, eventShowing, dragEntered, firstRunShowing, arrivalShowing;
+
+    // The mic button is on the pill, and its tooltip.
+    private bool micOn;
+    private string? micTip;
     private ArrivalFlight? arrival;
     private Task saving = Task.CompletedTask;
 
@@ -326,6 +330,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>Whether the now-playing row is on the Compact pill now; a click on the pill then opens the Media tab.</summary>
     public Func<bool>? NowPlayingShows { get; set; }
+
+    /// <summary>A click on the mic button, and the mute key: whoever holds the microphone answers them.</summary>
+    internal Action? MicClicked { get; set; }
+
+    internal Action? MuteKey { get; set; }
+
+    /// <summary>The feature whose one event the pill shows, or Other for none or a digest.</summary>
+    internal IslandEventSource EventOwner => eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other;
+
+    /// <summary>Desktop peek is what shows, rested or grown into its pill.</summary>
+    internal bool PeekShowing => activity.HasFlag(IslandActivity.Peek);
+
+    /// <summary>The mic button is on the pill; see <see cref="ShowMic"/>.</summary>
+    internal bool MicShown => micOn;
 
     /// <summary>
     /// Whether something plays, raised with every media change. With "Keep showing while music plays" on, the pill comes
@@ -722,11 +740,21 @@ internal sealed unsafe partial class TriggerController : IDisposable
         public IReadOnlyList<Target> Targets { get; private set; } = [];
 
         /// <summary>The state, the shape or the rambling changed: the targets again, registered while in Compact, and say so.</summary>
+        /// <summary>The pointer is on the mic button, where a rest does not open Panels.</summary>
+        public bool OnMic { get; private set; }
+
         public void Changed()
         {
             Targets = owner.machine.State == IslandState.Compact && (owner.activity & (IslandActivity.Rambling | IslandActivity.Undo)) == 0
                 ? CompactLayout.Targets(owner.island.Heading, owner.island.Mascot.Enabled)
                 : [];
+            if (owner.micOn && Targets.Count > 0)
+            {
+                // Last, so it sits on top of the pill.
+                var box = CompactLayout.MicButton;
+                Targets = [.. Targets, new Target(CompactLayout.MicId, box, box.Height / 2, TargetKind.Button, Tip: owner.micTip)];
+            }
+
             if (owner.machine.State == IslandState.Compact)
             {
                 PInvoke.GetCursorPos(out shownAt);
@@ -747,6 +775,10 @@ internal sealed unsafe partial class TriggerController : IDisposable
             {
                 owner.AskClicked();
             }
+            else if (id == CompactLayout.MicId)
+            {
+                owner.MicClicked?.Invoke();
+            }
             else
             {
                 owner.OpenPanelsNextTurn(CompactRules.ClickOpens(owner.NowPlayingShows?.Invoke() == true));
@@ -759,6 +791,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
         public void Hovered(string? id)
         {
             owner.island.Mascot.Hover(id == CompactLayout.TomteId);
+            // Clicking the mic in a call must not grow the panels over it: the rest that opens them stops on the button,
+            // and starts again from the pill around it.
+            bool wasOnMic = OnMic;
+            OnMic = id == CompactLayout.MicId;
+            if (OnMic != wasOnMic && id is not null && owner.pointerOn)
+            {
+                owner.Dwell(OnMic ? HoverStep.Cancel : HoverStep.Start);
+            }
+
             // The window's own mouse messages put the pointer on the pill or the badge. The rest that opens Panels runs
             // from the input thread's raw-input samples, which have been seen to miss a pointer resting on the peek
             // badge, so that thread looks again now.
@@ -840,7 +881,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 }
 
                 break;
-            case HoverTimer when pointerOn && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
+            case HoverTimer when pointerOn && !compact.OnMic && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
                 break;
             case EventTimer or FirstRunTimer when (id == EventTimer ? eventShowing : firstRunShowing) && machine.State == IslandState.Compact:
@@ -1164,6 +1205,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 }
 
                 break;
+            case HotkeyAction.Mute:
+                MuteKey?.Invoke();
+                break;
         }
     }
 
@@ -1269,7 +1313,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    private void ShowEvent(IReadOnlyList<IslandEvent> shown)
+    private void ShowEvent(IReadOnlyList<IslandEvent> shown, RevealTrigger trigger = RevealTrigger.Event)
     {
         // Callers queue while the island is busy; this is only the last guard against morphing over a panel.
         if (TriggerQueue.IslandBusy(machine.State, activity))
@@ -1277,7 +1321,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
-        if (Reveal(RevealTrigger.Event, IslandState.Compact))
+        if (Reveal(trigger, IslandState.Compact))
         {
             eventShowing = true;
             showing = shown;
@@ -1294,11 +1338,64 @@ internal sealed unsafe partial class TriggerController : IDisposable
         else
         {
             // The callers asked about the pause and the suppression a moment ago. Should either have changed since,
-            // the events wait again, and a finished timer keeps its ring for its own pill.
-            foreach (var e in shown)
+            // the events wait again, and a finished timer keeps its ring for its own pill. A key's own pill is now or never.
+            foreach (var e in trigger == RevealTrigger.Event ? shown : [])
             {
                 events.Offer(e, suppressed: true);
             }
+        }
+    }
+
+    /// <summary>The Compact pill grown at its trailing end for the mic button.</summary>
+    private static IslandGeometry MicPill => IslandGeometry.Compact with { Width = IslandGeometry.Compact.Width + CompactLayout.MicRoom };
+
+    /// <summary>
+    /// The mic button on the pill, or not, with what its tooltip says. The pill grows by <see cref="CompactLayout.MicRoom"/>
+    /// at its trailing end for it, and back; its content keeps its frame at the leading end meanwhile. Only in Compact.
+    /// </summary>
+    internal void ShowMic(bool on, string tip)
+    {
+        on &= machine.State == IslandState.Compact;
+        bool grow = on != micOn;
+        if (!grow && tip == micTip)
+        {
+            return;
+        }
+
+        (micOn, micTip) = (on, tip);
+        // Leaving Compact, the state change has its own shape.
+        if (grow && machine.State == IslandState.Compact)
+        {
+            // Set while the pill is still 220 wide, where it moves nothing; left as it is while the pill shrinks back.
+            if (on)
+            {
+                island.ButtonRoom = CompactLayout.MicRoom;
+            }
+
+            island.MorphTo(on ? MicPill : IslandGeometry.Compact, SpringPreset.Snappy);
+            InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+        }
+
+        compact.Changed();
+    }
+
+    /// <summary>
+    /// The mute key's pill: an event's pill for the event's time, with the mic button and whether it is muted now. Shown
+    /// now or never, since a state shown late is wrong: an island busy with something else shows nothing. A mute key
+    /// pill that is up takes the new state and starts its time again.
+    /// </summary>
+    internal void FlashMic(bool muted)
+    {
+        var e = new IslandEvent(CompactRules.MicLine(muted), DateTimeOffset.Now) { Source = IslandEventSource.Mic };
+        if (machine.State == IslandState.Compact && EventOwner == IslandEventSource.Mic)
+        {
+            showing = [e];
+            PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
+            UpdateRing();
+        }
+        else if (arrival is null && !TriggerQueue.IslandBusy(machine.State, activity))
+        {
+            ShowEvent([e], RevealTrigger.Hotkey);
         }
     }
 
@@ -1356,7 +1453,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             var (words, left) = CompactLine(DateTimeOffset.Now);
             bool mascot = island.Mascot.Enabled;
             float x = CompactLayout.Group(mascot, CompactLayout.RingSize, CompactLayout.RingWords(words ?? "", countdown: left is not null)).Lead;
-            ring.Show(run, DateTimeOffset.Now, mascot ? island.Trailing : island.Dips, mascot ? x - CompactLayout.End : x);
+            ring.Show(run, DateTimeOffset.Now, mascot ? island.Trailing : island.Pill, mascot ? x - CompactLayout.End : x);
         }
         else
         {
@@ -1732,7 +1829,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
             island.JumpSeat(CompactLayout.PeekSeat(peekStyle));
         }
 
-        var geometry = resting ? PeekShape(peekStyle) : peek ? IslandGeometry.Peek : state == IslandState.Compact && width > 0 ? IslandGeometry.Compact with { Width = width } : IslandGeometry.For(state, width, height);
+        // A pill that had the mic button keeps its room through the change, until the pill's reason is settled and the
+        // button is asked for again (ShowMic); any other state or shape drops it.
+        micOn &= state == IslandState.Compact && width == 0 && !peek && !resting;
+        if (state == IslandState.Compact)
+        {
+            island.ButtonRoom = micOn ? CompactLayout.MicRoom : 0;
+        }
+
+        var geometry = resting ? PeekShape(peekStyle) : peek ? IslandGeometry.Peek : state == IslandState.Compact && width > 0 ? IslandGeometry.Compact with { Width = width }
+            : micOn ? MicPill : IslandGeometry.For(state, width, height);
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.

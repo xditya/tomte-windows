@@ -30,6 +30,9 @@ public static class Glyphs
     public static readonly GlyphFigure[] Settings = Line("M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12", Dot(16, 6, 2), Dot(10, 12, 2), Dot(18, 18, 2));
     public static readonly GlyphFigure[] Sparkle = Solid("M12 3c.6 4.6 2.4 6.4 7 7-4.6.6-6.4 2.4-7 7-.6-4.6-2.4-6.4-7-7 4.6-.6 6.4-2.4 7-7z");
     public static readonly GlyphFigure[] Mic = Line(Rect(9, 3, 6, 11, 3), "M5 11a7 7 0 0 0 14 0M12 18v3");
+
+    /// <summary>The mic struck through: muted.</summary>
+    public static readonly GlyphFigure[] MicOff = Line(Rect(9, 3, 6, 11, 3), "M5 11a7 7 0 0 0 14 0M12 18v3", "M4 3l16 18");
     public static readonly GlyphFigure[] Region = Line("M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3");
     public static readonly GlyphFigure[] Window = Line(Rect(3, 4, 18, 16, 2), "M3 9h18");
     public static readonly GlyphFigure[] Link = Line("M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1", "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1");

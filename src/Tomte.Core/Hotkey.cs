@@ -14,6 +14,7 @@ public enum HotkeyAction
     Rambler,
     Scratchpad,
     Search,
+    Mute,
 }
 
 /// <summary>Same bit values as RegisterHotKey's MOD_ALT, MOD_CONTROL, MOD_SHIFT and MOD_WIN.</summary>
@@ -77,6 +78,7 @@ public readonly record struct Hotkey(HotkeyModifiers Modifiers, uint Key)
         HotkeyAction.Rambler => "Rambler (hold)",
         HotkeyAction.Scratchpad => "Scratchpad",
         HotkeyAction.Search => "Search",
+        HotkeyAction.Mute => "Mute the microphone",
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 

@@ -95,7 +95,7 @@ internal sealed class CompactLine
             // Words the tomte leads end the pill, so they go with its trailing end; alone they keep to its centre. The
             // corner pill has its own shape and lays its time out from its centre.
             bool fromEnd = mascot && !corner;
-            view = new View(island.Compositor, text, fromEnd ? island.Trailing : island.Dips, fromEnd);
+            view = new View(island.Compositor, text, fromEnd ? island.Trailing : island.Pill, fromEnd);
             view.Root.Opacity = 0;
             view.Root.StartAnimation("Opacity", fadeIn);
         }

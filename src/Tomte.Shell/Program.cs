@@ -545,6 +545,7 @@ internal static partial class Program
         var row = new NowPlayingRow(island, triggers, media, text, log);
         triggers.NowPlayingShows = () => row.Showing;
         _ = new CompactLine(island, triggers, text, row, log);
+        _ = new CallMute(island, triggers, store, log);
 
         bool announcing = false, keeping = false;
         media.TrackChanged += playing =>
