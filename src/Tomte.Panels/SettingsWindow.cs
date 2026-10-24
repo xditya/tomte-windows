@@ -124,6 +124,7 @@ public sealed partial class SettingsWindow : Window
                 ("Voice", "\uE720", "What happens to the words you say after a hold.", [Card(
                     Row("When you finish speaking, Enter does", voiceNote, VoiceEnter()),
                     Row("Spoken replies", Note("Read the answer to a voice command aloud with Windows speech."), Toggle(s => s.SpokenReplies, (s, v) => s with { SpokenReplies = v })))]),
+                ("Scratchpad", "\uE70B", "Text you put in the note by typing a slash and its name.", [SnippetsSection()]),
             ]),
             ("AI", [
                 (ProviderPage, "\uF4A5", "Tomte sends a request only when you ask, or when a job you made runs. With no provider set up, the AI layer stays off.", ProviderSection()),
