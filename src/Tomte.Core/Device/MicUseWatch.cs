@@ -79,6 +79,27 @@ public sealed class MicUseWatch : IAudioSessionNotification, IMMNotificationClie
     public static uint Caller(IEnumerable<(uint Pid, bool Active)> sessions, uint ownPid) =>
         sessions.FirstOrDefault(s => s.Active && s.Pid != 0 && s.Pid != ownPid).Pid;
 
+    /// <summary>
+    /// Apps that hold the microphone open all the time to filter it, NVIDIA Broadcast's processes, so their recording
+    /// is never a call.
+    /// </summary>
+    public static bool AlwaysOn(string processName) =>
+        processName.StartsWith("NVIDIA Broadcast", StringComparison.OrdinalIgnoreCase)
+        || processName.StartsWith("NvBroadcast", StringComparison.OrdinalIgnoreCase);
+
+    private static string NameOf(uint pid)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.GetProcessById((int)pid);
+            return process.ProcessName;
+        }
+        catch (Exception e) when (e is ArgumentException or InvalidOperationException)
+        {
+            return ""; // it has exited
+        }
+    }
+
     public void Dispose()
     {
         lock (gate)
@@ -193,7 +214,7 @@ public sealed class MicUseWatch : IAudioSessionNotification, IMMNotificationClie
     private void Track(IAudioSessionControl control)
     {
         var session = new Session(this, control);
-        if (session.Pid != ownPid)
+        if (session.Pid != ownPid && (session.Pid == 0 || !AlwaysOn(NameOf(session.Pid))))
         {
             sessions.Add(session);
         }
