@@ -658,7 +658,17 @@ public sealed partial class SettingsWindow : Window
                 RenderRules();
             }
         };
-        var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { exe, mode, add } };
+        // The box takes what the mode and Add leave, so a long name scrolls inside it instead of pushing Add out of
+        // the card.
+        var controls = new Grid { ColumnSpacing = 8 };
+        controls.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        controls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        controls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(mode, 1);
+        Grid.SetColumn(add, 2);
+        controls.Children.Add(exe);
+        controls.Children.Add(mode);
+        controls.Children.Add(add);
         return new StackPanel { Spacing = 4, Margin = new Thickness(0, 8, 0, 0), Children = { controls, note } };
     }
 
