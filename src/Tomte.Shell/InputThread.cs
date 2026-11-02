@@ -53,6 +53,9 @@ internal static unsafe class InputThread
     // the user may be typing in another app.
     public const int EditHotkeyId = 108;
 
+    // Ctrl+V, only while the Shelf panel shows under the pointer (RetractionRules.TakesPaste).
+    public const int PasteHotkeyId = 109;
+
     // Posted to the input window by the UI thread.
     private const uint MsgSetEscape = PInvoke.WM_APP + 10;      // wParam 1 registers Esc, 0 releases it
     private const uint MsgApplySettings = PInvoke.WM_APP + 11;  // re-read the store: thresholds, hooks, hotkeys
@@ -61,6 +64,7 @@ internal static unsafe class InputThread
     private const uint MsgSample = PInvoke.WM_APP + 15;         // sample the pointer against the island bounds now
     private const uint MsgPause = PInvoke.WM_APP + 16;          // wParam 1 releases the action hotkeys, 0 registers them again
     private const uint MsgSetUndo = PInvoke.WM_APP + 17;        // wParam 1 registers Win+Alt+Z, 0 releases it
+    private const uint MsgSetPaste = PInvoke.WM_APP + 19;       // wParam 1 registers Ctrl+V, 0 releases it
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B, VkReturn = 0x0D, VkMenu = 0x12;
     private static readonly ushort[] ChoiceLetters = ['I', 'A', 'N', 'C'];
@@ -158,6 +162,9 @@ internal static unsafe class InputThread
     public static void PauseHotkeys(bool on) => PInvoke.PostMessage(window, MsgPause, (nuint)(on ? 1 : 0), 0);
 
     public static void SetEscape(bool on) => PInvoke.PostMessage(window, MsgSetEscape, (nuint)(on ? 1 : 0), 0);
+
+    /// <summary>Ctrl+V for the shelf. When another app holds it, Ctrl+V stays that app's and only the island's own keys paste.</summary>
+    public static void SetPaste(bool on) => PInvoke.PostMessage(window, MsgSetPaste, (nuint)(on ? 1 : 0), 0);
 
     public static void SetConfirm(bool on) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(on ? 1 : 0), 0);
 
@@ -393,6 +400,12 @@ internal static unsafe class InputThread
                     }
 
                     return new LRESULT(0);
+                case MsgSetPaste when wParam.Value == 1:
+                    PInvoke.RegisterHotKey(hwnd, PasteHotkeyId, HOT_KEY_MODIFIERS.MOD_CONTROL | HOT_KEY_MODIFIERS.MOD_NOREPEAT, 'V');
+                    return new LRESULT(0);
+                case MsgSetPaste:
+                    PInvoke.UnregisterHotKey(hwnd, PasteHotkeyId);
+                    return new LRESULT(0);
                 case MsgSetConfirm:
                     if (wParam.Value is 2 or 3 or 4)
                     {
@@ -462,6 +475,7 @@ internal static unsafe class InputThread
                     PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
                     UnregisterConfirm(hwnd);
                     PInvoke.UnregisterHotKey(hwnd, UndoHotkeyId);
+                    PInvoke.UnregisterHotKey(hwnd, PasteHotkeyId);
                     if (!hook.IsNull)
                     {
                         PInvoke.UnhookWindowsHookEx(hook);

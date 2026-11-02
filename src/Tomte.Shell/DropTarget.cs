@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Tomte.Core;
+using Tomte.Core.Clipboard;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.System.Com;
@@ -27,13 +28,14 @@ internal sealed record DragItem(string Name, string? Path, long? Bytes)
 /// </summary>
 internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
 {
-    private const ushort CfUnicodeText = 13, CfHDrop = 15;
+    private const ushort CfDib = 8, CfUnicodeText = 13, CfHDrop = 15;
     private static readonly Guid ClsidDragDropHelper = new("4657278A-411B-11D2-839A-00C04FD918D0");
     private readonly HWND hwnd;
     private readonly Func<bool> shapeMoving;
     private readonly Action<string>? log;
     private readonly ushort cfDescriptor = (ushort)PInvoke.RegisterClipboardFormat("FileGroupDescriptorW");
     private readonly ushort cfContents = (ushort)PInvoke.RegisterClipboardFormat("FileContents");
+    private readonly ushort cfPng = (ushort)PInvoke.RegisterClipboardFormat(ClipboardReader.PngFormat);
     private readonly DragImageGate gate = new();
     private IDropTargetHelper* helper;
 
@@ -132,7 +134,7 @@ internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
         long started = Stopwatch.GetTimestamp();
         EndDrag();
         allowed = *effect;
-        offer = Refusing ? (ushort)0 : Has(dataObject, CfHDrop) ? CfHDrop : Has(dataObject, cfDescriptor) ? cfDescriptor : Has(dataObject, CfUnicodeText) ? CfUnicodeText : (ushort)0;
+        offer = Refusing ? (ushort)0 : Offer(dataObject);
         *effect = Effect(keys);
         dataObject->AddRef();
         data = dataObject;
@@ -188,7 +190,7 @@ internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
             long started = Stopwatch.GetTimestamp();
             try
             {
-                var drop = Read(dataObject, (keys & MODIFIERKEYS_FLAGS.MK_CONTROL) != 0);
+                var drop = Read(dataObject, offer, (keys & MODIFIERKEYS_FLAGS.MK_CONTROL) != 0);
                 log?.Invoke($"drop: {drop.Paths.Count} paths, {drop.Files.Count} virtual files, text {drop.Text?.Length ?? 0} chars, read in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F1}ms");
                 if (drop.Paths.Count + drop.Files.Count == 0 && string.IsNullOrEmpty(drop.Text))
                 {
@@ -280,14 +282,62 @@ internal sealed unsafe class DropTarget : IDropTarget.Interface, IDisposable
         return helper;
     }
 
-    private DroppedItems Read(IDataObject* dataObject, bool keepCopy)
+    /// <summary>
+    /// What the clipboard holds, read as a drop of it is (files, virtual files, then text), for Ctrl+V on the shelf. With
+    /// none of those a picture comes back in <paramref name="image"/>: the "PNG" format when the app put one there, else
+    /// the bitmap. Null when the clipboard holds nothing the shelf takes or could not be read.
+    /// </summary>
+    public DroppedItems? Paste(out CopiedImage? image)
     {
-        if (offer == CfHDrop)
+        image = null;
+        IDataObject* clipboard;
+        if (PInvoke.OleGetClipboard(&clipboard).Failed)
+        {
+            return null;
+        }
+
+        try
+        {
+            if (Offer(clipboard) is var what and not 0)
+            {
+                var items = Read(clipboard, what, keepCopy: false);
+                return items.Paths.Count + items.Files.Count > 0 || !string.IsNullOrEmpty(items.Text) ? items : null;
+            }
+
+            foreach (var (format, png) in (ReadOnlySpan<(ushort, bool)>)[(cfPng, true), (CfDib, false)])
+            {
+                if (Has(clipboard, format) && Global(clipboard, format) is { Length: > 0 } bytes)
+                {
+                    image = new CopiedImage(bytes, png);
+                    return null;
+                }
+            }
+
+            return null;
+        }
+        catch (Exception e) when (e is COMException or ArgumentException or IOException or UnauthorizedAccessException)
+        {
+            log?.Invoke($"paste: could not read the clipboard: {e.Message}");
+            return null;
+        }
+        finally
+        {
+            clipboard->Release();
+        }
+    }
+
+    // Files first, then virtual files, then text: the order a drop takes them in.
+    private ushort Offer(IDataObject* dataObject) =>
+        Has(dataObject, CfHDrop) ? CfHDrop : Has(dataObject, cfDescriptor) ? cfDescriptor : Has(dataObject, CfUnicodeText) ? CfUnicodeText : (ushort)0;
+
+    private DroppedItems Read(IDataObject* dataObject, ushort what, bool keepCopy)
+    {
+        if (what == CfHDrop)
         {
             return new DroppedItems(ShelfFormats.ParseDropFiles(Global(dataObject, CfHDrop)), [], null, keepCopy);
         }
 
-        if (offer == cfDescriptor)
+        if (what == cfDescriptor)
         {
             var files = new List<(string, string)>();
             var list = ShelfFormats.ParseDescriptor(Global(dataObject, cfDescriptor));

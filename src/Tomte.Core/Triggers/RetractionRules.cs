@@ -159,6 +159,14 @@ public static class RetractionRules
         && ((activity & (IslandActivity.Result | IslandActivity.Pinned)) == 0 || pointerInside);
 
     /// <summary>
+    /// Whether Ctrl+V is taken as a global hotkey to paste onto the shelf: only while the Shelf panel shows and the pointer
+    /// is on the island, so a paste in the user's own app is never taken, a pinned island's included. A text box with
+    /// the keys pastes into itself.
+    /// </summary>
+    public static bool TakesPaste(IslandState state, IslandActivity activity, bool pointerInside, bool shelfShowing) =>
+        state == IslandState.Panels && shelfShowing && pointerInside && !activity.HasFlag(IslandActivity.Typing);
+
+    /// <summary>
     /// The palette retracts when it loses the keys while nothing is being sent, unless the island is pinned (Ctrl+P),
     /// which only Esc, the hotkey that opened it or Ctrl+P again ends. A pin also keeps the island when the pointer leaves
     /// (<see cref="ShouldRetract"/>), not over a fullscreen app or the lock screen.

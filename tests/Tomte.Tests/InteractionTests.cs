@@ -315,6 +315,9 @@ public class InteractionTests
     [InlineData(0x2E, false, false, false, NavKey.Remove)]
     [InlineData((int)'C', false, true, false, NavKey.Copy)]
     [InlineData((int)'C', true, true, false, NavKey.None)]
+    // Ctrl+V pastes onto the shelf; Ctrl+Shift+V is nothing.
+    [InlineData((int)'V', false, true, false, NavKey.Paste)]
+    [InlineData((int)'V', true, true, false, NavKey.None)]
     [InlineData((int)'E', true, true, false, NavKey.ShowInFolder)]
     [InlineData((int)'E', false, true, false, NavKey.Edit)]
     [InlineData(0x20, false, false, false, NavKey.Space)]
