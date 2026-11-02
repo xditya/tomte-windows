@@ -46,14 +46,15 @@ public static class DropCard
 
     /// <summary>
     /// The event pill for what happened while the card was closed: what the phone sent, a failure, and the share
-    /// stopping by itself. Null for the rest, which only the card's line shows.
+    /// stopping by itself, short enough for the pill with the file's name last. Null for the rest, which only the card's
+    /// line shows.
     /// </summary>
-    public static string? Pill(DropActivity activity, TimeSpan idle) => activity.Kind switch
+    public static string? Pill(DropActivity activity) => activity.Kind switch
     {
-        DropActivityKind.Received => $"Got {activity.Name ?? "a file"} from {Inside(activity.Device)} · on the shelf",
-        DropActivityKind.Text => Line(activity),
-        DropActivityKind.Failed => $"Tomte Drop: {Line(activity)}",
-        DropActivityKind.Stopped => $"Tomte Drop stopped: nothing was asked for {Minutes(idle)}",
+        DropActivityKind.Received => $"{activity.Device} sent {activity.Name ?? "a file"}",
+        DropActivityKind.Text => $"{activity.Device} sent {(IsLink(activity.Text) ? "a link" : "text")}",
+        DropActivityKind.Failed => $"Tomte Drop: {activity.Name ?? "a transfer"} failed",
+        DropActivityKind.Stopped => "Tomte Drop stopped",
         _ => null,
     };
 

@@ -208,7 +208,7 @@ internal sealed class DropRun
             return;
         }
 
-        if (!view.Open && DropCard.Pill(activity, idle) is { } pill)
+        if (!view.Open && DropCard.Pill(activity) is { } pill)
         {
             triggers.Raise(new IslandEvent(pill, DateTimeOffset.Now));
         }

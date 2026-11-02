@@ -884,14 +884,14 @@ public sealed class DropZoneTests : IDisposable
     [Fact]
     public void ADropWithItsCardClosedNamesWhatCameInAPill()
     {
-        var idle = TimeSpan.FromMinutes(15);
-        Assert.Equal("Got IMG_2041.jpg from iPhone · on the shelf", DropCard.Pill(new(DropActivityKind.Received, "iPhone", "IMG_2041.jpg", @"C:\Downloads\Tomte Drop\IMG_2041.jpg"), idle));
-        Assert.Equal("Got text from a device · on the shelf", DropCard.Pill(new(DropActivityKind.Text, "A device", Text: "buy milk"), idle));
-        Assert.Equal("Tomte Drop: The phone stopped the upload.", DropCard.Pill(new(DropActivityKind.Failed, "iPhone", "a.zip", Text: "The phone stopped the upload."), idle));
-        Assert.Equal("Tomte Drop stopped: nothing was asked for 15 minutes", DropCard.Pill(new(DropActivityKind.Stopped, ""), idle));
+        Assert.Equal("iPhone sent IMG_2041.jpg", DropCard.Pill(new(DropActivityKind.Received, "iPhone", "IMG_2041.jpg", @"C:\Downloads\Tomte Drop\IMG_2041.jpg")));
+        Assert.Equal("A device sent text", DropCard.Pill(new(DropActivityKind.Text, "A device", Text: "buy milk")));
+        Assert.Equal("Android phone sent a link", DropCard.Pill(new(DropActivityKind.Text, "Android phone", Text: "https://example.com/a")));
+        Assert.Equal("Tomte Drop: a.zip failed", DropCard.Pill(new(DropActivityKind.Failed, "iPhone", "a.zip", Text: "The phone stopped the upload.")));
+        Assert.Equal("Tomte Drop stopped", DropCard.Pill(new(DropActivityKind.Stopped, "")));
         // Comings and goings only change the card's line.
-        Assert.Null(DropCard.Pill(new(DropActivityKind.Opened, "iPhone"), idle));
-        Assert.Null(DropCard.Pill(new(DropActivityKind.Sending, "iPhone", "report.pdf"), idle));
+        Assert.Null(DropCard.Pill(new(DropActivityKind.Opened, "iPhone")));
+        Assert.Null(DropCard.Pill(new(DropActivityKind.Sending, "iPhone", "report.pdf")));
     }
 
     [Fact]
