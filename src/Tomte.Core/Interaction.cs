@@ -447,6 +447,9 @@ public enum NavKey
 
     /// <summary>Ctrl+E: the Scratchpad switches between showing the note and typing in it.</summary>
     Edit,
+
+    /// <summary>Ctrl+V: what the clipboard holds goes on the shelf.</summary>
+    Paste,
 }
 
 /// <summary>Which keys move between the island's targets, which act on them, and which ones a text box gives up.</summary>
@@ -462,7 +465,7 @@ public static class NavKeys
     /// <summary>
     /// Tab and Shift+Tab move between stops, the arrows inside a group, Home and End to its ends, Enter and Space click,
     /// Ctrl+Tab and Ctrl+Shift+Tab switch panel tabs and Ctrl+1 to Ctrl+6 pick one, Ctrl+K asks, Ctrl+P pins and unpins
-    /// the island. On the focused item
+    /// the island, Ctrl+V pastes onto the shelf. On the focused item
     /// Delete removes, Ctrl+C copies, Ctrl+Shift+E shows it in its folder and P pins it. Ctrl+E switches the Scratchpad between showing and editing. Esc steps back. The AI box: Alt+Left is the
     /// back arrow, Ctrl+H opens History, Alt+A always allows, Alt+W, Alt+S, Alt+H and Alt+N toggle the chips, Page Up and
     /// Page Down scroll the answer. Ctrl with Alt is AltGr on many layouts, which types, so it is nothing here.
@@ -486,6 +489,7 @@ public static class NavKeys
             'H' when ctrl && !shift => NavKey.History,
             'P' when ctrl && !shift => NavKey.Pin,
             'C' when ctrl && !shift => NavKey.Copy,
+            'V' when ctrl && !shift => NavKey.Paste,
             'E' when ctrl && shift => NavKey.ShowInFolder,
             'E' when ctrl => NavKey.Edit,
             _ when ctrl => NavKey.None,

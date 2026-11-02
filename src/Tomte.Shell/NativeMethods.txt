@@ -80,6 +80,7 @@ HID_USAGE_GENERIC_MOUSE
 WindowFromPoint
 GetAncestor
 SendMessageTimeout
+OleGetClipboard
 OleInitialize
 RegisterDragDrop
 RevokeDragDrop

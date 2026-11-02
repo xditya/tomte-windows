@@ -84,7 +84,7 @@ public static class ShelfLayout
     public const string ClearId = "clear";
 
     /// <summary>The keys the footer names, each with what it does to the focused tile.</summary>
-    public static readonly (string Keys, string Does)[] FootKeys = [("Ctrl C", "copy"), ("P", "pin"), ("Del", "remove")];
+    public static readonly (string Keys, string Does)[] FootKeys = [("Ctrl V", "paste"), ("Ctrl C", "copy"), ("P", "pin"), ("Del", "remove")];
 
     public static float GridTop => Top + HeadHeight + HeadGap;
 

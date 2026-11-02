@@ -50,6 +50,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private IslandActivity activity;
     private bool armed, pointerInside, pointerOn, peekWanted, eventShowing, dragEntered, firstRunShowing, arrivalShowing;
 
+    // The Shelf panel is the one showing: Ctrl+V pastes onto it while the pointer is on the island.
+    private bool shelfShowing;
+
     // The mic button is on the pill, and its tooltip.
     private bool micOn;
     private string? micTip;
@@ -987,6 +990,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
         }
+
+        TakePaste();
     }
 
     /// <summary>The dwell that opens Panels from the pill starts, with the push pill's swell, or stops.</summary>
@@ -1117,6 +1122,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (id == InputThread.UndoHotkeyId)
         {
             Undo();
+            return;
+        }
+
+        if (id == InputThread.PasteHotkeyId)
+        {
+            island.Interaction.Command(NavKey.Paste);
             return;
         }
 
@@ -1931,6 +1942,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         // peek or the first-run hint, where swallowing the user's Esc in their own app would be a surprise. Once the
         // palette and the scratchpad activate the window they receive WM_KEYDOWN and this hotkey goes.
         InputThread.SetEscape(RetractionRules.TakesEscape(state, activity, pointerInside));
+        TakePaste();
     }
 
     /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
@@ -1943,7 +1955,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, pointerInside));
         }
+
+        TakePaste();
     }
+
+    /// <summary>The Shelf panel showed or hid.</summary>
+    internal void ShelfShowing(bool on)
+    {
+        shelfShowing = on;
+        TakePaste();
+    }
+
+    // Asked again whenever one of its inputs changes; registering what is registered already, or releasing what is not,
+    // changes nothing.
+    private void TakePaste() => InputThread.SetPaste(RetractionRules.TakesPaste(machine.State, activity, pointerInside, shelfShowing));
 
     /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: the island does not retract under it.</summary>
     internal void Pressing(bool on) => Hold(IslandActivity.Pressing, on);
@@ -2066,6 +2091,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         showing = [];
         InputThread.StopTrackingPointer();
         InputThread.SetEscape(false);
+        InputThread.SetPaste(false);
         if (machine.State != IslandState.Hidden)
         {
             Go(IslandState.Hidden);

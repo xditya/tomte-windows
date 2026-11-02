@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Tomte.Core;
+using Tomte.Core.Clipboard;
 using Tomte.Core.Interaction;
 using Tomte.Core.Shortcuts;
 using Tomte.Core.Text;
@@ -90,6 +91,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     {
         (this.body, this.size) = (body, size);
         shelf.Changed += Rebuild;
+        triggers.ShelfShowing(true);
         // Returns at once: the first showing loads the shelf, every showing looks for moved and deleted files, and
         // Changed brings the result.
         _ = shelf.Check();
@@ -99,6 +101,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     public void Hidden()
     {
         shelf.Changed -= Rebuild;
+        triggers.ShelfShowing(false);
         parts?.Dispose();
         band?.Dispose();
         (parts, band, body) = (null, null, null);
@@ -289,6 +292,71 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
 
         return true;
+    }
+
+    /// <summary>Ctrl+V, whatever has focus: from the island's own keys, or the hotkey taken while the panel shows under the pointer.</summary>
+    public bool Command(NavKey key)
+    {
+        if (key != NavKey.Paste || body is null)
+        {
+            return false;
+        }
+
+        Paste();
+        return true;
+    }
+
+    /// <summary>
+    /// What the clipboard holds goes on the shelf as a drop of it does: files stay where they are, text and links are
+    /// kept as files of their own, and a picture as a PNG named for when it was pasted. The grid goes back to its start,
+    /// showing everything, where the new item leads.
+    /// </summary>
+    private void Paste()
+    {
+        var items = triggers.Drops.Paste(out var image);
+        if (items is null && image is null)
+        {
+            island.Interaction.Acknowledge(this, ShelfLayout.SetsId, "Nothing on the clipboard to paste", tick: false);
+            return;
+        }
+
+        log?.Invoke(items is null ? "shelf: pasted a picture" : $"shelf: pasted {items.Paths.Count + items.Files.Count} files, text {items.Text?.Length ?? 0} chars");
+        _ = items is null ? PasteImage(image!) : shelf.Accept(items);
+        CloseSets();
+        (filter, first) = (ShelfFilter.All, 0);
+        selected.Clear();
+        Show(null);
+        Rebuild();
+    }
+
+    // Made into a PNG on the pool: a large bitmap takes a few hundred milliseconds to encode.
+    private async Task PasteImage(CopiedImage image)
+    {
+        KeptImage? kept;
+        try
+        {
+            long cap = shelf.MaxReceivedBytes;
+            kept = await Task.Run(() => ClipboardImages.Keep(image, cap));
+        }
+        catch (Exception e)
+        {
+            // Bytes that are not the picture they say they are.
+            log?.Invoke($"shelf: the pasted picture could not be read ({e.GetType().Name})");
+            return;
+        }
+        finally
+        {
+            image.Dispose();
+        }
+
+        if (kept is null)
+        {
+            log?.Invoke("shelf: the pasted picture is too large");
+            return;
+        }
+
+        string name = FormattableString.Invariant($"Image {DateTime.Now:yyyy-MM-dd HHmmss}.png");
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, name, Content: kept.Png)]);
     }
 
     /// <summary>Win32 runs the press, move and release loop with the system's drag threshold: true is a drag, false a click.</summary>
