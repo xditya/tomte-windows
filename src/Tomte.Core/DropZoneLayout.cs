@@ -5,10 +5,11 @@ using Tomte.Core.Text;
 
 namespace Tomte.Core;
 
-/// <summary>Where a drop on the Shelf-drop surface goes: onto the shelf, or into one of the AI zones.</summary>
+/// <summary>Where a drop on the Shelf-drop surface goes: onto the shelf, to a phone by Tomte Drop, or into one of the AI zones.</summary>
 public enum DropZone
 {
     Shelf,
+    Drop,
     Summarize,
     Ask,
     Tables,
@@ -21,16 +22,20 @@ public readonly record struct TextAt(TextRun Run, Vector2 At);
 
 /// <summary>
 /// The drop zones a drag held still on the Shelf-drop pill opens, in island space (x = 0 on the island's centre line,
-/// y = 0 at its top): a head row with the tomte, the file's name, its size and token estimate, and what to do; then six
-/// tiles, the shelf first and the custom skill slot last, in one row when the panel is at least <see cref="WideFrom"/>
-/// wide and in two rows of three below that; then a line on where the results go. Each tile has its glyph at the top
-/// and its name and what a drop there sends at the foot. Made only when a provider is set up; without one a drop on the
-/// pill goes on the shelf and there is nothing to hold for (<see cref="For"/> gives null).
+/// y = 0 at its top): a head row with the tomte, the file's name, its size and token estimate, and what to do; then the
+/// tiles; then a line on where the results go. Each tile has its glyph at the top and its name and what a drop there
+/// sends at the foot. Keep on shelf and Tomte Drop come first and need nothing set up; with a provider the four AI
+/// zones and the custom skill slot follow, seven tiles in one row when the panel is at least <see cref="WideFrom"/>
+/// wide and in two rows, four over three, below that. Without a provider the two share a panel of their own size,
+/// <see cref="PairWidth"/>.
 /// </summary>
 public sealed class DropZoneLayout
 {
-    /// <summary>The panel's width before the monitor's cap, and the width from which the six tiles share one row.</summary>
-    public const float Width = 1000, WideFrom = 900;
+    /// <summary>
+    /// The panel's width before the monitor's cap with a provider, which is also the narrowest at which the seven tiles
+    /// share one row with every name and line whole; and the panel's width with the two tiles alone.
+    /// </summary>
+    public const float Width = 1256, WideFrom = Width, PairWidth = 480;
 
     public const float PadTop = 14, PadSide = 16, PadBottom = 16, HeadInset = 6, HeadHeight = 24, HeadGap = 12;
     public const float TileHeight = 128, TileGap = 8, TilePad = 14, TileCorner = 18, Glyph = 22, SubGap = 3, FootHeight = 16;
@@ -40,6 +45,7 @@ public sealed class DropZoneLayout
 
     public const string Hint = "Drop it on what you want done";
     public const string Foot = "Results land on the shelf. Each one says which model ran it and what it cost.";
+    public const string PairFoot = "Either way it lands on the shelf.";
     public const string EmptySlot = "Add a skill", EmptySlotSub = "Pick one in Settings";
 
     public static TextStyle NameStyle => new(13, 500);
@@ -49,7 +55,7 @@ public sealed class DropZoneLayout
     public static TextStyle SubStyle => new(11, Color: Theme.Ink3);
     public static TextStyle FootStyle => new(12, Color: Theme.Ink3);
 
-    /// <summary>The Shelf-drop pill's words: what a drop does, and, when there are zones to open, how to get them.</summary>
+    /// <summary>The Shelf-drop pill's words: what a drop does, and how to get the zones.</summary>
     public const string PillLabel = "Drop on the shelf", PillHint = "or hold for actions";
 
     /// <summary>The pill's tray glyph, and its dashed ring: this far inside the outline, this thick.</summary>
@@ -61,31 +67,31 @@ public sealed class DropZoneLayout
     /// <summary>The tomte on the head row, its art where the head's words would start.</summary>
     public static readonly MascotSeat Seat = new(PadTop + (HeadHeight / 2), PadSide + HeadInset);
 
-    private static readonly DropZone[] Order = [DropZone.Shelf, DropZone.Summarize, DropZone.Ask, DropZone.Tables, DropZone.Rename, DropZone.Skill];
+    private static readonly DropZone[] Order = [DropZone.Shelf, DropZone.Drop, DropZone.Summarize, DropZone.Ask, DropZone.Tables, DropZone.Rename, DropZone.Skill];
 
-    private readonly string provider;
+    private readonly string? provider;
     private readonly string? skill;
     private readonly float left;
 
-    private DropZoneLayout(string provider, string? skill, float width)
+    private DropZoneLayout(string? provider, string? skill, float width)
     {
         this.provider = provider;
         this.skill = skill;
         PanelWidth = width;
         left = -width / 2;
-        bool wide = width >= WideFrom;
-        int columns = wide ? 6 : 3;
+        var order = provider is null ? Order[..2] : Order;
+        int columns = provider is null || width >= WideFrom ? order.Length : 4;
         float inner = width - (2 * PadSide), tile = (inner - ((columns - 1) * TileGap)) / columns, top = PadTop + HeadHeight + HeadGap;
-        var zones = new (DropZone, RectangleF)[Order.Length];
-        for (int i = 0; i < Order.Length; i++)
+        var zones = new (DropZone, RectangleF)[order.Length];
+        for (int i = 0; i < order.Length; i++)
         {
             int row = i / columns, column = i % columns;
-            zones[i] = (Order[i], new RectangleF(left + PadSide + (column * (tile + TileGap)), top + (row * (TileHeight + TileGap)), tile, TileHeight));
+            zones[i] = (order[i], new RectangleF(left + PadSide + (column * (tile + TileGap)), top + (row * (TileHeight + TileGap)), tile, TileHeight));
         }
 
         Zones = zones;
         float foot = zones[^1].Item2.Bottom + HeadGap;
-        FootSlot = new TextSlot(Foot, FootStyle, new RectangleF(left + PadSide + HeadInset, foot, inner - (2 * HeadInset), FootHeight));
+        FootSlot = new TextSlot(provider is null ? PairFoot : Foot, FootStyle, new RectangleF(left + PadSide + HeadInset, foot, inner - (2 * HeadInset), FootHeight));
         Height = foot + FootHeight + PadBottom;
     }
 
@@ -95,7 +101,10 @@ public sealed class DropZoneLayout
     /// <summary>The panel's height for its width: one row of tiles or two.</summary>
     public float Height { get; }
 
-    /// <summary>The six tiles in reading order: the shelf, the four AI zones, the custom skill slot.</summary>
+    /// <summary>
+    /// The tiles in reading order: the shelf and Tomte Drop, then with a provider the four AI zones and the custom skill
+    /// slot.
+    /// </summary>
     public IReadOnlyList<(DropZone Zone, RectangleF Rect)> Zones { get; }
 
     /// <summary>The line under the tiles.</summary>
@@ -122,21 +131,22 @@ public sealed class DropZoneLayout
         _ => config.Id,
     };
 
-    /// <summary>The zones the settings ask for, in a panel this wide: null without a provider that has a model.</summary>
-    public static DropZoneLayout? For(TomteSettings settings, double width) =>
-        HasProvider(settings) ? For(ProviderName(settings.Provider!), SlotSkill(settings), width) : null;
+    /// <summary>The zones the settings ask for, in a panel at most this wide: the AI zones only with a provider that has a model.</summary>
+    public static DropZoneLayout For(TomteSettings settings, double width) =>
+        For(HasProvider(settings) ? ProviderName(settings.Provider!) : null, SlotSkill(settings), width);
 
     /// <summary>
-    /// The zones in a panel this wide, or null without a provider: then nothing of the AI layer is drawn.
-    /// <paramref name="provider"/> is the name the tiles give it; <paramref name="skill"/> is the skill the user picked for
-    /// the custom slot, null for none.
+    /// The zones in a panel at most this wide. <paramref name="provider"/> is the name the tiles give it; without one only
+    /// the shelf and Tomte Drop show, and nothing of the AI layer is drawn. <paramref name="skill"/> is the skill the user
+    /// picked for the custom slot, null for none.
     /// </summary>
-    public static DropZoneLayout? For(string? provider, string? skill, double width) =>
-        string.IsNullOrEmpty(provider) ? null : new DropZoneLayout(provider, skill, (float)width);
+    public static DropZoneLayout For(string? provider, string? skill, double width) =>
+        string.IsNullOrEmpty(provider) ? new DropZoneLayout(null, null, Math.Min((float)width, PairWidth)) : new DropZoneLayout(provider, skill, Math.Min((float)width, Width));
 
     /// <summary>A zone's name on its tile and in its result, and the picked skill's name in its slot.</summary>
     public static string Label(DropZone zone, string? skill) => zone switch
     {
+        DropZone.Drop => "Tomte Drop",
         DropZone.Summarize => "Summarize",
         DropZone.Ask => "Ask about it",
         DropZone.Tables => "Tables to CSV",
@@ -149,6 +159,7 @@ public sealed class DropZoneLayout
     public string Sub(DropZone zone) => zone switch
     {
         DropZone.Shelf => "Nothing is sent",
+        DropZone.Drop => "To a phone on this Wi-Fi",
         DropZone.Ask => "Opens Ask · nothing sent yet",
         DropZone.Skill when skill is null => EmptySlotSub,
         _ => $"Sends to {provider}",
@@ -203,18 +214,18 @@ public sealed class DropZoneLayout
     }
 
     /// <summary>
-    /// The Shelf-drop pill's content in island space, one group centred across it: the tray glyph's box, the label and,
-    /// with <paramref name="hint"/>, the hint after it, each a gap apart and centred down the pill.
+    /// The Shelf-drop pill's content in island space, one group centred across it: the tray glyph's box, the label and
+    /// the hint after it, each a gap apart and centred down the pill.
     /// </summary>
-    public static (RectangleF Glyph, TextSlot Label, TextSlot Hint) Pill(bool hint)
+    public static (RectangleF Glyph, TextSlot Label, TextSlot Hint) Pill()
     {
         float depth = (float)IslandGeometry.ShelfDrop.Depth, gap = CompactLayout.Gap;
         float label = MathF.Ceiling(TextSlot.Measure(PillLabel, PillStyle, 400)) + 1;
-        float more = hint ? MathF.Ceiling(TextSlot.Measure(PillHint, PillHintStyle, 400)) + 1 : 0;
-        float x = -(PillGlyph + gap + label + (hint ? gap + more : 0)) / 2, words = x + PillGlyph + gap;
+        float more = MathF.Ceiling(TextSlot.Measure(PillHint, PillHintStyle, 400)) + 1;
+        float x = -(PillGlyph + gap + label + gap + more) / 2, words = x + PillGlyph + gap;
         return (new RectangleF(x, (depth - PillGlyph) / 2, PillGlyph, PillGlyph),
             new TextSlot(PillLabel, PillStyle, new RectangleF(words, 0, label, depth)),
-            new TextSlot(hint ? PillHint : "", PillHintStyle, new RectangleF(words + label + gap, 0, more, depth)));
+            new TextSlot(PillHint, PillHintStyle, new RectangleF(words + label + gap, 0, more, depth)));
     }
 
     /// <summary>The file's size and the estimate of what it costs to send, "1.2 MB · about 1,090 tokens"; either can be unknown.</summary>

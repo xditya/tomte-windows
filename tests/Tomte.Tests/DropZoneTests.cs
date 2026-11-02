@@ -6,6 +6,7 @@ using Tomte.AI.Files;
 using Tomte.AI.Palette;
 using Tomte.AI.Skills;
 using Tomte.Core;
+using Tomte.Core.Drop;
 using Tomte.Core.Interaction;
 using Tomte.Core.Storage;
 using Tomte.Core.Text;
@@ -77,51 +78,73 @@ public sealed class DropZoneTests : IDisposable
 
     // The pill and the zones
 
+    // Without a provider the shelf and Tomte Drop share a panel sized for the two, one row, and nothing of the AI layer shows.
     [Fact]
-    public void WithoutAProviderNoZoneIsDrawn()
+    public void WithoutAProviderOnlyTheShelfAndTomteDropShow()
     {
-        Assert.Null(DropZoneLayout.For(null, null, Surface));
-        Assert.Null(DropZoneLayout.For("", "notes", Surface));
+        foreach (var layout in new[] { DropZoneLayout.For(null, null, Surface), DropZoneLayout.For("", "notes", Surface) })
+        {
+            Assert.Equal([DropZone.Shelf, DropZone.Drop], layout.Zones.Select(z => z.Zone));
+            Assert.Equal(DropZoneLayout.PairWidth, layout.PanelWidth);
+            var (shelf, drop) = (layout.Zones[0].Rect, layout.Zones[1].Rect);
+            Assert.Equal(shelf.Y, drop.Y);
+            Assert.Equal(-DropZoneLayout.PairWidth / 2 + DropZoneLayout.PadSide, shelf.X, 3);
+            Assert.Equal(DropZoneLayout.TileGap, drop.X - shelf.Right, 3);
+            Assert.Equal(DropZoneLayout.PairWidth / 2 - DropZoneLayout.PadSide, drop.Right, 3);
+            Assert.Equal(222, layout.Height, 3);
+            Assert.Equal(DropZoneLayout.PairFoot, layout.FootSlot.Text);
+            Assert.True(layout.SlotEmpty);
+            Assert.Equal(DropZone.Drop, layout.At(new(drop.X + drop.Width / 2, drop.Y + drop.Height / 2)));
+            Assert.Equal(DropZone.Shelf, layout.At(new(shelf.X + shelf.Width / 2, shelf.Y + shelf.Height / 2)));
+            Assert.Equal(DropZone.Shelf, layout.At(new(0, DropZoneLayout.PadTop + 2)));
+        }
+
+        // A monitor narrower than that still caps it.
+        Assert.Equal(400, DropZoneLayout.For(null, null, 400).PanelWidth);
     }
 
     [Fact]
     public void TheSettingsDecideWhetherZonesShowAndWhatTheSlotCarries()
     {
         var noModel = new TomteSettings { Provider = new ProviderConfig("api.anthropic.com", ProviderKind.Anthropic) };
-        Assert.Null(DropZoneLayout.For(new TomteSettings(), Surface));
-        Assert.Null(DropZoneLayout.For(noModel, Surface));
-        Assert.Null(DropZoneLayout.For(noModel with { Provider = noModel.Provider! with { DefaultModel = "" } }, Surface));
+        Assert.Equal(2, DropZoneLayout.For(new TomteSettings(), Surface).Zones.Count);
+        Assert.Equal(2, DropZoneLayout.For(noModel, Surface).Zones.Count);
+        Assert.Equal(2, DropZoneLayout.For(noModel with { Provider = noModel.Provider! with { DefaultModel = "" } }, Surface).Zones.Count);
         Assert.False(DropZoneLayout.HasProvider(noModel));
 
         var set = noModel with { Provider = noModel.Provider! with { DefaultModel = "claude-sonnet-4-5" } };
         Assert.True(DropZoneLayout.HasProvider(set));
-        var layout = DropZoneLayout.For(set, Surface)!;
+        var layout = DropZoneLayout.For(set, Surface);
+        Assert.Equal(7, layout.Zones.Count);
         Assert.True(layout.SlotEmpty);
         // The company, not the host its key goes to; any other server by its host.
         Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Summarize));
         var local = new TomteSettings { Provider = Ollama };
-        Assert.Equal("Sends to ollama", DropZoneLayout.For(local, Surface)!.Sub(DropZone.Rename));
+        Assert.Equal("Sends to ollama", DropZoneLayout.For(local, Surface).Sub(DropZone.Rename));
 
         // A picked skill shows only while it is on, by its own name, not one that starts the same way.
         Assert.Null(DropZoneLayout.SlotSkill(set with { DropZoneSkill = "notes" }));
         Assert.Null(DropZoneLayout.SlotSkill(set with { DropZoneSkill = "notes", EnabledSkills = ["notes-two#1a2b"] }));
         var on = set with { DropZoneSkill = "notes", EnabledSkills = ["other#9f", "notes#1a2b"] };
         Assert.Equal("notes", DropZoneLayout.SlotSkill(on));
-        Assert.False(DropZoneLayout.For(on, Surface)!.SlotEmpty);
+        Assert.False(DropZoneLayout.For(on, Surface).SlotEmpty);
     }
 
     [Theory]
-    [InlineData(1000, 1)]
-    [InlineData(900, 1)]
-    [InlineData(899, 2)]
+    [InlineData(1600, 1)]
+    [InlineData(1256, 1)]
+    [InlineData(1255, 2)]
+    [InlineData(1000, 2)]
     [InlineData(768, 2)]
-    public void SixTilesShareARowFrom900WideAndMakeTwoRowsOfThreeBelow(double width, int rows)
+    public void SevenTilesShareARowWhenWideEnoughAndMakeFourOverThreeBelow(double width, int rows)
     {
-        var layout = DropZoneLayout.For("Anthropic", null, width)!;
-        Assert.Equal([DropZone.Shelf, DropZone.Summarize, DropZone.Ask, DropZone.Tables, DropZone.Rename, DropZone.Skill], layout.Zones.Select(z => z.Zone));
+        var layout = DropZoneLayout.For("Anthropic", null, width);
+        Assert.Equal([DropZone.Shelf, DropZone.Drop, DropZone.Summarize, DropZone.Ask, DropZone.Tables, DropZone.Rename, DropZone.Skill], layout.Zones.Select(z => z.Zone));
         Assert.Equal(rows, layout.Zones.Select(z => z.Rect.Y).Distinct().Count());
-        float left = (float)(-width / 2) + DropZoneLayout.PadSide;
-        int columns = rows == 1 ? 6 : 3;
+        // Never wider than the seven need.
+        Assert.Equal(Math.Min(width, DropZoneLayout.Width), layout.PanelWidth, 3);
+        float left = -layout.PanelWidth / 2 + DropZoneLayout.PadSide;
+        int columns = rows == 1 ? 7 : 4;
         for (int i = 0; i < layout.Zones.Count; i++)
         {
             var rect = layout.Zones[i].Rect;
@@ -152,33 +175,42 @@ public sealed class DropZoneTests : IDisposable
     [Fact]
     public void EachTileSaysWhatItDoesAndWhetherAnythingIsSent()
     {
-        var layout = DropZoneLayout.For("Anthropic", null, Surface)!;
-        Assert.Equal(["Keep on shelf", "Summarize", "Ask about it", "Tables to CSV", "Rename by content", "Add a skill"], layout.Zones.Select(z => DropZoneLayout.Label(z.Zone, null)));
+        var layout = DropZoneLayout.For("Anthropic", null, Surface);
+        Assert.Equal(["Keep on shelf", "Tomte Drop", "Summarize", "Ask about it", "Tables to CSV", "Rename by content", "Add a skill"], layout.Zones.Select(z => DropZoneLayout.Label(z.Zone, null)));
         Assert.Equal("Nothing is sent", layout.Sub(DropZone.Shelf));
+        Assert.Equal("To a phone on this Wi-Fi", layout.Sub(DropZone.Drop));
+        Assert.Equal("To a phone on this Wi-Fi", DropZoneLayout.For(null, null, Surface).Sub(DropZone.Drop));
         Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Summarize));
         Assert.Equal("Opens Ask · nothing sent yet", layout.Sub(DropZone.Ask));
         Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Tables));
         Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Rename));
         Assert.Equal("Pick one in Settings", layout.Sub(DropZone.Skill));
-        Assert.Equal("Sends to Anthropic", DropZoneLayout.For("Anthropic", "notes", Surface)!.Sub(DropZone.Skill));
+        Assert.Equal("Sends to Anthropic", DropZoneLayout.For("Anthropic", "notes", Surface).Sub(DropZone.Skill));
         Assert.Equal("notes", DropZoneLayout.Label(DropZone.Skill, "notes"));
         Assert.All(Enum.GetValues<DropZone>(), z => Assert.DoesNotContain("—", layout.Sub(z)));
 
-        // In the narrowest tile the monitor allows, the glyph sits at the top, the name and its line at the foot, whole.
-        var narrow = DropZoneLayout.For("Anthropic", null, 768)!;
-        foreach (var (zone, rect) in narrow.Zones.Concat(layout.Zones))
+        // In the narrowest tile of each layout (one row of seven from where it starts, four over three at the monitor's
+        // smallest cap, the two alone), with the longest provider name, the glyph sits at the top and the name and its
+        // line at the foot, whole.
+        DropZoneLayout[] narrowest = [DropZoneLayout.For("Google Gemini", null, DropZoneLayout.WideFrom), DropZoneLayout.For("Google Gemini", null, 768), DropZoneLayout.For(null, null, Surface)];
+        foreach (var each in narrowest)
         {
-            var (glyph, label, sub) = layout.TileText(zone, rect.Size);
-            Assert.Equal(new System.Drawing.RectangleF(14, 14, 22, 22), glyph);
-            Assert.Equal(rect.Height - 14, sub.Slot.Bottom, 3);
-            Assert.True(label.Slot.Bottom <= sub.Slot.Top);
-            Assert.True(label.Slot.Top >= glyph.Bottom);
-            using var name = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
-            Assert.False(name.Trimmed, $"{label.Text} is cut at {rect.Width}");
-        }
+            foreach (var (zone, rect) in each.Zones)
+            {
+                var (glyph, label, sub) = each.TileText(zone, rect.Size);
+                Assert.Equal(new System.Drawing.RectangleF(14, 14, 22, 22), glyph);
+                Assert.Equal(rect.Height - 14, sub.Slot.Bottom, 3);
+                Assert.True(label.Slot.Bottom <= sub.Slot.Top);
+                Assert.True(label.Slot.Top >= glyph.Bottom);
+                using var name = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
+                Assert.False(name.Trimmed, $"{label.Text} is cut at {rect.Width}");
+                using var line = TextLayout.Of(new TextRun(sub.Text, sub.Style, sub.Slot.Width));
+                Assert.False(line.Trimmed, $"{sub.Text} is cut at {rect.Width}");
+            }
 
-        using var foot = TextLayout.Of(new TextRun(narrow.FootSlot.Text, narrow.FootSlot.Style, narrow.FootSlot.Slot.Width));
-        Assert.False(foot.Trimmed);
+            using var foot = TextLayout.Of(new TextRun(each.FootSlot.Text, each.FootSlot.Style, each.FootSlot.Slot.Width));
+            Assert.False(foot.Trimmed, each.FootSlot.Text);
+        }
     }
 
     [Fact]
@@ -189,13 +221,13 @@ public sealed class DropZoneTests : IDisposable
         Assert.Equal("about 40 tokens", DropZoneLayout.Facts(null, 40));
         Assert.Equal("", DropZoneLayout.Facts(null, null));
 
-        var layout = DropZoneLayout.For("Anthropic", null, Surface)!;
+        var layout = DropZoneLayout.For("Anthropic", null, Surface);
         var head = layout.Head("cover.png", DropZoneLayout.Facts(1_258_291, 1090), mascot: true);
         Assert.Equal("cover.png", head[0].Text);
-        Assert.Equal(DropZoneLayout.Seat.After(CompactLayout.Gap) - 500, head[0].Slot.X, 3);
+        Assert.Equal(DropZoneLayout.Seat.After(CompactLayout.Gap) - (float)(Surface / 2), head[0].Slot.X, 3);
         Assert.Equal(head[0].Slot.Right + CompactLayout.Gap, head[1].Slot.X, 3);
         Assert.Equal(DropZoneLayout.Hint, head[2].Text);
-        Assert.Equal(500 - 16 - 6, head[2].Slot.Right, 3);
+        Assert.Equal((float)(Surface / 2) - 16 - 6, head[2].Slot.Right, 3);
         Assert.True(head[1].Slot.Right <= head[2].Slot.Left);
         foreach (var line in head)
         {
@@ -205,7 +237,7 @@ public sealed class DropZoneTests : IDisposable
 
         // A name too long for the row is cut, never the size or the hint; without the tomte the name starts at the inset.
         var longOne = layout.Head(new string('a', 300) + ".pdf", "1.2 MB", mascot: false);
-        Assert.Equal(-500 + 16 + 6, longOne[0].Slot.X, 3);
+        Assert.Equal(-(float)(Surface / 2) + 16 + 6, longOne[0].Slot.X, 3);
         Assert.True(longOne[1].Slot.Right <= longOne[2].Slot.Left);
         Assert.Equal("1.2 MB", longOne[1].Text);
     }
@@ -226,7 +258,7 @@ public sealed class DropZoneTests : IDisposable
     {
         // The drop point comes in pixels; the island maps it into island space, whose origin is one pixel in plus half
         // the outline's width, carrying the scale.
-        var layout = DropZoneLayout.For("Anthropic", "notes", Surface)!;
+        var layout = DropZoneLayout.For("Anthropic", "notes", Surface);
         float originX = 1 + (float)(Surface / 2 * scale);
         (int, int) Pixel(float x, float y) => ((int)Math.Round(originX + x * scale), (int)Math.Round(1 + y * scale));
         DropZone At(int px, int py) => layout.At(PanelSpace.FromPixels(px, py, originX, 1, scale));
@@ -244,31 +276,32 @@ public sealed class DropZoneTests : IDisposable
         }
 
         // With no skill picked the slot is drawn empty, and a drop on it goes on the shelf like anywhere else.
-        var empty = DropZoneLayout.For("Anthropic", null, Surface)!;
+        var empty = DropZoneLayout.For("Anthropic", null, Surface);
         var slot = empty.Zones[^1].Rect;
         Assert.Equal(DropZoneLayout.EmptySlot, DropZoneLayout.Label(DropZone.Skill, null));
         var (sx, sy) = Pixel(slot.X + slot.Width / 2, slot.Y + slot.Height / 2);
         Assert.Equal(DropZone.Shelf, empty.At(PanelSpace.FromPixels(sx, sy, originX, 1, scale)));
     }
 
-    // The pill's words are one group centred across it, clear of the tomte and inside the dashed ring.
+    // The pill's words are one group centred across it, clear of the tomte and inside the dashed ring. The zones always
+    // open, so the hold is always offered.
     [Fact]
-    public void ThePillSaysDropOnTheShelfAndOffersTheHoldOnlyWithZones()
+    public void ThePillSaysDropOnTheShelfAndOffersTheHold()
     {
         var g = IslandGeometry.ShelfDrop;
-        foreach (bool hint in new[] { true, false })
+        var (glyph, label, more) = DropZoneLayout.Pill();
+        Assert.Equal("Drop on the shelf", label.Text);
+        Assert.Equal("or hold for actions", more.Text);
+        Assert.Equal(0, (glyph.X + more.Slot.Right) / 2, 3);
+        Assert.Equal(glyph.Right + CompactLayout.Gap, label.Slot.X, 3);
+        Assert.Equal(label.Slot.Right + CompactLayout.Gap, more.Slot.X, 3);
+        Assert.Equal(g.Depth / 2, glyph.Y + (glyph.Height / 2), 3);
+        Assert.True(glyph.X >= MascotArt.Box(g).Right, "the group clears the tomte");
+        Assert.True(more.Slot.Right <= (g.Width / 2) - DropZoneLayout.RingInset - 10, "the group stays inside the ring");
+        foreach (var words in new[] { label, more })
         {
-            var (glyph, label, more) = DropZoneLayout.Pill(hint);
-            Assert.Equal("Drop on the shelf", label.Text);
-            Assert.Equal(hint ? "or hold for actions" : "", more.Text);
-            float right = hint ? more.Slot.Right : label.Slot.Right;
-            Assert.Equal(0, (glyph.X + right) / 2, 3);
-            Assert.Equal(glyph.Right + CompactLayout.Gap, label.Slot.X, 3);
-            Assert.Equal(g.Depth / 2, glyph.Y + (glyph.Height / 2), 3);
-            Assert.True(glyph.X >= MascotArt.Box(g).Right, "the group clears the tomte");
-            Assert.True(right <= (g.Width / 2) - DropZoneLayout.RingInset - 10, "the group stays inside the ring");
-            using var laid = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
-            Assert.False(laid.Trimmed);
+            using var laid = TextLayout.Of(new TextRun(words.Text, words.Style, words.Slot.Width));
+            Assert.False(laid.Trimmed, words.Text);
         }
     }
 
@@ -648,6 +681,192 @@ public sealed class DropZoneTests : IDisposable
         }
 
         Assert.True(layout.Band.Width == width && layout.Band.Height > 0);
+    }
+
+    // Tomte Drop's card
+
+    // A version 3 code's size, with dark modules scattered over it.
+    private static bool[,] Code()
+    {
+        var qr = new bool[29, 29];
+        for (int r = 0; r < 29; r++)
+        {
+            for (int c = 0; c < 29; c++)
+            {
+                qr[r, c] = (r * 7 + c * 3 + r * c) % 5 < 2;
+            }
+        }
+
+        return qr;
+    }
+
+    private static readonly Uri Link = new("http://192.168.178.100:53320/k3J9xQ2mPz8wVb1LxYz0aB/");
+
+    [Fact]
+    public void TheCodeSitsOnItsWhiteSquareWithItsQuietZoneOnWholeDips()
+    {
+        var qr = Code();
+        var layout = new DropResultLayout(DropCard.Sharing(3, false, 24_500_000, Link, qr, publicNetwork: false), (float)PanelSize.PaletteWidth, mascot: true);
+        var box = layout.QrBox;
+        Assert.Equal(new System.Drawing.RectangleF(DropResultLayout.Pad, DropResultLayout.BodyTop, DropResultLayout.QrSide, DropResultLayout.QrSide), box);
+        Assert.Equal(168, box.Width);
+
+        // Whole DIPs, centred, and at least four modules of white on every side, which a camera needs to find the code.
+        float m = layout.QrModule, code = 29 * m;
+        Assert.True(m >= 1 && m == MathF.Floor(m));
+        Assert.Equal(MathF.Floor(layout.QrAt.X), layout.QrAt.X);
+        Assert.Equal(MathF.Floor(layout.QrAt.Y), layout.QrAt.Y);
+        Assert.True(layout.QrAt.X - box.X >= DropResultLayout.QrQuiet * m);
+        Assert.InRange(box.Right - (layout.QrAt.X + code) - (layout.QrAt.X - box.X), 0, 1);
+        Assert.True(box.Right - (layout.QrAt.X + code) >= DropResultLayout.QrQuiet * m);
+        Assert.True(layout.QrAt.Y - box.Y >= DropResultLayout.QrQuiet * m);
+        Assert.True(box.Bottom - (layout.QrAt.Y + code) >= DropResultLayout.QrQuiet * m);
+
+        // The dark modules as runs along each row: fewer figures than modules, covering every dark one and nothing else.
+        int dark = qr.Cast<bool>().Count(d => d);
+        Assert.True(layout.QrRuns.Count < dark);
+        Assert.Equal(dark * m * m, layout.QrRuns.Sum(r => r.Width * r.Height), 1);
+        foreach (var run in layout.QrRuns)
+        {
+            int row = (int)((run.Y - layout.QrAt.Y) / m), from = (int)((run.X - layout.QrAt.X) / m);
+            Assert.Equal(m, run.Height);
+            Assert.All(Enumerable.Range(from, (int)(run.Width / m)), c => Assert.True(qr[row, c]));
+            // A run ends where the row's dark modules do.
+            int after = from + (int)(run.Width / m);
+            Assert.True(after == 29 || !qr[row, after]);
+        }
+
+        // A card with no code has no square.
+        Assert.True(new DropResultLayout(DropCard.Opening, (float)PanelSize.PaletteWidth, true).QrBox.IsEmpty);
+    }
+
+    // The code as the card draws it, the white square, the quiet zone and the runs on the dark card, read back by a QR
+    // reader at 100% and 150%: a pixel is dark where its centre falls in a run.
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(1.5)]
+    public void TheCodeAsDrawnReadsBackAsItsLink(double scale)
+    {
+        var matrix = ZXing.QrCode.Internal.Encoder.encode(Link.AbsoluteUri, ZXing.QrCode.Internal.ErrorCorrectionLevel.M).Matrix;
+        var qr = new bool[matrix.Height, matrix.Width];
+        for (int y = 0; y < matrix.Height; y++)
+        {
+            for (int x = 0; x < matrix.Width; x++)
+            {
+                qr[y, x] = matrix[x, y] == 1;
+            }
+        }
+
+        var layout = new DropResultLayout(DropCard.Sharing(1, false, 1, Link, qr, publicNetwork: false), (float)PanelSize.PaletteWidth, mascot: true);
+        var box = layout.QrBox;
+        const int margin = 20;
+        int w = (int)Math.Ceiling(box.Width * scale) + (2 * margin), h = (int)Math.Ceiling(box.Height * scale) + (2 * margin);
+        var bgra = new byte[4 * w * h];
+        for (int py = 0; py < h; py++)
+        {
+            for (int px = 0; px < w; px++)
+            {
+                float x = box.X + (float)((px - margin + 0.5) / scale), y = box.Y + (float)((py - margin + 0.5) / scale);
+                byte v = !box.Contains(x, y) ? (byte)0x1F : layout.QrRuns.Any(r => r.Contains(x, y)) ? (byte)0 : (byte)0xFF;
+                int i = 4 * ((py * w) + px);
+                (bgra[i], bgra[i + 1], bgra[i + 2], bgra[i + 3]) = (v, v, v, 0xFF);
+            }
+        }
+
+        Assert.Equal(Link.AbsoluteUri, ScreenText.DecodeQr(bgra, w, h));
+    }
+
+    [Theory]
+    [InlineData(480)]
+    [InlineData(360)]
+    public void TheLinkTheSummaryAndTheWarningSitBesideTheCodeAndNothingOverlaps(float maxHeight)
+    {
+        float width = (float)PanelSize.PaletteWidth;
+        var card = DropCard.Sharing(3, false, 24_500_000, Link, Code(), publicNetwork: true) with { Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture)] };
+        var layout = new DropResultLayout(card, width, mascot: true, maxHeight);
+        var box = layout.QrBox;
+
+        // The link and the summary, each a row that copies itself, right of the square and inside the panel.
+        Assert.Equal([Link.AbsoluteUri, "3 files · 23.4 MB"], card.Values);
+        Assert.Equal(2, layout.Values.Count);
+        Assert.All(layout.Values, v => Assert.True(v.Left >= box.Right + 8 && v.Right <= width - DropResultLayout.Pad + 0.01f && v.Top >= box.Top, $"{v}"));
+        Assert.True(layout.Values[1].Top >= layout.Values[0].Bottom);
+        var targets = layout.Targets(1);
+        Assert.Equal(["value:0", "value:1", "choice:0", "choice:1", "tile:0"], targets.Select(t => t.Id));
+        Assert.All(targets.Take(2), t => Assert.Equal("Copy", t.Tip));
+
+        // The warning under them, beside the code, its words in line with the values' own; the Public network sentence first, in the warning colour.
+        Assert.True(layout.Band.Top >= layout.Values[^1].Bottom && layout.Band.Left >= box.Right);
+        Assert.Equal(layout.Values[0].X + DropResultLayout.ValueInset, layout.Band.X + DropResultLayout.Pad, 3);
+        Assert.Equal(DropCard.PublicNetwork, layout.Body[0].Run.Text);
+        Assert.Equal(Theme.Warn, layout.Body[0].Run.Style.Color);
+        Assert.StartsWith("Your phone has to be on the same Wi-Fi", layout.Body.Single(r => r.Run.Text.StartsWith("Your", StringComparison.Ordinal)).Run.Text);
+        foreach (var (run, at) in layout.Body)
+        {
+            using var laid = TextLayout.Of(run);
+            Assert.True(layout.Band.X + at.X + laid.Width <= width - DropResultLayout.Pad + 0.5f, $"{run.Text} runs to {layout.Band.X + at.X + laid.Width}");
+        }
+
+        // Network settings, then Stop sharing, the default; both under the code and the warning, then the tile from the phone.
+        Assert.Equal([DropCard.NetworkSettings, DropCard.Stop], card.Choices);
+        Assert.True(layout.Choices[0].Top >= box.Bottom + DropResultLayout.Gap && layout.Choices[0].Top >= layout.Band.Bottom);
+        Assert.True(layout.Tiles[0].Top >= layout.Choices[^1].Bottom);
+        Assert.True(layout.Tiles[0].Bottom <= maxHeight - DropResultLayout.Pad + 0.5f);
+        Assert.True(layout.Height <= maxHeight);
+        var parts = new[] { box, layout.Band }.Concat(layout.Values).Concat(layout.Choices).Concat(layout.Tiles).ToList();
+        for (int i = 0; i < parts.Count; i++)
+        {
+            Assert.All(parts.Skip(i + 1), other => Assert.False(parts[i].IntersectsWith(other), $"{parts[i]} and {other}"));
+        }
+    }
+
+    [Fact]
+    public void TheCardSaysWhatIsOfferedAndWhatThePhoneDoesInPlainWords()
+    {
+        Assert.Equal("Tomte Drop · 3 files", DropCard.Title(3, folders: false));
+        Assert.Equal("Tomte Drop · 1 file", DropCard.Title(1, folders: false));
+        Assert.Equal("Tomte Drop · 2 items", DropCard.Title(2, folders: true));
+        Assert.Equal("Tomte Drop · receive only", DropCard.Title(0, folders: false));
+        Assert.Equal("Same Wi-Fi only", DropCard.Indicator);
+
+        // Receiving only: the link alone beside the code, and a warning that offers nothing to download.
+        var receive = DropCard.Sharing(0, false, 0, Link, Code(), publicNetwork: false);
+        Assert.Equal([Link.AbsoluteUri], receive.Values);
+        Assert.Equal([DropCard.Stop], receive.Choices);
+        Assert.DoesNotContain("download", receive.Body);
+        Assert.Null(receive.Warning);
+        Assert.Equal(DropCard.Waiting, receive.Line);
+
+        Assert.Equal("iPhone opened the page", DropCard.Line(new(DropActivityKind.Opened, "iPhone")));
+        Assert.Equal("Sending report.pdf to iPhone", DropCard.Line(new(DropActivityKind.Sending, "iPhone", "report.pdf")));
+        Assert.Equal("Sent report.pdf", DropCard.Line(new(DropActivityKind.Sent, "iPhone", "report.pdf")));
+        Assert.Equal("Getting IMG_2041.jpg from a device", DropCard.Line(new(DropActivityKind.Receiving, "A device", "IMG_2041.jpg")));
+        Assert.Equal("Got IMG_2041.jpg", DropCard.Line(new(DropActivityKind.Received, "iPhone", "IMG_2041.jpg", @"C:\Downloads\Tomte Drop\IMG_2041.jpg")));
+        Assert.Equal("Got a link from Android phone · on the shelf", DropCard.Line(new(DropActivityKind.Text, "Android phone", Text: "https://example.com/a")));
+        Assert.Equal("Got text from iPhone · on the shelf", DropCard.Line(new(DropActivityKind.Text, "iPhone", Text: "buy milk")));
+        Assert.Equal("The phone stopped the upload.", DropCard.Line(new(DropActivityKind.Failed, "iPhone", "a.zip", Text: "The phone stopped the upload.")));
+        Assert.Null(DropCard.Line(new(DropActivityKind.Stopped, "")));
+
+        // Stopped by itself: the code and the warning go, the files that came stay, and Close ends it.
+        var tile = new ResultTile("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture);
+        var stopped = DropCard.Stopped(DropCard.Sharing(3, false, 1, Link, Code(), publicNetwork: true) with { Tiles = [tile] }, TimeSpan.FromMinutes(15));
+        Assert.Equal("Stopped: nothing was asked for 15 minutes", stopped.Line);
+        Assert.Equal([DropResult.Close], stopped.Choices);
+        Assert.Null(stopped.Qr);
+        Assert.Null(stopped.Warning);
+        Assert.Equal("", stopped.Body);
+        Assert.Empty(stopped.Values);
+        Assert.Equal([tile], stopped.Tiles);
+        Assert.Equal("From iPhone · on the shelf", tile.Meta);
+
+        // A share that could not start says why, with Close.
+        var problem = DropCard.Problem("Every port is taken.");
+        Assert.True(problem.Problem);
+        Assert.Equal([DropResult.Close], problem.Choices);
+        Assert.Equal("Every port is taken.", problem.Line);
+
+        string[] words = [DropCard.SameWifi(true), DropCard.SameWifi(false), DropCard.PublicNetwork, DropCard.NotOnShelf, DropCard.SetGone, DropCard.CouldNotStart, stopped.Line!];
+        Assert.All(words, w => Assert.DoesNotContain("—", w));
     }
 
     // The custom slot

@@ -72,6 +72,9 @@ public static class Glyphs
     public static readonly GlyphFigure[] Wrench = Line("M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z");
     public static readonly GlyphFigure[] Info = Line(Dot(12, 12, 9), "M12 11v5M12 8h.01");
 
+    /// <summary>A phone: Tomte Drop.</summary>
+    public static readonly GlyphFigure[] Phone = Line(Rect(6.5f, 2, 11, 20, 2.5f), "M10.5 18h3");
+
     /// <summary>Every glyph by name, for tests and lookups by key.</summary>
     public static readonly IReadOnlyDictionary<string, GlyphFigure[]> All = new Dictionary<string, GlyphFigure[]>
     {
@@ -122,5 +125,6 @@ public static class Glyphs
         [nameof(Cursor)] = Cursor,
         [nameof(Wrench)] = Wrench,
         [nameof(Info)] = Info,
+        [nameof(Phone)] = Phone,
     };
 }
