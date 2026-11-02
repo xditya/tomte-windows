@@ -129,10 +129,11 @@ public static class ShelfLayout
     /// carries its name as the tip, and each its key) or else the Tomte Drop button and the Sets button, then the filter's
     /// segments (group 3, the current one checked) and Clear shelf while there is anything to clear. An action that none
     /// of <paramref name="acting"/> allows is disabled. <paramref name="items"/> are the items the filter lets through;
-    /// <paramref name="selected"/> is how many are selected, which the Tomte Drop button's tip names.
+    /// <paramref name="selected"/> is how many are selected, which the Tomte Drop button's tip names, and
+    /// <paramref name="sharing"/> whether a Tomte Drop runs, which the button brings back with nothing selected.
     /// </summary>
     public static IReadOnlyList<Target> Targets(Vector2 body, int first, IReadOnlyList<ShelfItem> items, ShelfItem? owner, IReadOnlyList<ShelfItem> acting, bool confirming,
-        ShelfFilter filter = ShelfFilter.All, bool clearing = false, bool any = false, int selected = 0)
+        ShelfFilter filter = ShelfFilter.All, bool clearing = false, bool any = false, int selected = 0, bool sharing = false)
     {
         var targets = new List<Target>();
         int visible = Visible(body, first, items.Count);
@@ -154,7 +155,7 @@ public static class ShelfLayout
         }
         else
         {
-            targets.Add(DropButtonTarget(body, selected));
+            targets.Add(DropButtonTarget(body, selected, sharing));
             targets.Add(SetsTarget(body, on: false));
         }
 
@@ -329,12 +330,13 @@ public static class ShelfLayout
     }
 
     /// <summary>What the head's Tomte Drop button does: the selection to a phone, or with none, files from one.</summary>
-    public static string DropTip(int selected) =>
-        selected == 0 ? "Tomte Drop: get files from a phone" : FormattableString.Invariant($"Tomte Drop: share {selected} selected with a phone");
+    public static string DropTip(int selected, bool sharing = false) =>
+        selected > 0 ? FormattableString.Invariant($"Tomte Drop: share {selected} selected with a phone")
+        : sharing ? "Tomte Drop: show the share" : "Tomte Drop: get files from a phone";
 
     // A Tab stop of its own, so the arrows still go from the Sets button to the filter and Tab through them.
-    private static Target DropButtonTarget(Vector2 body, int selected) =>
-        new(DropId, DropButton(body), DropButton(body).Height / 2, TargetKind.Button, Tip: DropTip(selected));
+    private static Target DropButtonTarget(Vector2 body, int selected, bool sharing) =>
+        new(DropId, DropButton(body), DropButton(body).Height / 2, TargetKind.Button, Tip: DropTip(selected, sharing));
 
     /// <summary>The save row's field, the name box inside it and the Save button at its right end, with its words.</summary>
     public static (RectangleF Field, RectangleF Box, RectangleF Button, TextSlot Label) SaveRow(Vector2 body, string label)
@@ -411,7 +413,7 @@ public static class ShelfLayout
     /// filter.
     /// </summary>
     public static IReadOnlyList<Target> SetTargets(Vector2 body, IReadOnlyList<ShelfSet> sets, int first, long? confirming, string saveLabel, bool canSave, long? renaming,
-        ShelfFilter filter, int selected = 0)
+        ShelfFilter filter, int selected = 0, bool sharing = false)
     {
         var save = SaveRow(body, saveLabel);
         var targets = new List<Target>
@@ -432,7 +434,7 @@ public static class ShelfLayout
             }
         }
 
-        targets.Add(DropButtonTarget(body, selected));
+        targets.Add(DropButtonTarget(body, selected, sharing));
         targets.Add(SetsTarget(body, on: true));
         foreach (var segment in Filters(body, filter))
         {

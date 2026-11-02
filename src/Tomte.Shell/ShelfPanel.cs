@@ -725,9 +725,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     }
 
     /// <summary>
-    /// Tomte Drop of the items whose files are there, or of nothing, a share that only receives, when none were asked
-    /// for; items that are all missing start nothing. On the next turn, after the click or key, since the island leaves
-    /// Panels for the card.
+    /// Tomte Drop of the items whose files are there, or when none were asked for the running share's card, else a share
+    /// that only receives; items that are all missing start nothing. On the next turn, after the click or key, since the
+    /// island leaves Panels for the card.
     /// </summary>
     private void TomteDrop(IReadOnlyList<ShelfItem> items)
     {
@@ -738,7 +738,13 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             return;
         }
 
-        island.Queue.TryEnqueue(() => DropRun.Start(island, triggers, shelf, text, Task.FromResult(offered), log));
+        island.Queue.TryEnqueue(() =>
+        {
+            if (items.Count > 0 || !DropRun.Reopen())
+            {
+                DropRun.Start(island, triggers, shelf, text, Task.FromResult(offered), log);
+            }
+        });
     }
 
     /// <summary>Tomte Drop of a saved set's files that are still where they were, without putting them on the shelf.</summary>
@@ -1153,8 +1159,8 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var acting = owner is null ? [] : Acting(owner);
         bool confirming = question.Asks(owner?.Id, Environment.TickCount64);
         targets = setsOpen
-            ? ShelfLayout.SetTargets(size, shelf.Sets, setFirst, Deleting(), SaveLabel(), SaveItems().Count > 0, renaming, filter, selected.Count)
-            : ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Any(i => !i.Pinned), selected.Count);
+            ? ShelfLayout.SetTargets(size, shelf.Sets, setFirst, Deleting(), SaveLabel(), SaveItems().Count > 0, renaming, filter, selected.Count, DropRun.Running)
+            : ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Any(i => !i.Pinned), selected.Count, DropRun.Running);
         var (track, segments) = ShelfLayout.Filter(size, filter);
         b.Box(into, track, track.Height / 2, b.Brush(ShelfColors.Card));
         foreach (var segment in segments)
@@ -1180,10 +1186,10 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
             b.Text(into, new TextSlot(ShelfLayout.SetsLabel, setsOpen ? ShelfLayout.FilterOn : ShelfLayout.FilterOff, segmentBox));
 
-            // The Tomte Drop button: a circle on the filter's grey with the phone in it.
+            // The Tomte Drop button: a circle on the filter's grey with the phone in it, in the accent while a share runs.
             var drop = ShelfLayout.DropButton(size);
-            b.Box(into, drop, drop.Height / 2, b.Brush(ShelfColors.Card));
-            b.Glyph(into, Glyphs.Phone, ShelfColors.Ink, Centred(drop));
+            b.Box(into, drop, drop.Height / 2, b.Brush(DropRun.Running ? ShelfColors.Accent : ShelfColors.Card));
+            b.Glyph(into, Glyphs.Phone, DropRun.Running ? ShelfColors.OnAccent : ShelfColors.Ink, Centred(drop));
 
             foreach (var line in ShelfLayout.HeadText(size, all.Count, setsOpen ? ShelfLayout.SetsHead(shelf.Sets.Count) : null))
             {

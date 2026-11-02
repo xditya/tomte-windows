@@ -487,7 +487,19 @@ public sealed class DropShareTests : IDisposable
 
         await WaitFor(() => Seen(DropActivityKind.Stopped).Count == 1);
         Assert.Equal("", Seen(DropActivityKind.Stopped)[0].Device);
-        AssertNobodyListens(share);
+        // Stopped is raised just before the listener closes.
+        await WaitFor(() =>
+        {
+            try
+            {
+                AssertNobodyListens(share);
+                return true;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
+        });
     }
 
     // A port can be taken for exclusive use only when no one listens on it. (A refused connection takes Windows about
