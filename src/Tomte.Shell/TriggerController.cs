@@ -2010,11 +2010,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// A drop zone's panel: the Palette state at this height, held open while its request runs, and once it is done
     /// held by its result, which was paid for, until the user dismisses it: Esc while the pointer is on the island, the
     /// palette hotkey, a press outside the island or another state. The pointer being away never retracts it. <paramref name="hold"/> false leaves a panel
-    /// that holds nothing of its own (Ask about it, which hands over to the typing palette) to the usual rules.
+    /// that holds nothing of its own (Ask about it, which hands over to the typing palette) to the usual rules. From
+    /// Panels (Tomte Drop on the shelf) the state passes through Hidden, so a view for it is made after this call.
     /// </summary>
     internal void ZonePalette(double height, bool busy, bool hold = true)
     {
-        if (machine.State == IslandState.ShelfDrop || (machine.State == IslandState.Palette && height != zoneHeight))
+        if (machine.State is IslandState.ShelfDrop or IslandState.Panels || (machine.State == IslandState.Palette && height != zoneHeight))
         {
             zoneHeight = height;
             Go(IslandState.Palette, (PanelSize.PaletteWidth, height));

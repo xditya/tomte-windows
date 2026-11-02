@@ -6,6 +6,7 @@ using Tomte.AI.Files;
 using Tomte.AI.Palette;
 using Tomte.AI.Skills;
 using Tomte.Core;
+using Tomte.Core.Drop;
 using Tomte.Core.Interaction;
 using Tomte.Core.Storage;
 using Tomte.Core.Text;
@@ -648,6 +649,192 @@ public sealed class DropZoneTests : IDisposable
         }
 
         Assert.True(layout.Band.Width == width && layout.Band.Height > 0);
+    }
+
+    // Tomte Drop's card
+
+    // A version 3 code's size, with dark modules scattered over it.
+    private static bool[,] Code()
+    {
+        var qr = new bool[29, 29];
+        for (int r = 0; r < 29; r++)
+        {
+            for (int c = 0; c < 29; c++)
+            {
+                qr[r, c] = (r * 7 + c * 3 + r * c) % 5 < 2;
+            }
+        }
+
+        return qr;
+    }
+
+    private static readonly Uri Link = new("http://192.168.178.100:53320/k3J9xQ2mPz8wVb1LxYz0aB/");
+
+    [Fact]
+    public void TheCodeSitsOnItsWhiteSquareWithItsQuietZoneOnWholeDips()
+    {
+        var qr = Code();
+        var layout = new DropResultLayout(DropCard.Sharing(3, false, 24_500_000, Link, qr, publicNetwork: false), (float)PanelSize.PaletteWidth, mascot: true);
+        var box = layout.QrBox;
+        Assert.Equal(new System.Drawing.RectangleF(DropResultLayout.Pad, DropResultLayout.BodyTop, DropResultLayout.QrSide, DropResultLayout.QrSide), box);
+        Assert.Equal(168, box.Width);
+
+        // Whole DIPs, centred, and at least four modules of white on every side, which a camera needs to find the code.
+        float m = layout.QrModule, code = 29 * m;
+        Assert.True(m >= 1 && m == MathF.Floor(m));
+        Assert.Equal(MathF.Floor(layout.QrAt.X), layout.QrAt.X);
+        Assert.Equal(MathF.Floor(layout.QrAt.Y), layout.QrAt.Y);
+        Assert.True(layout.QrAt.X - box.X >= DropResultLayout.QrQuiet * m);
+        Assert.InRange(box.Right - (layout.QrAt.X + code) - (layout.QrAt.X - box.X), 0, 1);
+        Assert.True(box.Right - (layout.QrAt.X + code) >= DropResultLayout.QrQuiet * m);
+        Assert.True(layout.QrAt.Y - box.Y >= DropResultLayout.QrQuiet * m);
+        Assert.True(box.Bottom - (layout.QrAt.Y + code) >= DropResultLayout.QrQuiet * m);
+
+        // The dark modules as runs along each row: fewer figures than modules, covering every dark one and nothing else.
+        int dark = qr.Cast<bool>().Count(d => d);
+        Assert.True(layout.QrRuns.Count < dark);
+        Assert.Equal(dark * m * m, layout.QrRuns.Sum(r => r.Width * r.Height), 1);
+        foreach (var run in layout.QrRuns)
+        {
+            int row = (int)((run.Y - layout.QrAt.Y) / m), from = (int)((run.X - layout.QrAt.X) / m);
+            Assert.Equal(m, run.Height);
+            Assert.All(Enumerable.Range(from, (int)(run.Width / m)), c => Assert.True(qr[row, c]));
+            // A run ends where the row's dark modules do.
+            int after = from + (int)(run.Width / m);
+            Assert.True(after == 29 || !qr[row, after]);
+        }
+
+        // A card with no code has no square.
+        Assert.True(new DropResultLayout(DropCard.Opening, (float)PanelSize.PaletteWidth, true).QrBox.IsEmpty);
+    }
+
+    // The code as the card draws it, the white square, the quiet zone and the runs on the dark card, read back by a QR
+    // reader at 100% and 150%: a pixel is dark where its centre falls in a run.
+    [Theory]
+    [InlineData(1.0)]
+    [InlineData(1.5)]
+    public void TheCodeAsDrawnReadsBackAsItsLink(double scale)
+    {
+        var matrix = ZXing.QrCode.Internal.Encoder.encode(Link.AbsoluteUri, ZXing.QrCode.Internal.ErrorCorrectionLevel.M).Matrix;
+        var qr = new bool[matrix.Height, matrix.Width];
+        for (int y = 0; y < matrix.Height; y++)
+        {
+            for (int x = 0; x < matrix.Width; x++)
+            {
+                qr[y, x] = matrix[x, y] == 1;
+            }
+        }
+
+        var layout = new DropResultLayout(DropCard.Sharing(1, false, 1, Link, qr, publicNetwork: false), (float)PanelSize.PaletteWidth, mascot: true);
+        var box = layout.QrBox;
+        const int margin = 20;
+        int w = (int)Math.Ceiling(box.Width * scale) + (2 * margin), h = (int)Math.Ceiling(box.Height * scale) + (2 * margin);
+        var bgra = new byte[4 * w * h];
+        for (int py = 0; py < h; py++)
+        {
+            for (int px = 0; px < w; px++)
+            {
+                float x = box.X + (float)((px - margin + 0.5) / scale), y = box.Y + (float)((py - margin + 0.5) / scale);
+                byte v = !box.Contains(x, y) ? (byte)0x1F : layout.QrRuns.Any(r => r.Contains(x, y)) ? (byte)0 : (byte)0xFF;
+                int i = 4 * ((py * w) + px);
+                (bgra[i], bgra[i + 1], bgra[i + 2], bgra[i + 3]) = (v, v, v, 0xFF);
+            }
+        }
+
+        Assert.Equal(Link.AbsoluteUri, ScreenText.DecodeQr(bgra, w, h));
+    }
+
+    [Theory]
+    [InlineData(480)]
+    [InlineData(360)]
+    public void TheLinkTheSummaryAndTheWarningSitBesideTheCodeAndNothingOverlaps(float maxHeight)
+    {
+        float width = (float)PanelSize.PaletteWidth;
+        var card = DropCard.Sharing(3, false, 24_500_000, Link, Code(), publicNetwork: true) with { Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture)] };
+        var layout = new DropResultLayout(card, width, mascot: true, maxHeight);
+        var box = layout.QrBox;
+
+        // The link and the summary, each a row that copies itself, right of the square and inside the panel.
+        Assert.Equal([Link.AbsoluteUri, "3 files · 23.4 MB"], card.Values);
+        Assert.Equal(2, layout.Values.Count);
+        Assert.All(layout.Values, v => Assert.True(v.Left >= box.Right + 8 && v.Right <= width - DropResultLayout.Pad + 0.01f && v.Top >= box.Top, $"{v}"));
+        Assert.True(layout.Values[1].Top >= layout.Values[0].Bottom);
+        var targets = layout.Targets(1);
+        Assert.Equal(["value:0", "value:1", "choice:0", "choice:1", "tile:0"], targets.Select(t => t.Id));
+        Assert.All(targets.Take(2), t => Assert.Equal("Copy", t.Tip));
+
+        // The warning under them, beside the code, its words in line with the values' own; the Public network sentence first, in the warning colour.
+        Assert.True(layout.Band.Top >= layout.Values[^1].Bottom && layout.Band.Left >= box.Right);
+        Assert.Equal(layout.Values[0].X + DropResultLayout.ValueInset, layout.Band.X + DropResultLayout.Pad, 3);
+        Assert.Equal(DropCard.PublicNetwork, layout.Body[0].Run.Text);
+        Assert.Equal(Theme.Warn, layout.Body[0].Run.Style.Color);
+        Assert.StartsWith("Your phone has to be on the same Wi-Fi", layout.Body.Single(r => r.Run.Text.StartsWith("Your", StringComparison.Ordinal)).Run.Text);
+        foreach (var (run, at) in layout.Body)
+        {
+            using var laid = TextLayout.Of(run);
+            Assert.True(layout.Band.X + at.X + laid.Width <= width - DropResultLayout.Pad + 0.5f, $"{run.Text} runs to {layout.Band.X + at.X + laid.Width}");
+        }
+
+        // Network settings, then Stop sharing, the default; both under the code and the warning, then the tile from the phone.
+        Assert.Equal([DropCard.NetworkSettings, DropCard.Stop], card.Choices);
+        Assert.True(layout.Choices[0].Top >= box.Bottom + DropResultLayout.Gap && layout.Choices[0].Top >= layout.Band.Bottom);
+        Assert.True(layout.Tiles[0].Top >= layout.Choices[^1].Bottom);
+        Assert.True(layout.Tiles[0].Bottom <= maxHeight - DropResultLayout.Pad + 0.5f);
+        Assert.True(layout.Height <= maxHeight);
+        var parts = new[] { box, layout.Band }.Concat(layout.Values).Concat(layout.Choices).Concat(layout.Tiles).ToList();
+        for (int i = 0; i < parts.Count; i++)
+        {
+            Assert.All(parts.Skip(i + 1), other => Assert.False(parts[i].IntersectsWith(other), $"{parts[i]} and {other}"));
+        }
+    }
+
+    [Fact]
+    public void TheCardSaysWhatIsOfferedAndWhatThePhoneDoesInPlainWords()
+    {
+        Assert.Equal("Tomte Drop · 3 files", DropCard.Title(3, folders: false));
+        Assert.Equal("Tomte Drop · 1 file", DropCard.Title(1, folders: false));
+        Assert.Equal("Tomte Drop · 2 items", DropCard.Title(2, folders: true));
+        Assert.Equal("Tomte Drop · receive only", DropCard.Title(0, folders: false));
+        Assert.Equal("Same Wi-Fi only", DropCard.Indicator);
+
+        // Receiving only: the link alone beside the code, and a warning that offers nothing to download.
+        var receive = DropCard.Sharing(0, false, 0, Link, Code(), publicNetwork: false);
+        Assert.Equal([Link.AbsoluteUri], receive.Values);
+        Assert.Equal([DropCard.Stop], receive.Choices);
+        Assert.DoesNotContain("download", receive.Body);
+        Assert.Null(receive.Warning);
+        Assert.Equal(DropCard.Waiting, receive.Line);
+
+        Assert.Equal("iPhone opened the page", DropCard.Line(new(DropActivityKind.Opened, "iPhone")));
+        Assert.Equal("Sending report.pdf to iPhone", DropCard.Line(new(DropActivityKind.Sending, "iPhone", "report.pdf")));
+        Assert.Equal("Sent report.pdf", DropCard.Line(new(DropActivityKind.Sent, "iPhone", "report.pdf")));
+        Assert.Equal("Getting IMG_2041.jpg from a device", DropCard.Line(new(DropActivityKind.Receiving, "A device", "IMG_2041.jpg")));
+        Assert.Equal("Got IMG_2041.jpg", DropCard.Line(new(DropActivityKind.Received, "iPhone", "IMG_2041.jpg", @"C:\Downloads\Tomte Drop\IMG_2041.jpg")));
+        Assert.Equal("Got a link from Android phone · on the shelf", DropCard.Line(new(DropActivityKind.Text, "Android phone", Text: "https://example.com/a")));
+        Assert.Equal("Got text from iPhone · on the shelf", DropCard.Line(new(DropActivityKind.Text, "iPhone", Text: "buy milk")));
+        Assert.Equal("The phone stopped the upload.", DropCard.Line(new(DropActivityKind.Failed, "iPhone", "a.zip", Text: "The phone stopped the upload.")));
+        Assert.Null(DropCard.Line(new(DropActivityKind.Stopped, "")));
+
+        // Stopped by itself: the code and the warning go, the files that came stay, and Close ends it.
+        var tile = new ResultTile("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture);
+        var stopped = DropCard.Stopped(DropCard.Sharing(3, false, 1, Link, Code(), publicNetwork: true) with { Tiles = [tile] }, TimeSpan.FromMinutes(15));
+        Assert.Equal("Stopped: nothing was asked for 15 minutes", stopped.Line);
+        Assert.Equal([DropResult.Close], stopped.Choices);
+        Assert.Null(stopped.Qr);
+        Assert.Null(stopped.Warning);
+        Assert.Equal("", stopped.Body);
+        Assert.Empty(stopped.Values);
+        Assert.Equal([tile], stopped.Tiles);
+        Assert.Equal("From iPhone · on the shelf", tile.Meta);
+
+        // A share that could not start says why, with Close.
+        var problem = DropCard.Problem("Every port is taken.");
+        Assert.True(problem.Problem);
+        Assert.Equal([DropResult.Close], problem.Choices);
+        Assert.Equal("Every port is taken.", problem.Line);
+
+        string[] words = [DropCard.SameWifi(true), DropCard.SameWifi(false), DropCard.PublicNetwork, DropCard.NotOnShelf, DropCard.SetGone, DropCard.CouldNotStart, stopped.Line!];
+        Assert.All(words, w => Assert.DoesNotContain("—", w));
     }
 
     // The custom slot

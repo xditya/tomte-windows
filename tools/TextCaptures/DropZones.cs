@@ -36,6 +36,12 @@ internal static partial class Program
             Zones("shelf-drop-zones-ask", null, DropZone.Ask, DropZoneLayout.Width),
             Zones("shelf-drop-zones-skill", "invoice-parser", DropZone.Skill, DropZoneLayout.Width),
             Zones("shelf-drop-zones-narrow", null, DropZone.Shelf, 820),
+            Result("drop-card", Card(3, publicNetwork: false)),
+            Result("drop-card-public", Card(3, publicNetwork: true) with { Line = "Sending report.pdf to iPhone" }),
+            Result("drop-card-public-short-monitor", Card(3, publicNetwork: true) with { Line = "Got IMG_2041.jpg", Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture)] }, maxHeight: 360),
+            Result("drop-card-receive-only", Card(0, publicNetwork: false) with { Line = "Got IMG_2041.jpg", Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture), new("notes.pdf", DropCard.From("iPhone"), Theme.KindPdf)] }),
+            Result("drop-card-stopped", DropCard.Stopped(Card(3, publicNetwork: false) with { Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture)] }, TimeSpan.FromMinutes(15))),
+            Result("drop-card-problem", DropCard.Problem("This PC is on no local network. Connect to Wi-Fi and try again.")),
             Result("zone-result-summary", summary),
             Result("zone-result-long", longOne),
             Result("zone-result-long-scrolled", longOne, scrolled: 1),
@@ -51,6 +57,23 @@ internal static partial class Program
             ColourResult("colour-result-light", new PickedColour(255, 255, 255), ThemeScheme.Light, hover: 0),
             ColourResult("colour-result-light-yellow", new PickedColour(0xF2, 0xB8, 0x4B), ThemeScheme.Light, hover: -1),
         ];
+    }
+
+    // A Tomte Drop card with a code of a link's size: three finder squares and a scatter of modules, which reads as a code.
+    private static DropResult Card(int files, bool publicNetwork)
+    {
+        var qr = new bool[33, 33];
+        for (int r = 0; r < 33; r++)
+        {
+            for (int c = 0; c < 33; c++)
+            {
+                bool Finder(int top, int left) => r - top is >= 0 and < 7 && c - left is >= 0 and < 7 && (r - top is 0 or 6 || c - left is 0 or 6 || (r - top is >= 2 and <= 4 && c - left is >= 2 and <= 4));
+                bool near = (r < 8 && c < 8) || (r < 8 && c > 24) || (r > 24 && c < 8);
+                qr[r, c] = near ? Finder(0, 0) || Finder(0, 26) || Finder(26, 0) : ((r * 31) ^ (c * 17) ^ (r * c)) % 7 < 3;
+            }
+        }
+
+        return DropCard.Sharing(files, false, 24_500_000, new Uri("http://192.168.178.100:53320/k3J9xQ2mPz8wVb1LxYz0aB/"), qr, publicNetwork);
     }
 
     // The pill as ShelfDropSurface builds it: the accent ring inside the outline, the tray glyph, the label and the hint.
@@ -180,16 +203,27 @@ internal static partial class Program
         });
     }
 
-    // A zone's panel as DropResultView builds it, in the palette's width, the answer scrolled a fraction of the way down.
-    private static Scene Result(string name, DropResult result, float scrolled = 0)
+    // A zone's panel as DropResultView builds it, in the palette's width, the answer scrolled a fraction of the way down;
+    // a Tomte Drop card's code on its white square, a black rectangle a run.
+    private static Scene Result(string name, DropResult result, float scrolled = 0, float maxHeight = (float)PanelSize.PaletteMaxHeight)
     {
         const float width = (float)PanelSize.PaletteWidth;
-        var layout = new DropResultLayout(result, width, mascot: true);
+        var layout = new DropResultLayout(result, width, mascot: true, maxHeight);
         return new(name, IslandGeometry.Panel(width, layout.Height), c =>
         {
             var host = new Vector2(-width / 2, 0);
             c.Pill();
             c.Mascot(shift: DropResultLayout.Seat.Shift);
+            if (result.Qr is not null)
+            {
+                c.RoundRect(Offset(layout.QrBox, host), DropResultLayout.QrCorner, 0xFFFFFFFF);
+                c.StrokeRect(Offset(layout.QrBox, host), DropResultLayout.QrCorner, Theme.Line);
+                foreach (var run in layout.QrRuns)
+                {
+                    c.RoundRect(Offset(run, host), 0, 0xFF000000);
+                }
+            }
+
             for (int i = 0; i < layout.Choices.Count; i++)
             {
                 var r = Offset(layout.Choices[i], host);
@@ -218,7 +252,7 @@ internal static partial class Program
             c.Clip = Offset(band, host);
             foreach (var (run, at) in layout.Body)
             {
-                c.Text(run, new Vector2(at.X, band.Y + at.Y - layout.MaxScroll * scrolled), host);
+                c.Text(run, new Vector2(band.X + at.X, band.Y + at.Y - layout.MaxScroll * scrolled), host);
             }
 
             c.Clip = null;

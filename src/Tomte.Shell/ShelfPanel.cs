@@ -435,8 +435,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     private static unsafe nint Handle(HWND hwnd) => (nint)hwnd.Value;
 
+    /// <summary>Text onto the clipboard; the AI layer's assembly, where the clipboard code lives, loads with the first copy, not before.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void CopyText(string text) => Tomte.AI.Palette.DesktopEffects.CopyToClipboard(text);
+    internal static void CopyText(string text) => Tomte.AI.Palette.DesktopEffects.CopyToClipboard(text);
 
     private static ShelfAction? ActionOf(string id) =>
         id.StartsWith("act:", StringComparison.Ordinal) && Enum.TryParse<ShelfAction>(id.AsSpan(4), out var action) ? action : null;
