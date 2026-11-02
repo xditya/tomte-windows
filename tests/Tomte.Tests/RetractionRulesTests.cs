@@ -15,6 +15,7 @@ public class TakenOverTests
         Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Rambling));
         // A drop zone's result gives way to whatever the user opens next.
         Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Result));
+        Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Sharing));
     }
 
     [Fact]
@@ -127,6 +128,8 @@ public class RetractionRulesTests
     [InlineData(IslandState.Panels, IslandActivity.Pinned, true, true)]
     [InlineData(IslandState.Panels, IslandActivity.Pinned, false, false)]
     [InlineData(IslandState.Palette, IslandActivity.Pinned, false, false)]
+    [InlineData(IslandState.Palette, IslandActivity.Sharing, true, true)]
+    [InlineData(IslandState.Palette, IslandActivity.Sharing, false, false)]
     // With the keys, Esc reaches the island as a key, never as a hotkey.
     [InlineData(IslandState.Panels, IslandActivity.Typing, true, false)]
     [InlineData(IslandState.Palette, IslandActivity.Typing | IslandActivity.Pinned, true, false)]
@@ -157,6 +160,8 @@ public class RetractionRulesTests
     [InlineData(IslandState.Palette, IslandActivity.None, false)]
     [InlineData(IslandState.Panels, IslandActivity.None, false)]
     [InlineData(IslandState.Compact, IslandActivity.Peek, false)]
+    // A running Tomte Drop: the phone may be part way through a file.
+    [InlineData(IslandState.Palette, IslandActivity.Sharing, false)]
     public void APressOutsideDismissesOnlyAFinishedZoneResult(IslandState state, IslandActivity activity, bool expected)
     {
         Assert.Equal(expected, RetractionRules.DismissedByClickOutside(state, activity));

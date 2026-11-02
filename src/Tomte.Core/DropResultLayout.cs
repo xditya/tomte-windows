@@ -35,16 +35,29 @@ public sealed record DropResult(string Title, string Indicator, string? Line, bo
     /// <summary>A colour (RRGGBB) shown as a square left of <see cref="Values"/>, as the colour picker's card does.</summary>
     public uint? Swatch { get; init; }
 
-    /// <summary>Beside <see cref="Swatch"/>: rows that each copy their own text, the first written large.</summary>
+    /// <summary>
+    /// Beside <see cref="Swatch"/> or <see cref="Qr"/>: rows that each copy their own text. By the swatch the first is
+    /// written large; by the code all are the same.
+    /// </summary>
     public IReadOnlyList<string> Values { get; init; } = [];
+
+    /// <summary>
+    /// A QR code, [row, column] and true for a dark module, drawn on a white square left of <see cref="Values"/>, with
+    /// the answer beside it under the values.
+    /// </summary>
+    public bool[,]? Qr { get; init; }
+
+    /// <summary>A sentence or two in the warning colour, above the answer.</summary>
+    public string? Warning { get; init; }
 }
 
 /// <summary>
 /// The drop zone's panel in the Palette state, in the panel's own DIPs (x = 0 at its left edge, y = 0 at its top):
 /// a head row right of the tomte with the zone and file on the left and where the request went on the right, a line
 /// under it, then the answer, the choices as full-width buttons with their words centred, the last of them (the
-/// default) filled, and the result files as tiles. The panel is the palette's width and grows with what it shows, up to
-/// the palette's height or the monitor's cap, whichever is less.
+/// default) filled, and the result files as tiles. A colour's swatch or a QR code sits at the left under the line, with
+/// rows to copy beside it; by a code the answer goes beside it too. The panel is the palette's width and grows with what
+/// it shows, up to the palette's height or the monitor's cap, whichever is less.
 /// The answer is read as Markdown (<see cref="Markdown"/>): paragraphs, bold, italic, headings as bold lines, list items
 /// with their marker hanging left of the text, code as it is. It wraps to the panel and scrolls in its band when it is longer.
 /// </summary>
@@ -60,6 +73,15 @@ public sealed class DropResultLayout
     public const float HexRowHeight = 40, ValueRowHeight = 28, ValueRowGap = 2, ValueWidth = 300, ValueInset = 10, SwatchGap = 16, SwatchCorner = 12;
 
     public const float SwatchSide = HexRowHeight + 2 * (ValueRowGap + ValueRowHeight);
+
+    /// <summary>
+    /// A QR code's white square and its corner, and the fewest modules of white kept round the code, which a reader needs
+    /// to find it. A module is a whole number of DIPs and the code starts on a whole DIP, centred in the square. On a
+    /// short monitor the square gives up to <see cref="QrMin"/> so the choices and tiles under it still fit.
+    /// </summary>
+    public const float QrSide = 168, QrMin = 120, QrCorner = 12;
+
+    public const int QrQuiet = 4;
 
     public static TextStyle HexStyle => new(22, 600, Tabular: true, Family: TextStyle.Mono);
     public static TextStyle ValueStyle => TextStyle.Figures with { Size = 13, Color = Theme.Ink2 };
@@ -101,7 +123,7 @@ public sealed class DropResultLayout
 
     public static TextStyle RestStyle => TextStyle.Secondary with { LineHeight = 19 };
 
-    private readonly List<RectangleF> tiles = [], choices = [], values = [];
+    private readonly List<RectangleF> tiles = [], choices = [], values = [], qrRuns = [];
     private readonly List<TextSlot> slots = [];
 
     /// <summary>The tomte beside the head row: centred on it, its art as far in from the left edge as the answer below.</summary>
@@ -123,7 +145,49 @@ public sealed class DropResultLayout
 
         int perRow = Math.Max(1, (int)((inner + Gap) / (TileWidth + Gap)));
         float below = result.Choices.Count * (ChoiceHeight + Gap) + (result.Tiles.Count == 0 ? 0 : (result.Tiles.Count + perRow - 1) / perRow * (TileHeight + Gap));
-        float y = problem ? LineTop + 4 : BodyTop;
+        // The answer's band: across the panel, or beside a QR code, where it ends no higher than the code's square.
+        float y = problem ? LineTop + 4 : BodyTop, bandX = 0, wrap = inner, beside = 0;
+        if (result.Qr is { } qr && result.Swatch is null)
+        {
+            // Smaller only where the choices and tiles under it would not fit the monitor's cap otherwise.
+            float side = Math.Clamp(maxHeight - y - below - Pad - 4, QrMin, QrSide);
+            QrBox = new RectangleF(Pad, y, side, side);
+            int rows = qr.GetLength(0), columns = qr.GetLength(1);
+            QrModule = Math.Max(1, MathF.Floor(side / (Math.Max(rows, columns) + (2 * QrQuiet))));
+            QrAt = new Vector2(QrBox.X + MathF.Floor((side - (columns * QrModule)) / 2), QrBox.Y + MathF.Floor((side - (rows * QrModule)) / 2));
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < columns; c++)
+                {
+                    if (!qr[r, c])
+                    {
+                        continue;
+                    }
+
+                    int start = c;
+                    while (c + 1 < columns && qr[r, c + 1])
+                    {
+                        c++;
+                    }
+
+                    qrRuns.Add(new RectangleF(QrAt.X + (start * QrModule), QrAt.Y + (r * QrModule), (c + 1 - start) * QrModule, QrModule));
+                }
+            }
+
+            float x = QrBox.Right + SwatchGap, row = y;
+            foreach (string value in result.Values)
+            {
+                var r = new RectangleF(x, row, width - Pad - x, ValueRowHeight);
+                values.Add(r);
+                slots.Add(new(value, ValueStyle, new(r.X + ValueInset, r.Y, r.Width - 2 * ValueInset, r.Height)));
+                row = r.Bottom + ValueRowGap;
+            }
+
+            // The answer's words start in line with the values' own.
+            (bandX, wrap, beside) = (x + ValueInset - Pad, width - Pad - x - ValueInset, QrBox.Bottom + Gap + 4);
+            y = values.Count > 0 ? row - ValueRowGap + Gap : y;
+        }
+
         if (result.Swatch is uint swatch)
         {
             SwatchBox = new RectangleF(Pad, y, SwatchSide, SwatchSide);
@@ -140,16 +204,28 @@ public sealed class DropResultLayout
 
             y = Math.Max(SwatchBox.Bottom, row) + Gap + 4;
         }
-        if (shown.Length > 0)
+        string warning = result.Warning ?? "";
+        if (shown.Length > 0 || warning.Length > 0)
         {
             // A cut never splits a character in two.
             int read = shown.Length <= MaxChars ? shown.Length : char.IsHighSurrogate(shown[MaxChars - 1]) ? MaxChars - 1 : MaxChars;
-            (Body, BodyHeight) = Lay(Markdown.Parse(shown[..read]), problem ? BodyStyle with { Color = Theme.Warn } : BodyStyle, inner, read < shown.Length);
+            (Body, BodyHeight) = Lay(Markdown.Parse(shown[..read]), problem ? BodyStyle with { Color = Theme.Warn } : BodyStyle, wrap, read < shown.Length);
+            if (warning.Length > 0)
+            {
+                // The warning first, and the answer moved down under it.
+                var (first, height) = Lay(Markdown.Parse(warning), BodyStyle with { Color = Theme.Warn }, wrap, cut: false);
+                float down = height + (Body.Count > 0 ? BlockGap : 0);
+                Body = [.. first, .. Body.Select(r => r with { At = r.At + new Vector2(0, down) })];
+                BodyHeight += down;
+            }
+
             // What fits above the choices and tiles; the rest scrolls.
             float room = Math.Max(BodyStyle.LineHeight, maxHeight - y - below - Pad - 4);
-            Band = new RectangleF(0, y, width, Math.Min(MathF.Ceiling(BodyHeight), room));
+            Band = new RectangleF(bandX, y, width - bandX, Math.Min(MathF.Ceiling(BodyHeight), room));
             y += Band.Height + Gap + 4;
         }
+
+        y = Math.Max(y, beside);
 
         foreach (string choice in result.Choices)
         {
@@ -201,8 +277,20 @@ public sealed class DropResultLayout
     /// <summary>Where <see cref="DropResult.Swatch"/> is drawn; empty without one.</summary>
     public RectangleF SwatchBox { get; }
 
-    /// <summary>The rows of <see cref="DropResult.Values"/>, right of the swatch.</summary>
+    /// <summary>The rows of <see cref="DropResult.Values"/>, right of the swatch or the code.</summary>
     public IReadOnlyList<RectangleF> Values => values;
+
+    /// <summary>Where <see cref="DropResult.Qr"/>'s white square is drawn; empty without one.</summary>
+    public RectangleF QrBox { get; }
+
+    /// <summary>The side of one of the code's modules, whole DIPs.</summary>
+    public float QrModule { get; }
+
+    /// <summary>The top-left corner of the code's first module, on whole DIPs.</summary>
+    public Vector2 QrAt { get; }
+
+    /// <summary>The code's dark modules, each row's run of them one rectangle, so the code draws as one path of few figures.</summary>
+    public IReadOnlyList<RectangleF> QrRuns => qrRuns;
 
     public IReadOnlyList<RectangleF> Choices => choices;
 

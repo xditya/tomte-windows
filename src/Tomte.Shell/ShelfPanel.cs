@@ -27,9 +27,11 @@ namespace Tomte.Shell;
 /// drag drags the tile out (the whole selection when it is one of it), and the buttons act on the same items. Remove
 /// and Clear shelf ask once; Clear shelf and a drag out leave pinned items, which carry a pin on their preview. Missing items are dimmed, with their own meta line. The island's interaction host runs the
 /// presses, hover, tooltips and focus.
+/// The Tomte Drop button left of the Sets button shares the selection with a phone, or with nothing selected opens a
+/// share that only receives; the band's Tomte Drop does the same for the items it acts on.
 /// The Sets button next to the filter swaps the grid for the saved sets: a name box and Save (the selection, or
-/// everything on the shelf), then a row per set with its counts, Bring back, Rename (the name turns into a box) and
-/// Delete, which asks once.
+/// everything on the shelf), then a row per set with its counts, Bring back, Tomte Drop of its files, Rename (the name
+/// turns into a box) and Delete, which asks once.
 /// </summary>
 internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, TypingFocus focus, Action<string>? log) : IPanel, IInteractive
 {
@@ -189,6 +191,17 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
                 selected.Clear();
                 Show(null);
                 Rebuild();
+            }
+
+            return;
+        }
+
+        if (id == ShelfLayout.DropId)
+        {
+            // The first click of a double click already acted. The selection, or with none a share that only receives.
+            if (by != ActivateBy.DoubleClick)
+            {
+                TomteDrop(Selection(shelf.Items));
             }
 
             return;
@@ -503,8 +516,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     private static unsafe nint Handle(HWND hwnd) => (nint)hwnd.Value;
 
+    /// <summary>Text onto the clipboard; the AI layer's assembly, where the clipboard code lives, loads with the first copy, not before.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void CopyText(string text) => Tomte.AI.Palette.DesktopEffects.CopyToClipboard(text);
+    internal static void CopyText(string text) => Tomte.AI.Palette.DesktopEffects.CopyToClipboard(text);
 
     private static ShelfAction? ActionOf(string id) =>
         id.StartsWith("act:", StringComparison.Ordinal) && Enum.TryParse<ShelfAction>(id.AsSpan(4), out var action) ? action : null;
@@ -608,6 +622,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
                 case ShelfAction.Share:
                     Share(allowed);
                     break;
+                case ShelfAction.Drop:
+                    TomteDrop(allowed);
+                    break;
                 case ShelfAction.Pin:
                     _ = shelf.SetPinned(allowed, !ShelfLayout.AllPinned(allowed));
                     break;
@@ -707,6 +724,30 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
     }
 
+    /// <summary>
+    /// Tomte Drop of the items whose files are there, or of nothing, a share that only receives, when none were asked
+    /// for; items that are all missing start nothing. On the next turn, after the click or key, since the island leaves
+    /// Panels for the card.
+    /// </summary>
+    private void TomteDrop(IReadOnlyList<ShelfItem> items)
+    {
+        var offered = DropRun.Offered(items);
+        log?.Invoke($"shelf: Tomte Drop of {offered.Count} of {items.Count}");
+        if (items.Count > 0 && offered.Count == 0)
+        {
+            return;
+        }
+
+        island.Queue.TryEnqueue(() => DropRun.Start(island, triggers, shelf, text, Task.FromResult(offered), log));
+    }
+
+    /// <summary>Tomte Drop of a saved set's files that are still where they were, without putting them on the shelf.</summary>
+    private void TomteDrop(long set)
+    {
+        log?.Invoke("shelf: Tomte Drop of a set");
+        island.Queue.TryEnqueue(() => DropRun.Start(island, triggers, shelf, text, DropRun.Offered(shelf.SetMembers(set)), log, DropCard.SetGone));
+    }
+
     /// <summary>What Save puts in a set: the selection when there is one, else everything on the shelf.</summary>
     private List<ShelfItem> SaveItems() => selected.Count > 0 ? Selection(shelf.Items) : [.. shelf.Items];
 
@@ -776,6 +817,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
                 selected.Clear();
                 Rebuild();
                 _ = shelf.BringBack(set);
+                break;
+            case "drop":
+                TomteDrop(set);
                 break;
             case "rename":
                 StartRename(set);
@@ -914,6 +958,8 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
             p.Box(into, slot.Back, ShelfLayout.ActionCorner, p.Brush(ShelfColors.Raised));
             p.Text(into, slot.BackLabel);
+            p.Box(into, slot.Drop, ShelfLayout.ActionCorner, p.Brush(ShelfColors.Raised));
+            p.Glyph(into, Glyphs.Phone, slot.Set.Missing < slot.Set.Count ? ShelfColors.Ink : ShelfColors.Disabled, Centred(slot.Drop));
             p.Box(into, slot.Rename, ShelfLayout.ActionCorner, p.Brush(ShelfColors.Raised));
             p.Glyph(into, Glyphs.Rename, ShelfColors.Ink, Centred(slot.Rename));
             if (slot.DeleteLabel is { } asking)
@@ -997,10 +1043,11 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             body!.Children.Remove(top);
             body.Children.InsertAtTop(top);
         }
-
-        static RectangleF Centred(RectangleF button) =>
-            new(button.X + (button.Width - ShelfLayout.ActionIcon) / 2, button.Y + (button.Height - ShelfLayout.ActionIcon) / 2, ShelfLayout.ActionIcon, ShelfLayout.ActionIcon);
     }
+
+    // An icon's square in the middle of its button.
+    private static RectangleF Centred(RectangleF button) =>
+        new(button.X + (button.Width - ShelfLayout.ActionIcon) / 2, button.Y + (button.Height - ShelfLayout.ActionIcon) / 2, ShelfLayout.ActionIcon, ShelfLayout.ActionIcon);
 
     private void ShowPlaceholder()
     {
@@ -1106,8 +1153,8 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var acting = owner is null ? [] : Acting(owner);
         bool confirming = question.Asks(owner?.Id, Environment.TickCount64);
         targets = setsOpen
-            ? ShelfLayout.SetTargets(size, shelf.Sets, setFirst, Deleting(), SaveLabel(), SaveItems().Count > 0, renaming, filter)
-            : ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Any(i => !i.Pinned));
+            ? ShelfLayout.SetTargets(size, shelf.Sets, setFirst, Deleting(), SaveLabel(), SaveItems().Count > 0, renaming, filter, selected.Count)
+            : ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Any(i => !i.Pinned), selected.Count);
         var (track, segments) = ShelfLayout.Filter(size, filter);
         b.Box(into, track, track.Height / 2, b.Brush(ShelfColors.Card));
         foreach (var segment in segments)
@@ -1132,6 +1179,11 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
             }
 
             b.Text(into, new TextSlot(ShelfLayout.SetsLabel, setsOpen ? ShelfLayout.FilterOn : ShelfLayout.FilterOff, segmentBox));
+
+            // The Tomte Drop button: a circle on the filter's grey with the phone in it.
+            var drop = ShelfLayout.DropButton(size);
+            b.Box(into, drop, drop.Height / 2, b.Brush(ShelfColors.Card));
+            b.Glyph(into, Glyphs.Phone, ShelfColors.Ink, Centred(drop));
 
             foreach (var line in ShelfLayout.HeadText(size, all.Count, setsOpen ? ShelfLayout.SetsHead(shelf.Sets.Count) : null))
             {
@@ -1344,12 +1396,12 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         p.Glyph(badge, Glyphs.Pin, ShelfColors.Accent, new RectangleF(glyph.X - disc.X, glyph.Y - disc.Y, glyph.Width, glyph.Height));
     }
 
-    /// <summary>An action's line icon in its square; Pin's from the icon set.</summary>
+    /// <summary>An action's line icon in its square; Pin's and Tomte Drop's from the icon set.</summary>
     private static void Glyph(Parts p, ShapeVisual into, ShelfAction action, RectangleF icon, Color color)
     {
-        if (action == ShelfAction.Pin)
+        if (action is ShelfAction.Pin or ShelfAction.Drop)
         {
-            p.Glyph(into, Glyphs.Pin, color, icon);
+            p.Glyph(into, action == ShelfAction.Pin ? Glyphs.Pin : Glyphs.Phone, color, icon);
             return;
         }
 

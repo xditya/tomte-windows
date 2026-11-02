@@ -1,0 +1,728 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f3f2ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111214" media="(prefers-color-scheme: dark)">
+<title>Tomte Drop</title>
+<style>
+/* Colours are the island's own (Theme.cs): the light set first, the dark set for a dark phone. */
+:root {
+  color-scheme: light dark;
+  --bg: #f3f2ef;
+  --card: #ffffff;
+  --raised: #e9e7e2;
+  --line: #e0ded8;
+  --line-strong: #cfccc5;
+  --dash: #b9b5ad;
+  --track: #dddad3;
+  --ink: #1c1b19;
+  --ink2: #4f4d48;
+  --ink3: #67645d;
+  --ok: #407a59;
+  --danger: #995c50;
+  --folder: #b8860b;
+  --hover: rgba(0, 0, 0, 0.06);
+  --press: rgba(0, 0, 0, 0.03);
+  --accent: {{accent-light}};
+  --on-accent: {{on-accent-light}};
+  --island: #111214;
+  --island-ink: #f2f0eb;
+  --island-line: rgba(255, 255, 255, 0.12);
+  --pdf: #c0392b;
+  --picture: #3e8e6a;
+  --document: #3a6ea5;
+  --link: #8c5bd6;
+  --other: #5d6d7e;
+  --shadow: 0 1px 2px rgba(30, 30, 40, 0.05), 0 10px 28px rgba(30, 30, 40, 0.06);
+  --spring: cubic-bezier(0.2, 0.9, 0.25, 1.15);
+  --text: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --display: "Segoe UI Variable Display", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111214;
+    --card: #1a1b1f;
+    --raised: #24262b;
+    --line: #2a2c31;
+    --line-strong: #34363c;
+    --dash: #3a3c42;
+    --track: #2e3036;
+    --ink: #f2f0eb;
+    --ink2: #b1afa9;
+    --ink3: #8e8c86;
+    --ok: #6fd39a;
+    --danger: #ff9a85;
+    --folder: #e9c46a;
+    --hover: rgba(255, 255, 255, 0.08);
+    --press: rgba(255, 255, 255, 0.03);
+    --accent: {{accent-dark}};
+    --on-accent: {{on-accent-dark}};
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  padding: 0 16px calc(36px + env(safe-area-inset-bottom));
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.45 var(--text);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+h2 { font-family: var(--display); }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+svg { display: block; flex: none; }
+
+/* The island hangs from the top edge, as it does on the PC. */
+.top { display: flex; flex-direction: column; align-items: center; }
+.island {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: env(safe-area-inset-top) 20px 0 14px;
+  height: calc(46px + env(safe-area-inset-top));
+  background: var(--island);
+  color: var(--island-ink);
+  border: 1px solid var(--island-line);
+  border-top: 0;
+  border-radius: 0 0 23px 23px;
+  font: 650 16px/1 var(--display);
+  letter-spacing: -0.01em;
+  animation: arrive 0.5s var(--spring) both;
+}
+.island svg { width: 28px; height: 28px; }
+@keyframes arrive { from { transform: translateY(-100%); } }
+.from { margin: 14px 0 0; color: var(--ink2); font-size: 15px; text-align: center; overflow-wrap: anywhere; }
+.from strong { color: var(--ink); font-weight: 600; }
+
+main { max-width: 560px; margin: 22px auto 0; display: grid; gap: 14px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.head { display: flex; align-items: center; gap: 12px; padding: 16px 16px 14px 18px; min-height: 72px; }
+.titles { flex: 1; min-width: 0; }
+.head h2 { margin: 0; font-size: 17px; line-height: 1.3; font-weight: 650; letter-spacing: -0.005em; overflow-wrap: anywhere; }
+.sub { margin: 2px 0 0; color: var(--ink3); font-size: 13.5px; }
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: 600 15px/1 var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.button svg { width: 18px; height: 18px; }
+.button.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.button:disabled { background: var(--raised); color: var(--ink3); border-color: transparent; cursor: default; }
+.round {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--raised);
+  color: var(--ink);
+  cursor: pointer;
+}
+.round svg { width: 20px; height: 20px; }
+@media (hover: hover) {
+  .button:not(:disabled):hover, .pick:hover { background-color: var(--hover); }
+  .button.primary:not(:disabled):hover { filter: brightness(1.06); }
+  .round:hover { box-shadow: inset 0 0 0 44px var(--hover); }
+}
+.button:not(:disabled):active, .round:active, .pick:active { box-shadow: inset 0 0 0 99px var(--press); }
+
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { border-top: 1px solid var(--line); }
+.line { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; min-height: 66px; }
+.kind {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--other);
+  color: #fff;
+  font: 700 10.5px/1 var(--text);
+  letter-spacing: 0.03em;
+}
+.kind svg { width: 22px; height: 22px; }
+.kind img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.kind.pdf { background: var(--pdf); }
+.kind.image { background: var(--picture); }
+.kind.document, .kind.text { background: var(--document); }
+.kind.link { background: var(--link); }
+.kind.folder { background: var(--raised); color: var(--folder); }
+.kind.missing { background: transparent; color: var(--ink3); box-shadow: inset 0 0 0 1.5px var(--dash); }
+.kind.up { background: var(--raised); color: var(--ink2); }
+.kind.done { background: var(--ok); color: var(--card); }
+.kind.failed { background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1.5px var(--danger); }
+.name {
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.meta { margin-top: 2px; color: var(--ink3); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta.bad { color: var(--danger); white-space: normal; }
+.is-missing .name { color: var(--ink3); }
+.actions { display: flex; align-items: center; gap: 8px; }
+.textual { margin: 0 16px 14px 72px; }
+.copy { display: flex; justify-content: flex-end; margin-top: 8px; }
+.preview {
+  padding: 10px 12px;
+  max-height: 10.5em;
+  overflow: auto;
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--ink2);
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bar { height: 4px; margin-top: 8px; border-radius: 2px; background: var(--track); overflow: hidden; }
+.bar span { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width 0.2s linear; }
+
+.pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: calc(100% - 32px);
+  min-height: 140px;
+  margin: 0 16px 16px;
+  padding: 18px;
+  border: 1.5px dashed var(--dash);
+  border-radius: 18px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.pick.over { border-color: var(--accent); background: var(--hover); }
+.disc { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 8px; border-radius: 50%; background: var(--accent); color: var(--on-accent); }
+.disc svg { width: 24px; height: 24px; }
+.pick-label { font: 650 17px/1.3 var(--display); }
+.pick-hint { color: var(--ink3); font-size: 13.5px; }
+.chooser { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+#uploads .row:last-child { border-bottom: 1px solid var(--line); }
+#uploads:not(:empty) { margin-top: -2px; }
+
+.compose { padding: 16px; }
+#uploads:empty + .compose { border-top: 1px solid var(--line); }
+.compose label { display: block; margin-bottom: 8px; color: var(--ink2); font-size: 13.5px; font-weight: 600; }
+.compose textarea {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 16px/1.45 var(--text);
+  resize: vertical;
+}
+.compose textarea:focus-visible { outline-offset: 1px; }
+.foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.status { flex: 1; min-width: 0; color: var(--ink2); font-size: 14px; }
+.status.bad { color: var(--danger); }
+.send { min-width: 104px; }
+
+.stopped { padding: 56px 24px 64px; text-align: center; }
+.stopped svg { width: 56px; height: 56px; margin: 0 auto 14px; }
+.stopped h2 { margin: 0 0 6px; font-size: 20px; line-height: 1.25; overflow-wrap: anywhere; }
+.stopped p { margin: 0 auto; max-width: 26em; color: var(--ink3); font-size: 15px; }
+.is-stopped .working { display: none; }
+
+footer { max-width: 560px; margin: 22px auto 0; color: var(--ink3); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
+footer p { margin: 0; }
+
+@media (max-width: 359px) {
+  .textual { margin-left: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .island { animation: none; }
+  .bar span { transition: none; }
+}
+</style>
+</head>
+<body data-pc="{{pc}}">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="tomte" viewBox="0 0 64 64">
+    <path d="M13 35 C11 48 21 61 31 61 C41 61 53 49 51 35 Z" fill="#ECE6DC"/>
+    <path d="M13 35 L51 35 C51 38.5 49.5 40.5 47.5 41.5 C37.5 43.8 26.5 43.8 16.5 41.5 C14.5 40.5 13 38.5 13 35 Z" fill="#D7CFC1"/>
+    <circle cx="33" cy="39.8" r="5.6" fill="#E8A98C"/>
+    <path d="M11 34 C12 23 18 13 27 10 L34 10 C42 15 48.5 24 53 34 Z" fill="#C8322F"/>
+    <path d="M27 10 C27 3 35 -1 41 2 C46 4 48.5 10 46.5 15.5 C44.5 11.5 40.5 9.2 36.5 9.6 C33 10 30 11 27 10 Z" fill="#C8322F"/>
+    <circle cx="46.5" cy="15.5" r="3.8" fill="#C8322F"/>
+    <path d="M9 31 H55 C56.2 33 56.2 35 55 37 H9 C7.8 35 7.8 33 9 31 Z" fill="#9A2622"/>
+  </symbol>
+</svg>
+
+<header class="top">
+  <div class="island"><svg aria-hidden="true"><use href="#tomte"/></svg>Tomte Drop</div>
+  <p class="from">from <strong>{{pc}}</strong></p>
+</header>
+
+<main>
+  <section id="shared" class="card working" aria-labelledby="shared-title" hidden>
+    <div class="head">
+      <div class="titles">
+        <h2 id="shared-title">Shared with you</h2>
+        <p id="summary" class="sub"></p>
+      </div>
+      <a id="all" class="button" href="all" download hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/></svg>
+        Download all
+      </a>
+    </div>
+    <ul id="items" class="rows"></ul>
+  </section>
+
+  <section class="card working" aria-labelledby="send-title">
+    <div class="head">
+      <div class="titles">
+        <h2 id="send-title">Send to {{pc}}</h2>
+        <p id="ready" class="sub" hidden>{{pc}} is ready to take files and text from this device.</p>
+      </div>
+    </div>
+    <button id="pick" class="pick" type="button">
+      <span class="disc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V6m0 0-5 5m5-5 5 5"/></svg></span>
+      <span class="pick-label">Choose files</span>
+      <span id="pick-hint" class="pick-hint">Photos, videos or any file</span>
+    </button>
+    <input id="chooser" class="chooser" type="file" multiple tabindex="-1" aria-hidden="true">
+    <ul id="uploads" class="rows" aria-live="polite"></ul>
+    <form id="compose" class="compose">
+      <label for="text">Text or a link</label>
+      <textarea id="text" rows="3" autocapitalize="sentences"></textarea>
+      <div class="foot">
+        <p id="text-status" class="status" role="status"></p>
+        <button id="send" class="button primary send" type="submit" disabled>Send</button>
+      </div>
+    </form>
+  </section>
+
+  <section id="stopped" class="card stopped" role="status" hidden>
+    <svg aria-hidden="true"><use href="#tomte"/></svg>
+    <h2>Sharing stopped on {{pc}}</h2>
+    <p>To share again, start a new Tomte Drop on the PC and scan its code.</p>
+  </section>
+</main>
+
+<footer class="working"><p>Files and text go straight between this device and {{pc}}, over your local network.</p></footer>
+
+<script>
+(() => {
+  'use strict';
+  const pc = document.body.dataset.pc;
+  const $ = id => document.getElementById(id);
+  const ICONS = {
+    download: '<path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14"/>',
+    copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 8.5V6.5a2 2 0 0 0-2-2H6.5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2"/>',
+    check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+    open: '<path d="M14 4.5h5.5V10M19.5 4.5 11 13M18 14v3.5a2 2 0 0 1-2 2H6.5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2H10"/>',
+    up: '<path d="M12 19V6m0 0-5 5m5-5 5 5"/>',
+    folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-10Z"/>',
+    image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.8"/><path d="m4.5 17.5 5-4.5 4 3.5 3-2.5 3.5 3"/>',
+    text: '<path d="M6.5 3.5h8l4 4v13h-12v-17Z"/><path d="M14 3.5v4.5h4.5M9.5 12.5h6M9.5 16h4"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/>',
+    file: '<path d="M6.5 3.5h8l4 4v13h-12v-17Z"/><path d="M14 3.5v4.5h4.5"/>',
+    missing: '<path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5v.2M12 17h.01"/>',
+    warn: '<path d="M12 7.5v5.5M12 16.5h.01"/>'
+  };
+  const DOCUMENTS = ['DOC', 'DOCX', 'RTF', 'ODT', 'PAGES', 'XLS', 'XLSX', 'CSV', 'ODS', 'PPT', 'PPTX', 'KEY', 'ODP'];
+  let last = '';
+  let failures = 0;
+  let timer = 0;
+  let asking = false;
+  let stopped = false;
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function icon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.8');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.innerHTML = ICONS[name];
+    return svg;
+  }
+
+  function size(n) {
+    if (n < 1000) return n + (n === 1 ? ' byte' : ' bytes');
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let v = n;
+    let u = -1;
+    do { v /= 1024; u++; } while (v >= 1000 && u < units.length - 1);
+    return (v < 10 ? v.toFixed(1) : Math.round(v)) + ' ' + units[u];
+  }
+
+  function extension(name) {
+    const m = /\.([A-Za-z0-9]{1,5})$/.exec(name);
+    return m ? m[1].toUpperCase() : '';
+  }
+
+  function safeUrl(url) {
+    return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
+  }
+
+  // The shared list
+
+  function badge(item) {
+    const box = el('span', 'kind');
+    const ext = extension(item.name);
+    if (item.kind === 'image') {
+      box.classList.add('image');
+      box.append(icon('image'));
+      if (item.size <= 15 * 1024 * 1024) {
+        const img = el('img');
+        img.alt = '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.onerror = () => img.remove();
+        img.src = 'file/' + item.id + '?inline=1';
+        box.append(img);
+      }
+    } else if (item.kind === 'folder' || item.kind === 'text' || item.kind === 'link' || item.kind === 'missing') {
+      box.classList.add(item.kind);
+      box.append(icon(item.kind === 'folder' ? 'folder' : item.kind === 'text' ? 'text' : item.kind === 'link' ? 'link' : 'missing'));
+    } else {
+      if (ext === 'PDF') box.classList.add('pdf');
+      else if (DOCUMENTS.includes(ext)) box.classList.add('document');
+      if (ext && ext.length <= 4) box.textContent = ext;
+      else box.append(icon('file'));
+    }
+    return box;
+  }
+
+  function download(item) {
+    const a = el('a', 'round');
+    a.href = 'file/' + item.id;
+    a.setAttribute('download', '');
+    a.setAttribute('aria-label', 'Download ' + item.name);
+    a.append(icon('download'));
+    return a;
+  }
+
+  function copyText(text, button, label) {
+    let ok = false;
+    // The clipboard API needs a secure page; on a plain local address only the older copy command works.
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => copied(button, label, true), () => copied(button, label, false));
+      return;
+    }
+    const area = el('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.cssText = 'position:fixed;top:0;left:0;opacity:0;font-size:16px';
+    document.body.append(area);
+    area.select();
+    area.setSelectionRange(0, text.length);
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    area.remove();
+    copied(button, label, ok);
+  }
+
+  function copied(button, label, ok) {
+    label.textContent = ok ? 'Copied' : 'Select it to copy';
+    button.replaceChild(icon(ok ? 'check' : 'warn'), button.firstChild);
+    clearTimeout(button.reset);
+    button.reset = setTimeout(() => {
+      label.textContent = 'Copy';
+      button.replaceChild(icon('copy'), button.firstChild);
+    }, 1800);
+  }
+
+  function row(item) {
+    const li = el('li', 'row' + (item.kind === 'missing' ? ' is-missing' : ''));
+    const line = el('div', 'line');
+    const info = el('div');
+    const actions = el('div', 'actions');
+    const url = item.kind === 'link' ? safeUrl(item.url) : null;
+    const name = url ? item.name.replace(/\.url$/i, '') : item.name;
+    info.append(el('div', 'name', name));
+    let meta;
+    if (item.kind === 'missing') meta = 'Moved or deleted on ' + pc;
+    else if (item.kind === 'folder') meta = 'Folder, downloads as a zip';
+    else if (url) {
+      const address = url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+      meta = address === name ? 'Web link' : address;
+    }
+    else meta = size(item.size);
+    info.append(el('div', 'meta', meta));
+
+    if (url) {
+      const a = el('a', 'button');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.append(icon('open'), document.createTextNode('Open'));
+      a.setAttribute('aria-label', 'Open ' + url);
+      actions.append(a);
+    } else if (item.kind !== 'missing') {
+      actions.append(download(item));
+    }
+
+    line.append(badge(item), info, actions);
+    li.append(line);
+    if (item.kind === 'text' && item.text != null) {
+      const textual = el('div', 'textual');
+      const preview = el('div', 'preview', item.text);
+      preview.tabIndex = 0;
+      preview.setAttribute('aria-label', 'Text of ' + item.name);
+      const button = el('button', 'button');
+      button.type = 'button';
+      const label = el('span', null, 'Copy');
+      button.append(icon('copy'), label);
+      button.setAttribute('aria-label', 'Copy the text of ' + item.name);
+      button.onclick = () => copyText(item.text, button, label);
+      const copy = el('div', 'copy');
+      copy.append(button);
+      textual.append(preview, copy);
+      li.append(textual);
+    }
+    return li;
+  }
+
+  function render(items) {
+    $('shared').hidden = items.length === 0;
+    $('ready').hidden = items.length !== 0;
+    const present = items.filter(i => i.kind !== 'missing');
+    const bytes = present.reduce((sum, i) => sum + (i.size || 0), 0);
+    const count = items.length + (items.length === 1 ? ' item' : ' items');
+    $('summary').textContent = bytes ? count + ' · ' + size(bytes) : count;
+    $('all').hidden = present.length < 2;
+    $('items').replaceChildren(...items.map(row));
+  }
+
+  // Asks for the list every few seconds while the page is in front; two misses in a row mean the PC stopped sharing.
+  function poll() {
+    if (stopped || asking) return;
+    asking = true;
+    fetch('list', { cache: 'no-store' })
+      .then(r => {
+        if (!r.ok) throw new Error('status ' + r.status);
+        return r.text();
+      })
+      .then(text => {
+        failures = 0;
+        if (text !== last) {
+          last = text;
+          render(JSON.parse(text));
+        }
+      })
+      .catch(() => {
+        if (++failures >= 2) stop();
+      })
+      .finally(() => {
+        asking = false;
+        schedule();
+      });
+  }
+
+  function schedule() {
+    clearTimeout(timer);
+    if (!stopped && document.visibilityState === 'visible') timer = setTimeout(poll, 3000);
+  }
+
+  function stop() {
+    stopped = true;
+    clearTimeout(timer);
+    document.body.classList.add('is-stopped');
+    $('stopped').hidden = false;
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') poll();
+    else clearTimeout(timer);
+  });
+
+  // Sending files, one at a time so a long list never crowds the PC's few connections
+
+  const queue = [];
+  let sending = false;
+
+  function uploadRow(file) {
+    const li = el('li', 'row');
+    const line = el('div', 'line');
+    const box = el('span', 'kind up');
+    box.append(icon('up'));
+    const info = el('div');
+    const meta = el('div', 'meta', 'Waiting · ' + size(file.size));
+    const bar = el('div', 'bar');
+    const fill = el('span');
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-label', 'Sending ' + file.name);
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', '100');
+    bar.setAttribute('aria-valuenow', '0');
+    bar.append(fill);
+    info.append(el('div', 'name', file.name), meta, bar);
+    line.append(box, info, el('div'));
+    li.append(line);
+    $('uploads').append(li);
+    return {
+      progress(sent) {
+        const share = file.size ? Math.min(1, sent / file.size) : 1;
+        fill.style.width = (share * 100).toFixed(1) + '%';
+        bar.setAttribute('aria-valuenow', String(Math.round(share * 100)));
+        meta.textContent = size(sent) + ' of ' + size(file.size);
+      },
+      done(savedAs) {
+        bar.remove();
+        box.className = 'kind done';
+        box.replaceChildren(icon('check'));
+        meta.textContent = 'Saved on ' + pc + (savedAs && savedAs !== file.name ? ' as ' + savedAs : '');
+      },
+      fail(why) {
+        bar.remove();
+        box.className = 'kind failed';
+        box.replaceChildren(icon('warn'));
+        meta.className = 'meta bad';
+        meta.textContent = why;
+      }
+    };
+  }
+
+  function reason(status) {
+    if (status === 507) return 'There is not enough space on ' + pc + '.';
+    if (status === 403 || status === 404) return 'Sharing stopped on ' + pc + '.';
+    if (status === 0) return 'Lost the connection to ' + pc + '. Check this device is on the same Wi-Fi.';
+    return pc + ' could not save it. Try again.';
+  }
+
+  function add(files) {
+    for (const file of files) queue.push({ file, view: uploadRow(file) });
+    next();
+  }
+
+  function next() {
+    if (sending || !queue.length) return;
+    const { file, view } = queue.shift();
+    if (stopped) {
+      view.fail('Sharing stopped on ' + pc + '.');
+      next();
+      return;
+    }
+    sending = true;
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', 'upload?name=' + encodeURIComponent(file.name));
+    xhr.upload.onprogress = e => view.progress(e.loaded);
+    xhr.onload = () => {
+      let saved = null;
+      try { saved = JSON.parse(xhr.responseText).name; } catch (e) { saved = null; }
+      if (xhr.status === 200) view.done(saved);
+      else view.fail(reason(xhr.status));
+      finish();
+    };
+    xhr.onerror = () => {
+      view.fail(reason(0));
+      finish();
+    };
+    view.progress(0);
+    xhr.send(file);
+  }
+
+  function finish() {
+    sending = false;
+    next();
+  }
+
+  const chooser = $('chooser');
+  const pick = $('pick');
+  pick.addEventListener('click', () => chooser.click());
+  chooser.addEventListener('change', () => {
+    add(Array.from(chooser.files));
+    chooser.value = '';
+  });
+  if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    $('pick-hint').textContent = 'Or drop them here';
+  }
+  pick.addEventListener('dragover', e => {
+    e.preventDefault();
+    pick.classList.add('over');
+  });
+  pick.addEventListener('dragleave', () => pick.classList.remove('over'));
+  pick.addEventListener('drop', e => {
+    e.preventDefault();
+    pick.classList.remove('over');
+    add(Array.from(e.dataTransfer.files));
+  });
+
+  // Sending text
+
+  const text = $('text');
+  const send = $('send');
+  const status = $('text-status');
+  function say(words, bad) {
+    status.textContent = words;
+    status.className = bad ? 'status bad' : 'status';
+  }
+  text.addEventListener('input', () => {
+    send.disabled = !text.value.trim();
+    say('');
+  });
+  $('compose').addEventListener('submit', e => {
+    e.preventDefault();
+    const value = text.value;
+    if (!value.trim()) return;
+    send.disabled = true;
+    say('Sending…');
+    fetch('text', { method: 'POST', body: value, headers: { 'Content-Type': 'text/plain;charset=utf-8' } })
+      .then(r => {
+        if (r.ok) {
+          text.value = '';
+          say('Sent to ' + pc + '.');
+        } else {
+          say(r.status === 413 ? 'That is too long to send. Send it as a file instead.' : reason(r.status), true);
+        }
+      })
+      .catch(() => say(reason(0), true))
+      .finally(() => { send.disabled = !text.value.trim(); });
+  });
+
+  poll();
+})();
+</script>
+</body>
+</html>

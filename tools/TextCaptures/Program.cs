@@ -777,7 +777,14 @@ internal static unsafe partial class Program
             bool allowed = ShelfStore.Allows(slot.Action, items[at]);
             c.RoundRect(Offset(slot.Box, body), ShelfLayout.ActionCorner, asking ? 0x29F0B35Au : 0x0FFFFFFFu);
             uint ink = asking ? 0xFFF0B35A : allowed ? 0xE6FFFFFF : 0x5CFFFFFF;
-            c.Glyph(slot.Action, body + new Vector2(slot.Icon.X, slot.Icon.Y), ink);
+            if (slot.Action is ShelfAction.Pin or ShelfAction.Drop)
+            {
+                c.Glyph(slot.Action == ShelfAction.Pin ? Glyphs.Pin : Glyphs.Phone, body + new Vector2(slot.Icon.X, slot.Icon.Y), slot.Icon.Width, ink);
+            }
+            else
+            {
+                c.Glyph(slot.Action, body + new Vector2(slot.Icon.X, slot.Icon.Y), ink);
+            }
             if (slot.Label is { } label)
             {
                 c.Text(label with { Style = label.Style with { Color = ink } }, body);

@@ -34,6 +34,12 @@ public enum IslandActivity
 
     /// <summary>A reminder that rang, with Snooze and Dismiss: it holds the island until one is pressed, and a rest on it opens nothing.</summary>
     Reminder = 1024,
+
+    /// <summary>
+    /// A Tomte Drop card while its share runs: a phone may be part way through a file, so the card stays until Stop
+    /// sharing, or Esc with the pointer on it. A click elsewhere is the user's own, into Settings for the network say.
+    /// </summary>
+    Sharing = 2048,
 }
 
 /// <summary>What a pointer report does to the hover dwell: nothing, start it, or cancel it.</summary>
@@ -92,11 +98,11 @@ public static class RetractionRules
     /// <summary>
     /// What is left when a state the user asked for takes the island over: the peek pill's "retract when a window
     /// comes under" rule, the hold of the pill kept while music plays and the rambler's hold on the pill end, so a hold
-    /// that ends later cannot retract it, and a drop zone's result or a reminder's pill, which the new state replaces, no
-    /// longer holds the island.
+    /// that ends later cannot retract it, and a drop zone's result, a Tomte Drop card or a reminder's pill, which the new
+    /// state replaces, no longer holds the island.
     /// </summary>
     public static IslandActivity TakenOver(IslandActivity activity) =>
-        activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result | IslandActivity.Playing | IslandActivity.Reminder);
+        activity & ~(IslandActivity.Peek | IslandActivity.Rambling | IslandActivity.Result | IslandActivity.Playing | IslandActivity.Reminder | IslandActivity.Sharing);
 
     /// <summary>How long the pill kept while music plays stays once playback pauses or stops, so it does not come and go between tracks.</summary>
     public static readonly TimeSpan KeptAfterPlayback = TimeSpan.FromSeconds(5);
@@ -150,13 +156,13 @@ public static class RetractionRules
 
     /// <summary>
     /// Whether Esc is taken as a global hotkey: in the states the user opened on purpose, except that a drop zone's
-    /// result or a pinned island, which can stay up a long time, takes it only while the pointer is on the island, so Esc
-    /// in the user's own app after Alt+Tab stays theirs. While the island has the keys Esc reaches it as a key, where an
-    /// input method can still use it, so it is no hotkey then.
+    /// result, a Tomte Drop card or a pinned island, which can stay up a long time, takes it only while the pointer is on
+    /// the island, so Esc in the user's own app after Alt+Tab stays theirs. While the island has the keys Esc reaches it as
+    /// a key, where an input method can still use it, so it is no hotkey then.
     /// </summary>
     public static bool TakesEscape(IslandState state, IslandActivity activity, bool pointerInside) =>
         state is IslandState.Panels or IslandState.Palette && !activity.HasFlag(IslandActivity.Typing)
-        && ((activity & (IslandActivity.Result | IslandActivity.Pinned)) == 0 || pointerInside);
+        && ((activity & (IslandActivity.Result | IslandActivity.Pinned | IslandActivity.Sharing)) == 0 || pointerInside);
 
     /// <summary>
     /// Whether Ctrl+V is taken as a global hotkey to paste onto the shelf: only while the Shelf panel shows and the pointer
@@ -173,7 +179,7 @@ public static class RetractionRules
     /// </summary>
     public static bool RetractsOnFocusLoss(IslandActivity activity) => !activity.HasFlag(IslandActivity.Pinned);
 
-    /// <summary>A press outside the island dismisses a drop zone's result; anywhere else it is the user's own click.</summary>
+    /// <summary>A press outside the island dismisses a drop zone's result, not a running Tomte Drop; anywhere else it is the user's own click.</summary>
     public static bool DismissedByClickOutside(IslandState state, IslandActivity activity) =>
         state == IslandState.Palette && activity.HasFlag(IslandActivity.Result);
 
