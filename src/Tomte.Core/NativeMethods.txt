@@ -129,3 +129,6 @@ GetWindowTextLength
 MFStartup
 MFShutdown
 MF_VERSION
+SHGetKnownFolderPath
+FOLDERID_Downloads
+GetDiskFreeSpaceEx
