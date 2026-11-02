@@ -5,6 +5,7 @@ using System.Text;
 using Tomte.Core;
 using Tomte.Core.Interaction;
 using Tomte.Core.Storage;
+using Tomte.Core.Text;
 using Xunit;
 
 namespace Tomte.Tests;
@@ -934,8 +935,8 @@ public sealed class ShelfTests : IDisposable
             }
         }
 
-        // Remove's question always says itself; the rest are named when every name fits, else icons with tips. Copy path
-        // and Share are always icons.
+        // Remove's question always says itself; the rest are named when every name fits, else icons with tips. Copy path,
+        // Share and Tomte Drop are always icons.
         var remove = actions[^1];
         Assert.Equal(confirming ? ShelfLayout.ConfirmRemove : "Remove", remove.Label?.Text ?? "Remove");
         Assert.Equal(width >= 760 || confirming, remove.Label is not null);
@@ -967,15 +968,21 @@ public sealed class ShelfTests : IDisposable
         static List<Target> In(IReadOnlyList<Target> all, int group) => [.. all.Where(t => t.Group == group)];
 
         // Nothing hovered: the page's eight tiles, Tab and arrows in group 1, each dragged out by a press; then the
-        // Sets button and the filter's four segments in group 3 with the current one checked, and Clear shelf.
+        // Tomte Drop button, a Tab stop of its own, the Sets button and the filter's four segments in group 3 with the
+        // current one checked, and Clear shelf.
         var all = ShelfLayout.Targets(Body, 0, items, null, [], false, ShelfFilter.Text);
+        var drop = all.Single(t => t.Id == ShelfLayout.DropId);
+        Assert.Equal((ShelfLayout.DropButton(Body), TargetKind.Button, 0, true), (drop.Bounds, drop.Kind, drop.Group, drop.Enabled));
+        // With nothing selected it only receives; with a selection it shares it. Either way its tip says so.
+        Assert.Equal("Tomte Drop: get files from a phone", drop.Tip);
+        Assert.Equal("Tomte Drop: share 3 selected with a phone", ShelfLayout.Targets(Body, 0, items, null, [], false, selected: 3).Single(t => t.Id == ShelfLayout.DropId).Tip);
         var tiles = In(all, 1);
         Assert.Equal(Enumerable.Range(1, 8).Select(i => $"tile:{i}"), tiles.Select(t => t.Id));
         Assert.All(tiles, t => Assert.True(t is { Kind: TargetKind.Tile, Group: 1, Draggable: true, Enabled: true }));
         Assert.Equal(Enumerable.Range(0, 8).Select(s => ShelfLayout.Tile(s, Body)), tiles.Select(t => t.Bounds));
         Assert.Equal("file 1.pdf\nC:\\docs", tiles[0].Tip);
         Assert.Equal("file 3.pdf\nKept on the shelf", tiles[2].Tip);
-        Assert.Equal([.. tiles.Select(t => t.Id), ShelfLayout.SetsId, "filter:All", "filter:Files", "filter:Text", "filter:Links", "clear"], all.Select(t => t.Id));
+        Assert.Equal([.. tiles.Select(t => t.Id), ShelfLayout.DropId, ShelfLayout.SetsId, "filter:All", "filter:Files", "filter:Text", "filter:Links", "clear"], all.Select(t => t.Id));
         Assert.Equal([false, false, false, true, false], In(all, 3).Select(t => t.Checked));
         Assert.Equal(ShelfLayout.Foot(Body, false).Clear, all[^1].Bounds);
         // Clear shelf only while there is something to clear; asking, it is wider.
@@ -987,9 +994,9 @@ public sealed class ShelfTests : IDisposable
         var band = In(ShelfLayout.Targets(Body, 0, items, items[1], [items[1]], false), 2);
         Assert.Equal(Enum.GetValues<ShelfAction>().Select(a => $"act:{a}"), band.Select(t => t.Id));
         Assert.All(band, t => Assert.True(t is { Kind: TargetKind.Button, Group: 2, Draggable: false }));
-        // Named on the band, so with the keys a tip only says the key; Copy path and Share are icons, named in their tips.
-        Assert.Equal(["Enter", "Ctrl+Shift+E", "Copy path (Ctrl+C)", "Share", "P", "Delete"], band.Select(t => t.TipWith(keys: true)));
-        Assert.Equal([false, false, true, false, false, true], band.Select(t => t.Enabled));
+        // Named on the band, so with the keys a tip only says the key; Copy path, Share and Tomte Drop are icons, named in their tips.
+        Assert.Equal(["Enter", "Ctrl+Shift+E", "Copy path (Ctrl+C)", "Share", "Tomte Drop", "P", "Delete"], band.Select(t => t.TipWith(keys: true)));
+        Assert.Equal([false, false, true, false, false, false, true], band.Select(t => t.Enabled));
         Assert.Equal(ShelfLayout.Actions(Body, false).Select(a => a.Box), band.Select(t => t.Bounds));
         // Acting on the selection: an action works when one of the items allows it.
         Assert.All(In(ShelfLayout.Targets(Body, 0, items, items[1], [items[0], items[1]], false), 2), t => Assert.True(t.Enabled));
@@ -997,12 +1004,15 @@ public sealed class ShelfTests : IDisposable
         // Icon only on a narrow band, each named in its tooltip, with its key while the island has the keys.
         var narrow = In(ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [items[0]], false), 2);
         Assert.Equal(Enum.GetValues<ShelfAction>().Select(ShelfLayout.Name), narrow.Select(t => t.Tip));
-        Assert.Equal(["Open (Enter)", "Show in folder (Ctrl+Shift+E)", "Copy path (Ctrl+C)", "Share", "Pin (P)", "Remove (Delete)"], narrow.Select(t => t.TipWith(keys: true)));
+        Assert.Equal(["Open (Enter)", "Show in folder (Ctrl+Shift+E)", "Copy path (Ctrl+C)", "Share", "Tomte Drop", "Pin (P)", "Remove (Delete)"], narrow.Select(t => t.TipWith(keys: true)));
         // Pin reads Unpin when every item acted on is pinned.
         var pinned = items[0] with { Pinned = true };
         Assert.Equal("Unpin", In(ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [pinned], false), 2).Single(t => t.Id == "act:Pin").Tip);
         Assert.Equal("Pin", In(ShelfLayout.Targets(new System.Numerics.Vector2(440, Body.Y), 0, items, items[0], [pinned, items[3]], false), 2).Single(t => t.Id == "act:Pin").Tip);
         Assert.Equal("Show in folder", ShelfLayout.Name(ShelfAction.Reveal));
+
+        // The band's buttons take the Tomte Drop button's place, as they take the Sets button's.
+        Assert.DoesNotContain(ShelfLayout.Targets(Body, 0, items, items[0], [items[0]], false), t => t.Id == ShelfLayout.DropId);
 
         // Scrolled away from the tile the band was for: no band.
         Assert.Empty(In(ShelfLayout.Targets(Body, 4, items, items[0], [items[0]], false), 2));
@@ -1434,10 +1444,41 @@ public sealed class ShelfTests : IDisposable
         var slots = ShelfLayout.SetSlots(body, sets, 0, confirming: 2);
         Assert.Equal(ShelfLayout.SetRows(body), slots.Count);
         Assert.True(slots[^1].Row.Bottom <= ShelfLayout.GridBottom(body));
-        Assert.All(slots, s => Assert.True(s.Row.Contains(s.Back) && s.Row.Contains(s.Rename) && s.Row.Contains(s.Delete) && s.Back.Left > s.Row.Left));
+        Assert.All(slots, s => Assert.True(s.Row.Contains(s.Back) && s.Row.Contains(s.Drop) && s.Row.Contains(s.Rename) && s.Row.Contains(s.Delete) && s.Back.Left > s.Row.Left));
+        // Bring back, Tomte Drop, Rename, Delete, apart, left to right; the name stops before them.
+        Assert.All(slots, s => Assert.True(s.Back.Right < s.Drop.Left && s.Drop.Right < s.Rename.Left && s.Rename.Right < s.Delete.Left && s.Name.Slot.Right < s.Back.Left));
         Assert.NotNull(slots[1].DeleteLabel);
         Assert.Equal(20 - slots.Count, ShelfLayout.ScrollSets(0, -100, 20, body));
         Assert.True(ShelfLayout.SetsButton(body).Right < ShelfLayout.Filter(body, ShelfFilter.All).Track.Left);
+
+        // Each row's Tomte Drop in Tab order after its Bring back, named in its tip, and off for a set whose files are all gone;
+        // then the head's Tomte Drop button before the Sets button.
+        var gone = new ShelfSet(30, "Gone", 2, 2);
+        var targets = ShelfLayout.SetTargets(body, [sets[0], gone], 0, null, "Save", true, null, ShelfFilter.All);
+        Assert.Equal(["setname", "setsave", "set:1:back", "set:1:drop", "set:1:rename", "set:1:delete", "set:30:back", "set:30:drop", "set:30:rename", "set:30:delete", ShelfLayout.DropId, ShelfLayout.SetsId],
+            targets.Take(12).Select(t => t.Id));
+        Assert.Equal(ShelfLayout.SetDropTip, targets[3].Tip);
+        Assert.Equal((true, false), (targets[3].Enabled, targets[7].Enabled));
+        Assert.Equal((42L, "drop"), ShelfLayout.SetPart(ShelfLayout.SetId(42, "drop")));
+    }
+
+    // The head row keeps the title, the Tomte Drop button, the Sets button and the filter apart at every width the Shelf takes.
+    [Theory]
+    [InlineData(760)]
+    [InlineData(600)]
+    [InlineData(512)]
+    [InlineData(440)]
+    public void TheTomteDropButtonFitsTheHeadAtEveryWidth(float width)
+    {
+        var body = new System.Numerics.Vector2(width, Body.Y);
+        var (drop, sets, track) = (ShelfLayout.DropButton(body), ShelfLayout.SetsButton(body), ShelfLayout.Filter(body, ShelfFilter.All).Track);
+        Assert.True(drop.Right + ShelfLayout.FilterApart <= sets.Left + 0.01f && sets.Right < track.Left);
+        Assert.Equal((sets.Y, sets.Height, sets.Height), (drop.Y, drop.Width, drop.Height));
+        Assert.True(drop.Height >= StateLook.MinTarget && drop.Top >= ShelfLayout.Top - 1 && drop.Bottom <= ShelfLayout.GridTop - ShelfLayout.HeadGap + 1);
+        var head = ShelfLayout.HeadText(body, 12);
+        float title = ShelfLayout.PadX + TextSlot.Measure(ShelfLayout.Title, TextStyle.PageTitle, width);
+        Assert.True(title < drop.Left, "the title shows whole");
+        Assert.True(head[1].Slot.Right <= drop.Left - ShelfLayout.FilterApart + 0.01f);
     }
 
     [Fact]

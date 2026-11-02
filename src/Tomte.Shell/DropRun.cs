@@ -58,6 +58,20 @@ internal sealed class DropRun
         _ = new DropRun(island, triggers, shelf, text, log).RunAsync(offered, none);
     }
 
+    /// <summary>The shelf items a Tomte Drop offers: those whose file is still there, by their names on the shelf.</summary>
+    public static IReadOnlyList<DropFile> Offered(IEnumerable<ShelfItem> items) =>
+        [.. items.Where(i => ShelfStore.Allows(ShelfAction.Drop, i)).Select(i => new DropFile(i.Name, i.Path))];
+
+    /// <summary>The same, once a drop's items are on the shelf.</summary>
+    public static async Task<IReadOnlyList<DropFile>> Offered(Task<IReadOnlyList<ShelfItem>> items) => Offered(await items);
+
+    /// <summary>A saved set's files that are still where they were, looked at on the pool; the shelf does not change.</summary>
+    public static async Task<IReadOnlyList<DropFile>> Offered(Task<IReadOnlyList<ShelfEntry>> members)
+    {
+        var all = await members;
+        return await Task.Run(() => (IReadOnlyList<DropFile>)[.. all.Where(m => File.Exists(m.Path) || Directory.Exists(m.Path)).Select(m => new DropFile(m.Name, m.Path!))]);
+    }
+
     private async Task RunAsync(Task<IReadOnlyList<DropFile>> offered, string? none)
     {
         Show();

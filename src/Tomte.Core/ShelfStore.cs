@@ -25,6 +25,9 @@ public enum ShelfAction
     CopyPath,
     Share,
 
+    /// <summary>Tomte Drop: the items to a phone on the same Wi-Fi, by a QR code.</summary>
+    Drop,
+
     /// <summary>Pins the items, or unpins them when every one is pinned. A pinned item stays on the shelf after a drag out and a Clear shelf.</summary>
     Pin,
     Remove,
