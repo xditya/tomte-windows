@@ -1440,6 +1440,27 @@ public sealed class ShelfTests : IDisposable
         Assert.True(ShelfLayout.SetsButton(body).Right < ShelfLayout.Filter(body, ShelfFilter.All).Track.Left);
     }
 
+    [Fact]
+    public async Task ASetsMembersAreReadInItsOrderWithoutTouchingTheShelf()
+    {
+        string a = Write(user, "a.txt", "a"), stick = Write(usb, "stick.txt", "stick");
+        var shelf = Store();
+        await shelf.Accept(new DroppedItems([a, stick], [], "a note", KeepCopy: false));
+        var set = (await shelf.SaveSet("Three", shelf.Items))!;
+        var saved = shelf.Items.Select(i => new ShelfEntry(i.Kind, i.Name, i.Path)).ToList();
+        await shelf.Remove([shelf.Items.Single(i => i.Path == a)]);
+        File.Delete(a);
+        var before = shelf.Items.ToList();
+
+        // In the set's order, as saved: a file that went is still a member, and nothing comes back onto the shelf.
+        var next = Store();
+        var members = await next.SetMembers(set.Id);
+        Assert.Equal(saved, members);
+        Assert.Equal([ShelfKind.Content, ShelfKind.Copy, ShelfKind.Reference], members.Select(m => m.Kind));
+        Assert.Equal(before.Select(i => i.Id), next.Items.Select(i => i.Id));
+        Assert.Empty(await next.SetMembers(set.Id + 1));
+    }
+
     private static bool InsideRoundedBottom(float x, float y, System.Numerics.Vector2 body, float radius)
     {
         // Body coordinates; the panel's bottom corners are the body's.

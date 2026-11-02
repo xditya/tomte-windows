@@ -263,24 +263,12 @@ public sealed class ShelfStore : IShelf
             var added = new List<ShelfItem>();
             using (var connection = db.Open(Feature, Schema))
             {
-                var members = new List<(string Name, string Path, ShelfKind Kind)>();
-                using (var read = connection.CreateCommand())
-                {
-                    read.CommandText = "SELECT name, path, kind FROM shelf_set_items WHERE set_id = $set ORDER BY position";
-                    read.Parameters.AddWithValue("$set", setId);
-                    using var reader = read.ExecuteReader();
-                    while (reader.Read())
-                    {
-                        members.Add((reader.GetString(0), reader.GetString(1), (ShelfKind)reader.GetInt32(2)));
-                    }
-                }
-
-                var fresh = members.Where(m => present.Add(Normal(m.Path))).ToList();
+                var fresh = Members(connection, setId).Where(m => present.Add(Normal(m.Path!))).ToList();
                 using var transaction = connection.BeginTransaction();
                 // Last first: at one time the newer id sorts first, so the set's first item leads the shelf.
                 for (int i = fresh.Count - 1; i >= 0; i--)
                 {
-                    var (name, path, kind) = fresh[i];
+                    var (kind, name, path, _) = fresh[i];
                     string unique = Unique(name, taken);
                     taken.Add(unique);
                     using var insert = connection.CreateCommand();
@@ -289,7 +277,7 @@ public sealed class ShelfStore : IShelf
                     insert.Parameters.AddWithValue("$path", path);
                     insert.Parameters.AddWithValue("$kind", (int)kind);
                     insert.Parameters.AddWithValue("$added", now.ToUnixTimeMilliseconds());
-                    added.Insert(0, Probe(new ShelfItem((long)insert.ExecuteScalar()!, unique, path, kind, now)));
+                    added.Insert(0, Probe(new ShelfItem((long)insert.ExecuteScalar()!, unique, path!, kind, now)));
                 }
 
                 transaction.Commit();
@@ -300,6 +288,21 @@ public sealed class ShelfStore : IShelf
             log?.Invoke($"shelf: brought back {added.Count} items, {added.Count(a => a.Missing)} missing");
         });
         return back;
+    }
+
+    /// <summary>
+    /// A set's items as it saved them, in its order, each with its name, path and kind; the shelf does not change and
+    /// nothing on disk is looked at. None for a set that is gone. Queued.
+    /// </summary>
+    public async Task<IReadOnlyList<ShelfEntry>> SetMembers(long setId)
+    {
+        IReadOnlyList<ShelfEntry> members = [];
+        await Run(() =>
+        {
+            using var connection = db.Open(Feature, Schema);
+            members = Members(connection, setId);
+        });
+        return members;
     }
 
     /// <summary>Renames a set; an empty name changes nothing, one another set has gets " (2)" and so on. Queued.</summary>
@@ -951,6 +954,22 @@ public sealed class ShelfStore : IShelf
         }
 
         (sets, setPaths) = (read, paths);
+    }
+
+    /// <summary>A set's items from the database, in the set's order.</summary>
+    private static List<ShelfEntry> Members(SqliteConnection connection, long setId)
+    {
+        var members = new List<ShelfEntry>();
+        using var read = connection.CreateCommand();
+        read.CommandText = "SELECT name, path, kind FROM shelf_set_items WHERE set_id = $set ORDER BY position";
+        read.Parameters.AddWithValue("$set", setId);
+        using var reader = read.ExecuteReader();
+        while (reader.Read())
+        {
+            members.Add(new ShelfEntry((ShelfKind)reader.GetInt32(2), reader.GetString(0), reader.GetString(1)));
+        }
+
+        return members;
     }
 
     /// <summary>The name trimmed, or <see cref="DefaultSetName"/>, with " (2)" and so on when another set has it.</summary>
