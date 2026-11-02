@@ -23,8 +23,8 @@ public static class DropCard
     public const string SetGone = "None of the set's files are where they were, so nothing is shared.";
     public const string CouldNotStart = "Tomte Drop could not start. Nothing is shared.";
 
-    /// <summary>Windows keeps phones out of a network set to Public; the card ends when the user clicks into Settings, so they start again after.</summary>
-    public const string PublicNetwork = "Windows has this network set to Public, which blocks phones. Set it to Private in Network settings, then start Tomte Drop again.";
+    /// <summary>Windows keeps phones out of a network set to Public. The card stays up while the user changes it in Settings, and the share takes the phone once it is Private.</summary>
+    public const string PublicNetwork = "Windows has this network set to Public, which blocks phones. Set it to Private in Network settings, then scan the code.";
 
     /// <summary>The card while the share starts.</summary>
     public static DropResult Opening => new(Name, Indicator, Starting, false, "", [], [Stop]);

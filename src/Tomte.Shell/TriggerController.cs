@@ -983,7 +983,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         // Only a pointer coming onto the pill dwells; one moving about on it lets the dwell run.
         Dwell(hover);
-        if ((activity & (IslandActivity.Result | IslandActivity.Pinned)) != 0)
+        if ((activity & (IslandActivity.Result | IslandActivity.Pinned | IslandActivity.Sharing)) != 0)
         {
             InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
         }
@@ -2013,7 +2013,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// that holds nothing of its own (Ask about it, which hands over to the typing palette) to the usual rules. From
     /// Panels (Tomte Drop on the shelf) the state passes through Hidden, so a view for it is made after this call.
     /// </summary>
-    internal void ZonePalette(double height, bool busy, bool hold = true)
+    internal void ZonePalette(double height, bool busy, bool hold = true, bool sharing = false)
     {
         if (machine.State is IslandState.ShelfDrop or IslandState.Panels || (machine.State == IslandState.Palette && height != zoneHeight))
         {
@@ -2024,8 +2024,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (machine.State == IslandState.Palette)
         {
             var was = activity;
-            activity = (activity & ~(IslandActivity.AiTask | IslandActivity.Result)) | (busy ? IslandActivity.AiTask : hold ? IslandActivity.Result : IslandActivity.None);
-            if ((was ^ activity).HasFlag(IslandActivity.Result))
+            activity = (activity & ~(IslandActivity.AiTask | IslandActivity.Result | IslandActivity.Sharing))
+                | (busy ? IslandActivity.AiTask : sharing ? IslandActivity.Sharing : hold ? IslandActivity.Result : IslandActivity.None);
+            if (((was ^ activity) & (IslandActivity.Result | IslandActivity.Sharing)) != 0)
             {
                 InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, pointerInside));
             }

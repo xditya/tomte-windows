@@ -11,7 +11,8 @@ namespace Tomte.Shell;
 /// that the phone must be on this Wi-Fi, and a line that follows what the phone does. A file the phone sends goes on
 /// the shelf where it was saved, and the newest show as tiles, which a drag takes out and a double click opens; text
 /// goes on the shelf as the shelf keeps text. The share lives exactly as long as the card: Stop sharing, Esc, or anything else that
-/// takes the island out of the Palette state ends it, and a share that stopped by itself turns the card to Close. Needs
+/// takes the island out of the Palette state ends it, and a share that stopped by itself turns the card to Close. A click
+/// outside the island does not end it, so a phone part way through a file is not cut off by a click elsewhere. Needs
 /// no provider and loads nothing of the AI layer; a copied row loads the assembly the clipboard code is in, as the
 /// shelf's Copy path does. On the island's thread; the share's events are posted to it.
 /// </summary>
@@ -241,7 +242,8 @@ internal sealed class DropRun
         }
 
         view.Show(card, got);
-        triggers.ZonePalette(view.Height, busy: false);
+        // While the share runs a click elsewhere leaves the card up; once it has ended the card is a result like any other.
+        triggers.ZonePalette(view.Height, busy: false, sharing: share is not null);
         // After the change to the Palette state, which seats the tomte by the prompt box: this card's row is its head.
         island.Seat = DropResultLayout.Seat;
     }
