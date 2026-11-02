@@ -44,6 +44,9 @@ internal static partial class Program
     // The AI drop zones, made with the shelf; the undo driver drops on them.
     private static DropZones? zones;
 
+    // The tray's Tomte Drop, once the shelf it puts what arrives on is up.
+    private static Action? tomteDrop;
+
     /// <summary>The AI history beside the settings file in use: the palette, voice, jobs and the History tab share it.</summary>
     internal static AiHistory? History { get; private set; }
 
@@ -289,6 +292,7 @@ internal static partial class Program
         tray.OpenIsland += triggers.Toggle;
         tray.Ask += () => AskFromTray(island, triggers, store, logLine);
         tray.Search += () => triggers.OpenSearch(ignorePause: true);
+        tray.TomteDrop += () => tomteDrop?.Invoke();
         // The island goes first, as for the Shortcuts tile, and with it the keys it registers while open (Esc among them),
         // which a settings shortcut box would otherwise not get.
         tray.OpenSettings += () =>
@@ -491,6 +495,7 @@ internal static partial class Program
         // own shelf, tiles, note and history too.
         panels.Register(StartShelf(island, triggers, store, db, text, typing, log, out var shelf));
         panels.ShelfCount = () => shelf.Items.Count;
+        tomteDrop = () => DropRun.Receive(island, triggers, shelf, text, log);
         shelf.Changed += panels.ShelfChanged;
         panels.Register(new HomePanel(island, text, typing, shelf, media, Scratchpad, shortcuts, new HomeActions
         {

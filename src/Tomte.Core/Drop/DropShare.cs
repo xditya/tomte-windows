@@ -55,7 +55,10 @@ public sealed record DropActivity(DropActivityKind Kind, string Device, string? 
 public sealed record DropOptions(string ReceiveFolder, string PcName, uint Accent)
 {
     /// <summary>How long a share waits with nothing asked of it, and no transfer running, before it stops by itself.</summary>
-    public TimeSpan Idle { get; init; } = TimeSpan.FromMinutes(15);
+    public TimeSpan Idle { get; init; } = DefaultIdle;
+
+    /// <summary>How long a share waits with nothing asked of it before it stops; <see cref="Timeout.InfiniteTimeSpan"/> never stops it.</summary>
+    public static readonly TimeSpan DefaultIdle = TimeSpan.FromMinutes(15);
 
     /// <summary>The address to listen on; null picks this PC's address on the local network. Tests give loopback.</summary>
     public IPAddress? Address { get; init; }
@@ -177,7 +180,7 @@ public sealed class DropShare : IDisposable
     /// <summary>The page's address, token included: what the QR code holds.</summary>
     public Uri Link { get; }
 
-    /// <summary>Windows has the network this address is on set to Public, so its firewall keeps phones out.</summary>
+    /// <summary>Windows has the network this address is on set to Public, where its firewall keeps phones out unless a rule lets them in.</summary>
     public bool PublicNetwork { get; }
 
     /// <summary>The QR code of <see cref="Link"/>: [row, column], true for a dark module, with no quiet zone.</summary>

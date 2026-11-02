@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using Tomte.Core;
 using Tomte.Core.Drop;
+using Tomte.Core.Triggers;
 
 namespace Tomte.Shell;
 
@@ -10,19 +11,26 @@ namespace Tomte.Shell;
 /// the share starts on the pool, and the card shows its QR code with the link and what it offers beside it, the warning
 /// that the phone must be on this Wi-Fi, and a line that follows what the phone does. A file the phone sends goes on
 /// the shelf where it was saved, and the newest show as tiles, which a drag takes out and a double click opens; text
-/// goes on the shelf as the shelf keeps text. The share lives exactly as long as the card: Stop sharing, Esc, or anything else that
-/// takes the island out of the Palette state ends it, and a share that stopped by itself turns the card to Close. A click
-/// outside the island does not end it, so a phone part way through a file is not cut off by a click elsewhere. Needs
+/// goes on the shelf as the shelf keeps text. Only Stop sharing ends the share, or nothing asked of a share that offers
+/// files for a while; one that only receives stays until stopped. Esc, a click elsewhere or anything else that takes
+/// the island closes the card and leaves the share running, one at a time: the shelf's Tomte Drop button and the tray
+/// bring the card back, and what the phone sends meanwhile shows as an event pill. Needs
 /// no provider and loads nothing of the AI layer; a copied row loads the assembly the clipboard code is in, as the
 /// shelf's Copy path does. On the island's thread; the share's events are posted to it.
 /// </summary>
 internal sealed class DropRun
 {
+    // The share that runs, with its card up or not.
+    private static DropRun? running;
+
     private readonly IslandWindow island;
     private readonly TriggerController triggers;
     private readonly ShelfStore shelf;
+    private readonly TextRenderer text;
     private readonly Action<string>? log;
-    private readonly DropResultView view;
+
+    // The card while it is up; a new one each time it comes back.
+    private DropResultView view = null!;
 
     // The newest files that came from the phone, behind the card's tiles in the same order.
     private readonly List<ShelfItem> got = [];
@@ -32,13 +40,68 @@ internal sealed class DropRun
 
     private DropRun(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log)
     {
-        (this.island, this.triggers, this.shelf, this.log) = (island, triggers, shelf, log);
+        (this.island, this.triggers, this.shelf, this.text, this.log) = (island, triggers, shelf, text, log);
+        NewView();
+        shelf.Changed += OnShelf;
+    }
+
+    /// <summary>A share runs, with its card up or not.</summary>
+    public static bool Running => running is not null;
+
+    /// <summary>
+    /// The running share's card, or with none a share that only receives: the tray's Tomte Drop. Whatever the island
+    /// shows goes first, as for the tray's Settings, and the card opens in the Palette state the way Undo brings one back.
+    /// </summary>
+    public static void Receive(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log)
+    {
+        if (running?.view.Open == true)
+        {
+            return;
+        }
+
+        triggers.Hide();
+        if (!triggers.Reopen(PanelSize.PaletteMinHeight))
+        {
+            return;
+        }
+
+        if (!Reopen())
+        {
+            Start(island, triggers, shelf, text, Task.FromResult<IReadOnlyList<DropFile>>([]), log);
+        }
+    }
+
+    /// <summary>Brings back the running share's card; false when no share runs.</summary>
+    public static bool Reopen()
+    {
+        if (running is not { } run)
+        {
+            return false;
+        }
+
+        if (!run.view.Open)
+        {
+            // First, as in Start: on the way from Panels the state passes through Hidden.
+            run.triggers.ZonePalette(PanelSize.PaletteMinHeight, busy: false, sharing: true);
+            if (run.triggers.Machine.State != IslandState.Palette)
+            {
+                return true;
+            }
+
+            run.NewView();
+            run.Show();
+            run.island.Mascot.Set(MascotState.Result);
+        }
+
+        return true;
+    }
+
+    private void NewView()
+    {
         view = new DropResultView(island, triggers, shelf, text, log);
         view.Chose += Chose;
         view.ValueChosen += CopyValue;
-        // The share goes with the card, whichever way the island leaves it.
-        view.Closed += End;
-        shelf.Changed += OnShelf;
+        view.Closed += Closed;
     }
 
     /// <summary>
@@ -56,6 +119,8 @@ internal sealed class DropRun
             return;
         }
 
+        // One share at a time: a new one replaces the one that runs.
+        running?.End();
         _ = new DropRun(island, triggers, shelf, text, log).RunAsync(offered, none);
     }
 
@@ -95,9 +160,10 @@ internal sealed class DropRun
             // Start reads the network's category and binds a port; the sizes are read from the disk with it.
             var (started, problem, options, bytes, folders) = await Task.Run(() =>
             {
-                var options = new DropOptions(DropOptions.DefaultReceiveFolder, Environment.MachineName, accent);
-                var running = DropShare.Start(files, options, out string? why, log);
-                return (running, why, options, files.Sum(f => new FileInfo(f.Path) is { Exists: true } file ? file.Length : 0), files.Any(f => Directory.Exists(f.Path)));
+                // A share that only receives offers nothing to forget about: it stays until stopped.
+                var options = new DropOptions(DropOptions.DefaultReceiveFolder, Environment.MachineName, accent) { Idle = files.Count == 0 ? Timeout.InfiniteTimeSpan : DropOptions.DefaultIdle };
+                var begun = DropShare.Start(files, options, out string? why, log);
+                return (begun, why, options, files.Sum(f => new FileInfo(f.Path) is { Exists: true } file ? file.Length : 0), files.Any(f => Directory.Exists(f.Path)));
             });
             if (!view.Open)
             {
@@ -112,7 +178,7 @@ internal sealed class DropRun
                 return;
             }
 
-            (share, idle) = (started, options.Idle);
+            (share, idle, running) = (started, options.Idle, this);
             started.Activity += activity => island.Queue.TryEnqueue(() => On(activity));
             log?.Invoke($"tomte drop: sharing {files.Count} items{(started.PublicNetwork ? ", the network is set to Public" : "")}");
             card = DropCard.Sharing(files.Count, folders, bytes, started.Link, started.Qr, started.PublicNetwork);
@@ -130,12 +196,21 @@ internal sealed class DropRun
         }
     }
 
-    /// <summary>What the phone did, on the island's thread: the line says it, and what it sent goes on the shelf.</summary>
+    /// <summary>
+    /// What the phone did, on the island's thread: the line says it, and what it sent goes on the shelf. A phone that
+    /// opened the page got through, so the Public network warning goes. With the card closed what it sent shows as an
+    /// event pill.
+    /// </summary>
     private void On(DropActivity activity)
     {
-        if (share is null || !view.Open)
+        if (share is null)
         {
             return;
+        }
+
+        if (!view.Open && DropCard.Pill(activity, idle) is { } pill)
+        {
+            triggers.Raise(new IslandEvent(pill, DateTimeOffset.Now));
         }
 
         switch (activity.Kind)
@@ -144,6 +219,9 @@ internal sealed class DropRun
                 End();
                 Finish(DropCard.Stopped(card, idle));
                 return;
+            case DropActivityKind.Opened when card.Warning is not null:
+                card = DropCard.Reached(card);
+                break;
             case DropActivityKind.Received when activity.Path is { } path:
                 // Where the share saved it: the shelf points there and copies nothing.
                 _ = Keep(new ShelfEntry(ShelfKind.Reference, Path.GetFileName(path), path), activity.Device);
@@ -162,7 +240,7 @@ internal sealed class DropRun
     private async Task Keep(ShelfEntry entry, string? device)
     {
         var added = await shelf.Add([entry]);
-        if (device is null || added is not [var item, ..] || !view.Open)
+        if (device is null || added is not [var item, ..])
         {
             return;
         }
@@ -191,7 +269,7 @@ internal sealed class DropRun
         }
     }
 
-    // Network settings opens Windows' page for the network; Stop sharing and Close take the island down, and the share with it.
+    // Network settings opens Windows' page for the network; Stop sharing ends the share, and it and Close take the island down.
     private void Chose(int i)
     {
         if (i < card.Choices.Count && card.Choices[i] == DropCard.NetworkSettings)
@@ -208,7 +286,17 @@ internal sealed class DropRun
             return;
         }
 
+        End();
         triggers.Hide();
+    }
+
+    // The card went: a share that runs keeps running for the card to come back; one that never started or has ended is done.
+    private void Closed()
+    {
+        if (share is null)
+        {
+            End();
+        }
     }
 
     // A value row puts its text on the clipboard and the card stays.
@@ -263,12 +351,17 @@ internal sealed class DropRun
     private void End()
     {
         shelf.Changed -= OnShelf;
-        if (share is { } running)
+        if (running == this)
+        {
+            running = null;
+        }
+
+        if (share is { } stopping)
         {
             share = null;
             log?.Invoke("tomte drop: stopped");
             // Off the island's thread: ending the transfers under way may take a moment.
-            _ = Task.Run(running.Dispose);
+            _ = Task.Run(stopping.Dispose);
         }
     }
 }

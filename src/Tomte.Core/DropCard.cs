@@ -23,8 +23,11 @@ public static class DropCard
     public const string SetGone = "None of the set's files are where they were, so nothing is shared.";
     public const string CouldNotStart = "Tomte Drop could not start. Nothing is shared.";
 
-    /// <summary>Windows keeps phones out of a network set to Public. The card stays up while the user changes it in Settings, and the share takes the phone once it is Private.</summary>
-    public const string PublicNetwork = "Windows has this network set to Public, which blocks phones. Set it to Private in Network settings, then scan the code.";
+    /// <summary>
+    /// Windows' firewall keeps phones out of a network set to Public unless a rule for Tomte lets them in, which the
+    /// user may have allowed. The card stays up while the user changes it in Settings, and goes once a phone gets through.
+    /// </summary>
+    public const string PublicNetwork = "Windows has this network set to Public. If your phone can't open the page, set it to Private in Network settings.";
 
     /// <summary>The card while the share starts.</summary>
     public static DropResult Opening => new(Name, Indicator, Starting, false, "", [], [Stop]);
@@ -38,14 +41,29 @@ public static class DropCard
             Warning = publicNetwork ? PublicNetwork : null,
         };
 
+    /// <summary>The card once a phone opened the page: the network let it through, so the Public warning and its button go.</summary>
+    public static DropResult Reached(DropResult card) => card with { Warning = null, Choices = [.. card.Choices.Where(c => c != NetworkSettings)] };
+
+    /// <summary>
+    /// The event pill for what happened while the card was closed: what the phone sent, a failure, and the share
+    /// stopping by itself. Null for the rest, which only the card's line shows.
+    /// </summary>
+    public static string? Pill(DropActivity activity, TimeSpan idle) => activity.Kind switch
+    {
+        DropActivityKind.Received => $"Got {activity.Name ?? "a file"} from {Inside(activity.Device)} · on the shelf",
+        DropActivityKind.Text => Line(activity),
+        DropActivityKind.Failed => $"Tomte Drop: {Line(activity)}",
+        DropActivityKind.Stopped => $"Tomte Drop stopped: nothing was asked for {Minutes(idle)}",
+        _ => null,
+    };
+
     /// <summary>The card once the share stopped by itself: the link is dead, so the code and the warning go; the files that came stay.</summary>
     public static DropResult Stopped(DropResult card, TimeSpan idle)
     {
-        int minutes = (int)Math.Round(idle.TotalMinutes);
         return card with
         {
             Indicator = NotSharing,
-            Line = $"Stopped: nothing was asked for {minutes} minute{(minutes == 1 ? "" : "s")}",
+            Line = $"Stopped: nothing was asked for {Minutes(idle)}",
             Body = "",
             Choices = [DropResult.Close],
             Qr = null,
@@ -97,6 +115,12 @@ public static class DropCard
 
     // The shelf keeps a lone web address as a link, the rest as text.
     private static bool IsLink(string? text) => text is not null && ShelfFormats.FromText(text).Name.EndsWith(".url", StringComparison.OrdinalIgnoreCase);
+
+    private static string Minutes(TimeSpan idle)
+    {
+        int minutes = (int)Math.Round(idle.TotalMinutes);
+        return $"{minutes} minute{(minutes == 1 ? "" : "s")}";
+    }
 
     private static string Count(int count, bool folders) =>
         FormattableString.Invariant($"{count} {(folders ? "item" : "file")}{(count == 1 ? "" : "s")}");

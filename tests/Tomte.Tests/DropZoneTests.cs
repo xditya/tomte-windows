@@ -869,6 +869,40 @@ public sealed class DropZoneTests : IDisposable
         Assert.All(words, w => Assert.DoesNotContain("—", w));
     }
 
+    [Fact]
+    public void ADropCardDropsThePublicWarningOnceAPhoneGotThrough()
+    {
+        var card = DropCard.Sharing(0, false, 0, new Uri("http://192.168.1.20:53320/abc/"), new bool[21, 21], publicNetwork: true);
+        Assert.Equal([DropCard.NetworkSettings, DropCard.Stop], card.Choices);
+
+        var reached = DropCard.Reached(card);
+        Assert.Null(reached.Warning);
+        Assert.Equal([DropCard.Stop], reached.Choices);
+        Assert.NotNull(reached.Qr);
+    }
+
+    [Fact]
+    public void ADropWithItsCardClosedNamesWhatCameInAPill()
+    {
+        var idle = TimeSpan.FromMinutes(15);
+        Assert.Equal("Got IMG_2041.jpg from iPhone · on the shelf", DropCard.Pill(new(DropActivityKind.Received, "iPhone", "IMG_2041.jpg", @"C:\Downloads\Tomte Drop\IMG_2041.jpg"), idle));
+        Assert.Equal("Got text from a device · on the shelf", DropCard.Pill(new(DropActivityKind.Text, "A device", Text: "buy milk"), idle));
+        Assert.Equal("Tomte Drop: The phone stopped the upload.", DropCard.Pill(new(DropActivityKind.Failed, "iPhone", "a.zip", Text: "The phone stopped the upload."), idle));
+        Assert.Equal("Tomte Drop stopped: nothing was asked for 15 minutes", DropCard.Pill(new(DropActivityKind.Stopped, ""), idle));
+        // Comings and goings only change the card's line.
+        Assert.Null(DropCard.Pill(new(DropActivityKind.Opened, "iPhone"), idle));
+        Assert.Null(DropCard.Pill(new(DropActivityKind.Sending, "iPhone", "report.pdf"), idle));
+    }
+
+    [Fact]
+    public void TheShelfsDropButtonBringsARunningShareBack()
+    {
+        Assert.Equal("Tomte Drop: get files from a phone", ShelfLayout.DropTip(0));
+        Assert.Equal("Tomte Drop: show the share", ShelfLayout.DropTip(0, sharing: true));
+        // A selection is a new share either way.
+        Assert.Equal("Tomte Drop: share 2 selected with a phone", ShelfLayout.DropTip(2, sharing: true));
+    }
+
     // The custom slot
 
     private string Skills => Path.Combine(_dir, "skills");
