@@ -30,12 +30,12 @@ internal static partial class Program
         var ask = new DropResult("Ask about it · Q3-report.pdf", "Nothing sent", "File · Q3-report.pdf is attached. Nothing is sent until you ask.", false, "Ask about Q3-report.pdf", [], []);
         return
         [
-            new("shelf-drop-pill", IslandGeometry.ShelfDrop, c => DropPill(c, hint: true)),
-            new("shelf-drop-pill-no-provider", IslandGeometry.ShelfDrop, c => DropPill(c, hint: false)),
+            new("shelf-drop-pill", IslandGeometry.ShelfDrop, DropPill),
             Zones("shelf-drop-zones", null, DropZone.Summarize, DropZoneLayout.Width),
             Zones("shelf-drop-zones-ask", null, DropZone.Ask, DropZoneLayout.Width),
             Zones("shelf-drop-zones-skill", "invoice-parser", DropZone.Skill, DropZoneLayout.Width),
-            Zones("shelf-drop-zones-narrow", null, DropZone.Shelf, 820),
+            Zones("shelf-drop-zones-narrow", null, DropZone.Drop, 768),
+            Zones("shelf-drop-zones-no-provider", null, DropZone.Drop, DropZoneLayout.Width, provider: null),
             Result("drop-card", Card(3, publicNetwork: false)),
             Result("drop-card-public", Card(3, publicNetwork: true) with { Line = "Sending report.pdf to iPhone" }),
             Result("drop-card-public-short-monitor", Card(3, publicNetwork: true) with { Line = "Got IMG_2041.jpg", Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture)] }, maxHeight: 360),
@@ -77,24 +77,24 @@ internal static partial class Program
     }
 
     // The pill as ShelfDropSurface builds it: the accent ring inside the outline, the tray glyph, the label and the hint.
-    private static void DropPill(Canvas c, bool hint)
+    private static void DropPill(Canvas c)
     {
         var g = IslandGeometry.ShelfDrop;
         float inset = DropZoneLayout.RingInset;
         c.Pill();
         c.Mascot();
         c.Stroke(new RectangleF((float)(-g.Width / 2) + inset, inset, (float)g.Width - (2 * inset), (float)g.Depth - (2 * inset)), ((float)g.Depth / 2) - inset, Theme.Accent, DropZoneLayout.RingWidth);
-        var (glyph, label, more) = DropZoneLayout.Pill(hint);
+        var (glyph, label, more) = DropZoneLayout.Pill();
         c.Figures(Glyphs.Shelf, new Vector2(glyph.X, glyph.Y), Theme.Accent);
         c.Text(label, Vector2.Zero);
         c.Text(more, Vector2.Zero);
     }
 
     // The zones as ShelfDropSurface builds them, the one under the cursor lifted and filled with the accent.
-    private static Scene Zones(string name, string? skill, DropZone hot, float width)
+    private static Scene Zones(string name, string? skill, DropZone hot, float width, string? provider = "Anthropic")
     {
-        var layout = DropZoneLayout.For("Anthropic", skill, width)!;
-        return new(name, IslandGeometry.Panel(width, layout.Height), c =>
+        var layout = DropZoneLayout.For(provider, skill, width);
+        return new(name, IslandGeometry.Panel(layout.PanelWidth, layout.Height), c =>
         {
             c.Pill();
             c.Mascot(shift: DropZoneLayout.Seat.Shift);
@@ -118,7 +118,7 @@ internal static partial class Program
 
                 var host = new Vector2(r.X, r.Y);
                 var (glyph, label, sub) = layout.TileText(zone, r.Size);
-                c.Figures(empty ? Glyphs.Plus : zone == DropZone.Shelf ? Glyphs.Shelf : Glyphs.Summarize, host + new Vector2(glyph.X, glyph.Y), lit ? Theme.OnAccent : Theme.Ink);
+                c.Figures(empty ? Glyphs.Plus : zone == DropZone.Shelf ? Glyphs.Shelf : zone == DropZone.Drop ? Glyphs.Phone : Glyphs.Summarize, host + new Vector2(glyph.X, glyph.Y), lit ? Theme.OnAccent : Theme.Ink);
                 c.Text(lit ? label with { Style = label.Style with { Color = Theme.OnAccent } } : label, host);
                 c.Text(lit ? sub with { Style = sub.Style with { Color = Theme.OnAccent } } : sub, host, lit ? 0.8f : 1);
             }

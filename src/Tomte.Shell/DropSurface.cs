@@ -11,11 +11,11 @@ namespace Tomte.Shell;
 
 /// <summary>
 /// The Shelf-drop state's content. First the pill a drag to the top edge opens: a dashed accent ring, the tray glyph and
-/// "Drop on the shelf", which is what a drop there does. With a provider set up it adds "or hold for actions": a drag
-/// held still on the pill for <see cref="DropHold.HoldMs"/> opens the drop zones in its place, still in the Shelf-drop
-/// state, and the drag goes on over them. The zone under the cursor rises and fills with the accent; a drop anywhere
-/// that is not an AI zone goes on the shelf. Built when the state is entered and released 0.1 s after it is left; the
-/// hold's timer runs only while a drag rests on the pill.
+/// "Drop on the shelf", which is what a drop there does, then "or hold for actions": a drag held still on the pill for
+/// <see cref="DropHold.HoldMs"/> opens the drop zones in its place, still in the Shelf-drop state, and the drag goes on
+/// over them. The zone under the cursor rises and fills with the accent; a drop anywhere that is not Tomte Drop or an
+/// AI zone goes on the shelf. Built when the state is entered and released 0.1 s after it is left; the hold's timer
+/// runs only while a drag rests on the pill.
 /// </summary>
 internal sealed class ShelfDropSurface
 {
@@ -35,7 +35,7 @@ internal sealed class ShelfDropSurface
     private ContainerVisual? space;
     private CompositionColorBrush? ring;
     private (TextVisual Name, TextVisual Facts, TextVisual Hint)? head;
-    private bool fadeInPending, accepting, holdable;
+    private bool fadeInPending, accepting;
     private int shown;
 
     public ShelfDropSurface(IslandWindow island, IslandStateMachine machine, DropTarget drops, TextRenderer text,
@@ -102,7 +102,6 @@ internal sealed class ShelfDropSurface
         Release();
         shown++;
         accepting = drops.Accepting;
-        holdable = zones(DropZoneLayout.Width) is not null;
         var p = Begin();
         var g = IslandGeometry.ShelfDrop;
         float w = (float)g.Width, d = (float)g.Depth, inset = DropZoneLayout.RingInset;
@@ -113,7 +112,7 @@ internal sealed class ShelfDropSurface
         dashed.StrokeDashArray.Add(2);
         dashed.StrokeDashCap = CompositionStrokeCap.Round;
 
-        var (glyph, label, hint) = DropZoneLayout.Pill(holdable);
+        var (glyph, label, hint) = DropZoneLayout.Pill();
         var tray = p.Keep(island.Compositor.CreateContainerShape());
         tray.Offset = new Vector2(glyph.X + (w / 2), glyph.Y);
         shapes.Shapes.Add(tray);
@@ -159,7 +158,7 @@ internal sealed class ShelfDropSurface
         // Over the pill or the strip above it, which takes a drag pushed up to the top row: the wait starts, and starts
         // again whenever the cursor moves on.
         var g = IslandGeometry.ShelfDrop;
-        bool on = holdable && Math.Abs(at.X) <= g.Width / 2 && at.Y >= -IslandOutline.Gap && at.Y <= g.Depth;
+        bool on = Math.Abs(at.X) <= g.Width / 2 && at.Y >= -IslandOutline.Gap && at.Y <= g.Depth;
         if (!on)
         {
             StopHold();
@@ -196,7 +195,7 @@ internal sealed class ShelfDropSurface
         OpenZones();
     }
 
-    /// <summary>The drop zones in the pill's place: the panel as wide as the monitor allows, its tiles reflowed to fit.</summary>
+    /// <summary>The drop zones in the pill's place: the panel as wide as its tiles ask and the monitor allows, its tiles reflowed to fit.</summary>
     private void OpenZones()
     {
         if (Layout is not null || machine.State != IslandState.ShelfDrop)
@@ -232,7 +231,7 @@ internal sealed class ShelfDropSurface
         }
 
         p.Text(space!, layout.FootSlot);
-        open(width, layout.Height);
+        open(layout.PanelWidth, layout.Height);
         // After the morph is asked for, so the tomte travels to the head row on the shape's springs.
         island.Seat = DropZoneLayout.Seat;
     }
@@ -387,6 +386,7 @@ internal sealed class ShelfDropSurface
 
         private static GlyphFigure[] GlyphOf(DropZone zone, bool empty) => zone switch
         {
+            DropZone.Drop => Glyphs.Phone,
             DropZone.Summarize => Glyphs.Summarize,
             DropZone.Ask => Glyphs.Ask,
             DropZone.Tables => Glyphs.Table,

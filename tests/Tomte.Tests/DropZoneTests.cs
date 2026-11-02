@@ -78,51 +78,73 @@ public sealed class DropZoneTests : IDisposable
 
     // The pill and the zones
 
+    // Without a provider the shelf and Tomte Drop share a panel sized for the two, one row, and nothing of the AI layer shows.
     [Fact]
-    public void WithoutAProviderNoZoneIsDrawn()
+    public void WithoutAProviderOnlyTheShelfAndTomteDropShow()
     {
-        Assert.Null(DropZoneLayout.For(null, null, Surface));
-        Assert.Null(DropZoneLayout.For("", "notes", Surface));
+        foreach (var layout in new[] { DropZoneLayout.For(null, null, Surface), DropZoneLayout.For("", "notes", Surface) })
+        {
+            Assert.Equal([DropZone.Shelf, DropZone.Drop], layout.Zones.Select(z => z.Zone));
+            Assert.Equal(DropZoneLayout.PairWidth, layout.PanelWidth);
+            var (shelf, drop) = (layout.Zones[0].Rect, layout.Zones[1].Rect);
+            Assert.Equal(shelf.Y, drop.Y);
+            Assert.Equal(-DropZoneLayout.PairWidth / 2 + DropZoneLayout.PadSide, shelf.X, 3);
+            Assert.Equal(DropZoneLayout.TileGap, drop.X - shelf.Right, 3);
+            Assert.Equal(DropZoneLayout.PairWidth / 2 - DropZoneLayout.PadSide, drop.Right, 3);
+            Assert.Equal(222, layout.Height, 3);
+            Assert.Equal(DropZoneLayout.PairFoot, layout.FootSlot.Text);
+            Assert.True(layout.SlotEmpty);
+            Assert.Equal(DropZone.Drop, layout.At(new(drop.X + drop.Width / 2, drop.Y + drop.Height / 2)));
+            Assert.Equal(DropZone.Shelf, layout.At(new(shelf.X + shelf.Width / 2, shelf.Y + shelf.Height / 2)));
+            Assert.Equal(DropZone.Shelf, layout.At(new(0, DropZoneLayout.PadTop + 2)));
+        }
+
+        // A monitor narrower than that still caps it.
+        Assert.Equal(400, DropZoneLayout.For(null, null, 400).PanelWidth);
     }
 
     [Fact]
     public void TheSettingsDecideWhetherZonesShowAndWhatTheSlotCarries()
     {
         var noModel = new TomteSettings { Provider = new ProviderConfig("api.anthropic.com", ProviderKind.Anthropic) };
-        Assert.Null(DropZoneLayout.For(new TomteSettings(), Surface));
-        Assert.Null(DropZoneLayout.For(noModel, Surface));
-        Assert.Null(DropZoneLayout.For(noModel with { Provider = noModel.Provider! with { DefaultModel = "" } }, Surface));
+        Assert.Equal(2, DropZoneLayout.For(new TomteSettings(), Surface).Zones.Count);
+        Assert.Equal(2, DropZoneLayout.For(noModel, Surface).Zones.Count);
+        Assert.Equal(2, DropZoneLayout.For(noModel with { Provider = noModel.Provider! with { DefaultModel = "" } }, Surface).Zones.Count);
         Assert.False(DropZoneLayout.HasProvider(noModel));
 
         var set = noModel with { Provider = noModel.Provider! with { DefaultModel = "claude-sonnet-4-5" } };
         Assert.True(DropZoneLayout.HasProvider(set));
-        var layout = DropZoneLayout.For(set, Surface)!;
+        var layout = DropZoneLayout.For(set, Surface);
+        Assert.Equal(7, layout.Zones.Count);
         Assert.True(layout.SlotEmpty);
         // The company, not the host its key goes to; any other server by its host.
         Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Summarize));
         var local = new TomteSettings { Provider = Ollama };
-        Assert.Equal("Sends to ollama", DropZoneLayout.For(local, Surface)!.Sub(DropZone.Rename));
+        Assert.Equal("Sends to ollama", DropZoneLayout.For(local, Surface).Sub(DropZone.Rename));
 
         // A picked skill shows only while it is on, by its own name, not one that starts the same way.
         Assert.Null(DropZoneLayout.SlotSkill(set with { DropZoneSkill = "notes" }));
         Assert.Null(DropZoneLayout.SlotSkill(set with { DropZoneSkill = "notes", EnabledSkills = ["notes-two#1a2b"] }));
         var on = set with { DropZoneSkill = "notes", EnabledSkills = ["other#9f", "notes#1a2b"] };
         Assert.Equal("notes", DropZoneLayout.SlotSkill(on));
-        Assert.False(DropZoneLayout.For(on, Surface)!.SlotEmpty);
+        Assert.False(DropZoneLayout.For(on, Surface).SlotEmpty);
     }
 
     [Theory]
-    [InlineData(1000, 1)]
-    [InlineData(900, 1)]
-    [InlineData(899, 2)]
+    [InlineData(1600, 1)]
+    [InlineData(1256, 1)]
+    [InlineData(1255, 2)]
+    [InlineData(1000, 2)]
     [InlineData(768, 2)]
-    public void SixTilesShareARowFrom900WideAndMakeTwoRowsOfThreeBelow(double width, int rows)
+    public void SevenTilesShareARowWhenWideEnoughAndMakeFourOverThreeBelow(double width, int rows)
     {
-        var layout = DropZoneLayout.For("Anthropic", null, width)!;
-        Assert.Equal([DropZone.Shelf, DropZone.Summarize, DropZone.Ask, DropZone.Tables, DropZone.Rename, DropZone.Skill], layout.Zones.Select(z => z.Zone));
+        var layout = DropZoneLayout.For("Anthropic", null, width);
+        Assert.Equal([DropZone.Shelf, DropZone.Drop, DropZone.Summarize, DropZone.Ask, DropZone.Tables, DropZone.Rename, DropZone.Skill], layout.Zones.Select(z => z.Zone));
         Assert.Equal(rows, layout.Zones.Select(z => z.Rect.Y).Distinct().Count());
-        float left = (float)(-width / 2) + DropZoneLayout.PadSide;
-        int columns = rows == 1 ? 6 : 3;
+        // Never wider than the seven need.
+        Assert.Equal(Math.Min(width, DropZoneLayout.Width), layout.PanelWidth, 3);
+        float left = -layout.PanelWidth / 2 + DropZoneLayout.PadSide;
+        int columns = rows == 1 ? 7 : 4;
         for (int i = 0; i < layout.Zones.Count; i++)
         {
             var rect = layout.Zones[i].Rect;
@@ -153,33 +175,42 @@ public sealed class DropZoneTests : IDisposable
     [Fact]
     public void EachTileSaysWhatItDoesAndWhetherAnythingIsSent()
     {
-        var layout = DropZoneLayout.For("Anthropic", null, Surface)!;
-        Assert.Equal(["Keep on shelf", "Summarize", "Ask about it", "Tables to CSV", "Rename by content", "Add a skill"], layout.Zones.Select(z => DropZoneLayout.Label(z.Zone, null)));
+        var layout = DropZoneLayout.For("Anthropic", null, Surface);
+        Assert.Equal(["Keep on shelf", "Tomte Drop", "Summarize", "Ask about it", "Tables to CSV", "Rename by content", "Add a skill"], layout.Zones.Select(z => DropZoneLayout.Label(z.Zone, null)));
         Assert.Equal("Nothing is sent", layout.Sub(DropZone.Shelf));
+        Assert.Equal("To a phone on this Wi-Fi", layout.Sub(DropZone.Drop));
+        Assert.Equal("To a phone on this Wi-Fi", DropZoneLayout.For(null, null, Surface).Sub(DropZone.Drop));
         Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Summarize));
         Assert.Equal("Opens Ask · nothing sent yet", layout.Sub(DropZone.Ask));
         Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Tables));
         Assert.Equal("Sends to Anthropic", layout.Sub(DropZone.Rename));
         Assert.Equal("Pick one in Settings", layout.Sub(DropZone.Skill));
-        Assert.Equal("Sends to Anthropic", DropZoneLayout.For("Anthropic", "notes", Surface)!.Sub(DropZone.Skill));
+        Assert.Equal("Sends to Anthropic", DropZoneLayout.For("Anthropic", "notes", Surface).Sub(DropZone.Skill));
         Assert.Equal("notes", DropZoneLayout.Label(DropZone.Skill, "notes"));
         Assert.All(Enum.GetValues<DropZone>(), z => Assert.DoesNotContain("—", layout.Sub(z)));
 
-        // In the narrowest tile the monitor allows, the glyph sits at the top, the name and its line at the foot, whole.
-        var narrow = DropZoneLayout.For("Anthropic", null, 768)!;
-        foreach (var (zone, rect) in narrow.Zones.Concat(layout.Zones))
+        // In the narrowest tile of each layout (one row of seven from where it starts, four over three at the monitor's
+        // smallest cap, the two alone), with the longest provider name, the glyph sits at the top and the name and its
+        // line at the foot, whole.
+        DropZoneLayout[] narrowest = [DropZoneLayout.For("Google Gemini", null, DropZoneLayout.WideFrom), DropZoneLayout.For("Google Gemini", null, 768), DropZoneLayout.For(null, null, Surface)];
+        foreach (var each in narrowest)
         {
-            var (glyph, label, sub) = layout.TileText(zone, rect.Size);
-            Assert.Equal(new System.Drawing.RectangleF(14, 14, 22, 22), glyph);
-            Assert.Equal(rect.Height - 14, sub.Slot.Bottom, 3);
-            Assert.True(label.Slot.Bottom <= sub.Slot.Top);
-            Assert.True(label.Slot.Top >= glyph.Bottom);
-            using var name = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
-            Assert.False(name.Trimmed, $"{label.Text} is cut at {rect.Width}");
-        }
+            foreach (var (zone, rect) in each.Zones)
+            {
+                var (glyph, label, sub) = each.TileText(zone, rect.Size);
+                Assert.Equal(new System.Drawing.RectangleF(14, 14, 22, 22), glyph);
+                Assert.Equal(rect.Height - 14, sub.Slot.Bottom, 3);
+                Assert.True(label.Slot.Bottom <= sub.Slot.Top);
+                Assert.True(label.Slot.Top >= glyph.Bottom);
+                using var name = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
+                Assert.False(name.Trimmed, $"{label.Text} is cut at {rect.Width}");
+                using var line = TextLayout.Of(new TextRun(sub.Text, sub.Style, sub.Slot.Width));
+                Assert.False(line.Trimmed, $"{sub.Text} is cut at {rect.Width}");
+            }
 
-        using var foot = TextLayout.Of(new TextRun(narrow.FootSlot.Text, narrow.FootSlot.Style, narrow.FootSlot.Slot.Width));
-        Assert.False(foot.Trimmed);
+            using var foot = TextLayout.Of(new TextRun(each.FootSlot.Text, each.FootSlot.Style, each.FootSlot.Slot.Width));
+            Assert.False(foot.Trimmed, each.FootSlot.Text);
+        }
     }
 
     [Fact]
@@ -190,13 +221,13 @@ public sealed class DropZoneTests : IDisposable
         Assert.Equal("about 40 tokens", DropZoneLayout.Facts(null, 40));
         Assert.Equal("", DropZoneLayout.Facts(null, null));
 
-        var layout = DropZoneLayout.For("Anthropic", null, Surface)!;
+        var layout = DropZoneLayout.For("Anthropic", null, Surface);
         var head = layout.Head("cover.png", DropZoneLayout.Facts(1_258_291, 1090), mascot: true);
         Assert.Equal("cover.png", head[0].Text);
-        Assert.Equal(DropZoneLayout.Seat.After(CompactLayout.Gap) - 500, head[0].Slot.X, 3);
+        Assert.Equal(DropZoneLayout.Seat.After(CompactLayout.Gap) - (float)(Surface / 2), head[0].Slot.X, 3);
         Assert.Equal(head[0].Slot.Right + CompactLayout.Gap, head[1].Slot.X, 3);
         Assert.Equal(DropZoneLayout.Hint, head[2].Text);
-        Assert.Equal(500 - 16 - 6, head[2].Slot.Right, 3);
+        Assert.Equal((float)(Surface / 2) - 16 - 6, head[2].Slot.Right, 3);
         Assert.True(head[1].Slot.Right <= head[2].Slot.Left);
         foreach (var line in head)
         {
@@ -206,7 +237,7 @@ public sealed class DropZoneTests : IDisposable
 
         // A name too long for the row is cut, never the size or the hint; without the tomte the name starts at the inset.
         var longOne = layout.Head(new string('a', 300) + ".pdf", "1.2 MB", mascot: false);
-        Assert.Equal(-500 + 16 + 6, longOne[0].Slot.X, 3);
+        Assert.Equal(-(float)(Surface / 2) + 16 + 6, longOne[0].Slot.X, 3);
         Assert.True(longOne[1].Slot.Right <= longOne[2].Slot.Left);
         Assert.Equal("1.2 MB", longOne[1].Text);
     }
@@ -227,7 +258,7 @@ public sealed class DropZoneTests : IDisposable
     {
         // The drop point comes in pixels; the island maps it into island space, whose origin is one pixel in plus half
         // the outline's width, carrying the scale.
-        var layout = DropZoneLayout.For("Anthropic", "notes", Surface)!;
+        var layout = DropZoneLayout.For("Anthropic", "notes", Surface);
         float originX = 1 + (float)(Surface / 2 * scale);
         (int, int) Pixel(float x, float y) => ((int)Math.Round(originX + x * scale), (int)Math.Round(1 + y * scale));
         DropZone At(int px, int py) => layout.At(PanelSpace.FromPixels(px, py, originX, 1, scale));
@@ -245,31 +276,32 @@ public sealed class DropZoneTests : IDisposable
         }
 
         // With no skill picked the slot is drawn empty, and a drop on it goes on the shelf like anywhere else.
-        var empty = DropZoneLayout.For("Anthropic", null, Surface)!;
+        var empty = DropZoneLayout.For("Anthropic", null, Surface);
         var slot = empty.Zones[^1].Rect;
         Assert.Equal(DropZoneLayout.EmptySlot, DropZoneLayout.Label(DropZone.Skill, null));
         var (sx, sy) = Pixel(slot.X + slot.Width / 2, slot.Y + slot.Height / 2);
         Assert.Equal(DropZone.Shelf, empty.At(PanelSpace.FromPixels(sx, sy, originX, 1, scale)));
     }
 
-    // The pill's words are one group centred across it, clear of the tomte and inside the dashed ring.
+    // The pill's words are one group centred across it, clear of the tomte and inside the dashed ring. The zones always
+    // open, so the hold is always offered.
     [Fact]
-    public void ThePillSaysDropOnTheShelfAndOffersTheHoldOnlyWithZones()
+    public void ThePillSaysDropOnTheShelfAndOffersTheHold()
     {
         var g = IslandGeometry.ShelfDrop;
-        foreach (bool hint in new[] { true, false })
+        var (glyph, label, more) = DropZoneLayout.Pill();
+        Assert.Equal("Drop on the shelf", label.Text);
+        Assert.Equal("or hold for actions", more.Text);
+        Assert.Equal(0, (glyph.X + more.Slot.Right) / 2, 3);
+        Assert.Equal(glyph.Right + CompactLayout.Gap, label.Slot.X, 3);
+        Assert.Equal(label.Slot.Right + CompactLayout.Gap, more.Slot.X, 3);
+        Assert.Equal(g.Depth / 2, glyph.Y + (glyph.Height / 2), 3);
+        Assert.True(glyph.X >= MascotArt.Box(g).Right, "the group clears the tomte");
+        Assert.True(more.Slot.Right <= (g.Width / 2) - DropZoneLayout.RingInset - 10, "the group stays inside the ring");
+        foreach (var words in new[] { label, more })
         {
-            var (glyph, label, more) = DropZoneLayout.Pill(hint);
-            Assert.Equal("Drop on the shelf", label.Text);
-            Assert.Equal(hint ? "or hold for actions" : "", more.Text);
-            float right = hint ? more.Slot.Right : label.Slot.Right;
-            Assert.Equal(0, (glyph.X + right) / 2, 3);
-            Assert.Equal(glyph.Right + CompactLayout.Gap, label.Slot.X, 3);
-            Assert.Equal(g.Depth / 2, glyph.Y + (glyph.Height / 2), 3);
-            Assert.True(glyph.X >= MascotArt.Box(g).Right, "the group clears the tomte");
-            Assert.True(right <= (g.Width / 2) - DropZoneLayout.RingInset - 10, "the group stays inside the ring");
-            using var laid = TextLayout.Of(new TextRun(label.Text, label.Style, label.Slot.Width));
-            Assert.False(laid.Trimmed);
+            using var laid = TextLayout.Of(new TextRun(words.Text, words.Style, words.Slot.Width));
+            Assert.False(laid.Trimmed, words.Text);
         }
     }
 

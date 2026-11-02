@@ -9,13 +9,14 @@ using Tomte.Core.Storage;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The AI drop zones: whether the Shelf-drop pill offers them (only with a provider set up in settings), which a drag
-/// held still on the pill opens, and the drop that lands on one. Such a drop is read inside Drop exactly as the shelf
-/// reads it and the item goes on the shelf; everything after that (the panel, reading the file, sending it, the result
-/// files) runs in a <see cref="ZoneRun"/> once Drop has returned to the source. Making it at start, and a drag over the
-/// pill, loads nothing of the AI layer and reads no key; the zones opening reads the dragged file's first bytes (an
-/// image's header) for the head row's estimate, by the counting rules of the AI layer, and sends nothing. The kept
-/// results are not opened until a drop on a zone.
+/// The drop zones a drag held still on the pill opens: Keep on shelf and Tomte Drop always, the AI zones only with a
+/// provider set up in settings; and the drop that lands on one. Such a drop is read inside Drop exactly as the shelf
+/// reads it and the item goes on the shelf; everything after that runs once Drop has returned to the source: for Tomte
+/// Drop a <see cref="DropRun"/>, which loads nothing of the AI layer, and for an AI zone a <see cref="ZoneRun"/> (the
+/// panel, reading the file, sending it, the result files). Making it at start, and a drag over the pill, loads nothing
+/// of the AI layer and reads no key; the zones opening with a provider reads the dragged file's first bytes (an image's
+/// header) for the head row's estimate, by the counting rules of the AI layer, and sends nothing. The kept results are
+/// not opened until a drop on an AI zone.
 /// </summary>
 internal sealed class DropZones
 {
@@ -38,16 +39,19 @@ internal sealed class DropZones
 
     public ShelfDropSurface Surface { get; }
 
-    /// <summary>The zones for a panel this wide: none without a provider that has a model.</summary>
-    private DropZoneLayout? Layout(double width) => DropZoneLayout.For(store.Current, width);
+    /// <summary>The zones for a panel at most this wide: the AI zones only with a provider that has a model.</summary>
+    private DropZoneLayout Layout(double width) => DropZoneLayout.For(store.Current, width);
 
-    /// <summary>The head row's estimate for what the drag carries, on the pool; null without a provider or for a file it cannot count.</summary>
+    /// <summary>
+    /// The head row's estimate for what the drag carries, on the pool; null without the AI zones (no provider with a
+    /// model, when nothing of the AI layer loads) or for a file it cannot count.
+    /// </summary>
     private Task<int?> Estimate(DragItem item) =>
-        store.Current.Provider is { } config ? Task.Run(() => DragEstimate.TokensAsync(item, config)) : Task.FromResult<int?>(null);
+        DropZoneLayout.HasProvider(store.Current) && store.Current.Provider is { } config ? Task.Run(() => DragEstimate.TokensAsync(item, config)) : Task.FromResult<int?>(null);
 
     private bool Take(DroppedItems drop)
     {
-        if (Surface.Layout is null || Surface.Hot is not { } zone || zone == DropZone.Shelf || !DropZoneLayout.HasProvider(store.Current))
+        if (Surface.Layout is null || Surface.Hot is not { } zone || zone == DropZone.Shelf || (zone != DropZone.Drop && !DropZoneLayout.HasProvider(store.Current)))
         {
             return false;
         }
@@ -56,8 +60,17 @@ internal sealed class DropZones
         var accepted = shelf.Accept(drop);
         bool fromText = drop.Text is not null && drop.Paths.Count + drop.Files.Count == 0;
         log?.Invoke($"drop zone: {zone}, {drop.Paths.Count + drop.Files.Count + (drop.Text is null ? 0 : 1)} items");
-        // The rest waits until Drop has returned: the source is not held while the AI layer loads and the island morphs.
-        island.Queue.TryEnqueue(() => Run(zone, accepted, fromText));
+        // The rest waits until Drop has returned: the source is not held while the share starts, the AI layer loads and
+        // the island morphs. Tomte Drop offers every item that landed, several at once too.
+        if (zone == DropZone.Drop)
+        {
+            island.Queue.TryEnqueue(() => DropRun.Start(island, triggers, shelf, text, DropRun.Offered(accepted), log, DropCard.NotOnShelf));
+        }
+        else
+        {
+            island.Queue.TryEnqueue(() => Run(zone, accepted, fromText));
+        }
+
         return true;
     }
 
