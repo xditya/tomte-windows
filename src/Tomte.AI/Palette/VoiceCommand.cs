@@ -12,7 +12,8 @@ public static class VoiceCommand
     /// What a choice on the rambler's card does with the words. Insert hands them to <paramref name="insert"/>, which types
     /// them or says why it cannot; Add to note keeps them; Ask alone makes a session with <paramref name="start"/> and routes
     /// the words through it as <see cref="RouteAsync"/> does, so nothing reaches a provider before the user picks Ask.
-    /// Returns why Insert could not type, if it could not, and the session Ask ran, if it made one.
+    /// Copy is the card's own and never comes here. Returns why Insert could not type, if it could not, and the session
+    /// Ask ran, if it made one.
     /// </summary>
     public static async Task<(string? Refused, PaletteSession? Asked)> PickedAsync(VoiceChoice choice, string transcript, Func<string, string?> insert, Func<string, Task> keep, Func<Task<PaletteSession?>> start, Func<PaletteSession, Task> run)
     {
@@ -23,10 +24,12 @@ public static class VoiceCommand
             case VoiceChoice.Note:
                 await keep(transcript);
                 return (null, null);
-            default:
+            case VoiceChoice.Ask:
                 var session = await start();
                 await RouteAsync(transcript, keep, session, run);
                 return (null, session);
+            default:
+                throw new ArgumentOutOfRangeException(nameof(choice), choice, "Copy is done by the card.");
         }
     }
 

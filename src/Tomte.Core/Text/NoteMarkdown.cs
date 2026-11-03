@@ -290,7 +290,7 @@ public static class NoteMarkdown
     }
 
     /// <summary>Whether <paramref name="lineStart"/> is inside a code block: an odd number of fence lines before it.</summary>
-    private static bool InFence(string text, int lineStart)
+    internal static bool InFence(string text, int lineStart)
     {
         bool fenced = false;
         for (int at = 0; at < lineStart;)
@@ -349,7 +349,7 @@ public static class NoteMarkdown
     public static string? ToggleTask(string text, int lineStart) =>
         TaskBox(text, lineStart) is var (mark, done) ? string.Concat(text.AsSpan(0, mark), done ? " " : "x", text.AsSpan(mark + 1)) : null;
 
-    private static int LineStart(string text, int at) => at == 0 ? 0 : text.LastIndexOf('\n', at - 1) + 1;
+    internal static int LineStart(string text, int at) => at == 0 ? 0 : text.LastIndexOf('\n', at - 1) + 1;
 
     private static int LineEnd(string text, int at)
     {

@@ -15,6 +15,7 @@ public class TakenOverTests
         Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Rambling));
         // A drop zone's result gives way to whatever the user opens next.
         Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Result));
+        Assert.Equal(IslandActivity.None, RetractionRules.TakenOver(IslandActivity.Sharing));
     }
 
     [Fact]
@@ -127,6 +128,8 @@ public class RetractionRulesTests
     [InlineData(IslandState.Panels, IslandActivity.Pinned, true, true)]
     [InlineData(IslandState.Panels, IslandActivity.Pinned, false, false)]
     [InlineData(IslandState.Palette, IslandActivity.Pinned, false, false)]
+    [InlineData(IslandState.Palette, IslandActivity.Sharing, true, true)]
+    [InlineData(IslandState.Palette, IslandActivity.Sharing, false, false)]
     // With the keys, Esc reaches the island as a key, never as a hotkey.
     [InlineData(IslandState.Panels, IslandActivity.Typing, true, false)]
     [InlineData(IslandState.Palette, IslandActivity.Typing | IslandActivity.Pinned, true, false)]
@@ -136,12 +139,29 @@ public class RetractionRulesTests
     }
 
     [Theory]
+    [InlineData(IslandState.Panels, IslandActivity.None, true, true, true)]
+    [InlineData(IslandState.Panels, IslandActivity.Pinned, true, true, true)]
+    // Away from the island, a pinned one too, Ctrl+V is the user's app's.
+    [InlineData(IslandState.Panels, IslandActivity.None, false, true, false)]
+    [InlineData(IslandState.Panels, IslandActivity.Pinned, false, true, false)]
+    // Another tab, the AI box, or a text box with the keys, which pastes into itself.
+    [InlineData(IslandState.Panels, IslandActivity.None, true, false, false)]
+    [InlineData(IslandState.Palette, IslandActivity.None, true, true, false)]
+    [InlineData(IslandState.Panels, IslandActivity.Typing, true, true, false)]
+    public void CtrlVIsTakenOnlyWhileTheShelfShowsUnderThePointer(IslandState state, IslandActivity activity, bool pointerInside, bool shelf, bool expected)
+    {
+        Assert.Equal(expected, RetractionRules.TakesPaste(state, activity, pointerInside, shelf));
+    }
+
+    [Theory]
     [InlineData(IslandState.Palette, IslandActivity.Result, true)]
     [InlineData(IslandState.Palette, IslandActivity.Result | IslandActivity.DragInProgress, true)]
     [InlineData(IslandState.Palette, IslandActivity.AiTask, false)]
     [InlineData(IslandState.Palette, IslandActivity.None, false)]
     [InlineData(IslandState.Panels, IslandActivity.None, false)]
     [InlineData(IslandState.Compact, IslandActivity.Peek, false)]
+    // A running Tomte Drop: the phone may be part way through a file.
+    [InlineData(IslandState.Palette, IslandActivity.Sharing, false)]
     public void APressOutsideDismissesOnlyAFinishedZoneResult(IslandState state, IslandActivity activity, bool expected)
     {
         Assert.Equal(expected, RetractionRules.DismissedByClickOutside(state, activity));

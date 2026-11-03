@@ -231,6 +231,21 @@ public sealed class ClipboardHistory(TomteDb db, ClipboardRetention? retention =
         return rows;
     }
 
+    /// <summary>The pinned text items, newest first, each with the start of its text as stored, line breaks kept. Images have no text to find them by.</summary>
+    public IReadOnlyList<(long Id, string Text)> Pins()
+    {
+        using var connection = db.Open("clipboard", Schema);
+        using var command = Command(connection, "SELECT id, substr(text, 1, 400) FROM clipboard_entries WHERE pinned = 1 AND width IS NULL ORDER BY copied_at DESC, id DESC");
+        using var reader = command.ExecuteReader();
+        var pins = new List<(long, string)>();
+        while (reader.Read())
+        {
+            pins.Add((reader.GetInt64(0), reader.GetString(1)));
+        }
+
+        return pins;
+    }
+
     /// <summary>The whole item, to put back on the clipboard; null when it is gone. An image's text is empty.</summary>
     public string? Text(long id)
     {
@@ -404,6 +419,9 @@ public sealed class ClipboardWatch(ClipboardHistory history, Func<Action<Clipboa
         history.Clear();
         return [];
     });
+
+    /// <summary>The pinned text items for search; none while history is off.</summary>
+    public Task<IReadOnlyList<(long Id, string Text)>> PinsAsync() => Enqueue(() => On ? history.Pins() : []);
 
     /// <summary>
     /// Puts the item back on the clipboard. It does not paste, and it does not come back as a new item. True when the

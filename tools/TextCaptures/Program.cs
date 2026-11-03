@@ -28,7 +28,7 @@ namespace TextCaptures;
 /// pill's real outline, gradient and hairline and the mascot's real paths; art, buttons, bars and ring are drawn
 /// from the numbers the island's composition shapes use. The drop shadow is left out. Also prints what the text
 /// costs in time and memory.
-/// Usage: TextCaptures &lt;output folder&gt;
+/// Usage: TextCaptures &lt;output folder&gt; [the start of the scenes' names, to draw only those]
 /// </summary>
 internal static unsafe partial class Program
 {
@@ -84,9 +84,10 @@ internal static unsafe partial class Program
         again->Release();
         d3dAgain->Release();
 
+        var scenes = Scenes().Where(s => args.Length < 2 || s.Name.StartsWith(args[1], StringComparison.Ordinal)).ToList();
         foreach (double scale in Scales)
         {
-            foreach (var scene in Scenes())
+            foreach (var scene in scenes)
             {
                 var canvas = new Canvas(dc, scene.Geometry, scale);
                 scene.Draw(canvas);
@@ -96,7 +97,7 @@ internal static unsafe partial class Program
             }
         }
 
-        report.Add(Memory($"after {Scales.Length * Scenes().Count} captures"));
+        report.Add(Memory($"after {Scales.Length * scenes.Count} captures"));
         report.Add($"per run: layout {Stats(LayoutMs)}, draw {Stats(DrawMs)} ({LayoutMs.Count} runs)");
         report.Add($"runs whose surface does not start on a whole pixel: {OffGrid} of {DrawMs.Count}");
         report.Add($"a two-line run cut with an ellipsis draws nothing below its second line: {TwoLinesOnly(dc)}");
@@ -300,6 +301,10 @@ internal static unsafe partial class Program
             UndoPill("compact-undo-transcript", "Transcript closed", key: true),
             // Another app holds Win+Alt+Z: the button alone.
             UndoPill("compact-undo-no-key", "AI answer closed", key: false),
+            ReminderPill("compact-reminder", "Check the oven"),
+            ReminderPill("compact-reminder-missed", "Missed at 09:30: standup"),
+            ReminderPill("compact-reminder-long", "Call mum about the trip to the coast next weekend and ask about the train times"),
+            ReminderPill("compact-off-reminder", "Check the oven", mascot: false),
             new("compact-peek", IslandGeometry.Peek, c =>
             {
                 c.Pill();
@@ -370,6 +375,7 @@ internal static unsafe partial class Program
             new("palette-ai-off-back", IslandGeometry.Panel(PanelSize.PaletteWidth, PanelSize.PaletteMinHeight), c => Palette(c, null, [], "", [], 0, 0, back: true)),
             .. DropZoneScenes(),
             .. HistoryScenes(),
+            .. JobsScenes(),
             .. SearchScenes(),
             .. VoiceScenes(),
             CaptureHint(),
@@ -591,6 +597,32 @@ internal static unsafe partial class Program
         });
     }
 
+    // A reminder that rang, as ReminderPill lays it out: its text, then Snooze 10 min on a raised fill and Dismiss.
+    private static Scene ReminderPill(string name, string line, bool mascot = true)
+    {
+        var (width, slot, snooze, dismiss) = CompactLayout.Reminder(mascot, TextSlot.Measure(line, CompactLayout.LineStyle, CompactLayout.ReminderLineMax),
+            TextSlot.Measure(CompactLayout.SnoozeLabel, CompactLayout.SnoozeStyle, 200), TextSlot.Measure(CompactLayout.DismissLabel, CompactLayout.DismissStyle, 200));
+        return new(name, IslandGeometry.Compact with { Width = width }, c =>
+        {
+            c.Pill();
+            if (mascot)
+            {
+                c.Mascot();
+            }
+
+            c.Text(line, CompactLayout.LineStyle, slot, Vector2.Zero);
+            foreach (var (box, fill, says, style) in new[]
+            {
+                (snooze, Theme.Raised, CompactLayout.SnoozeLabel, CompactLayout.SnoozeStyle),
+                (dismiss, Theme.Accent, CompactLayout.DismissLabel, CompactLayout.DismissStyle),
+            })
+            {
+                c.RoundRect(box, box.Height / 2, fill);
+                c.Text(says, style, new RectangleF(box.X + CompactLayout.UndoPadX, box.Y, box.Width - (2 * CompactLayout.UndoPadX), box.Height), Vector2.Zero);
+            }
+        });
+    }
+
     private static IslandGeometry Panel((double W, double H) size) => IslandGeometry.Panel(size.W, size.H);
 
     // The tab row as the panel host draws it: the rail, the current tab's capsule and name, and the two round buttons.
@@ -745,7 +777,14 @@ internal static unsafe partial class Program
             bool allowed = ShelfStore.Allows(slot.Action, items[at]);
             c.RoundRect(Offset(slot.Box, body), ShelfLayout.ActionCorner, asking ? 0x29F0B35Au : 0x0FFFFFFFu);
             uint ink = asking ? 0xFFF0B35A : allowed ? 0xE6FFFFFF : 0x5CFFFFFF;
-            c.Glyph(slot.Action, body + new Vector2(slot.Icon.X, slot.Icon.Y), ink);
+            if (slot.Action is ShelfAction.Pin or ShelfAction.Drop)
+            {
+                c.Glyph(slot.Action == ShelfAction.Pin ? Glyphs.Pin : Glyphs.Phone, body + new Vector2(slot.Icon.X, slot.Icon.Y), slot.Icon.Width, ink);
+            }
+            else
+            {
+                c.Glyph(slot.Action, body + new Vector2(slot.Icon.X, slot.Icon.Y), ink);
+            }
             if (slot.Label is { } label)
             {
                 c.Text(label with { Style = label.Style with { Color = ink } }, body);

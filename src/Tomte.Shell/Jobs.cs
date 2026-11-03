@@ -1,9 +1,11 @@
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using Tomte.AI;
+using Tomte.AI.Automation;
 using Tomte.AI.Jobs;
 using Tomte.AI.Palette;
 using Tomte.Core;
+using Tomte.Core.Device;
 using Tomte.Core.Jobs;
 using Tomte.Core.Storage;
 using Windows.System;
@@ -48,8 +50,17 @@ internal static class Jobs
     /// <summary>The shelf the Shelf panel uses, so a job reads the same items. Set when the shelf starts.</summary>
     public static ShelfStore? Shelf { get; set; }
 
-    /// <summary>The one-shot was armed for another time, or for none: the job due next may have changed. On the island's thread.</summary>
+    /// <summary>
+    /// The one-shot was armed for another time, or for none, or the clock moved: the job due next may have changed. On the
+    /// island's thread.
+    /// </summary>
     public static event Action? NextChanged;
+
+    /// <summary>A run in this process started or ended, or made a device action (<see cref="Step"/>). On the island's thread.</summary>
+    public static event Action? Ran;
+
+    /// <summary>The line the run in progress raised last, such as a device action; null as a run starts.</summary>
+    public static string? Step { get; private set; }
 
     /// <summary>What the one-shot is armed for: the next run over all jobs, or null with none. Read without the database.</summary>
     public static DateTimeOffset? NextDue => Clock.Next;
@@ -65,6 +76,38 @@ internal static class Jobs
         var now = DateTimeOffset.Now;
         var jobs = await Task.Run(() => new JobStore(open).All());
         return jobs.Where(j => j.NextDue > now).MinBy(j => j.NextDue) is { NextDue: { } at } job ? (job.Name, at) : null;
+    }
+
+    /// <summary>Every job with its latest result and whether it runs now: a read of the database on the pool. Empty before the jobs have started.</summary>
+    public static async Task<IReadOnlyList<JobStatus>> StatusesAsync() =>
+        db is { } open ? await Task.Run(() => new JobStore(open).Statuses(DateTimeOffset.Now)) : [];
+
+    /// <summary>
+    /// Removes a job, its results and its Task Scheduler entry, as the settings window does, and arms the one-shot again
+    /// from the next-due file. Null when it is done; else what went wrong.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static async Task<string?> RemoveAsync(long id)
+    {
+        if (context is not { } c)
+        {
+            return "The jobs have not started yet.";
+        }
+
+        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
+        string? problem;
+        try
+        {
+            problem = await Task.Run(() => planner.Remove(id));
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            problem = $"Not removed: {e.Message}";
+        }
+
+        c.Log?.Invoke(problem ?? $"jobs: removed job {id} and its task");
+        await RearmAsync(c);
+        return problem;
     }
 
     /// <summary>
@@ -93,7 +136,7 @@ internal static class Jobs
             c.Island.Message = (message, wParam, lParam) => OnMessage(c, message, wParam, lParam) || (inner?.Invoke(message, wParam, lParam) ?? false);
             if (Arg(args, "--debug-remove-job") is { } remove)
             {
-                await RemoveAsync(c, long.Parse(remove, CultureInfo.InvariantCulture));
+                await RemoveAndQuitAsync(long.Parse(remove, CultureInfo.InvariantCulture));
                 return;
             }
 
@@ -123,7 +166,7 @@ internal static class Jobs
 
     private static JobPlanner NewPlanner(JobContext c)
     {
-        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
+        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath)) { Installed = Apps.IsInstalled };
         planner.Scheduled += next => Arm(c, next);
         return planner;
     }
@@ -178,6 +221,7 @@ internal static class Jobs
                 // A time zone change arrives as a clock change too: drop the cached zone so times are worked out in the new one.
                 TimeZoneInfo.ClearCachedData();
                 SetOneShot(c, Clock.Wait());
+                NextChanged?.Invoke();
                 // The controller re-arms its own timer too.
                 return false;
             default:
@@ -275,7 +319,11 @@ internal static class Jobs
         var shelf = new ShelfStore(db, Path.Combine(data, "Shelf"), action => queue.TryEnqueue(() => action()), log);
         await shelf.Load();
         await note.LoadAsync();
-        var next = await NewRunner(db, note, shelf, timer: null, Path.Combine(data, "send-log.jsonl"), settings, resident: false, log).RunDueAsync();
+        var runner = NewRunner(db, note, shelf, timer: null, Path.Combine(data, "send-log.jsonl"), settings, resident: false, log);
+        // A Tomte started on the same folder meanwhile shows the run on its Jobs tab: it reads the jobs again on each.
+        runner.Raised += _ => JobTask.Changed(data);
+        var next = await runner.RunDueAsync();
+        JobTask.Changed(data);
         log?.Invoke($"jobs: next due {next?.ToString("O") ?? "none"}");
         // Whatever the tools wrote is saved before the process ends.
         await note.FlushAsync();
@@ -286,7 +334,7 @@ internal static class Jobs
     private static JobRunner NewRunner(TomteDb db, ScratchpadNote note, IShelf shelf, IslandTimer? timer, string sendLog, string settings, bool resident, Action<string>? log)
     {
         var http = ProviderSetup.NewHttp();
-        var tools = new BuiltInTools(shelf, note, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, timer: timer);
+        var tools = new BuiltInTools(shelf, note, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, timer: timer, web: WebTools.Http);
         // The settings file is read at each run, so a cap lowered since a job was made applies to its next run.
         return new JobRunner(new JobStore(db, log), NoJobTasks.For(Environment.ProcessPath!, settings), config => ProviderSetup.Load(config, http), tools,
             new SendLog(sendLog), config => ProviderSetup.OptionsFor(SettingsStore.Load(settings), config))
@@ -295,6 +343,8 @@ internal static class Jobs
             Log = log,
             // The settings file is read at each keep, so a history turned off since start keeps nothing.
             History = new AiHistory(db, () => SettingsStore.Load(settings).KeepAiHistory, log),
+            // And at each run that uses apps, so UI Automation turned off since keeps every job out of them.
+            Automation = apps => SettingsStore.Load(settings) is { UiAutomation.Enabled: true } now ? AutomationTools.ForJob(now.UiAutomation, now.AppRules, apps) : null,
         };
     }
 
@@ -349,12 +399,9 @@ internal static class Jobs
     }
 
     /// <summary>--debug-remove-job id: removes the job, its results and its Task Scheduler entry, then quits.</summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    private static async Task RemoveAsync(JobContext c, long id)
+    private static async Task RemoveAndQuitAsync(long id)
     {
-        var planner = new JobPlanner(new JobStore(c.Db, c.Log), NoJobTasks.For(Environment.ProcessPath!, c.Store.FilePath));
-        string? problem = await Task.Run(() => planner.Remove(id));
-        c.Log?.Invoke(problem ?? $"jobs: removed job {id} and its task");
+        await RemoveAsync(id);
         PInvoke.PostQuitMessage(0);
     }
 
@@ -379,6 +426,8 @@ internal static class Jobs
                 {
                     c.Log?.Invoke($"jobs: event \"{e.Text}\"");
                     c.Triggers.Raise(e);
+                    Step = e.Text.StartsWith(JobRunner.Starting, StringComparison.Ordinal) ? null : e.Text;
+                    Ran?.Invoke();
                 };
             }
 

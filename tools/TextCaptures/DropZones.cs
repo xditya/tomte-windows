@@ -30,12 +30,18 @@ internal static partial class Program
         var ask = new DropResult("Ask about it · Q3-report.pdf", "Nothing sent", "File · Q3-report.pdf is attached. Nothing is sent until you ask.", false, "Ask about Q3-report.pdf", [], []);
         return
         [
-            new("shelf-drop-pill", IslandGeometry.ShelfDrop, c => DropPill(c, hint: true)),
-            new("shelf-drop-pill-no-provider", IslandGeometry.ShelfDrop, c => DropPill(c, hint: false)),
+            new("shelf-drop-pill", IslandGeometry.ShelfDrop, DropPill),
             Zones("shelf-drop-zones", null, DropZone.Summarize, DropZoneLayout.Width),
             Zones("shelf-drop-zones-ask", null, DropZone.Ask, DropZoneLayout.Width),
             Zones("shelf-drop-zones-skill", "invoice-parser", DropZone.Skill, DropZoneLayout.Width),
-            Zones("shelf-drop-zones-narrow", null, DropZone.Shelf, 820),
+            Zones("shelf-drop-zones-narrow", null, DropZone.Drop, 768),
+            Zones("shelf-drop-zones-no-provider", null, DropZone.Drop, DropZoneLayout.Width, provider: null),
+            Result("drop-card", Card(3, publicNetwork: false)),
+            Result("drop-card-public", Card(3, publicNetwork: true) with { Line = "Sending report.pdf to iPhone" }),
+            Result("drop-card-public-short-monitor", Card(3, publicNetwork: true) with { Line = "Got IMG_2041.jpg", Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture)] }, maxHeight: 360),
+            Result("drop-card-receive-only", Card(0, publicNetwork: false) with { Line = "Got IMG_2041.jpg", Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture), new("notes.pdf", DropCard.From("iPhone"), Theme.KindPdf)] }),
+            Result("drop-card-stopped", DropCard.Stopped(Card(3, publicNetwork: false) with { Tiles = [new("IMG_2041.jpg", DropCard.From("iPhone"), Theme.KindPicture)] }, TimeSpan.FromMinutes(15))),
+            Result("drop-card-problem", DropCard.Problem("This PC is on no local network. Connect to Wi-Fi and try again.")),
             Result("zone-result-summary", summary),
             Result("zone-result-long", longOne),
             Result("zone-result-long-scrolled", longOne, scrolled: 1),
@@ -45,28 +51,50 @@ internal static partial class Program
             Result("zone-size-question", question),
             Result("zone-failed", failed),
             Result("zone-ask", ask),
+            ColourResult("colour-result", new PickedColour(58, 123, 213), ThemeScheme.Dark, hover: -1),
+            ColourResult("colour-result-hover-rgb", new PickedColour(58, 123, 213), ThemeScheme.Dark, hover: 1),
+            ColourResult("colour-result-near-panel", new PickedColour(0x1A, 0x1B, 0x1F), ThemeScheme.Dark, hover: -1),
+            ColourResult("colour-result-light", new PickedColour(255, 255, 255), ThemeScheme.Light, hover: 0),
+            ColourResult("colour-result-light-yellow", new PickedColour(0xF2, 0xB8, 0x4B), ThemeScheme.Light, hover: -1),
         ];
     }
 
+    // A Tomte Drop card with a code of a link's size: three finder squares and a scatter of modules, which reads as a code.
+    private static DropResult Card(int files, bool publicNetwork)
+    {
+        var qr = new bool[33, 33];
+        for (int r = 0; r < 33; r++)
+        {
+            for (int c = 0; c < 33; c++)
+            {
+                bool Finder(int top, int left) => r - top is >= 0 and < 7 && c - left is >= 0 and < 7 && (r - top is 0 or 6 || c - left is 0 or 6 || (r - top is >= 2 and <= 4 && c - left is >= 2 and <= 4));
+                bool near = (r < 8 && c < 8) || (r < 8 && c > 24) || (r > 24 && c < 8);
+                qr[r, c] = near ? Finder(0, 0) || Finder(0, 26) || Finder(26, 0) : ((r * 31) ^ (c * 17) ^ (r * c)) % 7 < 3;
+            }
+        }
+
+        return DropCard.Sharing(files, false, 24_500_000, new Uri("http://192.168.178.100:53320/k3J9xQ2mPz8wVb1LxYz0aB/"), qr, publicNetwork);
+    }
+
     // The pill as ShelfDropSurface builds it: the accent ring inside the outline, the tray glyph, the label and the hint.
-    private static void DropPill(Canvas c, bool hint)
+    private static void DropPill(Canvas c)
     {
         var g = IslandGeometry.ShelfDrop;
         float inset = DropZoneLayout.RingInset;
         c.Pill();
         c.Mascot();
         c.Stroke(new RectangleF((float)(-g.Width / 2) + inset, inset, (float)g.Width - (2 * inset), (float)g.Depth - (2 * inset)), ((float)g.Depth / 2) - inset, Theme.Accent, DropZoneLayout.RingWidth);
-        var (glyph, label, more) = DropZoneLayout.Pill(hint);
+        var (glyph, label, more) = DropZoneLayout.Pill();
         c.Figures(Glyphs.Shelf, new Vector2(glyph.X, glyph.Y), Theme.Accent);
         c.Text(label, Vector2.Zero);
         c.Text(more, Vector2.Zero);
     }
 
     // The zones as ShelfDropSurface builds them, the one under the cursor lifted and filled with the accent.
-    private static Scene Zones(string name, string? skill, DropZone hot, float width)
+    private static Scene Zones(string name, string? skill, DropZone hot, float width, string? provider = "Anthropic")
     {
-        var layout = DropZoneLayout.For("Anthropic", skill, width)!;
-        return new(name, IslandGeometry.Panel(width, layout.Height), c =>
+        var layout = DropZoneLayout.For(provider, skill, width);
+        return new(name, IslandGeometry.Panel(layout.PanelWidth, layout.Height), c =>
         {
             c.Pill();
             c.Mascot(shift: DropZoneLayout.Seat.Shift);
@@ -90,7 +118,7 @@ internal static partial class Program
 
                 var host = new Vector2(r.X, r.Y);
                 var (glyph, label, sub) = layout.TileText(zone, r.Size);
-                c.Figures(empty ? Glyphs.Plus : zone == DropZone.Shelf ? Glyphs.Shelf : Glyphs.Summarize, host + new Vector2(glyph.X, glyph.Y), lit ? Theme.OnAccent : Theme.Ink);
+                c.Figures(empty ? Glyphs.Plus : zone == DropZone.Shelf ? Glyphs.Shelf : zone == DropZone.Drop ? Glyphs.Phone : Glyphs.Summarize, host + new Vector2(glyph.X, glyph.Y), lit ? Theme.OnAccent : Theme.Ink);
                 c.Text(lit ? label with { Style = label.Style with { Color = Theme.OnAccent } } : label, host);
                 c.Text(lit ? sub with { Style = sub.Style with { Color = Theme.OnAccent } } : sub, host, lit ? 0.8f : 1);
             }
@@ -133,16 +161,69 @@ internal static partial class Program
         Next steps are with the secretary.
         """;
 
-    // A zone's panel as DropResultView builds it, in the palette's width, the answer scrolled a fraction of the way down.
-    private static Scene Result(string name, DropResult result, float scrolled = 0)
+    // The colour picker's card as DropResultView builds it, in a scheme of its own: the square with its hairline, the rows
+    // right of it, one of them under the pointer when hover is its index.
+    private static Scene ColourResult(string name, PickedColour colour, ThemeScheme scheme, int hover)
     {
         const float width = (float)PanelSize.PaletteWidth;
-        var layout = new DropResultLayout(result, width, mascot: true);
+        var card = colour.Card(colour.Hex);
+        return new(name, IslandGeometry.Panel(width, new DropResultLayout(card, width, mascot: true).Height), c =>
+        {
+            Theme.UseScheme(scheme);
+            try
+            {
+                var layout = new DropResultLayout(card, width, mascot: true);
+                var host = new Vector2(-width / 2, 0);
+                c.Pill();
+                if (scheme != ThemeScheme.Dark)
+                {
+                    // The canvas's pill is the dark one; the scheme's own surface goes over it, near enough to its outline.
+                    c.RoundRect(new RectangleF(-width / 2, 0, width, layout.Height), 24, Theme.Island);
+                }
+
+                c.Mascot(shift: DropResultLayout.Seat.Shift);
+                c.RoundRect(Offset(layout.Choices[^1], host), DropResultLayout.Corner, Tomte.Core.Interaction.StateLook.Accent);
+                var swatch = Offset(layout.SwatchBox, host);
+                c.RoundRect(swatch, DropResultLayout.SwatchCorner, 0xFF000000 | colour.Rgb);
+                c.StrokeRect(swatch, DropResultLayout.SwatchCorner, Theme.Line);
+                if (hover >= 0)
+                {
+                    c.RoundRect(Offset(layout.Values[hover], host), DropResultLayout.Corner, Tomte.Core.Interaction.StateLook.Hover);
+                }
+
+                foreach (var line in layout.Slots)
+                {
+                    c.Text(line, host);
+                }
+            }
+            finally
+            {
+                Theme.UseScheme(ThemeScheme.Dark);
+            }
+        });
+    }
+
+    // A zone's panel as DropResultView builds it, in the palette's width, the answer scrolled a fraction of the way down;
+    // a Tomte Drop card's code on its white square, a black rectangle a run.
+    private static Scene Result(string name, DropResult result, float scrolled = 0, float maxHeight = (float)PanelSize.PaletteMaxHeight)
+    {
+        const float width = (float)PanelSize.PaletteWidth;
+        var layout = new DropResultLayout(result, width, mascot: true, maxHeight);
         return new(name, IslandGeometry.Panel(width, layout.Height), c =>
         {
             var host = new Vector2(-width / 2, 0);
             c.Pill();
             c.Mascot(shift: DropResultLayout.Seat.Shift);
+            if (result.Qr is not null)
+            {
+                c.RoundRect(Offset(layout.QrBox, host), DropResultLayout.QrCorner, 0xFFFFFFFF);
+                c.StrokeRect(Offset(layout.QrBox, host), DropResultLayout.QrCorner, Theme.Line);
+                foreach (var run in layout.QrRuns)
+                {
+                    c.RoundRect(Offset(run, host), 0, 0xFF000000);
+                }
+            }
+
             for (int i = 0; i < layout.Choices.Count; i++)
             {
                 var r = Offset(layout.Choices[i], host);
@@ -171,7 +252,7 @@ internal static partial class Program
             c.Clip = Offset(band, host);
             foreach (var (run, at) in layout.Body)
             {
-                c.Text(run, new Vector2(at.X, band.Y + at.Y - layout.MaxScroll * scrolled), host);
+                c.Text(run, new Vector2(band.X + at.X, band.Y + at.Y - layout.MaxScroll * scrolled), host);
             }
 
             c.Clip = null;

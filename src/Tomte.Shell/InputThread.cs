@@ -7,7 +7,6 @@ using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
-using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.Input;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
 using Windows.Win32.UI.WindowsAndMessaging;
@@ -43,16 +42,19 @@ internal static unsafe class InputThread
     // in another app can never say yes.
     public const int ConfirmHotkeyId = 101;
 
-    // While the rambler's card offers its choices, between the release and a pick: Alt+I, Alt+A and Alt+N from the first
-    // id on, in VoiceChoice order, and Enter alone on its own id, which a card that refused Insert does not take.
-    public const int ChoiceHotkeyId = 102, ChoiceEnterHotkeyId = 105;
+    // While the rambler's card offers its choices, between the release and a pick: Alt+I, Alt+A, Alt+N and Alt+C from
+    // the first id on, in VoiceChoice order, and Enter alone on its own id, which a card that refused Insert does not take.
+    public const int ChoiceHotkeyId = 102, ChoiceEnterHotkeyId = 106;
 
     // Win+Alt+Z, only while the pill after a closed AI view offers Undo.
-    public const int UndoHotkeyId = 106;
+    public const int UndoHotkeyId = 107;
 
     // E alone while the rambler's card offers its choices and can edit its words; never once Insert was refused, when
     // the user may be typing in another app.
-    public const int EditHotkeyId = 107;
+    public const int EditHotkeyId = 108;
+
+    // Ctrl+V, only while the Shelf panel shows under the pointer (RetractionRules.TakesPaste).
+    public const int PasteHotkeyId = 109;
 
     // Posted to the input window by the UI thread.
     private const uint MsgSetEscape = PInvoke.WM_APP + 10;      // wParam 1 registers Esc, 0 releases it
@@ -62,9 +64,10 @@ internal static unsafe class InputThread
     private const uint MsgSample = PInvoke.WM_APP + 15;         // sample the pointer against the island bounds now
     private const uint MsgPause = PInvoke.WM_APP + 16;          // wParam 1 releases the action hotkeys, 0 registers them again
     private const uint MsgSetUndo = PInvoke.WM_APP + 17;        // wParam 1 registers Win+Alt+Z, 0 releases it
+    private const uint MsgSetPaste = PInvoke.WM_APP + 19;       // wParam 1 registers Ctrl+V, 0 releases it
     private const nuint DwellTimer = 1;
     private const ushort VkEscape = 0x1B, VkReturn = 0x0D, VkMenu = 0x12;
-    private static readonly ushort[] ChoiceLetters = ['I', 'A', 'N'];
+    private static readonly ushort[] ChoiceLetters = ['I', 'A', 'N', 'C'];
     private static readonly HWND MessageOnlyParent = new(-3); // HWND_MESSAGE, which CsWin32 does not emit
 
     private static HWND island, window;
@@ -81,7 +84,7 @@ internal static unsafe class InputThread
     private static readonly Stopwatch clock = Stopwatch.StartNew();
 
     // Shared with the UI thread. Written there, read here; a torn read costs one wrong pointer sample.
-    private static int zoneLeft, zoneRight, zoneTop, bandBottom;
+    private static RevealEdges edges = RevealEdges.None;
     private static int boundsLeft, boundsTop, boundsRight, boundsBottom, boundsMargin, boundsVersion;
     private static int trackPointer, dragArmed;
 
@@ -121,13 +124,8 @@ internal static unsafe class InputThread
     /// <summary>The store changed; the input thread re-reads it where it runs.</summary>
     public static void ApplySettings() => PInvoke.PostMessage(window, MsgApplySettings, 0, 0);
 
-    public static void SetZone(RevealZone zone)
-    {
-        Volatile.Write(ref zoneLeft, zone.Left);
-        Volatile.Write(ref zoneRight, zone.Right);
-        Volatile.Write(ref zoneTop, zone.Top);
-        Volatile.Write(ref bandBottom, zone.DragBandBottom);
-    }
+    /// <summary>The reveal zones of the monitors the island may show on, swapped in whole.</summary>
+    public static void SetEdges(RevealEdges next) => Volatile.Write(ref edges, next);
 
     /// <summary>Island bounds in physical pixels to track the pointer against; the next sample reports inside or outside.</summary>
     public static void TrackPointer(System.Drawing.Rectangle bounds, int margin)
@@ -164,6 +162,9 @@ internal static unsafe class InputThread
     public static void PauseHotkeys(bool on) => PInvoke.PostMessage(window, MsgPause, (nuint)(on ? 1 : 0), 0);
 
     public static void SetEscape(bool on) => PInvoke.PostMessage(window, MsgSetEscape, (nuint)(on ? 1 : 0), 0);
+
+    /// <summary>Ctrl+V for the shelf. When another app holds it, Ctrl+V stays that app's and only the island's own keys paste.</summary>
+    public static void SetPaste(bool on) => PInvoke.PostMessage(window, MsgSetPaste, (nuint)(on ? 1 : 0), 0);
 
     public static void SetConfirm(bool on) => PInvoke.PostMessage(window, MsgSetConfirm, (nuint)(on ? 1 : 0), 0);
 
@@ -318,8 +319,9 @@ internal static unsafe class InputThread
         PInvoke.RegisterRawInputDevices(&device, 1, (uint)sizeof(RAWINPUTDEVICE));
     }
 
-    // Alt+I, Alt+A or Alt+N picked on the card, with Alt still down: a tap of a key assigned to nothing, so the app in
-    // front takes Alt as used in a chord. Letting Alt go then opens no menu, and letters typed after are not menu keys.
+    // Alt+I, Alt+A, Alt+N or Alt+C picked on the card, with Alt still down: a tap of a key assigned to nothing, so the
+    // app in front takes Alt as used in a chord. Letting Alt go then opens no menu, and letters typed after are not menu
+    // keys.
     private static void MaskAlt()
     {
         const VIRTUAL_KEY Unassigned = (VIRTUAL_KEY)0xE8;
@@ -331,7 +333,7 @@ internal static unsafe class InputThread
         PInvoke.SendInput(tap, sizeof(INPUT));
     }
 
-    // Win+Alt+Enter, or the card's three Alt keys and its Enter: an id that is not registered is ignored.
+    // Win+Alt+Enter, or the card's four Alt keys and its Enter: an id that is not registered is ignored.
     private static void UnregisterConfirm(HWND hwnd)
     {
         for (int id = ConfirmHotkeyId; id <= ChoiceEnterHotkeyId; id++)
@@ -397,6 +399,12 @@ internal static unsafe class InputThread
                         PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
                     }
 
+                    return new LRESULT(0);
+                case MsgSetPaste when wParam.Value == 1:
+                    PInvoke.RegisterHotKey(hwnd, PasteHotkeyId, HOT_KEY_MODIFIERS.MOD_CONTROL | HOT_KEY_MODIFIERS.MOD_NOREPEAT, 'V');
+                    return new LRESULT(0);
+                case MsgSetPaste:
+                    PInvoke.UnregisterHotKey(hwnd, PasteHotkeyId);
                     return new LRESULT(0);
                 case MsgSetConfirm:
                     if (wParam.Value is 2 or 3 or 4)
@@ -467,6 +475,7 @@ internal static unsafe class InputThread
                     PInvoke.UnregisterHotKey(hwnd, EscapeHotkeyId);
                     UnregisterConfirm(hwnd);
                     PInvoke.UnregisterHotKey(hwnd, UndoHotkeyId);
+                    PInvoke.UnregisterHotKey(hwnd, PasteHotkeyId);
                     if (!hook.IsNull)
                     {
                         PInvoke.UnhookWindowsHookEx(hook);
@@ -510,16 +519,14 @@ internal static unsafe class InputThread
     {
         System.Drawing.Point cursor;
         PInvoke.GetCursorPos(&cursor);
-        int top = Volatile.Read(ref zoneTop);
-        bool atTop = cursor.Y == top;
-        bool inZone = atTop && cursor.X >= Volatile.Read(ref zoneLeft) && cursor.X <= Volatile.Read(ref zoneRight)
-            // Asked only on the top row: a monitor above this x means there is no edge to push against.
-            && PInvoke.MonitorFromPoint(new System.Drawing.Point(cursor.X, top - 1), MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONULL) == HMONITOR.Null;
+        // On a zone's top row with no monitor above it: an edge to push against. The island then opens on the monitor
+        // under the pointer, which is this one.
+        bool atEdge = Volatile.Read(ref edges).EdgeAt(cursor.X, cursor.Y) >= 0;
         // Absolute devices (pen, RDP) carry no push; they still get the dwell.
         int dy = (mouse.usFlags & MOUSE_STATE.MOUSE_MOVE_ABSOLUTE) != 0 ? 0 : mouse.lLastY;
         if (reveal.EdgePush)
         {
-            switch (detector.Feed(clock.Elapsed.TotalMilliseconds, dy, atTop, inZone, touchpad))
+            switch (detector.Feed(clock.Elapsed.TotalMilliseconds, dy, atEdge, atEdge, touchpad))
             {
                 case EdgePushDetector.Event.EnterZone:
                     if (reveal.DwellMs > 0)
@@ -596,8 +603,7 @@ internal static unsafe class InputThread
                             candidate = true;
                             PInvoke.PostMessage(island, MsgDragCandidate, 0, Pack(downX, downY));
                         }
-                        else if (candidate && Volatile.Read(ref dragArmed) == 1 && y >= Volatile.Read(ref zoneTop) && y <= Volatile.Read(ref bandBottom)
-                            && x >= Volatile.Read(ref zoneLeft) && x <= Volatile.Read(ref zoneRight))
+                        else if (candidate && Volatile.Read(ref dragArmed) == 1 && Volatile.Read(ref edges).InDragBand(x, y))
                         {
                             // Once per drag: a retract must not re-show the surface for the rest of it.
                             Volatile.Write(ref dragArmed, 0);

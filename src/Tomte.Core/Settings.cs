@@ -100,6 +100,24 @@ public sealed record TomteSettings
     /// </summary>
     public bool KeepWhilePlaying { get; init; }
 
+    /// <summary>
+    /// While another app uses the microphone, the push pill carries a button that mutes it and the Call tab shows. On by
+    /// default; on, Tomte hears apps start and stop using the microphone while the island is hidden.
+    /// </summary>
+    public bool MuteDuringCalls { get; init; } = true;
+
+    public const int JobsAheadMinMinutes = 5, JobsAheadMaxMinutes = 240;
+
+    /// <summary>
+    /// How many minutes before a job's run the Jobs tab shows and the push pill names the job. The tab also shows while a
+    /// job runs; otherwise it is not on the strip.
+    /// </summary>
+    public int JobsAheadMinutes { get; init; } = 30;
+
+    /// <summary>The time as used: held to its range, so a hand-edited file cannot show the tab always or never.</summary>
+    [JsonIgnore]
+    public TimeSpan JobsAhead => TimeSpan.FromMinutes(Math.Clamp(JobsAheadMinutes, JobsAheadMinMinutes, JobsAheadMaxMinutes));
+
     /// <summary>Skills the user turned on, by folder name. A skill not listed is off, so a new one starts off.</summary>
     public IReadOnlyList<string> EnabledSkills { get; init; } = [];
 
@@ -108,6 +126,18 @@ public sealed record TomteSettings
 
     /// <summary>The apps the AI's UI Automation tools may use; the tools themselves are off unless a run turns them on.</summary>
     public UiAutomationSettings UiAutomation { get; init; } = new();
+
+    /// <summary>
+    /// After Copy text from screen, send the recognised text (never the picture) to <see cref="Provider"/> to fix reading
+    /// mistakes. Off unless the user turns it on; with no provider nothing is sent either way.
+    /// </summary>
+    public bool CleanUpScreenText { get; init; }
+
+    /// <summary>
+    /// The language Translate on Copy text from screen's card asks the provider for, as a language tag such as "de".
+    /// Empty means the Windows display language.
+    /// </summary>
+    public string TranslateScreenTextTo { get; init; } = "";
 
     /// <summary>The AI provider the palette uses. Null keeps the AI layer off. Its key is in Credential Manager, never here.</summary>
     public ProviderConfig? Provider { get; init; }
@@ -192,6 +222,26 @@ public sealed record HotkeySettings
 
     public string Search { get; init; } = "Win+Alt+Space";
 
+    /// <summary>
+    /// X, a key no Windows 11 or Game Bar shortcut documents with Win+Alt. It was Win+Alt+T until Game Bar's recording
+    /// timer turned out to own that one, so a file still holding the old default reads as the new default.
+    /// </summary>
+    public string TextCapture
+    {
+        get => textCapture;
+        init => textCapture = value == OldTextCapture ? "Win+Alt+X" : value;
+    }
+
+    private readonly string textCapture = "Win+Alt+X";
+
+    /// <summary>Game Bar's show or hide recording timer; never a Tomte shortcut.</summary>
+    public const string OldTextCapture = "Win+Alt+T";
+
+    /// <summary>E for eyedropper. Win+Alt+K, the obvious pick, mutes the microphone in calls on Windows 11.</summary>
+    public string ColourPick { get; init; } = "Win+Alt+E";
+
+    public string Mute { get; init; } = "Win+Alt+U";
+
     public string this[HotkeyAction action] => action switch
     {
         HotkeyAction.Summon => Summon,
@@ -200,6 +250,9 @@ public sealed record HotkeySettings
         HotkeyAction.Rambler => Rambler,
         HotkeyAction.Scratchpad => Scratchpad,
         HotkeyAction.Search => Search,
+        HotkeyAction.TextCapture => TextCapture,
+        HotkeyAction.ColourPick => ColourPick,
+        HotkeyAction.Mute => Mute,
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 
@@ -211,6 +264,9 @@ public sealed record HotkeySettings
         HotkeyAction.Rambler => this with { Rambler = chord },
         HotkeyAction.Scratchpad => this with { Scratchpad = chord },
         HotkeyAction.Search => this with { Search = chord },
+        HotkeyAction.TextCapture => this with { TextCapture = chord },
+        HotkeyAction.ColourPick => this with { ColourPick = chord },
+        HotkeyAction.Mute => this with { Mute = chord },
         _ => throw new ArgumentOutOfRangeException(nameof(action)),
     };
 }

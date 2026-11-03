@@ -20,6 +20,9 @@ public enum CompactReason
 
     /// <summary>The pill kept while music plays, when the user turned that on: what plays, as long as it plays.</summary>
     Playing,
+
+    /// <summary>A reminder that rang: its text, Snooze and Dismiss, all its own, so the pill's line shows nothing.</summary>
+    Reminder,
 }
 
 /// <summary>Which feature raised an event, so its pill can show that feature's content.</summary>
@@ -28,6 +31,9 @@ public enum IslandEventSource
     Other,
     Timer,
     TrackChange,
+
+    /// <summary>The mute key's pill: whether the microphone is muted now, with the mic button.</summary>
+    Mic,
 }
 
 /// <summary>What fills the Compact pill's one line of live content.</summary>
@@ -46,6 +52,9 @@ public enum CompactContent
 public sealed record GlanceFacts
 {
     public (string Name, DateTimeOffset At)? Job { get; init; }
+
+    /// <summary>How long before its run the job is named: <see cref="TomteSettings.JobsAhead"/>.</summary>
+    public TimeSpan JobAhead { get; init; } = new TomteSettings().JobsAhead;
 
     public IReadOnlyCollection<IslandEvent> Waiting { get; init; } = [];
 
@@ -85,8 +94,7 @@ public static class CompactRules
         _ => null,
     };
 
-    /// <summary>A job is mentioned this long before it is due, and a battery at or below this charge.</summary>
-    public static readonly TimeSpan JobSoon = TimeSpan.FromHours(1);
+    /// <summary>A battery at or below this charge is mentioned.</summary>
     public const int BatteryLow = 20;
 
     /// <summary>The time of day as the user's culture writes a short time: "18:41" or "6:41 PM".</summary>
@@ -102,7 +110,7 @@ public static class CompactRules
 
     /// <summary>
     /// The push pill's line with no timer and nothing playing: the time of day, then the first that applies of a job due
-    /// within the hour ("Report at 18:00"), what waits unseen (only counted during Focus, Do Not Disturb or the tray pause), a low battery while the PC runs on it, what is on the
+    /// within <see cref="GlanceFacts.JobAhead"/> ("Report at 18:00"), what waits unseen (only counted during Focus, Do Not Disturb or the tray pause), a low battery while the PC runs on it, what is on the
     /// shelf, and the short date. Cut to <paramref name="width"/> as <paramref name="measure"/> lays a line out: the
     /// job's name or the mention ends in an ellipsis, a job's time stays, and with no room even for that the time of
     /// day stands alone.
@@ -113,7 +121,7 @@ public static class CompactRules
         string time = TimeOfDay(now, culture);
         var (cut, kept) = facts switch
         {
-            { Job: (var name, var at) } when at > now && at - now <= JobSoon => (name, $" at {TimeOfDay(at, culture)}"),
+            { Job: (var name, var at) } when at > now && at - now <= facts.JobAhead => (name, $" at {TimeOfDay(at, culture)}"),
             { Waiting.Count: 1, Quiet: false, Paused: false } => (facts.Waiting.First().Text, ""),
             { Waiting.Count: > 0 and var n } => (n == 1 ? "1 event waiting" : $"{n} events waiting", ""),
             { Battery: <= BatteryLow and var charge } => ($"Battery {charge}%", ""),
@@ -182,18 +190,35 @@ public static class CompactRules
         shown is [var only] ? only.Source : IslandEventSource.Other;
 
     /// <summary>
-    /// The tab a click on the pill opens Panels on: Media when the now-playing row shows on it, else the tab last open
-    /// (null). A hover, a scroll and the hotkeys always open the tab last open.
+    /// The tab a click on the pill opens Panels on: Call during a call, Media when the now-playing row shows on it, else
+    /// the tab last open (null). A hover, a scroll and the hotkeys always open the tab last open.
     /// </summary>
-    public static PanelId? ClickOpens(bool nowPlayingShows) => nowPlayingShows ? PanelId.Media : null;
+    public static PanelId? ClickOpens(bool nowPlayingShows, bool onCall = false) =>
+        onCall ? PanelId.Call : nowPlayingShows ? PanelId.Media : null;
 
     /// <summary>
-    /// The tab to put back when the island hides after a click on the track opened Media: the one current before the
+    /// The tab to put back when the island hides after a click on the pill opened Media or Call: the one current before the
     /// click, so hover and the hotkeys keep opening the tab the user chose. Null when the user went on to another tab
     /// by hand, or nothing was clicked.
     /// </summary>
     public static PanelId? TabAfterClick(PanelId? beforeClick, PanelId? current) =>
-        beforeClick is { } back && current == PanelId.Media ? back : null;
+        beforeClick is { } back && current is PanelId.Media or PanelId.Call ? back : null;
+
+    /// <summary>
+    /// Whether the pill carries the mic button: the mute key's own pill always, and while another app uses the
+    /// microphone (<paramref name="call"/>, which also means the setting is on and there is a microphone) the push pill and
+    /// the pill kept while music plays. Never desktop peek, which rests in shapes of its own, nor a pill that has a
+    /// button or no room of its own (undo, the rambler), the hint, the arrival or another feature's event.
+    /// </summary>
+    public static bool ShowsMic(CompactReason reason, IslandEventSource shown, bool call, bool peek) => reason switch
+    {
+        CompactReason.Event => shown == IslandEventSource.Mic,
+        CompactReason.Summary or CompactReason.Playing => call && !peek,
+        _ => false,
+    };
+
+    /// <summary>What the mute key's pill says.</summary>
+    public static string MicLine(bool muted) => muted ? "Microphone muted" : "Microphone on";
 
     /// <summary>The track-change pill shows when the user turned it on, except over the kept pill, whose row already shows the new track.</summary>
     public static bool AnnouncesTrack(bool on, CompactReason showing) => on && showing != CompactReason.Playing;

@@ -10,6 +10,11 @@
     <PackageReference Include="System.Management" />
     <!-- File search through the Windows Search index's OLE DB provider; loaded on the first search without Everything. -->
     <PackageReference Include="System.Data.OleDb" />
+    <!-- Tomte Drop's QR code. -->
+    <PackageReference Include="ZXing.Net" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Drop\DropPage.html" LogicalName="Tomte.Core.Drop.DropPage.html" />
   </ItemGroup>
   <ItemGroup>
     <!-- The dark mode tests replace the registry and the broadcast with a recorder. -->

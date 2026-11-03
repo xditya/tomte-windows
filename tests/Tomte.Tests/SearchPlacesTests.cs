@@ -161,7 +161,8 @@ public sealed class SearchPlacesTests
     {
         var shelf = Search("shelf").First(r => r.Detail == "Tomte island");
         Assert.Equal(PanelId.Shelf, Places.Tab(shelf.Target));
-        Assert.Equal(Enum.GetValues<PanelId>().Length, Places.Rows([]).Count(r => Places.Tab(r.Target) is not null));
+        // Every tab but Call and Jobs, which are there only during a call and near a job's run.
+        Assert.Equal(Enum.GetValues<PanelId>().Length - 2, Places.Rows([]).Count(r => Places.Tab(r.Target) is not null));
         Assert.Null(Places.Tab("tomte:tab:9"));
         Assert.Null(Places.Tab("ms-settings:display"));
     }
@@ -207,7 +208,7 @@ public sealed class SearchPlacesTests
         var rows = SearchRank.Order(items, "sound", None);
         Assert.Equal([SearchKind.App, SearchKind.Place, SearchKind.Shortcut, SearchKind.Shelf, SearchKind.File, SearchKind.GetEverything, SearchKind.Ask], rows.Select(r => r.Kind).Distinct());
         Assert.Equal(SearchRank.MaxPlaces, rows.Count(r => r.Kind == SearchKind.Place));
-        Assert.Equal(["APPS", "SETTINGS", "SHORTCUTS AND SHELF", "FILES"], SearchLayout.Lines(rows).Select(l => l.Heading).OfType<string>());
+        Assert.Equal(["APPS", "SETTINGS", "SHORTCUTS, SHELF AND CLIPS", "FILES"], SearchLayout.Lines(rows).Select(l => l.Heading).OfType<string>());
     }
 
     [Fact]

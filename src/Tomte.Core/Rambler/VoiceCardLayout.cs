@@ -6,8 +6,8 @@ namespace Tomte.Core.Rambler;
 
 /// <summary>
 /// The card the words show on after a hold, in DIPs from its top-left corner: a header with the mic, "Heard you", how
-/// long the take was and where it was turned into text; the take's waveform; the words; Insert, Ask Tomte and Add to note
-/// in a row; a line on why one of them is off when one is; and the key hints along the bottom.
+/// long the take was and where it was turned into text; the take's waveform; the words; Insert, Copy, Ask Tomte and Add
+/// to note in a row; a line on why one of them is off when one is; and the key hints along the bottom.
 /// <paramref name="words"/> is the height of the words as shown (the text box's while they are edited); <paramref name="line"/>
 /// is the reason line, empty for none.
 /// </summary>
@@ -21,8 +21,16 @@ public sealed class VoiceCardLayout(float width, bool mascot, float words, strin
     /// <summary>The take: bars 3 wide and 3 apart, up to 34 high.</summary>
     public const float WaveHeight = 34, WaveInset = 2;
 
-    /// <summary>The three actions: 52 high, Insert 1.4 times as wide as each of the others.</summary>
-    public const float ActionHeight = 52, ActionGap = 8, ActionCorner = 14, ActionPadX = 14, InsertShare = 1.4f, GlyphSize = 16, GlyphGap = 10;
+    /// <summary>
+    /// The four actions: 52 high, Insert 1.4 times as wide as Ask Tomte or Add to note, and Copy, the shortest word, 0.75
+    /// times, which leaves Add to note room for its glyph and words at the card's full width.
+    /// </summary>
+    public const float ActionHeight = 52, ActionGap = 8, ActionCorner = 14, ActionPadX = 14, InsertShare = 1.4f, CopyShare = 0.75f, GlyphSize = 16, GlyphGap = 10;
+
+    /// <summary>The row left to right, as <see cref="Actions"/> lays it out.</summary>
+    public static readonly VoiceChoice[] Order = [VoiceChoice.Insert, VoiceChoice.Copy, VoiceChoice.Ask, VoiceChoice.Note];
+
+    private static readonly float[] Shares = [InsertShare, CopyShare, 1, 1];
 
     public const float LineHeight = 16, FootHeight = Keycap.Height, FootGap = 14;
 
@@ -79,21 +87,29 @@ public sealed class VoiceCardLayout(float width, bool mascot, float words, strin
     /// <summary>The words, under the waveform, as wide as the card's content.</summary>
     public RectangleF Text => new(Side, Wave.Bottom + Gap, width - (2 * Side), words);
 
-    /// <summary>Insert, Ask Tomte and Add to note, left to right, under the words.</summary>
+    /// <summary>The actions in <see cref="Order"/>, left to right, under the words.</summary>
     public IReadOnlyList<RectangleF> Actions
     {
         get
         {
-            float y = Text.Bottom + Gap, unit = (width - (2 * Side) - (2 * ActionGap)) / (InsertShare + 2);
-            float insert = unit * InsertShare;
-            return
-            [
-                new(Side, y, insert, ActionHeight),
-                new(Side + insert + ActionGap, y, unit, ActionHeight),
-                new(Side + insert + unit + (2 * ActionGap), y, unit, ActionHeight),
-            ];
+            float y = Text.Bottom + Gap, x = Side, unit = (width - (2 * Side) - ((Shares.Length - 1) * ActionGap)) / Shares.Sum();
+            var row = new List<RectangleF>(Shares.Length);
+            foreach (float share in Shares)
+            {
+                row.Add(new RectangleF(x, y, unit * share, ActionHeight));
+                x += (unit * share) + ActionGap;
+            }
+
+            return row;
         }
     }
+
+    /// <summary>
+    /// Whether <paramref name="action"/> holds its padding, a glyph when it has one, <paramref name="label"/> whole, and
+    /// with <paramref name="enter"/> the Enter cap at its right end. The highlighted action carries Enter only where it fits.
+    /// </summary>
+    public static bool Fits(RectangleF action, string label, bool glyph, bool enter) =>
+        (2 * ActionPadX) + (glyph ? GlyphSize + GlyphGap : 0) + TextSlot.Measure(label, Action, 400) + (enter ? GlyphGap + Keycap.Width("Enter") : 0) <= action.Width;
 
     /// <summary>Why an action is off or could not type, under the row; empty when there is nothing to say.</summary>
     public TextSlot ReasonLine => new(line, Reason, new RectangleF(Side, Actions[0].Bottom + (Gap / 2), width - (2 * Side), line.Length > 0 ? LineHeight : 0));

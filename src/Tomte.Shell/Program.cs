@@ -44,6 +44,9 @@ internal static partial class Program
     // The AI drop zones, made with the shelf; the undo driver drops on them.
     private static DropZones? zones;
 
+    // The tray's Tomte Drop, once the shelf it puts what arrives on is up.
+    private static Action? tomteDrop;
+
     /// <summary>The AI history beside the settings file in use: the palette, voice, jobs and the History tab share it.</summary>
     internal static AiHistory? History { get; private set; }
 
@@ -216,6 +219,7 @@ internal static partial class Program
         var shortcuts = new ShortcutStore(db, () => store.Current.ScriptShortcuts);
         StartPanels(island, triggers, store, db, shortcuts, clipboard, logLine);
         _ = Jobs.StartAsync(new JobContext(island, triggers, store, db, timer, Scratchpad, SendLogPath, log, logLine), args);
+        _ = Reminders.StartAsync(island, triggers, db, logLine);
 
         if (rambler)
         {
@@ -281,11 +285,14 @@ internal static partial class Program
         triggers.Captured = captureQuestion is null
             ? (overlay, crop, foreground) => CaptureToPalette(island, triggers, store, logLine, overlay, crop, foreground)
             : (overlay, crop, foreground) => AskAboutCapture(island, triggers, store, log!, captureQuestion, overlay, crop, foreground);
+        triggers.TextCaptured = (overlay, crop, _) => ScreenTextRun.StartAsync(island, triggers, store, logLine, overlay, crop);
+        triggers.ColourPicked = (overlay, _, _) => ColourRun.StartAsync(island, triggers, logLine, overlay);
 
         using var tray = new TrayIcon(pause, timer);
         tray.OpenIsland += triggers.Toggle;
         tray.Ask += () => AskFromTray(island, triggers, store, logLine);
         tray.Search += () => triggers.OpenSearch(ignorePause: true);
+        tray.TomteDrop += () => tomteDrop?.Invoke();
         // The island goes first, as for the Shortcuts tile, and with it the keys it registers while open (Esc among them),
         // which a settings shortcut box would otherwise not get.
         tray.OpenSettings += () =>
@@ -459,6 +466,7 @@ internal static partial class Program
         // Search shares tomte.db for what was opened from it, and the tiles; nothing of it loads before its first open.
         search = new SearchHost(island, triggers, text, typing, store, db, shortcuts, log)
         {
+            Clipboard = clipboard,
             Ask = words => AskFromSearch(island, triggers, store, log, words),
             Back = () => island.Queue.TryEnqueue(() => GoBack(island, triggers)),
             Tab = id => island.Queue.TryEnqueue(() =>
@@ -485,8 +493,9 @@ internal static partial class Program
         };
         // In the tabs' order. db is tomte.db next to the settings file in use, so a run with its own settings file has its
         // own shelf, tiles, note and history too.
-        panels.Register(StartShelf(island, triggers, store, db, text, log, out var shelf));
+        panels.Register(StartShelf(island, triggers, store, db, text, typing, log, out var shelf));
         panels.ShelfCount = () => shelf.Items.Count;
+        tomteDrop = () => DropRun.Receive(island, triggers, shelf, text, log);
         shelf.Changed += panels.ShelfChanged;
         panels.Register(new HomePanel(island, text, typing, shelf, media, Scratchpad, shortcuts, new HomeActions
         {
@@ -513,7 +522,7 @@ internal static partial class Program
             OpenSettings(Tomte.Panels.SettingsWindow.ShortcutsHeader);
         }, text, log));
         panels.Register(new MediaPanel(island, media, text, () => DateTimeOffset.UtcNow, log));
-        var scratchpad = new ScratchpadPanel(island, Scratchpad, text, typing, log);
+        var scratchpad = new ScratchpadPanel(island, Scratchpad, text, typing, new Tomte.Core.Text.SnippetStore(db), log);
         panels.Register(scratchpad);
         triggers.ScratchpadOpened = () => scratchpad.TakeKeys();
         // Panels opened on the Scratchpad tab gives the note the keys when it is being edited, as its own hotkey does; a
@@ -540,11 +549,14 @@ internal static partial class Program
             entry => shelf.Add([entry]), log));
         // Continue opens the AI box on the next turn, after the click that asked for it.
         panels.Register(new HistoryPanel(island, History!, text, item => island.Queue.TryEnqueue(() => ContinueInPalette(triggers, item)), answer => CopyAnswer(answer, log), log));
+        panels.Register(new JobsPanel(island, panels, store, text, log));
         triggers.Panels = panels;
         // The row and the line live on the state changes and ContentReady they listen to.
         var row = new NowPlayingRow(island, triggers, media, text, log);
         triggers.NowPlayingShows = () => row.Showing;
-        _ = new CompactLine(island, triggers, text, row, log);
+        _ = new CompactLine(island, triggers, text, row, () => store.Current.JobsAhead, log);
+        var calls = new CallMute(island, triggers, panels, store, log);
+        panels.Register(new CallPanel(island, calls, text, triggers.Hide, log));
 
         bool announcing = false, keeping = false;
         media.TrackChanged += playing =>
@@ -594,7 +606,7 @@ internal static partial class Program
     /// The shelf takes what is dropped on the island and is the Shelf tab. Its database and its folder sit next to
     /// the settings file, and neither is opened before the first drop or the first time the shelf shows.
     /// </summary>
-    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, TextRenderer text, Action<string>? log, out ShelfStore shelfStore)
+    private static ShelfPanel StartShelf(IslandWindow island, TriggerController triggers, SettingsStore store, TomteDb db, TextRenderer text, TypingFocus typing, Action<string>? log, out ShelfStore shelfStore)
     {
         string dir = Path.GetDirectoryName(store.FilePath)!;
         var shelf = shelfStore = new ShelfStore(db, Path.Combine(dir, "Shelf"), action => island.Queue.TryEnqueue(() => action()), log)
@@ -606,7 +618,7 @@ internal static partial class Program
         triggers.Drops.Receive = shelf.Receive;
         triggers.Dropped += drop => shelf.Accept(drop);
         zones = new DropZones(island, triggers, shelf, text, store, db, log);
-        return new ShelfPanel(island, triggers, shelf, text, log);
+        return new ShelfPanel(island, triggers, shelf, text, typing, log);
     }
 
     /// <summary>
@@ -809,8 +821,8 @@ internal static partial class Program
             bool dry = Environment.GetCommandLineArgs().Contains("--dry");
             var tools = dry
                 ? new BuiltInTools(shelf, scratchpad, text => log.WriteLine($"palette dry: would copy {text.Length} characters"), url => log.WriteLine($"palette dry: would open {url}"),
-                    (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true), triggers.Timer)
-                : new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, null, triggers.Timer);
+                    (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true), triggers.Timer, web: WebTools.Http)
+                : new BuiltInTools(shelf, scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl, null, triggers.Timer, web: WebTools.Http);
             // Servers start on the send; disposing at the end of the run stops them, as closing the palette does.
             await using var mcp = McpTools.For(store.Current.McpServers);
             // --automation offers the UI Automation tools in this run; without it nothing of them is made.
@@ -898,7 +910,7 @@ internal static partial class Program
     /// one for the run instead. Speech to text is local whisper.cpp when tools/whisper/Get-Whisper.ps1 has run, or the
     /// provider's /audio/transcriptions with --stt-provider and --stt-model, read at the first hold;
     /// --debug-transcript "text" or --debug-wav file.wav stands in for what the microphone heard. The words show on the
-    /// card with Insert, Ask Tomte and Add to note; Ask, offered only with a provider, makes them a voice command the
+    /// card with Insert, Copy, Ask Tomte and Add to note; Ask, offered only with a provider, makes them a voice command the
     /// model reads with the voice tools, shown and asked in the palette. --dry keeps device tools from changing anything
     /// and Insert from typing. Null when there is no speech to text.
     /// </summary>
@@ -947,7 +959,10 @@ internal static partial class Program
         // The real shelf, so a file made by voice is still there after a restart. The tiles open by name; that way
         // never runs a script tile.
         var tools = new BuiltInTools((IShelf?)Jobs.Shelf ?? new InMemoryShelf(), scratchpad, DesktopEffects.CopyToClipboard, DesktopEffects.OpenUrl,
-            args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName);
+            args.Contains("--dry") ? (n, i) => BuiltInTools.RunDevice(n, i, dryRun: true) : null, timer, launchShortcut: shortcuts.LaunchByName, web: WebTools.Http)
+        {
+            Reminders = Reminders.Set,
+        };
         async Task<PaletteSession?> Voice()
         {
             var now = named is null ? Configured(store, log.WriteLine)
@@ -996,7 +1011,7 @@ internal static partial class Program
     }
 
     // Beside the settings file, so a run with its own settings file keeps its send log to itself too.
-    private static string SendLogPath => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsFile))!, "send-log.jsonl");
+    internal static string SendLogPath => Path.Combine(Path.GetDirectoryName(Path.GetFullPath(settingsFile))!, "send-log.jsonl");
 
     // What a driven run may say yes to with nobody at the keyboard: the app's own data, kept in the run's folder, and
     // reads. A device action only as a dry run (--dry), so a test never changes a setting on the PC, not even for a

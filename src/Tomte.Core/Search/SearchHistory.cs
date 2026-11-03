@@ -44,7 +44,10 @@ public sealed class SearchHistory(TomteDb db)
         return (items, launches);
     }
 
-    /// <summary>The row was opened now: one more for it, and the oldest rows past <see cref="MaxRows"/> go.</summary>
+    /// <summary>
+    /// The row was opened now: one more for it, and the oldest rows past <see cref="MaxRows"/> go. A pinned clip is kept
+    /// by its id only, never its text, so nothing of it stays here once it is unpinned or removed.
+    /// </summary>
     public void Record(SearchItem item, DateTimeOffset now)
     {
         using var connection = db.Open(Feature, Schema);
@@ -52,7 +55,7 @@ public sealed class SearchHistory(TomteDb db)
         Run(connection, """
             INSERT INTO search_launches(key, kind, name, target, count, last) VALUES ($key, $kind, $name, $target, 1, $last)
             ON CONFLICT(key) DO UPDATE SET name = excluded.name, count = count + 1, last = excluded.last
-            """, ("$key", item.Key), ("$kind", (int)item.Kind), ("$name", item.Name), ("$target", item.Target), ("$last", now.UtcTicks));
+            """, ("$key", item.Key), ("$kind", (int)item.Kind), ("$name", item.Kind == SearchKind.Clip ? "" : item.Name), ("$target", item.Target), ("$last", now.UtcTicks));
         Run(connection, "DELETE FROM search_launches WHERE key NOT IN (SELECT key FROM search_launches ORDER BY last DESC LIMIT $max)", ("$max", MaxRows));
         transaction.Commit();
     }

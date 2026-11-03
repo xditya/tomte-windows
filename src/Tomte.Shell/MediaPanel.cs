@@ -6,10 +6,7 @@ using Tomte.Core.Media;
 using Tomte.Core.Text;
 using Windows.UI.Composition;
 using Windows.Win32;
-using Windows.Win32.Foundation;
-using Windows.Win32.System.SystemServices;
 using Windows.Win32.UI.Input.KeyboardAndMouse;
-using Windows.Win32.UI.WindowsAndMessaging;
 using Color = Windows.UI.Color;
 
 namespace Tomte.Shell;
@@ -201,60 +198,19 @@ internal sealed class MediaPanel(IslandWindow island, MediaTracker tracker, Text
     /// the pointer, and the position under it at the release is the answer. Esc, the mouse going to another window or
     /// the panel hiding end it with nothing to seek to. Every other message is dispatched as the island's loop would.
     /// </summary>
-    private unsafe TimeSpan? Scrub(MediaTimeline timeline)
+    private TimeSpan? Scrub(MediaTimeline timeline)
     {
-        var hwnd = island.Hwnd;
-        PInvoke.SetCapture(hwnd);
+        TimeSpan At(Vector2 point) => layout.SeekAt(PanelSpace.ToBody(point, bodyWidth).X, timeline);
         try
         {
-            MSG message;
-            while (view is not null && PInvoke.GetCapture() == hwnd)
+            return PointerDrag.Follow(island, () => view is not null, point =>
             {
-                if (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value <= 0)
-                {
-                    // The app is quitting: the island's own loop has to see it too.
-                    PInvoke.PostQuitMessage((int)message.wParam.Value);
-                    return null;
-                }
-
-                // The island is never the foreground window, so a button let go off it can go unseen: a move with
-                // the button up ends the drag with nothing to seek to.
-                if (message.message == PInvoke.WM_MOUSEMOVE && (message.wParam.Value & (nuint)MODIFIERKEYS_FLAGS.MK_LBUTTON) == 0)
-                {
-                    return null;
-                }
-
-                if (message.message is PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP && message.hwnd == hwnd)
-                {
-                    int x = (short)(message.lParam.Value & 0xFFFF), y = (short)((message.lParam.Value >> 16) & 0xFFFF);
-                    var to = layout.SeekAt(PanelSpace.ToBody(island.ToIsland(x, y), bodyWidth).X, timeline);
-                    if (message.message == PInvoke.WM_LBUTTONUP)
-                    {
-                        return to;
-                    }
-
-                    view?.Scrub(layout.BarX(to, timeline), to);
-                    continue;
-                }
-
-                if (message.message == PInvoke.WM_KEYDOWN && message.wParam.Value == (nuint)VIRTUAL_KEY.VK_ESCAPE)
-                {
-                    return null;
-                }
-
-                PInvoke.TranslateMessage(&message);
-                PInvoke.DispatchMessage(&message);
-            }
-
-            return null;
+                var to = At(point);
+                view?.Scrub(layout.BarX(to, timeline), to);
+            }) is { } up ? At(up) : null;
         }
         finally
         {
-            if (PInvoke.GetCapture() == hwnd)
-            {
-                PInvoke.ReleaseCapture();
-            }
-
             view?.Scrubbed();
         }
     }

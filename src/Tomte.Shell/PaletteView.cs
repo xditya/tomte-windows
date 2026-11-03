@@ -73,6 +73,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
     private readonly bool typed;
     private readonly string hint;
     private TextVisual? setup;
+    private string? localLine;
     private float answerHeight, scroll;
     private bool pinned = true;
     private Action? retract;
@@ -164,12 +165,13 @@ internal sealed class PaletteView : IDisposable, IInteractive
         provider = text.Create(root);
         cost = text.Create(root);
         spend = text.Create(root);
-        if (session is not null && focus is not null)
+        // With no session the box still takes words Tomte answers itself (a reminder), when there is somewhere to send them.
+        if ((session is not null || send is not null) && focus is not null)
         {
             // The prompt hands Tab and Shift+Tab to the palette's chips, Send and buttons, and takes the keys back after them.
             prompt = focus.Create(root, multiline: true, PaletteLayout.PromptSize, owner: this);
             prompt.CaretInk = Theme.Accent;
-            prompt.Services.Text = session.Prompt;
+            prompt.Services.Text = session?.Prompt ?? "";
             if (send is not null)
             {
                 // While a question is open Enter runs what it asks; otherwise Enter sends.
@@ -249,6 +251,23 @@ internal sealed class PaletteView : IDisposable, IInteractive
         {
             send(prompt.Services.Text);
         }
+    }
+
+    /// <summary>With no session: <paramref name="line"/> under the box in place of what the palette needs, and the box emptied when <paramref name="done"/>.</summary>
+    public void ShowLine(string? line, bool done)
+    {
+        if (disposed)
+        {
+            return;
+        }
+
+        localLine = line;
+        if (done)
+        {
+            Fill("");
+        }
+
+        Update();
     }
 
     /// <summary>What the palette shows, for the debug driver.</summary>
@@ -332,7 +351,7 @@ internal sealed class PaletteView : IDisposable, IInteractive
             return;
         }
 
-        if (session is null)
+        if (session is null && id != SendId)
         {
             return;
         }
@@ -457,10 +476,15 @@ internal sealed class PaletteView : IDisposable, IInteractive
 
         if (session is null)
         {
-            // No provider: what the palette needs, under the box, and nothing to type in.
+            // No provider: what the palette needs, under the box, or what Tomte answered itself.
             setup ??= text.Create(root);
-            setup.Show(new TextRun(PaletteLayout.Setup, TextStyle.Secondary, layout.AnswerWidth), new Vector2(PaletteLayout.Pad + PaletteLayout.AnswerInset, layout.AnswerTop));
-            SetHeight(layout.Height(0));
+            var run = new TextRun(localLine ?? PaletteLayout.Setup, localLine is null ? TextStyle.Secondary : PaletteLayout.AnswerText, layout.AnswerWidth);
+            setup.Show(run, new Vector2(PaletteLayout.Pad + PaletteLayout.AnswerInset, layout.AnswerTop));
+            using (var laid = TextLayout.Of(run))
+            {
+                SetHeight(layout.Height(localLine is null ? 0 : laid.Height));
+            }
+
             Retarget();
             return;
         }
@@ -1294,6 +1318,12 @@ internal sealed partial class PaletteHost
     /// <summary>What a closed AI box gives the undo: <see cref="TriggerController.Closed"/>. Null keeps nothing (a driven run).</summary>
     public TriggerController? Triggers { get; init; }
 
+    /// <summary>
+    /// Typed words Tomte answers itself before any provider (a reminder): the line to show, or null to send them on. With
+    /// it the AI box takes typing even with no provider set up.
+    /// </summary>
+    public Func<string, Task<string?>>? Local { get; init; }
+
     /// <summary>The prompt of the palette <see cref="Type"/> last opened takes the keys again, while that palette is still up. False when it has none or Windows refused.</summary>
     public bool TakeKeys() => typed?.TakeKeys() == true;
 
@@ -1310,8 +1340,8 @@ internal sealed partial class PaletteHost
     /// puts that skill's command in the box, and the next Enter sends it. Esc and focus loss while nothing is being sent
     /// hide the island; leaving the palette cancels what is in flight (an open question is answered no), then stops the
     /// MCP servers and the UI Automation thread the session started. With no session, because no provider is set up,
-    /// the palette says the AI layer is off and takes no keys. <paramref name="back"/> is the back arrow's action, for a
-    /// palette opened from the panels; with none, Esc hides the island as before.
+    /// the palette says the AI layer is off and its box takes only what <see cref="Local"/> answers. <paramref name="back"/>
+    /// is the back arrow's action, for a palette opened from the panels; with none, Esc hides the island as before.
     /// </summary>
     public void Type(PaletteSession? session, Action? back = null) => Type(session, back, null);
 
@@ -1323,7 +1353,7 @@ internal sealed partial class PaletteHost
         var question = shut?.Question ?? new ToolQuestion();
         Task sending = shut?.Sending ?? Task.CompletedTask;
         PaletteView? view = null;
-        view = new PaletteView(island, machine, text, focus, session, (float)Width, session is null ? null : Entered, question) { OpenHistory = OpenHistory, Back = back, AddToNote = AddToNote, KeepOnShelf = KeepOnShelf };
+        view = new PaletteView(island, machine, text, focus, session, (float)Width, session is not null ? Entered : Local is not null ? Offline : null, question) { OpenHistory = OpenHistory, Back = back, AddToNote = AddToNote, KeepOnShelf = KeepOnShelf };
         if (shut is not null)
         {
             view.Restore(shut.Typed, shut.Scrolled);
@@ -1360,10 +1390,20 @@ internal sealed partial class PaletteHost
                 return;
             }
 
-            var send = SendAsync(session, typed);
+            var send = Local is null ? SendAsync(session, typed) : LocalOrSendAsync(session, view!, typed);
             if (!send.IsCompleted)
             {
                 sending = send;
+            }
+        }
+
+        // No provider: only what Tomte answers itself, else the line on what the palette needs.
+        async void Offline(string typed)
+        {
+            // An exception leaving an async void ends the process; Local reports its own failures in its line.
+            if (typed.Trim().Length > 0 && await Local!(typed) is var line && machine.State == IslandState.Palette)
+            {
+                view!.ShowLine(line, done: line is not null);
             }
         }
 
@@ -1416,6 +1456,7 @@ internal sealed partial class PaletteHost
         {
             await sending;
             session.Automation?.Dispose();
+            session.Browser?.Dispose();
         }
         catch (Exception e)
         {
@@ -1436,6 +1477,28 @@ internal sealed partial class PaletteHost
     }
 
     private double Width => Math.Min(PanelSize.PaletteWidth, 0.6 * island.MonitorSize.Width);
+
+    // Words Tomte answers itself show as the answer and go no further; the rest are sent.
+    private async Task LocalOrSendAsync(PaletteSession session, PaletteView view, string typed)
+    {
+        if (session.Status == PaletteStatus.Sending || string.IsNullOrWhiteSpace(typed))
+        {
+            return;
+        }
+
+        if (await Local!(typed) is { } line)
+        {
+            if (machine.State == IslandState.Palette)
+            {
+                session.AnswerLocally(typed, line);
+                view.Fill("");
+            }
+
+            return;
+        }
+
+        await SendAsync(session, typed);
+    }
 
     // Every send is the user's Enter; the session logs it and shows where it goes.
     private async Task SendAsync(PaletteSession session, string typed)

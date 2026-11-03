@@ -62,7 +62,23 @@ public static class CompactLayout
     public const float DotSize = 8, Halo = 4;
     public static TextStyle ElapsedStyle => new(13, Tabular: true, Family: TextStyle.Mono);
 
-    public const string PillId = "pill", TomteId = "tomte", AskTip = "Ask Tomte";
+    /// <summary>The round mic button during a call, as tall as the undo pill's button, and its glyph.</summary>
+    public const float MicSize = 28, MicGlyph = 16;
+
+    /// <summary>
+    /// How much wider the pill grows for the mic button: the button, its inset and a gap, less the end inset the content
+    /// keeps anyway. The content keeps its 220 wide frame at the leading end, so the tomte, the ring, the art and the
+    /// words sit where they always do from the left and the button takes the room after them.
+    /// </summary>
+    public static readonly float MicRoom = MathF.Ceiling(UndoInset + MicSize + Gap - EndInset);
+
+    public const string PillId = "pill", TomteId = "tomte", AskTip = "Ask Tomte", MicId = "mic";
+
+    /// <summary>The mic button in island space, at the trailing end of the pill grown by <see cref="MicRoom"/>, centred down it.</summary>
+    public static RectangleF MicButton => new(((Width + MicRoom) / 2) - UndoInset - MicSize, (Depth - MicSize) / 2, MicSize, MicSize);
+
+    /// <summary>The mic button's tooltip: what a click does now.</summary>
+    public static string MicTip(bool muted) => muted ? "Unmute the microphone" : "Mute the microphone";
 
     private static float Width => (float)IslandGeometry.Compact.Width;
 
@@ -203,6 +219,25 @@ public static class CompactLayout
         float left = -width / 2 + RingLeft(mascot);
         var box = new RectangleF((width / 2) - UndoInset - pad, UndoInset, pad, Depth - (2 * UndoInset));
         return (width, new RectangleF(left, 0, box.X - Gap - left, Depth), box);
+    }
+
+    /// <summary>The widest a reminder's text grows its pill; longer text ends in an ellipsis.</summary>
+    public const float ReminderLineMax = 320;
+
+    /// <summary>The reminder pill's buttons: Snooze's words on a raised fill, Dismiss's on the accent.</summary>
+    public const string SnoozeLabel = "Snooze 10 min", DismissLabel = "Dismiss";
+    public static TextStyle SnoozeStyle => new(12, 600, Color: Theme.Ink);
+    public static TextStyle DismissStyle => new(12, 600, Color: Theme.OnAccent);
+
+    /// <summary>
+    /// The reminder pill in island space: its width, the text's slot, then Snooze and Dismiss at the right end, each laid
+    /// out as the undo button is and <see cref="UndoKeyGap"/> apart. <paramref name="line"/> is the text's width.
+    /// </summary>
+    public static (float Width, RectangleF Line, RectangleF Snooze, RectangleF Dismiss) Reminder(bool mascot, float line, float snooze, float dismiss)
+    {
+        float first = snooze + (2 * UndoPadX), second = dismiss + (2 * UndoPadX);
+        var (width, slot, box) = Undo(mascot, Math.Min(line, ReminderLineMax), first + UndoKeyGap + second - (2 * UndoPadX));
+        return (width, slot, box with { Width = first }, box with { X = box.Right - second, Width = second });
     }
 
     /// <summary>What the undo button says: Undo and the whole seconds left, rounded up so it never reads 0 while it still works.</summary>

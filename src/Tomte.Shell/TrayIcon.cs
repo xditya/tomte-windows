@@ -29,6 +29,7 @@ internal sealed unsafe class TrayIcon : IDisposable
     private const int TimerStopItem = 6;
     private const int AskItem = 7;
     private const int SearchItem = 8;
+    private const int DropItem = 9;
 
     // The timer menu's lengths in minutes; item ids start at TimerFirstItem in this order.
     private const int TimerFirstItem = 10;
@@ -86,6 +87,9 @@ internal sealed unsafe class TrayIcon : IDisposable
     public event Action? Search;
 
     public event Action? OpenSettings;
+
+    /// <summary>Tomte Drop: the running share's card, or a share that only receives, for a phone to send files and text to this PC.</summary>
+    public event Action? TomteDrop;
 
     /// <summary>Raised after either pause item starts a pause; the island should retract.</summary>
     public event Action? Paused;
@@ -178,6 +182,7 @@ internal sealed unsafe class TrayIcon : IDisposable
         Append(menu, MENU_ITEM_FLAGS.MF_STRING, OpenItem, "Open island");
         Append(menu, MENU_ITEM_FLAGS.MF_STRING, AskItem, "Ask AI");
         Append(menu, MENU_ITEM_FLAGS.MF_STRING, SearchItem, "Search");
+        Append(menu, MENU_ITEM_FLAGS.MF_STRING, DropItem, DropRun.Running ? "Show Tomte Drop" : "Receive from phone");
         Append(menu, MENU_ITEM_FLAGS.MF_STRING, SettingsItem, "Settings");
         Append(menu, MENU_ITEM_FLAGS.MF_SEPARATOR, 0, null);
         // A timer with no AI: the same countdown the palette's set_timer starts, with its ring and its done event.
@@ -237,6 +242,9 @@ internal sealed unsafe class TrayIcon : IDisposable
                 break;
             case SettingsItem:
                 OpenSettings?.Invoke();
+                break;
+            case DropItem:
+                TomteDrop?.Invoke();
                 break;
             case PauseHourItem when pause.IsPaused(now) && !pause.UntilRestart:
             case PauseRestartItem when pause.UntilRestart:

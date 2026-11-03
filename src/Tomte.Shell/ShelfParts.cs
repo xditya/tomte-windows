@@ -27,6 +27,7 @@ internal static class ShelfColors
     public static Color WarnFill => Of(Theme.WarnSoft);
 
     public static Color Accent => Of(Theme.Accent);
+    public static Color OnAccent => Of(Theme.OnAccent);
 
 
     // Brushes that live as long as the island, each with the theme colour it shows.

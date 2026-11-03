@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Numerics;
+using Microsoft.Graphics.Canvas.Geometry;
 using Tomte.Core;
 using Tomte.Core.Interaction;
 using Windows.UI.Composition;
@@ -70,6 +71,9 @@ internal sealed class DropResultView : IInteractive
 
     /// <summary>A choice of the size question was clicked, by its index.</summary>
     public event Action<int>? Chose;
+
+    /// <summary>A row of <see cref="DropResult.Values"/> was clicked or took Enter, by its index.</summary>
+    public event Action<int>? ValueChosen;
 
     public event Action? TargetsChanged;
 
@@ -145,12 +149,13 @@ internal sealed class DropResultView : IInteractive
     }
 
     /// <summary>
-    /// Buttons for the choices, raised, the last (cancel, the default) filled with the accent, and cards for the tiles;
-    /// built again only when they move.
+    /// Buttons for the choices, raised, the last (cancel, the default) filled with the accent, cards for the tiles, and
+    /// the swatch or the QR code; built again only when they move or change.
     /// </summary>
     private void Shapes(DropResultLayout next, DropResult result)
     {
-        string key = string.Join(';', next.Choices.Concat(next.Tiles).Select(r => $"{r.X},{r.Y},{r.Width},{r.Height}")) + string.Join(';', result.Tiles.Select(t => t.Color));
+        string key = string.Join(';', next.Choices.Concat(next.Tiles).Append(next.SwatchBox).Append(next.QrBox).Select(r => $"{r.X},{r.Y},{r.Width},{r.Height}"))
+            + string.Join(';', result.Tiles.Select(t => t.Color)) + $";{result.Swatch};{result.Qr?.GetHashCode()}";
         if (key == shapesKey)
         {
             return;
@@ -169,6 +174,21 @@ internal sealed class DropResultView : IInteractive
             p.Box(canvas, next.Choices[i], DropResultLayout.Corner, p.Brush(cancel ? ShelfColors.Accent : ShelfColors.CardSelected));
         }
 
+        if (result.Swatch is uint swatch)
+        {
+            // A hairline keeps white, black and a colour close to the panel's own visible.
+            p.Box(canvas, next.SwatchBox, DropResultLayout.SwatchCorner, p.Brush(ShelfColors.Rgb(swatch)), p.Brush(ShelfColors.Line));
+        }
+
+        if (result.Qr is not null)
+        {
+            // White in both themes, as a camera expects, with the swatch's hairline; the modules black, all of them one shape.
+            p.Box(canvas, next.QrBox, DropResultLayout.QrCorner, p.Brush(ShelfColors.Rgb(0xFFFFFF)), p.Brush(ShelfColors.Line));
+            var modules = p.Keep(island.Compositor.CreateSpriteShape(p.Keep(island.Compositor.CreatePathGeometry(Figures(next.QrRuns)))));
+            modules.FillBrush = p.Brush(ShelfColors.Rgb(0));
+            canvas.Shapes.Add(modules);
+        }
+
         for (int i = 0; i < next.Tiles.Count; i++)
         {
             p.Box(canvas, next.Tiles[i], DropResultLayout.TileCorner, p.Brush(ShelfColors.Card));
@@ -176,9 +196,26 @@ internal sealed class DropResultView : IInteractive
         }
     }
 
+    // Rectangles as one path, a figure each.
+    private static CompositionPath Figures(IReadOnlyList<RectangleF> rects)
+    {
+        using var builder = new CanvasPathBuilder(null);
+        foreach (var r in rects)
+        {
+            builder.BeginFigure(r.Left, r.Top);
+            builder.AddLine(r.Right, r.Top);
+            builder.AddLine(r.Right, r.Bottom);
+            builder.AddLine(r.Left, r.Bottom);
+            builder.EndFigure(CanvasFigureLoop.Closed);
+        }
+
+        using var geometry = CanvasGeometry.CreatePath(builder);
+        return new CompositionPath(geometry);
+    }
+
     public void Activate(string id) => Activate(id, ActivateBy.Click);
 
-    /// <summary>A choice answers on a click or a key; a tile opens its file on a double click or Enter, as on the shelf.</summary>
+    /// <summary>A choice or a value row answers on a click or a key; a tile opens its file on a double click or Enter, as on the shelf.</summary>
     public void Activate(string id, ActivateBy by)
     {
         if (!Live)
@@ -187,7 +224,11 @@ internal sealed class DropResultView : IInteractive
         }
 
         var (tile, choice) = DropResultLayout.Of(id);
-        if (choice >= 0)
+        if (DropResultLayout.ValueOf(id) is int value and >= 0)
+        {
+            ValueChosen?.Invoke(value);
+        }
+        else if (choice >= 0)
         {
             Chose?.Invoke(choice);
         }

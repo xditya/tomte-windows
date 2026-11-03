@@ -4,7 +4,7 @@ namespace Tomte.Core.Search;
 
 /// <summary>
 /// What a search row is. Rows are grouped in this order: apps, then places (settings pages, Tomte's own places and
-/// Windows tools), then tiles and shelf items, then files and folders, then Open in browser, then the AI rows: Ask, then
+/// Windows tools), then tiles, shelf items and pinned clips, then files and folders, then Open in browser, then the AI rows: Ask, then
 /// AI search. The launch counts store a kind by its number: new kinds go at the end.
 /// </summary>
 public enum SearchKind
@@ -29,6 +29,27 @@ public enum SearchKind
 
     /// <summary>The row that searches the web for the typed words, or opens the address they are, in the browser.</summary>
     Web,
+
+    /// <summary>A pinned clipboard text item, from <see cref="Clip"/>; its target is the item's id in the history.</summary>
+    Clip,
+}
+
+/// <summary>Pinned clipboard items as search rows. Only pins: the rest of the history can hold what was copied in passing.</summary>
+public static class Clip
+{
+    /// <summary>The dim text after a pinned clip's name.</summary>
+    public const string Detail = "Pinned clip";
+
+    /// <summary>
+    /// A row for a pinned text item: its first line with text, trimmed and shortened, as the name; the whole start of the
+    /// text on one line as the words it answers to besides that.
+    /// </summary>
+    public static SearchItem Row(long id, string text)
+    {
+        string first = text.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
+        return new SearchItem(SearchKind.Clip, Clipboard.ClipboardRow.Shorten(first), id.ToString(System.Globalization.CultureInfo.InvariantCulture), Detail,
+            Words: string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)));
+    }
 }
 
 /// <summary>
@@ -44,7 +65,7 @@ public sealed record SearchItem(SearchKind Kind, string Name, string Target, str
     {
         SearchKind.App => 0,
         SearchKind.Place => 1,
-        SearchKind.Shortcut or SearchKind.Shelf => 2,
+        SearchKind.Shortcut or SearchKind.Shelf or SearchKind.Clip => 2,
         SearchKind.Folder or SearchKind.File or SearchKind.GetEverything => 3,
         SearchKind.Web => 4,
         _ => 5,
@@ -420,9 +441,16 @@ public static partial class SearchRank
         return every || (!appWhole && (nameWhole || (loose && !appStart)));
     }
 
-    /// <summary>How well a row's name, or a place's name and words, match the query; 0 is no match.</summary>
-    public static int Score(SearchItem item, string query) =>
-        item.Kind == SearchKind.Place ? Places.Score(item, query) : SearchMatch.Score(item.Name, query);
+    /// <summary>
+    /// How well a row's name, or a place's name and words, match the query; 0 is no match. A pinned clip's later text
+    /// counts where the typed words start its words: letters in order across a long text would match almost anything.
+    /// </summary>
+    public static int Score(SearchItem item, string query) => item.Kind switch
+    {
+        SearchKind.Place => Places.Score(item, query),
+        SearchKind.Clip => Math.Max(SearchMatch.Score(item.Name, query), SearchMatch.Score(item.Words, query, wordStarts: true)),
+        _ => SearchMatch.Score(item.Name, query),
+    };
 
     /// <summary>Typed text of this many words or more reads as a sentence, which AI search may answer better than names do.</summary>
     public const int SentenceWords = 3;
@@ -430,13 +458,13 @@ public static partial class SearchRank
     /// <summary>
     /// The rows with the AI rows moved first, Ask Tomte first of them so Enter asks, when the text reads as a sentence and
     /// nothing local matches it well: no file or folder (a file search found every word in their names) and no app, place,
-    /// tile or shelf item with every word in its name. Otherwise the rows as they are.
+    /// tile, shelf item or pinned clip with every word in its name. Otherwise the rows as they are.
     /// </summary>
     public static IReadOnlyList<SearchItem> AiFirst(IReadOnlyList<SearchItem> ranked, string query)
     {
         bool ai = ranked.Any(r => r.Kind == SearchKind.AiSearch);
         bool matched = ranked.Any(r => r.Kind is SearchKind.File or SearchKind.Folder
-            || (r.Kind is SearchKind.App or SearchKind.Place or SearchKind.Shortcut or SearchKind.Shelf && Score(r, query) >= SearchMatch.Substring));
+            || (r.Kind is SearchKind.App or SearchKind.Place or SearchKind.Shortcut or SearchKind.Shelf or SearchKind.Clip && Score(r, query) >= SearchMatch.Substring));
         return !ai || matched || FileQuery.Words(query).Count < SentenceWords ? ranked : [.. ranked.Where(IsAi), .. ranked.Where(r => !IsAi(r))];
 
         static bool IsAi(SearchItem r) => r.Kind is SearchKind.Ask or SearchKind.AiSearch;

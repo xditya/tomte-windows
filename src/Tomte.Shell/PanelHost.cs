@@ -139,6 +139,24 @@ internal sealed class PanelHost
         }
     }
 
+    /// <summary>
+    /// Puts a tab on the strip or takes it off (<see cref="PanelTabs.Show"/>). Open on the tab that goes, Panels switches
+    /// to the one that is current then; otherwise the strip shows the change.
+    /// </summary>
+    public void ShowTab(PanelId id, bool on)
+    {
+        var before = tabs.Current;
+        tabs.Show(id, on);
+        if (tabs.Current != before)
+        {
+            Switched();
+        }
+        else if (strip is not null && body is not null)
+        {
+            ShowStrip(bodySize.X);
+        }
+    }
+
     /// <summary>The next tab (+1) or the previous one (-1) while Panels is open.</summary>
     public void Step(int direction)
     {
@@ -449,8 +467,8 @@ internal sealed class PanelHost
         }
 
         /// <summary>
-        /// Ctrl+1 to Ctrl+7 pick the tab in that place, and leave the current one's to whoever has the keys there (the
-        /// note keeps them); Ctrl+K and "/" ask, as the Ask bar does.
+        /// Ctrl+1 to Ctrl+7 pick the tab in that place (a tab past the seventh, Jobs or Call, has no key), and leave the current one's to
+        /// whoever has the keys there (the note keeps them); Ctrl+K and "/" ask, as the Ask bar does.
         /// </summary>
         public bool Command(NavKey key)
         {
@@ -502,7 +520,7 @@ internal sealed class PanelHost
                     p.Text(Visual, new TextSlot(tab.Count!, TabStrip.BadgeLabel, badge));
                 }
 
-                list.Add(new(tab.Id.ToString(), tab.Bounds, TabStrip.TabHeight / 2, TargetKind.Tab, Tip: TabStrip.Name(tab.Id), Group: 1, Checked: on, Key: $"Ctrl+{list.Count + 1}"));
+                list.Add(new(tab.Id.ToString(), tab.Bounds, TabStrip.TabHeight / 2, TargetKind.Tab, Tip: TabStrip.Name(tab.Id), Group: 1, Checked: on, Key: list.Count < 7 ? $"Ctrl+{list.Count + 1}" : null));
             }
 
             // Laid out from the search button's left edge, which the expression keeps that far from the live right end.

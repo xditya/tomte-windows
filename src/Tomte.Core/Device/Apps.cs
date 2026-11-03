@@ -23,9 +23,11 @@ public static class Apps
         var opened = Launch(new ProcessStartInfo(target) { UseShellExecute = true }, target, out int failed);
         // "Settings" and other names Start shows are no file the shell finds by name: open those as Start does. Only
         // then: a start refused at its UAC prompt, or failing any other way, must not be tried again.
-        return failed != (int)WIN32_ERROR.ERROR_FILE_NOT_FOUND || StartApp(target) is not { } app
-            ? opened
-            : Launch(new ProcessStartInfo(app.Target) { UseShellExecute = true }, target);
+        if (failed != (int)WIN32_ERROR.ERROR_FILE_NOT_FOUND || StartApp(target) is not { } app) return opened;
+        // A Start shortcut left behind by an uninstall would open Windows' "Problem with Shortcut" box, which nobody
+        // answers in a scheduled job.
+        if (ShortcutTarget.Read(app.Target).Missing) return ActionResult.Fail($"{target} is not installed: its Start menu shortcut points to a program that is gone.");
+        return Launch(new ProcessStartInfo(app.Target) { UseShellExecute = true }, target);
     }
 
     /// <summary>
@@ -35,6 +37,17 @@ public static class Apps
     public static InstalledApp? StartApp(string name) =>
         name.IndexOfAny(['\\', '/', ':']) >= 0 ? null
             : AppList.Load().FirstOrDefault(app => string.Equals(app.Name, name.Trim(), StringComparison.CurrentCultureIgnoreCase));
+
+    /// <summary>
+    /// Whether open_app can find this app: it runs, or Start lists it by this name and its program is still there. Reads
+    /// Start's list: a worker thread only.
+    /// </summary>
+    public static bool IsInstalled(string name)
+    {
+        var running = Process.GetProcessesByName(name);
+        foreach (var process in running) process.Dispose();
+        return running.Length > 0 || StartApp(name) is { } app && !ShortcutTarget.Read(app.Target).Missing;
+    }
 
     // "notepad" and "C:\Tools\app.exe" name a process; a .lnk shortcut or an AUMID does not, so those only launch.
     public static string? ProcessNameFor(string target)

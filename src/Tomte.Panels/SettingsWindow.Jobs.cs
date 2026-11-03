@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml.Controls;
+using Tomte.AI.Browser;
 using Tomte.AI.Jobs;
+using Tomte.Core;
 using Tomte.Core.Jobs;
 using Tomte.Core.Storage;
 
@@ -7,7 +9,8 @@ namespace Tomte.Panels;
 
 /// <summary>
 /// The scheduled jobs section: each job made in the AI box or by voice, when it runs, its next run and the tools it may
-/// use, with Remove. Read when the window opens and after a removal; nothing watches tomte.db.
+/// use, with Remove; how long before a run the island shows its Jobs tab; and a button that opens Tomte's browser for
+/// signing in to sites. Read when the window opens and after a removal; nothing watches tomte.db.
 /// </summary>
 public sealed partial class SettingsWindow
 {
@@ -21,7 +24,18 @@ public sealed partial class SettingsWindow
     private Border JobsSection() => Card(
         Note("Jobs you made in the AI box or by voice. Each runs at its time with only the tools listed, without asking, and sends to the provider it was made with."),
         jobsList,
-        jobsNote);
+        jobsNote,
+        Row("Jobs tab", Note("Minutes before a job runs that the island shows the Jobs tab and names the job on the pill. The tab also shows while a job runs."),
+            Number(TomteSettings.JobsAheadMinMinutes, TomteSettings.JobsAheadMaxMinutes, store.Current.JobsAhead.TotalMinutes, value => Save(s => s with { JobsAheadMinutes = (int)value }))),
+        Row("Tomte's browser", Note("Jobs and the AI box use their own Edge profile, not yours. Sign in to sites here once; Tomte never types passwords."), BrowserButton()));
+
+    // Edge on Tomte's own profile, in a window, for signing in; what it signs in to stays in that profile.
+    private Button BrowserButton()
+    {
+        var open = new Button { Content = "Open Tomte's browser" };
+        open.Click += (_, _) => Show(jobsNote, Edge.OpenForSignIn());
+        return open;
+    }
 
     private async Task RenderJobsAsync()
     {

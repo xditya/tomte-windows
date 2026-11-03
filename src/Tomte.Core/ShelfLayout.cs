@@ -84,7 +84,7 @@ public static class ShelfLayout
     public const string ClearId = "clear";
 
     /// <summary>The keys the footer names, each with what it does to the focused tile.</summary>
-    public static readonly (string Keys, string Does)[] FootKeys = [("Ctrl C", "copy"), ("P", "pin"), ("Del", "remove")];
+    public static readonly (string Keys, string Does)[] FootKeys = [("Ctrl V", "paste"), ("Ctrl C", "copy"), ("P", "pin"), ("Del", "remove")];
 
     public static float GridTop => Top + HeadHeight + HeadGap;
 
@@ -126,12 +126,14 @@ public static class ShelfLayout
     /// <summary>
     /// The shelf's clickable parts in Tab order: the visible tiles (group 1, draggable, the full name and folder as the
     /// tip), then, while <paramref name="owner"/> is on the page, the band's actions for it (group 2; an icon-only one
-    /// carries its name as the tip, and each its key), then the filter's segments (group 3, the current one checked)
-    /// and Clear shelf while there is anything to clear. An action that none of <paramref name="acting"/> allows is
-    /// disabled. <paramref name="items"/> are the items the filter lets through.
+    /// carries its name as the tip, and each its key) or else the Tomte Drop button and the Sets button, then the filter's
+    /// segments (group 3, the current one checked) and Clear shelf while there is anything to clear. An action that none
+    /// of <paramref name="acting"/> allows is disabled. <paramref name="items"/> are the items the filter lets through;
+    /// <paramref name="selected"/> is how many are selected, which the Tomte Drop button's tip names, and
+    /// <paramref name="sharing"/> whether a Tomte Drop runs, which the button brings back with nothing selected.
     /// </summary>
     public static IReadOnlyList<Target> Targets(Vector2 body, int first, IReadOnlyList<ShelfItem> items, ShelfItem? owner, IReadOnlyList<ShelfItem> acting, bool confirming,
-        ShelfFilter filter = ShelfFilter.All, bool clearing = false, bool any = false)
+        ShelfFilter filter = ShelfFilter.All, bool clearing = false, bool any = false, int selected = 0, bool sharing = false)
     {
         var targets = new List<Target>();
         int visible = Visible(body, first, items.Count);
@@ -150,6 +152,11 @@ public static class ShelfLayout
                 targets.Add(new(ActionId(slot.Action), slot.Box, ActionCorner, TargetKind.Button, allowed, slot.Label is null ? Name(slot.Action, pinned) : null, Group: 2,
                     Key: ActionKey(slot.Action)));
             }
+        }
+        else
+        {
+            targets.Add(DropButtonTarget(body, selected, sharing));
+            targets.Add(SetsTarget(body, on: false));
         }
 
         foreach (var segment in Filters(body, filter))
@@ -171,10 +178,11 @@ public static class ShelfLayout
 
     /// <summary>
     /// The action buttons in the band, in the enum's order from the left padding, with Remove on its own at the band's
-    /// right end, before the filter, so its question grows away from the others. Every button but Copy path and Share
-    /// (see <see cref="IconOnly"/>) shows its icon and name when all the names fit with Remove asking; otherwise every
+    /// right end, before the filter, so its question grows away from the others. Every button but Copy path, Share and
+    /// Tomte Drop (see <see cref="IconOnly"/>) shows its icon and name when all the names fit with Remove asking; otherwise every
     /// one is icon only, its name in its tooltip, except Remove while it asks. So the others never move when Remove asks.
-    /// Pin is measured as Unpin, so it keeps its width too.
+    /// Pin is measured as Unpin, so it keeps its width too. On a band too narrow even for the icons, every icon-only
+    /// button narrows alike, as far as the smallest target.
     /// </summary>
     /// <param name="pinned">Every item acted on is pinned: Pin reads Unpin.</param>
     public static IReadOnlyList<ActionSlot> Actions(Vector2 body, bool confirming, bool pinned = false)
@@ -185,17 +193,18 @@ public static class ShelfLayout
         float Labelled(string name) => 2 * ActionPadX + ActionIcon + ActionIconGap + MathF.Ceiling(TextSlot.Measure(name, ActionStyle, Math.Max(1, right - left)));
         float widest = actions.Sum(a => IconOnly(a) ? IconOnlyWidth : Labelled(a == ShelfAction.Remove ? ConfirmRemove : Name(a, pinned: true))) + (actions.Length - 2) * ActionGap + RemoveApart;
         bool names = widest <= right - left;
+        float iconOnly = Math.Clamp(MathF.Floor((right - left - (actions.Length - 2) * ActionGap - RemoveApart) / actions.Length), StateLook.MinTarget, IconOnlyWidth);
         var slots = new List<ActionSlot>();
         foreach (var action in actions)
         {
             bool remove = action == ShelfAction.Remove, label = (names && !IconOnly(action)) || (remove && confirming);
             string name = remove && confirming ? ConfirmRemove : Name(action, pinned);
-            float w = label ? Labelled(action == ShelfAction.Pin ? Name(action, pinned: true) : name) : IconOnlyWidth, x = left;
+            float w = label ? Labelled(action == ShelfAction.Pin ? Name(action, pinned: true) : name) : iconOnly, x = left;
             if (remove)
             {
-                // Never over Share: on a band too narrow for it the question is cut short.
+                // Never over the others: on a band too narrow for it the question is cut short.
                 x = Math.Max(right - w, left - ActionGap + RemoveApart);
-                w = Math.Max(Math.Min(w, right - x), IconOnlyWidth);
+                w = Math.Max(Math.Min(w, right - x), iconOnly);
             }
 
             var box = new RectangleF(x, BandTop, w, ActionHeight);
@@ -288,8 +297,155 @@ public static class ShelfLayout
     /// <summary>How long a Later change waits: one aim's worth while the pointer heads for the buttons, else the grace.</summary>
     public static int Wait(bool aiming) => aiming ? BandAimMs : BandGraceMs;
 
-    /// <summary>The band's row, in body DIPs: where its buttons sit, with the gaps between them, up to the filter.</summary>
+    /// <summary>The band's row, in body DIPs: where its buttons sit, with the gaps between them, up to the filter. The Tomte Drop and Sets buttons sit at its right end while the title shows, and give way to the buttons.</summary>
     public static RectangleF BandRow(Vector2 body) => RectangleF.FromLTRB(PadX, BandTop, Math.Max(PadX, Filter(body, ShelfFilter.All).Track.Left - FilterApart), BandTop + ActionHeight);
+
+    // The sets view: a row that names and saves a new set, over the list of saved sets, each row its name, its counts and
+    // its buttons. It takes the grid's place while the Sets button is on.
+    public const float SaveHeight = 40, SaveBoxHeight = 20, SetRowHeight = 44, SetRowGap = 6, SetPadX = 14, SetCorner = 12;
+    public const string SetsId = "sets", SetNameId = "setname", SaveSetId = "setsave", RenameBoxId = "setrename";
+    public const string SetsLabel = "Sets", SetPlaceholder = "Name a set, like Tax docs", BringBack = "Bring back", ConfirmDelete = "Delete? Click again";
+    public const string NoSets = "No sets yet. Name what is on the shelf and save it,\nthen bring it all back from here whenever you need it.";
+    public const string SetsHint = "Bring back adds a set's items to the shelf";
+    public const string SetDropTip = "Tomte Drop: share this set's files with a phone";
+
+    /// <summary>The Sets button, a capsule of one segment like the filter's, just left of the filter.</summary>
+    public static RectangleF SetsButton(Vector2 body)
+    {
+        var track = Filter(body, ShelfFilter.All).Track;
+        float w = MathF.Ceiling(TextSlot.Measure(SetsLabel, FilterOn, body.X)) + 2 * SegmentPadX + 2 * SegmentInset;
+        return new(track.Left - FilterApart - w, track.Y, w, track.Height);
+    }
+
+    public const string DropId = "drop";
+
+    /// <summary>
+    /// The head's Tomte Drop button, a circle as tall as the Sets button, just left of it, with the phone glyph alone, so
+    /// the head row keeps room for the title at the narrowest panel. It gives way to the band's buttons with them.
+    /// </summary>
+    public static RectangleF DropButton(Vector2 body)
+    {
+        var sets = SetsButton(body);
+        return new(sets.Left - FilterApart - sets.Height, sets.Y, sets.Height, sets.Height);
+    }
+
+    /// <summary>What the head's Tomte Drop button does: the selection to a phone, or with none, files from one.</summary>
+    public static string DropTip(int selected, bool sharing = false) =>
+        selected > 0 ? FormattableString.Invariant($"Tomte Drop: share {selected} selected with a phone")
+        : sharing ? "Tomte Drop: show the share" : "Tomte Drop: get files from a phone";
+
+    // A Tab stop of its own, so the arrows still go from the Sets button to the filter and Tab through them.
+    private static Target DropButtonTarget(Vector2 body, int selected, bool sharing) =>
+        new(DropId, DropButton(body), DropButton(body).Height / 2, TargetKind.Button, Tip: DropTip(selected, sharing));
+
+    /// <summary>The save row's field, the name box inside it and the Save button at its right end, with its words.</summary>
+    public static (RectangleF Field, RectangleF Box, RectangleF Button, TextSlot Label) SaveRow(Vector2 body, string label)
+    {
+        var field = new RectangleF(PadX, GridTop, body.X - 2 * PadX, SaveHeight);
+        float w = MathF.Ceiling(TextSlot.Measure(label, ActionStyle, body.X)) + 2 * SetPadX;
+        var button = new RectangleF(field.Right - (SaveHeight - ActionHeight) / 2 - w, field.Y + (SaveHeight - ActionHeight) / 2, w, ActionHeight);
+        var box = RectangleF.FromLTRB(field.X + SetPadX, field.Y + (SaveHeight - SaveBoxHeight) / 2, Math.Max(field.X + SetPadX, button.Left - SetPadX), field.Y + (SaveHeight + SaveBoxHeight) / 2);
+        return (field, box, button, new(label, ActionStyle with { Align = TextAlign.Center }, button));
+    }
+
+    /// <summary>The Save button's words: the selection when there is one, else everything on the shelf.</summary>
+    public static string SaveLabel(int count, bool selection) =>
+        selection ? FormattableString.Invariant($"Save {count} selected") : FormattableString.Invariant($"Save {count} item{(count == 1 ? "" : "s")}");
+
+    /// <summary>A set's counts: "4 items", and how many are moved or deleted after it.</summary>
+    public static string SetMeta(ShelfSet set) =>
+        FormattableString.Invariant($"{set.Count} item{(set.Count == 1 ? "" : "s")}") + (set.Missing > 0 ? FormattableString.Invariant($" · {set.Missing} missing") : "");
+
+    public static string SetId(long id, string part) => FormattableString.Invariant($"set:{id}:{part}");
+
+    /// <summary>A set row's id back as the set and the part ("back", "drop", "rename" or "delete"), or null.</summary>
+    public static (long Id, string Part)? SetPart(string id)
+    {
+        var parts = id.Split(':');
+        return parts is ["set", var n, var part] && long.TryParse(n, System.Globalization.CultureInfo.InvariantCulture, out long set) ? (set, part) : null;
+    }
+
+    /// <summary>One set's row: its box, the name and counts, the box a rename puts over them, and its four buttons.</summary>
+    public readonly record struct SetSlot(ShelfSet Set, RectangleF Row, TextSlot Name, TextSlot Meta, RectangleF NameBox, RectangleF Back, TextSlot BackLabel,
+        RectangleF Drop, RectangleF Rename, RectangleF Delete, TextSlot? DeleteLabel);
+
+    /// <summary>The top of the sets' list, under the save row.</summary>
+    public static float SetsTop => GridTop + SaveHeight + Gap;
+
+    /// <summary>Whole set rows that fit between the save row and the footer; at least one.</summary>
+    public static int SetRows(Vector2 body) => Math.Max(1, (int)((GridBottom(body) - SetsTop + SetRowGap) / (SetRowHeight + SetRowGap)));
+
+    /// <summary>The first set shown after the wheel moved by whole notches, one row a notch, never past the last full page.</summary>
+    public static int ScrollSets(int first, int notches, int count, Vector2 body) => Math.Clamp(first - notches, 0, Math.Max(0, count - SetRows(body)));
+
+    /// <summary>The rows of the sets shown from <paramref name="first"/> on; <paramref name="confirming"/> is the set Delete asks about.</summary>
+    public static IReadOnlyList<SetSlot> SetSlots(Vector2 body, IReadOnlyList<ShelfSet> sets, int first, long? confirming)
+    {
+        var slots = new List<SetSlot>();
+        int shown = Math.Clamp(sets.Count - first, 0, SetRows(body));
+        float backW = MathF.Ceiling(TextSlot.Measure(BringBack, ActionStyle, body.X)) + 2 * SetPadX;
+        float askW = MathF.Ceiling(TextSlot.Measure(ConfirmDelete, ActionStyle, body.X)) + 2 * ActionPadX;
+        for (int i = 0; i < shown; i++)
+        {
+            var set = sets[first + i];
+            var row = new RectangleF(PadX, SetsTop + i * (SetRowHeight + SetRowGap), body.X - 2 * PadX, SetRowHeight);
+            float y = row.Y + (SetRowHeight - ActionHeight) / 2, inset = (SetRowHeight - ActionHeight) / 2;
+            bool asking = confirming == set.Id;
+            var delete = new RectangleF(row.Right - inset - (asking ? askW : IconOnlyWidth), y, asking ? askW : IconOnlyWidth, ActionHeight);
+            var rename = new RectangleF(delete.Left - ActionGap - IconOnlyWidth, y, IconOnlyWidth, ActionHeight);
+            var drop = new RectangleF(rename.Left - ActionGap - IconOnlyWidth, y, IconOnlyWidth, ActionHeight);
+            var back = new RectangleF(drop.Left - ActionGap - backW, y, backW, ActionHeight);
+            float textW = Math.Max(0, back.Left - SetPadX - (row.X + SetPadX));
+            var name = new TextSlot(set.Name, NameStyle, new(row.X + SetPadX, row.Y + 6, textW, NameLine));
+            var meta = new TextSlot(SetMeta(set), set.Missing > 0 ? MetaStyle with { Color = Theme.Warn } : MetaStyle, new(row.X + SetPadX, row.Y + 6 + NameLine + MetaGap, textW, MetaLine));
+            var nameBox = new RectangleF(row.X + SetPadX, row.Y + (SetRowHeight - SaveBoxHeight) / 2, textW, SaveBoxHeight);
+            slots.Add(new(set, row, name, meta, nameBox, back, new(BringBack, ActionStyle with { Align = TextAlign.Center }, back), drop, rename, delete,
+                asking ? new TextSlot(ConfirmDelete, ActionStyle with { Align = TextAlign.Center, Color = Theme.Warn }, delete) : null));
+        }
+
+        return slots;
+    }
+
+    /// <summary>
+    /// The sets view's clickable parts in Tab order: the name box and Save (disabled with nothing to save), each row's
+    /// Bring back, Tomte Drop (disabled when every file of the set is gone), Rename and Delete (Up and Down move along
+    /// each kind), the rename box while one is open, then the head's Tomte Drop button, the Sets button, on, and the
+    /// filter.
+    /// </summary>
+    public static IReadOnlyList<Target> SetTargets(Vector2 body, IReadOnlyList<ShelfSet> sets, int first, long? confirming, string saveLabel, bool canSave, long? renaming,
+        ShelfFilter filter, int selected = 0, bool sharing = false)
+    {
+        var save = SaveRow(body, saveLabel);
+        var targets = new List<Target>
+        {
+            new(SetNameId, save.Field, SetCorner, TargetKind.Box),
+            new(SaveSetId, save.Button, ActionCorner, TargetKind.Button, canSave, Key: "Enter"),
+        };
+        foreach (var slot in SetSlots(body, sets, first, confirming))
+        {
+            long id = slot.Set.Id;
+            targets.Add(new(SetId(id, "back"), slot.Back, ActionCorner, TargetKind.Button, Tip: "Put these items back on the shelf", Group: 4));
+            targets.Add(new(SetId(id, "drop"), slot.Drop, ActionCorner, TargetKind.Button, slot.Set.Missing < slot.Set.Count, SetDropTip, Group: 5));
+            targets.Add(new(SetId(id, "rename"), slot.Rename, ActionCorner, TargetKind.Button, Tip: "Rename", Group: 6));
+            targets.Add(new(SetId(id, "delete"), slot.Delete, ActionCorner, TargetKind.Button, Tip: slot.DeleteLabel is null ? "Delete set" : null, Group: 7));
+            if (renaming == id)
+            {
+                targets.Add(new(RenameBoxId, slot.NameBox, 6, TargetKind.Box));
+            }
+        }
+
+        targets.Add(DropButtonTarget(body, selected, sharing));
+        targets.Add(SetsTarget(body, on: true));
+        foreach (var segment in Filters(body, filter))
+        {
+            targets.Add(new(FilterId(segment.Filter), segment.Box, segment.Box.Height / 2, TargetKind.Button, Tip: $"Show {FilterName(segment.Filter).ToLowerInvariant()}", Group: 3));
+        }
+
+        return targets;
+    }
+
+    private static Target SetsTarget(Vector2 body, bool on) =>
+        new(SetsId, SetsButton(body), SetsButton(body).Height / 2, TargetKind.Toggle, Tip: on ? "Back to the items" : "Saved sets of items", Group: 3, Checked: on);
 
     /// <summary>
     /// Whether a pointer at <paramref name="at"/> is on its way to the band's buttons from <paramref name="from"/>, where it
@@ -385,25 +541,38 @@ public static class ShelfLayout
     public static TextStyle ClearStyle => TextStyle.Secondary with { Align = TextAlign.Center };
     public static TextStyle ClearAskStyle => ClearStyle with { Color = Theme.Warn };
 
-    /// <summary>The head row in body DIPs: the title, and the count after it up to the band's end.</summary>
-    public static IReadOnlyList<TextSlot> HeadText(Vector2 body, int count)
+    /// <summary>The head row in body DIPs: the title, and the count (or <paramref name="words"/>) after it up to the Tomte Drop button.</summary>
+    public static IReadOnlyList<TextSlot> HeadText(Vector2 body, int count, string? words = null)
     {
         float after = PadX + MathF.Ceiling(TextSlot.Measure(Title, TextStyle.PageTitle, body.X)) + 10;
         var row = new RectangleF(PadX, Top, body.X - 2 * PadX, HeadHeight);
         return
         [
             new(Title, TextStyle.PageTitle, row),
-            new(Head(count), CountStyle, RectangleF.FromLTRB(after, Top, Math.Max(after, BandRow(body).Right), Top + HeadHeight)),
+            new(words ?? Head(count), CountStyle, RectangleF.FromLTRB(after, Top, Math.Max(after, DropButton(body).Left - FilterApart), Top + HeadHeight)),
         ];
     }
 
+    /// <summary>The head row's words in the sets view.</summary>
+    public static string SetsHead(int sets) => sets == 0 ? "Saved sets" : FormattableString.Invariant($"{sets} saved set{(sets == 1 ? "" : "s")}");
+
+    /// <summary>The sets view's footer line, across the footer row.</summary>
+    public static TextSlot SetsFoot(Vector2 body) => new(SetsHint, FootStyle, new(PadX + FootInset, body.Y - PadBottom - FootHeight, body.X - 2 * (PadX + FootInset), FootHeight));
+
+    /// <summary>The empty sets list's lines, centred under the save row.</summary>
+    public static IReadOnlyList<TextSlot> NoSetsText(Vector2 body)
+    {
+        var box = RectangleF.FromLTRB(PadX, SetsTop, body.X - PadX, GridBottom(body));
+        return [.. EmptyText(box.Size, NoSets).Select(l => l with { Slot = l.Slot with { X = l.Slot.X + box.X, Y = l.Slot.Y + box.Y } })];
+    }
+
     /// <summary>The empty shelf's two lines, centred one under the other in the dashed box, in the box's own DIPs.</summary>
-    public static IReadOnlyList<TextSlot> EmptyText(SizeF box)
+    public static IReadOnlyList<TextSlot> EmptyText(SizeF box, string text = Empty)
     {
         const float line = 19.5f;
-        var lines = Empty.Split('\n');
+        var lines = text.Split('\n');
         float top = (box.Height - lines.Length * line) / 2;
-        return [.. lines.Select((text, i) => new TextSlot(text, EmptyStyle, new(20, top + i * line, box.Width - 40, line)))];
+        return [.. lines.Select((words, i) => new TextSlot(words, EmptyStyle, new(20, top + i * line, box.Width - 40, line)))];
     }
 
     /// <summary>A tile's name under its preview and its meta line under that, in the tile's own DIPs.</summary>
@@ -596,15 +765,16 @@ public static class ShelfLayout
         ShelfAction.Reveal => "Show in folder",
         ShelfAction.CopyPath => "Copy path",
         ShelfAction.Share => "Share",
+        ShelfAction.Drop => "Tomte Drop",
         ShelfAction.Pin => pinned ? "Unpin" : "Pin",
         _ => "Remove",
     };
 
     /// <summary>
-    /// Copy path and Share always show their icon only, their names in their tooltips: with them named the band no
-    /// longer fits the Shelf's own width and every button would lose its name. Copy path's key is in the footer.
+    /// Copy path, Share and Tomte Drop always show their icon only, their names in their tooltips: with them named the
+    /// band no longer fits the Shelf's own width and every button would lose its name. Copy path's key is in the footer.
     /// </summary>
-    public static bool IconOnly(ShelfAction action) => action is ShelfAction.CopyPath or ShelfAction.Share;
+    public static bool IconOnly(ShelfAction action) => action is ShelfAction.CopyPath or ShelfAction.Share or ShelfAction.Drop;
 
     /// <summary>Whether Pin unpins: there are items acted on and every one is pinned.</summary>
     public static bool AllPinned(IReadOnlyList<ShelfItem> acting) => acting.Count > 0 && acting.All(i => i.Pinned);
@@ -620,7 +790,7 @@ public static class ShelfLayout
         return (at, new(at.X + (disc - glyph) / 2, at.Y + (disc - glyph) / 2, glyph, glyph));
     }
 
-    /// <summary>The key that does an action on a focused tile, for the button's tooltip while the island has the keys; null for Share.</summary>
+    /// <summary>The key that does an action on a focused tile, for the button's tooltip while the island has the keys; null for Share and Tomte Drop.</summary>
     public static string? ActionKey(ShelfAction action) => action switch
     {
         ShelfAction.Open => "Enter",
@@ -663,7 +833,8 @@ public static class ShelfLayout
 
     /// <summary>
     /// An action's line icon: Open an arrow out of a box, Show in folder a folder, Copy path two sheets, Share an arrow
-    /// out of a tray, Remove a bin. Pin has none here: it is drawn with <see cref="Glyphs.Pin"/>.
+    /// out of a tray, Remove a bin. Pin and Tomte Drop have none here: they are drawn with <see cref="Glyphs.Pin"/> and
+    /// <see cref="Glyphs.Phone"/>.
     /// </summary>
     public static IReadOnlyList<GlyphStroke> Glyph(ShelfAction action) => action switch
     {
@@ -671,7 +842,7 @@ public static class ShelfLayout
         ShelfAction.Reveal => FolderGlyphStrokes,
         ShelfAction.CopyPath => CopyGlyph,
         ShelfAction.Share => ShareGlyph,
-        ShelfAction.Pin => [],
+        ShelfAction.Pin or ShelfAction.Drop => [],
         _ => RemoveGlyph,
     };
 

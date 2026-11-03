@@ -260,7 +260,7 @@ public sealed class JobTests : IDisposable
             Assert.Equal($"{tool} is destructive and never runs in a scheduled job. Tell the user it cannot be scheduled.", planner.Read(call.RootElement).Error);
         }
 
-        Assert.DoesNotContain(JobPlanner.JobTools, t => BuiltInTools.Tiers[t.Name] == ActionTier.Destructive);
+        Assert.DoesNotContain(JobPlanner.JobTools, t => BuiltInTools.Tiers.TryGetValue(t.Name, out var tier) && tier == ActionTier.Destructive);
     }
 
     [Fact]
@@ -279,6 +279,17 @@ public sealed class JobTests : IDisposable
         Assert.Equal("name must be a short name of 1 to 60 characters.", Error("""{"name":"","prompt":"p","time":"09:00","days":["mon"],"tools":[]}"""));
         Assert.Equal("prompt must say what the job does, in 1 to 2000 characters.", Error("""{"name":"n","time":"09:00","days":["mon"],"tools":[]}"""));
         Assert.Null(Error("""{"name":"n","prompt":"p","time":"09:00","days":["mon"],"tools":[]}"""));
+        // A job that reads a web page for a number, as the user would ask for it.
+        using (var fetch = JsonDocument.Parse("""
+            {"name":"Subscriber count","prompt":"Fetch https://www.youtube.com/@NAME with find 'subscribers', then say the channel's subscriber count.",
+             "time":"21:00","days":["mon","tue","wed","thu","fri","sat","sun"],"tools":["fetch_url"]}
+            """))
+        {
+            var (draft, error) = planner.Read(fetch.RootElement);
+            Assert.Null(error);
+            Assert.True(PaletteLayout.FitsJobCard(JobPlanner.Confirmation(draft!, Ollama)));
+        }
+
         // It is 13:45: a one-off due four minutes ago is still taken, one due six minutes ago is not.
         Assert.Null(Error("""{"name":"n","prompt":"p","time":"13:41","date":"2026-10-14","tools":[]}"""));
         Assert.Equal("That time has already passed. Ask the user for a time in the future.",
@@ -388,7 +399,7 @@ public sealed class JobTests : IDisposable
     public async Task AJobPromptTooLongToReadOnTheCardIsSentBackBeforeAsking()
     {
         var provider = new ScriptedProvider();
-        string prompt = string.Join(' ', Enumerable.Repeat("Open the Settings app and then read every item on the shelf.", 15));
+        string prompt = string.Join(' ', Enumerable.Repeat("Open the Settings app and then read every item on the shelf.", 30));
         provider.Turns.Add(ScriptedProvider.Call(JobPlanner.Tool, $$"""{"name":"Long","prompt":"{{prompt}}","time":"09:00","days":["mon"],"tools":["open_app"]}"""));
         provider.Turns.Add(ScriptedProvider.Text(10, 5, "Shorter, then."));
         var session = new PaletteSession(provider, Haiku, new PaletteOptions(), new SendLog(LogPath), Tools(), new PermissionGrants(), [])
@@ -795,6 +806,23 @@ public sealed class JobTests : IDisposable
         Assert.Equal("The job called copy_to_clipboard, which it was not approved to use, so the run stopped.", run.Text);
         Assert.Equal(["Running job: Morning notes", "Job failed: Morning notes"], events.Select(e => e.Text));
         Assert.Equal("Morning notes", Assert.Single(new SendLog(LogPath).ReadAll()).Job);
+    }
+
+    [Fact]
+    public async Task ARunWhoseLastStepFailedIsKeptAsFailed()
+    {
+        // The model answers in words after the error, as it did when Telegram was not installed.
+        AddJob("Read the shelf item gone.txt and summarise it in one sentence.", "read_shelf_item");
+        var runner = Runner("runmissing", 2, out _);
+        var events = new List<IslandEvent>();
+        runner.Raised += events.Add;
+
+        await runner.RunDueAsync();
+
+        var run = Assert.Single(_store.Results());
+        Assert.False(run.Ok);
+        Assert.Equal("I could not find gone.txt on the shelf, so there is nothing to summarise.", run.Text);
+        Assert.Equal(["Running job: Morning notes", "Job failed: Morning notes"], events.Select(e => e.Text));
     }
 
     [Fact]

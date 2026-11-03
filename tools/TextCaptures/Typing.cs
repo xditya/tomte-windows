@@ -236,6 +236,35 @@ internal static unsafe class Typing
         keys.Type("!");
         Pump();
         Check("a key after it lands where the caret is", note.Text == "one!\ntwo\nthree", Esc(note.Text));
+
+        // "/" after a space lists the snippets; the word typed after it filters them, Down and Enter put the chosen one
+        // in place of the word, and one Ctrl+Z brings the word back.
+        Snippet[] saved = [new(1, "signature", "Best,\nAda"), new(2, "sigh", "*sigh*"), new(3, "address", "1 Main St")];
+        var menus = new List<SnippetMenu?>();
+        binding.Snippets = () => saved;
+        binding.MenuChanged += menus.Add;
+        box.Services.Selection = (note.Text.Length, note.Text.Length);
+        keys.Type(" /sig");
+        Pump();
+        Check("a slash after a space lists the snippets the word matches", binding.Menu is { Query: "sig", Rows.Count: 2 }, $"{binding.Menu?.Query} {binding.Menu?.Rows.Count}");
+        string typedWord = box.Services.Text;
+        keys.Press(VIRTUAL_KEY.VK_DOWN);
+        keys.Press(VIRTUAL_KEY.VK_RETURN);
+        Pump();
+        string chosen = binding.Menu is null ? box.Services.Text : "(still open)";
+        Check("Down then Enter puts the second snippet in place of the word, and no line break", chosen == typedWord[..^4] + SnippetSlash.Filter(saved, "sig")[1].Text, Esc(chosen));
+        keys.Press(VIRTUAL_KEY.VK_Z, ctrl: true);
+        Pump();
+        Check("one Ctrl+Z brings the typed word back", box.Services.Text == typedWord, Esc(box.Services.Text));
+        keys.Press(VIRTUAL_KEY.VK_END);
+        Pump();
+        keys.Type(" /zzz");
+        Pump();
+        Check("with no snippet matching nothing is listed", binding.Menu is null, $"{binding.Menu?.Rows.Count}");
+        keys.Type(" /");
+        Pump();
+        bool open = binding.Menu is not null;
+        Check("Esc closes the list and leaves the slash as typed", open && binding.Dismiss() && binding.Menu is null && box.Services.Text.EndsWith(" /", StringComparison.Ordinal), Esc(box.Services.Text));
         note.FlushAsync().GetAwaiter().GetResult();
         Log($"note in the store: \"{Esc(note.Text)}\"");
     }

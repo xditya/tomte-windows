@@ -57,6 +57,7 @@ PostMessage
 SetTimer
 KillTimer
 GetCursorPos
+SetCursorPos
 UnregisterHotKey
 GetAsyncKeyState
 SendInput
@@ -79,6 +80,7 @@ HID_USAGE_GENERIC_MOUSE
 WindowFromPoint
 GetAncestor
 SendMessageTimeout
+OleGetClipboard
 OleInitialize
 RegisterDragDrop
 RevokeDragDrop
@@ -311,3 +313,5 @@ SetLayeredWindowAttributes
 UnregisterClass
 SetProcessWorkingSetSize
 WM_SETTINGCHANGE
+EnumDisplayMonitors
+PlaySound

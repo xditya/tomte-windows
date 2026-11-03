@@ -4,8 +4,10 @@ using System.Drawing;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Tomte.Core;
+using Tomte.Core.Clipboard;
 using Tomte.Core.Interaction;
 using Tomte.Core.Shortcuts;
+using Tomte.Core.Text;
 using Tomte.Core.Triggers;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -25,10 +27,24 @@ namespace Tomte.Shell;
 /// drag drags the tile out (the whole selection when it is one of it), and the buttons act on the same items. Remove
 /// and Clear shelf ask once; Clear shelf and a drag out leave pinned items, which carry a pin on their preview. Missing items are dimmed, with their own meta line. The island's interaction host runs the
 /// presses, hover, tooltips and focus.
+/// The Tomte Drop button left of the Sets button shares the selection with a phone, or with nothing selected opens a
+/// share that only receives; the band's Tomte Drop does the same for the items it acts on.
+/// The Sets button next to the filter swaps the grid for the saved sets: a name box and Save (the selection, or
+/// everything on the shelf), then a row per set with its counts, Bring back, Tomte Drop of its files, Rename (the name
+/// turns into a box) and Delete, which asks once.
 /// </summary>
-internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, Action<string>? log) : IPanel, IInteractive
+internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers, ShelfStore shelf, TextRenderer text, TypingFocus focus, Action<string>? log) : IPanel, IInteractive
 {
     private readonly HashSet<long> selected = [];
+
+    // The sets view: whether it shows, the first set row on the page, the set whose name is being edited, and the boxes.
+    private bool setsOpen;
+    private int setFirst;
+    private long? renaming;
+    private EditorView? nameBox, renameBox;
+    private TextVisual? placeholder;
+    private readonly RemoveQuestion deleteQuestion = new();
+    private Windows.System.DispatcherQueueTimer? deleteWait;
 
     // What the tiles read about their items and the pictures on the page, for one showing of the panel.
     private readonly Dictionary<string, ShelfPeek> peeks = new(StringComparer.OrdinalIgnoreCase);
@@ -77,6 +93,7 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     {
         (this.body, this.size) = (body, size);
         shelf.Changed += Rebuild;
+        triggers.ShelfShowing(true);
         // Returns at once: the first showing loads the shelf, every showing looks for moved and deleted files, and
         // Changed brings the result.
         _ = shelf.Check();
@@ -86,9 +103,11 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     public void Hidden()
     {
         shelf.Changed -= Rebuild;
+        triggers.ShelfShowing(false);
         parts?.Dispose();
         band?.Dispose();
         (parts, band, body) = (null, null, null);
+        CloseSets();
         selected.Clear();
         bandWait?.Stop();
         (shown, due, last, hovering) = (null, null, null, null);
@@ -107,6 +126,14 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     /// <summary>A press on none of the targets: the selection goes. The host runs the presses on targets.</summary>
     public void Press(Vector2 point)
     {
+        // A press on the name field's padding gives its box the keys.
+        if (setsOpen && nameBox is not null && !nameBox.Box.Contains(point.X, point.Y)
+            && ShelfLayout.SaveRow(size, "").Field.Contains(point.X, point.Y) && !SaveButton().Contains(point.X, point.Y))
+        {
+            focus.Take(nameBox);
+            return;
+        }
+
         if (targets.Any(t => t.Bounds.Contains(point.X, point.Y)))
         {
             return;
@@ -130,6 +157,19 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
 
         wheel -= notches * 120;
+        if (setsOpen)
+        {
+            int to = ShelfLayout.ScrollSets(setFirst, notches, shelf.Sets.Count, size);
+            if (to != setFirst)
+            {
+                setFirst = to;
+                EndRename(keepKeys: false);
+                Rebuild();
+            }
+
+            return;
+        }
+
         int next = ShelfLayout.Scroll(first, notches, showing.Count, size);
         if (next != first)
         {
@@ -144,14 +184,31 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     {
         if (Enum.GetValues<ShelfFilter>().FirstOrDefault(f => ShelfLayout.FilterId(f) == id) is var picked && ShelfLayout.FilterId(picked) == id)
         {
-            if (picked != filter)
+            if (picked != filter || setsOpen)
             {
+                CloseSets();
                 (filter, first) = (picked, 0);
                 selected.Clear();
                 Show(null);
                 Rebuild();
             }
 
+            return;
+        }
+
+        if (id == ShelfLayout.DropId)
+        {
+            // The first click of a double click already acted. The selection, or with none a share that only receives.
+            if (by != ActivateBy.DoubleClick)
+            {
+                TomteDrop(Selection(shelf.Items));
+            }
+
+            return;
+        }
+
+        if (SetsActivate(id, by))
+        {
             return;
         }
 
@@ -248,6 +305,71 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
 
         return true;
+    }
+
+    /// <summary>Ctrl+V, whatever has focus: from the island's own keys, or the hotkey taken while the panel shows under the pointer.</summary>
+    public bool Command(NavKey key)
+    {
+        if (key != NavKey.Paste || body is null)
+        {
+            return false;
+        }
+
+        Paste();
+        return true;
+    }
+
+    /// <summary>
+    /// What the clipboard holds goes on the shelf as a drop of it does: files stay where they are, text and links are
+    /// kept as files of their own, and a picture as a PNG named for when it was pasted. The grid goes back to its start,
+    /// showing everything, where the new item leads.
+    /// </summary>
+    private void Paste()
+    {
+        var items = triggers.Drops.Paste(out var image);
+        if (items is null && image is null)
+        {
+            island.Interaction.Acknowledge(this, ShelfLayout.SetsId, "Nothing on the clipboard to paste", tick: false);
+            return;
+        }
+
+        log?.Invoke(items is null ? "shelf: pasted a picture" : $"shelf: pasted {items.Paths.Count + items.Files.Count} files, text {items.Text?.Length ?? 0} chars");
+        _ = items is null ? PasteImage(image!) : shelf.Accept(items);
+        CloseSets();
+        (filter, first) = (ShelfFilter.All, 0);
+        selected.Clear();
+        Show(null);
+        Rebuild();
+    }
+
+    // Made into a PNG on the pool: a large bitmap takes a few hundred milliseconds to encode.
+    private async Task PasteImage(CopiedImage image)
+    {
+        KeptImage? kept;
+        try
+        {
+            long cap = shelf.MaxReceivedBytes;
+            kept = await Task.Run(() => ClipboardImages.Keep(image, cap));
+        }
+        catch (Exception e)
+        {
+            // Bytes that are not the picture they say they are.
+            log?.Invoke($"shelf: the pasted picture could not be read ({e.GetType().Name})");
+            return;
+        }
+        finally
+        {
+            image.Dispose();
+        }
+
+        if (kept is null)
+        {
+            log?.Invoke("shelf: the pasted picture is too large");
+            return;
+        }
+
+        string name = FormattableString.Invariant($"Image {DateTime.Now:yyyy-MM-dd HHmmss}.png");
+        await shelf.Add([new ShelfEntry(ShelfKind.Content, name, Content: kept.Png)]);
     }
 
     /// <summary>Win32 runs the press, move and release loop with the system's drag threshold: true is a drag, false a click.</summary>
@@ -394,8 +516,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
 
     private static unsafe nint Handle(HWND hwnd) => (nint)hwnd.Value;
 
+    /// <summary>Text onto the clipboard; the AI layer's assembly, where the clipboard code lives, loads with the first copy, not before.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private static void CopyText(string text) => Tomte.AI.Palette.DesktopEffects.CopyToClipboard(text);
+    internal static void CopyText(string text) => Tomte.AI.Palette.DesktopEffects.CopyToClipboard(text);
 
     private static ShelfAction? ActionOf(string id) =>
         id.StartsWith("act:", StringComparison.Ordinal) && Enum.TryParse<ShelfAction>(id.AsSpan(4), out var action) ? action : null;
@@ -410,6 +533,11 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
     /// <summary>The item the band shows the actions of, while its tile is on the page.</summary>
     private ShelfItem? Owner()
     {
+        if (setsOpen)
+        {
+            return null;
+        }
+
         var items = showing;
         for (int i = first; i < first + ShelfLayout.Visible(size, first, items.Count); i++)
         {
@@ -493,6 +621,9 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
                     break;
                 case ShelfAction.Share:
                     Share(allowed);
+                    break;
+                case ShelfAction.Drop:
+                    TomteDrop(allowed);
                     break;
                 case ShelfAction.Pin:
                     _ = shelf.SetPinned(allowed, !ShelfLayout.AllPinned(allowed));
@@ -593,6 +724,345 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         }
     }
 
+    /// <summary>
+    /// Tomte Drop of the items whose files are there, or when none were asked for the running share's card, else a share
+    /// that only receives; items that are all missing start nothing. On the next turn, after the click or key, since the
+    /// island leaves Panels for the card.
+    /// </summary>
+    private void TomteDrop(IReadOnlyList<ShelfItem> items)
+    {
+        var offered = DropRun.Offered(items);
+        log?.Invoke($"shelf: Tomte Drop of {offered.Count} of {items.Count}");
+        if (items.Count > 0 && offered.Count == 0)
+        {
+            return;
+        }
+
+        island.Queue.TryEnqueue(() =>
+        {
+            if (items.Count > 0 || !DropRun.Reopen())
+            {
+                DropRun.Start(island, triggers, shelf, text, Task.FromResult(offered), log);
+            }
+        });
+    }
+
+    /// <summary>Tomte Drop of a saved set's files that are still where they were, without putting them on the shelf.</summary>
+    private void TomteDrop(long set)
+    {
+        log?.Invoke("shelf: Tomte Drop of a set");
+        island.Queue.TryEnqueue(() => DropRun.Start(island, triggers, shelf, text, DropRun.Offered(shelf.SetMembers(set)), log, DropCard.SetGone));
+    }
+
+    /// <summary>What Save puts in a set: the selection when there is one, else everything on the shelf.</summary>
+    private List<ShelfItem> SaveItems() => selected.Count > 0 ? Selection(shelf.Items) : [.. shelf.Items];
+
+    private string SaveLabel() => ShelfLayout.SaveLabel(SaveItems().Count, selected.Count > 0);
+
+    private RectangleF SaveButton() => ShelfLayout.SaveRow(size, SaveLabel()).Button;
+
+    /// <summary>The set Delete asks about now, or null.</summary>
+    private long? Deleting() => deleteQuestion.Item is long id && deleteQuestion.Asks(id, Environment.TickCount64) ? id : null;
+
+    /// <summary>The sets view's targets; false for an id that is none of them.</summary>
+    private bool SetsActivate(string id, ActivateBy by)
+    {
+        bool ours = id is ShelfLayout.SetsId or ShelfLayout.SetNameId or ShelfLayout.RenameBoxId or ShelfLayout.SaveSetId || ShelfLayout.SetPart(id) is not null;
+        if (!ours || by == ActivateBy.DoubleClick)
+        {
+            // The first click of a double click already acted.
+            return ours;
+        }
+
+        switch (id)
+        {
+            case ShelfLayout.SetsId:
+                if (setsOpen)
+                {
+                    CloseSets();
+                }
+                else
+                {
+                    (setsOpen, setFirst) = (true, 0);
+                    Show(null);
+                }
+
+                Rebuild();
+                return true;
+            case ShelfLayout.SetNameId:
+                // Focus reached the box with the keys: it takes them. Never on its own, so no foreground is taken here.
+                if (nameBox is not null && focus.HasKeys)
+                {
+                    focus.Take(nameBox);
+                }
+
+                return true;
+            case ShelfLayout.RenameBoxId:
+                if (renameBox is not null && focus.HasKeys)
+                {
+                    focus.Take(renameBox);
+                }
+
+                return true;
+            case ShelfLayout.SaveSetId:
+                Save();
+                return true;
+        }
+
+        if (ShelfLayout.SetPart(id) is not (long set, string part))
+        {
+            return false;
+        }
+
+        switch (part)
+        {
+            case "back":
+                // Back to the items, at the top, where the set's items land once the worker has put them there.
+                CloseSets();
+                (first, filter) = (0, ShelfFilter.All);
+                selected.Clear();
+                Rebuild();
+                _ = shelf.BringBack(set);
+                break;
+            case "drop":
+                TomteDrop(set);
+                break;
+            case "rename":
+                StartRename(set);
+                break;
+            default:
+                AskDelete(set);
+                break;
+        }
+
+        return true;
+    }
+
+    /// <summary>Saves the selection, or the whole shelf, as a set named what the box holds.</summary>
+    private void Save()
+    {
+        var items = SaveItems();
+        if (items.Count == 0 || nameBox is null)
+        {
+            return;
+        }
+
+        string name = nameBox.Services.Text;
+        nameBox.Services.Text = "";
+        selected.Clear();
+        island.Interaction.Acknowledge(this, ShelfLayout.SaveSetId, "Saved");
+        _ = shelf.SaveSet(name, items);
+        Rebuild();
+    }
+
+    private void StartRename(long set)
+    {
+        EndRename(keepKeys: false);
+        deleteQuestion.Drop();
+        renaming = set;
+        Rebuild();
+        if (renameBox is not null)
+        {
+            focus.Take(renameBox);
+            renameBox.Services.Selection = (0, -1);
+        }
+    }
+
+    /// <summary>
+    /// Closes the rename box. With <paramref name="keepKeys"/> (Enter or Esc in it) the island keeps the keys for its
+    /// targets; otherwise a box that had them lets them go, as any box going does.
+    /// </summary>
+    private void EndRename(bool keepKeys)
+    {
+        if (renameBox is { } box)
+        {
+            if (keepKeys && focus.Focused == box)
+            {
+                focus.TakeKeys();
+            }
+
+            renameBox = null;
+            box.Dispose();
+        }
+
+        renaming = null;
+    }
+
+    private void AskDelete(long set)
+    {
+        EndRename(keepKeys: false);
+        var step = deleteQuestion.Click(set, Environment.TickCount64, PInvoke.GetDoubleClickTime());
+        if (step == RemoveStep.Remove)
+        {
+            _ = shelf.DeleteSet(set);
+        }
+        else if (step == RemoveStep.Ask)
+        {
+            if (deleteWait is null)
+            {
+                deleteWait = island.Queue.CreateTimer();
+                deleteWait.Interval = TimeSpan.FromMilliseconds(RemoveQuestion.AskMs);
+                deleteWait.IsRepeating = false;
+                deleteWait.Tick += (_, _) =>
+                {
+                    deleteQuestion.Drop();
+                    Rebuild();
+                };
+            }
+
+            deleteWait.Start();
+        }
+
+        Rebuild();
+    }
+
+    /// <summary>Back to the items: the boxes go, and a box that had the keys lets them go.</summary>
+    private void CloseSets()
+    {
+        EndRename(keepKeys: false);
+        nameBox?.Dispose();
+        placeholder?.Dispose();
+        (nameBox, placeholder, setsOpen) = (null, null, false);
+        deleteQuestion.Drop();
+        deleteWait?.Stop();
+    }
+
+    /// <summary>The sets view in the grid's place: the save row, the sets' rows or a line saying there are none, the footer line, and the boxes over them.</summary>
+    private void BuildSets(Parts p)
+    {
+        var into = p.Shapes(body!, new RectangleF(0, 0, size.X, size.Y));
+        var save = ShelfLayout.SaveRow(size, SaveLabel());
+        bool canSave = SaveItems().Count > 0;
+        p.Box(into, save.Field, ShelfLayout.SetCorner, p.Brush(ShelfColors.Card), p.Brush(ShelfColors.Line));
+        p.Box(into, save.Button, ShelfLayout.ActionCorner, p.Brush(ShelfColors.Raised));
+        p.Text(into, save.Label with { Style = save.Label.Style with { Color = ShelfColors.Argb(canSave ? ShelfColors.Ink : ShelfColors.Disabled) } });
+
+        var sets = shelf.Sets;
+        setFirst = ShelfLayout.ScrollSets(setFirst, 0, sets.Count, size);
+        if (sets.Count == 0)
+        {
+            foreach (var line in ShelfLayout.NoSetsText(size))
+            {
+                p.Text(into, line);
+            }
+        }
+
+        RectangleF? renameAt = null;
+        foreach (var slot in ShelfLayout.SetSlots(size, sets, setFirst, Deleting()))
+        {
+            p.Box(into, slot.Row, ShelfLayout.SetCorner, p.Brush(ShelfColors.Card));
+            if (renaming == slot.Set.Id)
+            {
+                renameAt = slot.NameBox;
+                p.Box(into, RectangleF.Inflate(slot.NameBox, 6, 4), 8, p.Brush(ShelfColors.Raised), p.Brush(ShelfColors.Mark));
+            }
+            else
+            {
+                p.Text(into, slot.Name);
+                p.Text(into, slot.Meta);
+            }
+
+            p.Box(into, slot.Back, ShelfLayout.ActionCorner, p.Brush(ShelfColors.Raised));
+            p.Text(into, slot.BackLabel);
+            p.Box(into, slot.Drop, ShelfLayout.ActionCorner, p.Brush(ShelfColors.Raised));
+            p.Glyph(into, Glyphs.Phone, slot.Set.Missing < slot.Set.Count ? ShelfColors.Ink : ShelfColors.Disabled, Centred(slot.Drop));
+            p.Box(into, slot.Rename, ShelfLayout.ActionCorner, p.Brush(ShelfColors.Raised));
+            p.Glyph(into, Glyphs.Rename, ShelfColors.Ink, Centred(slot.Rename));
+            if (slot.DeleteLabel is { } asking)
+            {
+                p.Box(into, slot.Delete, ShelfLayout.ActionCorner, p.Brush(ShelfColors.WarnFill));
+                p.Text(into, asking);
+            }
+            else
+            {
+                p.Box(into, slot.Delete, ShelfLayout.ActionCorner, p.Brush(ShelfColors.Raised));
+                Glyph(p, into, ShelfAction.Remove, Centred(slot.Delete), ShelfColors.Ink);
+            }
+        }
+
+        p.Text(into, ShelfLayout.SetsFoot(size));
+
+        if (nameBox is null)
+        {
+            placeholder = text.Create(body!);
+            var box = nameBox = focus.Create(body!, multiline: false, TextStyle.Primary.Size);
+            box.SendOnEnter(_ => island.Queue.TryEnqueue(Save));
+            box.Services.Changed += () => island.Queue.TryEnqueue(ShowPlaceholder);
+            // Esc empties the box first; with nothing in it, it leaves the box for the tab's label, and a second Esc
+            // closes the island as before.
+            box.Escape = () =>
+            {
+                if (box.Services.Text.Length > 0)
+                {
+                    box.Services.Text = "";
+                    return true;
+                }
+
+                if (!focus.TakeKeys())
+                {
+                    return false;
+                }
+
+                island.Interaction.FocusTab();
+                return true;
+            };
+        }
+
+        nameBox.Place(save.Box, island.Scale);
+        ShowPlaceholder();
+        if (renameAt is { } at && renaming is long set)
+        {
+            if (renameBox is null)
+            {
+                var box = renameBox = focus.Create(body!, multiline: false, TextStyle.Primary.Size);
+                box.Services.Text = sets.First(s => s.Id == set).Name;
+                box.SendOnEnter(words => island.Queue.TryEnqueue(() =>
+                {
+                    EndRename(keepKeys: true);
+                    _ = shelf.RenameSet(set, words);
+                    Rebuild();
+                    island.Interaction.Focus(this, ShelfLayout.SetId(set, "rename"));
+                }));
+                box.Escape = () =>
+                {
+                    island.Queue.TryEnqueue(() =>
+                    {
+                        EndRename(keepKeys: true);
+                        Rebuild();
+                        island.Interaction.Focus(this, ShelfLayout.SetId(set, "rename"));
+                    });
+                    return true;
+                };
+            }
+
+            renameBox.Place(at, island.Scale);
+        }
+        else if (renameBox is not null)
+        {
+            // Its row scrolled away or its set went.
+            EndRename(keepKeys: false);
+        }
+
+        // The hint and the boxes over the rows just drawn.
+        foreach (Visual top in new Visual?[] { placeholder?.Visual, nameBox.Visual, renameBox?.Visual }.OfType<Visual>())
+        {
+            body!.Children.Remove(top);
+            body.Children.InsertAtTop(top);
+        }
+    }
+
+    // An icon's square in the middle of its button.
+    private static RectangleF Centred(RectangleF button) =>
+        new(button.X + (button.Width - ShelfLayout.ActionIcon) / 2, button.Y + (button.Height - ShelfLayout.ActionIcon) / 2, ShelfLayout.ActionIcon, ShelfLayout.ActionIcon);
+
+    private void ShowPlaceholder()
+    {
+        if (nameBox is not null && placeholder is not null)
+        {
+            placeholder.Show(nameBox.Services.Text.Length == 0 ? ShelfLayout.SetPlaceholder : "", ShelfLayout.CountStyle, nameBox.Box);
+        }
+    }
+
     private void Rebuild()
     {
         if (body is null)
@@ -607,6 +1077,13 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var items = showing;
         selected.RemoveWhere(id => !items.Any(i => i.Id == id));
         first = ShelfLayout.Scroll(first, 0, items.Count, size);
+        if (setsOpen)
+        {
+            BuildSets(p);
+            Band();
+            return;
+        }
+
         if (items.Count == 0)
         {
             var empty = RectangleF.FromLTRB(ShelfLayout.PadX, ShelfLayout.GridTop, size.X - ShelfLayout.PadX, ShelfLayout.GridBottom(size));
@@ -681,22 +1158,40 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         var owner = Owner();
         var acting = owner is null ? [] : Acting(owner);
         bool confirming = question.Asks(owner?.Id, Environment.TickCount64);
-        targets = ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Any(i => !i.Pinned));
+        targets = setsOpen
+            ? ShelfLayout.SetTargets(size, shelf.Sets, setFirst, Deleting(), SaveLabel(), SaveItems().Count > 0, renaming, filter, selected.Count, DropRun.Running)
+            : ShelfLayout.Targets(size, first, showing, owner, acting, confirming, filter, clearing, all.Any(i => !i.Pinned), selected.Count, DropRun.Running);
         var (track, segments) = ShelfLayout.Filter(size, filter);
         b.Box(into, track, track.Height / 2, b.Brush(ShelfColors.Card));
         foreach (var segment in segments)
         {
-            if (segment.Filter == filter)
+            if (segment.Filter == filter && !setsOpen)
             {
                 b.Box(into, segment.Box, segment.Box.Height / 2, b.Brush(ShelfColors.RaisedHi));
             }
 
-            b.Text(into, segment.Label);
+            b.Text(into, setsOpen ? segment.Label with { Style = ShelfLayout.FilterOff } : segment.Label);
         }
 
         if (owner is null)
         {
-            foreach (var line in ShelfLayout.HeadText(size, all.Count))
+            // The Sets button: a one-segment track like the filter's, its segment raised while the sets show.
+            var sets = ShelfLayout.SetsButton(size);
+            b.Box(into, sets, sets.Height / 2, b.Brush(ShelfColors.Card));
+            var segmentBox = RectangleF.Inflate(sets, -ShelfLayout.SegmentInset, -ShelfLayout.SegmentInset);
+            if (setsOpen)
+            {
+                b.Box(into, segmentBox, segmentBox.Height / 2, b.Brush(ShelfColors.RaisedHi));
+            }
+
+            b.Text(into, new TextSlot(ShelfLayout.SetsLabel, setsOpen ? ShelfLayout.FilterOn : ShelfLayout.FilterOff, segmentBox));
+
+            // The Tomte Drop button: a circle on the filter's grey with the phone in it, in the accent while a share runs.
+            var drop = ShelfLayout.DropButton(size);
+            b.Box(into, drop, drop.Height / 2, b.Brush(DropRun.Running ? ShelfColors.Accent : ShelfColors.Card));
+            b.Glyph(into, Glyphs.Phone, DropRun.Running ? ShelfColors.OnAccent : ShelfColors.Ink, Centred(drop));
+
+            foreach (var line in ShelfLayout.HeadText(size, all.Count, setsOpen ? ShelfLayout.SetsHead(shelf.Sets.Count) : null))
             {
                 b.Text(into, line);
             }
@@ -907,12 +1402,12 @@ internal sealed class ShelfPanel(IslandWindow island, TriggerController triggers
         p.Glyph(badge, Glyphs.Pin, ShelfColors.Accent, new RectangleF(glyph.X - disc.X, glyph.Y - disc.Y, glyph.Width, glyph.Height));
     }
 
-    /// <summary>An action's line icon in its square; Pin's from the icon set.</summary>
+    /// <summary>An action's line icon in its square; Pin's and Tomte Drop's from the icon set.</summary>
     private static void Glyph(Parts p, ShapeVisual into, ShelfAction action, RectangleF icon, Color color)
     {
-        if (action == ShelfAction.Pin)
+        if (action is ShelfAction.Pin or ShelfAction.Drop)
         {
-            p.Glyph(into, Glyphs.Pin, color, icon);
+            p.Glyph(into, action == ShelfAction.Pin ? Glyphs.Pin : Glyphs.Phone, color, icon);
             return;
         }
 

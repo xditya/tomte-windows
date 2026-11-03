@@ -18,6 +18,17 @@ public sealed class SettingsTests : IDisposable
     }
 
     [Fact]
+    public void AStoredOldTextCaptureDefaultReadsAsTheNewOne()
+    {
+        Directory.CreateDirectory(dir);
+        System.IO.File.WriteAllText(File, """{ "hotkeys": { "textCapture": "Win+Alt+T", "colourPick": "Win+Alt+Shift+T" } }""");
+        var s = SettingsStore.Load(File);
+        Assert.Equal("Win+Alt+X", s.Hotkeys.TextCapture);
+        Assert.Equal("Win+Alt+Shift+T", s.Hotkeys.ColourPick);
+        Assert.Equal("Win+Alt+Shift+T", new HotkeySettings { TextCapture = "Win+Alt+Shift+T" }.TextCapture);
+    }
+
+    [Fact]
     public void AMissingFileGivesTheSpecDefaults()
     {
         using var store = new SettingsStore(File);
@@ -28,6 +39,9 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal("Win+Alt+V", s.Hotkeys.Rambler);
         Assert.Equal("Win+Alt+N", s.Hotkeys.Scratchpad);
         Assert.Equal("Win+Alt+Space", s.Hotkeys.Search);
+        Assert.Equal("Win+Alt+X", s.Hotkeys.TextCapture);
+        Assert.Equal("Win+Alt+E", s.Hotkeys.ColourPick);
+        Assert.False(s.CleanUpScreenText);
         Assert.Equal(0.30, s.Reveal.ZoneFraction);
         Assert.Equal(60, s.Reveal.PushCounts);
         Assert.Equal(400, s.Reveal.PushWindowMs);
@@ -290,6 +304,8 @@ public sealed class SettingsTests : IDisposable
     [InlineData("Alt+Win+Z", "brings back a closed AI answer")]
     [InlineData("Alt+Win+N", "Scratchpad already uses Win+Alt+N.")]
     [InlineData("Win+Alt+Space", "Search already uses Win+Alt+Space.")]
+    [InlineData("Win+Alt+X", "Copy text from screen already uses Win+Alt+X.")]
+    [InlineData("Alt+Win+T", "Game Bar recording timer")]
     public void RebindingRejectsBadChords(string chord, string message)
     {
         string? error = Hotkey.Validate(new HotkeySettings(), HotkeyAction.Summon, chord);
@@ -301,12 +317,25 @@ public sealed class SettingsTests : IDisposable
     [InlineData("Win+Alt+Shift+I")]
     [InlineData("Win+Ctrl+Alt+I")]
     [InlineData("Win+Alt+I")]
-    [InlineData("Win+Alt+K")]
+    [InlineData("Win+Alt+J")]
     [InlineData("Win+Alt+Shift+Enter")]
     [InlineData("Win+Alt+Shift+Z")]
     [InlineData("")]
     public void RebindingAcceptsGoodChordsAndBlank(string chord) =>
         Assert.Null(Hotkey.Validate(new HotkeySettings(), HotkeyAction.Summon, chord));
+
+    [Fact]
+    public void CopyTextFromScreenIsAppendedAndRebindsLikeTheOthers()
+    {
+        // Registered as its number plus one, so it comes after the actions that were there before.
+        Assert.Equal(HotkeyAction.Search + 1, HotkeyAction.TextCapture);
+        Assert.Equal("Copy text from screen", Hotkey.Name(HotkeyAction.TextCapture));
+        var bindings = new HotkeySettings().With(HotkeyAction.TextCapture, "Win+Alt+Shift+T");
+        Assert.Equal("Win+Alt+Shift+T", bindings[HotkeyAction.TextCapture]);
+        Assert.Equal("Win+Alt+C", bindings[HotkeyAction.CircleToAsk]);
+        Assert.Null(Hotkey.Validate(bindings, HotkeyAction.Summon, "Win+Alt+X"));
+        Assert.Equal("Copy text from screen already uses Win+Alt+Shift+T.", Hotkey.Validate(bindings, HotkeyAction.Summon, "Win+Alt+Shift+T"));
+    }
 
     [Fact]
     public void AConflictNamesTheChordAndTheAction() =>

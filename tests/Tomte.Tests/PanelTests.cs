@@ -274,7 +274,8 @@ public class PanelTests
     [Fact]
     public void TheButtonsEndTheRowAndTheSearchButtonCarriesItsShortcutWhenThereIsRoom()
     {
-        var all = Enum.GetValues<PanelId>();
+        // The tabs outside a call with no job near.
+        var all = Enum.GetValues<PanelId>().Where(id => id is not (PanelId.Call or PanelId.Jobs)).ToArray();
         var row = TabStrip.Layout(all, PanelId.Home, 760, mascot: true, "Win+Alt+Space");
 
         // Settings: 36 round at the right padding, 12 after the search button, both centred on the row.
@@ -316,7 +317,8 @@ public class PanelTests
     [Fact]
     public void TheCurrentTabsNameGivesWayOnANarrowPanel()
     {
-        var all = Enum.GetValues<PanelId>();
+        // The tabs outside a call with no job near.
+        var all = Enum.GetValues<PanelId>().Where(id => id is not (PanelId.Call or PanelId.Jobs)).ToArray();
         // Room for the rail with the name cut: the name keeps what is left, never less than the least.
         var cut = TabStrip.Layout(all, PanelId.Scratchpad, 470, mascot: true);
         var tab = cut.Tabs.Single(t => t.Id == PanelId.Scratchpad);

@@ -1,3 +1,5 @@
+using Tomte.AI.Automation;
+using Tomte.AI.Browser;
 using Tomte.AI.Palette;
 using Tomte.Core;
 using Tomte.Core.Device;
@@ -11,11 +13,16 @@ namespace Tomte.AI.Jobs;
 /// may use only the tools approved when its job was created and never asks: a call to any other tool, or spend past
 /// the daily cap, ends it with a result that says so. Each run writes one send-log line with the job's name and keeps
 /// its result for the palette. "Running job: name" comes before a run and "Job done: name" or "Job failed: name" after
-/// it; each device action a run made raises its own line, as device actions do in the palette.
+/// it; each device action a run made raises its own line, as device actions do in the palette. A job with browser
+/// tools gets a headless Tomte browser held to its sites, closed when the run ends; one with app tools gets UI
+/// Automation held to its apps, and the window that was in front before is brought back after.
 /// </summary>
 /// <param name="options">Asked at each run with the job's provider, so the cap and prices settings hold then apply.</param>
 public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConfig, IChatProvider> provider, BuiltInTools tools, SendLog log, Func<ProviderConfig, PaletteOptions> options)
 {
+    private const int PlanToolSteps = 30;
+    private static readonly TimeSpan PlanTimeout = TimeSpan.FromMinutes(5);
+
     public Func<DateTimeOffset> Now { get; init; } = () => DateTimeOffset.Now;
 
     // Asked at every look, not kept: the resident runner lives as long as the process, and a new time zone reaches
@@ -33,8 +40,20 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
     /// <summary>Where each run's request and result go for the History tab, as the palette's do; null keeps none.</summary>
     public AiHistory? History { get; init; }
 
+    /// <summary>
+    /// The UI Automation tools for a run that uses apps, held to the apps given; null when UI Automation is off in
+    /// settings, which the run then reports. Asked at each such run, so a setting changed since applies.
+    /// </summary>
+    public Func<IReadOnlyList<string>, AutomationTools?> Automation { get; init; } = _ => null;
+
+    /// <summary>Whether the PC is locked now; tests set it.</summary>
+    internal Func<bool> Locked { get; init; } = KeyPress.Locked;
+
     /// <summary>Raised on the caller's context for each run as it starts and ends, each device action a run made, and each kept result.</summary>
     public event Action<IslandEvent>? Raised;
+
+    /// <summary>How the line raised as a run starts begins; the job's name follows.</summary>
+    public const string Starting = "Running job: ";
 
     /// <summary>The event line for a kept result.</summary>
     public static string EventText(JobRunRecord run) =>
@@ -61,7 +80,7 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
             }
             else
             {
-                Raised?.Invoke(new IslandEvent("Running job: " + job.Name, Now()));
+                Raised?.Invoke(new IslandEvent(Starting + job.Name, Now()));
                 run = await RunAsync(job, due);
             }
 
@@ -86,18 +105,68 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
     {
         // Checked at every run as well as at creation: a row edited by hand, or a tool whose tier has changed since, must
         // not run unattended.
-        if (job.Tools.FirstOrDefault(t => !BuiltInTools.AllowedInScheduledJobs(t)) is { } refused)
+        if (job.Tools.FirstOrDefault(t => !JobPlanner.IsJobTool(t)) is { } refused)
         {
             return Record(job, due, false, $"{refused} cannot run in a scheduled job, so this run was refused before anything was sent.", "");
+        }
+
+        AutomationTools? automation = null;
+        if (job.Tools.Any(AutomationTools.Owns))
+        {
+            string apps = JobSchedule.JoinWords(job.Apps);
+            // Nobody unlocks the PC for a job; it fails before anything is sent.
+            if (Locked())
+            {
+                return Record(job, due, false, $"Your PC was locked, so the job could not use {apps}.", "");
+            }
+
+            if ((automation = Automation(job.Apps)) is null)
+            {
+                return Record(job, due, false, $"UI Automation is off in settings, so the job could not use {apps}.", "");
+            }
+        }
+
+        using var _ = automation;
+        nint before = automation is null ? 0 : KeyPress.InFront();
+        var browser = job.Tools.Any(BrowserTools.Owns) ? new BrowserTools(headless: true, job.Sites) : null;
+        try
+        {
+            return await RunAsync(job, due, automation, browser);
+        }
+        finally
+        {
+            if (browser is not null)
+            {
+                await browser.CloseAsync();
+            }
+
+            // A job that brought an app to the front gives the front back.
+            if (before != 0 && KeyPress.InFront() != before)
+            {
+                await Task.Run(() => automation!.Front(before));
+            }
+        }
+    }
+
+    private async Task<JobRunRecord> RunAsync(ScheduledJob job, DateTimeOffset due, AutomationTools? automation, BrowserTools? browser)
+    {
+        // A plan that works through pages and app windows takes a few calls a step, and pages take time to load; the
+        // run still ends within JobStore.RunLimit.
+        var settings = options(job.Provider);
+        if (job.Steps.Count > 0)
+        {
+            settings = settings with { MaxToolSteps = Math.Max(settings.MaxToolSteps, PlanToolSteps), Timeout = settings.Timeout > PlanTimeout ? settings.Timeout : PlanTimeout };
         }
 
         PaletteSession session;
         try
         {
-            session = new PaletteSession(provider(job.Provider), job.Provider, options(job.Provider), log, tools, new PermissionGrants(), [])
+            session = new PaletteSession(provider(job.Provider), job.Provider, settings, log, tools, new PermissionGrants(), [])
             {
                 Job = job,
-                Prompt = job.Prompt,
+                Prompt = JobPlanner.RunPrompt(job),
+                Automation = automation,
+                Browser = browser,
                 Now = Now,
                 History = History,
                 // The user approved these tools when the job was made; nothing else is offered to the model.
@@ -116,7 +185,9 @@ public sealed class JobRunner(JobStore store, IJobTasks tasks, Func<ProviderConf
         await session.SendAsync();
         var steps = session.Answer.OfType<ToolStepSegment>().Select(s => $"{s.Summary}: {(s.IsError ? "error: " : "")}{s.Result}");
         string text = session.Status == PaletteStatus.Done ? session.AnswerText.Trim() : session.Error ?? $"The run ended: {session.Status}.";
-        return Record(job, due, session.Status == PaletteStatus.Done, text, string.Join("\n", [.. steps, session.ProviderIndicator]));
+        // A model whose last step failed still finishes with an answer, one that says it could not do the work.
+        bool ok = session.Status == PaletteStatus.Done && session.Answer.OfType<ToolStepSegment>().LastOrDefault() is not { IsError: true };
+        return Record(job, due, ok, text, string.Join("\n", [.. steps, session.ProviderIndicator]));
     }
 
     private JobRunRecord Record(ScheduledJob job, DateTimeOffset due, bool ok, string text, string details) =>

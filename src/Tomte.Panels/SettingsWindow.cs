@@ -98,6 +98,7 @@ public sealed partial class SettingsWindow : Window
                         StackedRow("Desktop peek", Note("How Tomte rests at the top of the screen when no window is there: perched on the edge, an edge lip, the pill, or a small pill in a corner, clear of a clock or widget in the middle. Point at it to open the island."), PeekStyles(), 14),
                         Row("Track changes", Note("Show the pill for a few seconds when another track starts playing."), Toggle(s => s.MediaTrackChangeEvent, (s, v) => s with { MediaTrackChangeEvent = v })),
                         Row("Keep showing while music plays", Note("Keep the pill at the top of the screen with what is playing. It goes 5 seconds after the music pauses or stops, and still hides over fullscreen apps."), Toggle(s => s.KeepWhilePlaying, (s, v) => s with { KeepWhilePlaying = v })),
+                        Row("Show call controls during calls", Note("While another app uses the microphone, the pill shows a button that mutes it, for every app as a mute key does. A click on the pill opens the Call tab, with the microphone, the call's volume, the devices and the camera."), Toggle(s => s.MuteDuringCalls, (s, v) => s with { MuteDuringCalls = v })),
                         Row("Monitors", Note("Where an edge push or a drag can reveal the island."), Monitors()),
                         Row("Island position", Note("Drag the island along the top edge to move it. Double-click an empty part of its tab row to put it back in the middle."), ResetPosition())),
                     Header("Appearance"),
@@ -124,6 +125,8 @@ public sealed partial class SettingsWindow : Window
                 ("Voice", "\uE720", "What happens to the words you say after a hold.", [Card(
                     Row("When you finish speaking, Enter does", voiceNote, VoiceEnter()),
                     Row("Spoken replies", Note("Read the answer to a voice command aloud with Windows speech."), Toggle(s => s.SpokenReplies, (s, v) => s with { SpokenReplies = v })))]),
+                ("Scratchpad", "\uE70B", "Text you put in the note by typing a slash and its name.", [SnippetsSection()]),
+                ("Reminders", "", "What the island tells you at a time you chose.", [RemindersSection()]),
             ]),
             ("AI", [
                 (ProviderPage, "\uF4A5", "Tomte sends a request only when you ask, or when a job you made runs. With no provider set up, the AI layer stays off.", ProviderSection()),
@@ -131,7 +134,11 @@ public sealed partial class SettingsWindow : Window
                     Card(
                         Note("What the AI can do when you ask, once a provider is set up. A tool that asks each time can be always allowed from its prompt. By voice, every tool asks first, always allowed or not, and MCP server tools are not offered."),
                         Row("Desktop automation", Note("Let the typed palette list, click, type into and select controls in other apps. Every action asks first and none can be always allowed. Never by voice."),
-                            Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } }))),
+                            Toggle(s => s.UiAutomation.Enabled, (s, v) => s with { UiAutomation = s.UiAutomation with { Enabled = v } })),
+                        Row("Clean up copied text", Note("After Copy text from screen, send the text it read to the provider to fix reading mistakes. Only the text is sent, never the picture, and the result is marked as cleaned up by AI."),
+                            Toggle(s => s.CleanUpScreenText, (s, v) => s with { CleanUpScreenText = v })),
+                        Row("Translate copied text into", Note("The language Translate on the Copy text from screen card asks for. Only the text is sent, and only when you press Translate: to the provider, or with none set up, to the free MyMemory service by Translated, which keeps what it is sent. Text over 5,000 characters, or a translation that failed, can go to Google Translate in your browser."),
+                            TranslateTo())),
                     Header("Always allowed"),
                     Card(grantsList),
                     Header("All tools"),
@@ -203,6 +210,7 @@ public sealed partial class SettingsWindow : Window
         RenderMcpServers();
         _ = RenderSkillsAsync();
         _ = RenderJobsAsync();
+        _ = RenderRemindersAsync();
         _ = LoadStartupAsync();
         startup.Toggled += async (_, _) => await SetStartupAsync(startup.IsOn);
         Closed += (_, _) => store.Dispose();
@@ -368,6 +376,23 @@ public sealed partial class SettingsWindow : Window
     private ToggleSwitch RevealToggle(Func<RevealSettings, bool> get, Func<RevealSettings, bool, RevealSettings> set) =>
         Toggle(s => get(s.Reveal), (s, v) => s with { Reveal = set(s.Reveal, v) });
 
+    // The Windows display language first, then the languages by their English names; a tag from a hand-edited file stays listed.
+    private ComboBox TranslateTo()
+    {
+        string held = store.Current.TranslateScreenTextTo;
+        string[] tags = ["", .. ScreenText.Languages.Append(held).Where(t => t.Length > 0).Distinct().OrderBy(ScreenText.LanguageName, StringComparer.CurrentCulture)];
+        var names = tags.Select(t => t.Length == 0 ? $"Windows display language ({ScreenText.LanguageName(t)})" : ScreenText.LanguageName(t)).ToArray();
+        var box = new ComboBox { ItemsSource = names, SelectedIndex = Array.IndexOf(tags, held), MinWidth = 200 };
+        box.SelectionChanged += (_, _) =>
+        {
+            if (box.SelectedIndex >= 0)
+            {
+                Save(s => s with { TranslateScreenTextTo = tags[box.SelectedIndex] });
+            }
+        };
+        return box;
+    }
+
     private ComboBox Monitors()
     {
         var box = new ComboBox { ItemsSource = new[] { "Every monitor", "Primary monitor only" }, SelectedIndex = store.Current.AllMonitors ? 0 : 1, MinWidth = 200 };
@@ -375,13 +400,13 @@ public sealed partial class SettingsWindow : Window
         return box;
     }
 
-    // Insert, Ask Tomte or Add to note, in VoiceChoice order. Ask is off while no provider is set up, and the box shows
+    // Insert, Ask Tomte, Add to note or Copy, in VoiceChoice order. Ask is off while no provider is set up, and the box shows
     // Insert then without changing what is saved, so Ask comes back with a provider. It follows a provider set up or
     // removed while the window is open.
     private ComboBox VoiceEnter()
     {
         var ask = new ComboBoxItem { Content = VoiceChoices.Label(VoiceChoice.Ask) };
-        var box = new ComboBox { MinWidth = 200, Items = { VoiceChoices.Label(VoiceChoice.Insert), ask, VoiceChoices.Label(VoiceChoice.Note) } };
+        var box = new ComboBox { MinWidth = 200, Items = { VoiceChoices.Label(VoiceChoice.Insert), ask, VoiceChoices.Label(VoiceChoice.Note), VoiceChoices.Label(VoiceChoice.Copy) } };
         bool showing = false;
         void Show(TomteSettings s)
         {
@@ -391,7 +416,7 @@ public sealed partial class SettingsWindow : Window
             box.SelectedIndex = (int)VoiceChoices.Default(s.VoiceEnter, canAsk);
             showing = false;
             voiceNote.Text = (canAsk ? "" : VoiceChoices.NoProvider + $" Set one up on the {ProviderPage} page. ")
-                + "After you speak, Alt+I, Alt+A and Alt+N pick Insert, Ask Tomte and Add to note, and Esc throws the words away.";
+                + "After you speak, Alt+I, Alt+C, Alt+A and Alt+N pick Insert, Copy, Ask Tomte and Add to note, and Esc throws the words away.";
             voiceNote.Visibility = Visibility.Visible;
         }
 
@@ -492,13 +517,17 @@ public sealed partial class SettingsWindow : Window
         return reset;
     }
 
-    private NumberBox Number(double min, double max, Func<RevealSettings, double> get, Func<RevealSettings, double, RevealSettings> set)
+    private NumberBox Number(double min, double max, Func<RevealSettings, double> get, Func<RevealSettings, double, RevealSettings> set) =>
+        Number(min, max, get(store.Current.Reveal), value => Save(s => s with { Reveal = set(s.Reveal, value) }));
+
+    // A whole number held to its range; a cleared box goes back to the value it had.
+    private static NumberBox Number(double min, double max, double value, Action<double> save)
     {
         var box = new NumberBox
         {
             Minimum = min,
             Maximum = max,
-            Value = Math.Round(get(store.Current.Reveal)),
+            Value = Math.Round(value),
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
             SmallChange = max >= 1000 ? 10 : 1,
             ValidationMode = NumberBoxValidationMode.InvalidInputOverwritten,
@@ -512,7 +541,7 @@ public sealed partial class SettingsWindow : Window
                 return;
             }
 
-            Save(s => s with { Reveal = set(s.Reveal, Math.Round(e.NewValue)) });
+            save(Math.Round(e.NewValue));
         };
         return box;
     }

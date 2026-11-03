@@ -22,8 +22,8 @@ using Windows.Win32.UI.WindowsAndMessaging;
 namespace Tomte.Shell;
 
 /// <summary>
-/// The island surface: a WS_EX_NOREDIRECTIONBITMAP popup at the top of the primary monitor, where along the edge a
-/// drag on the pill left it, with a Windows.UI.Composition tree. Five springs drive the outline; a worker thread
+/// The island surface: a WS_EX_NOREDIRECTIONBITMAP popup at the top of one monitor, where along the edge a drag on
+/// the pill left it, with a Windows.UI.Composition tree. Five springs drive the outline; a worker thread
 /// waits on the compositor clock and the UI thread rebuilds the path once per frame. The window is sized once
 /// per morph to the union of start and target bounds, then shrunk to the shape and given a region
 /// from the same outline when the springs settle. Hidden means SW_HIDE and a parked worker. The same tick
@@ -80,8 +80,12 @@ internal sealed unsafe class IslandWindow : IDisposable
     private readonly MascotVisual mascotVisual;
     private readonly DispatcherQueueTimer wakeTimer;
     private double scale;
-    private int screenWidth;
+    // The monitor the island shows on, and its bounds in virtual-screen pixels. Hidden, it moves to wherever the next
+    // show opens; while it shows it stays put.
+    private HMONITOR monitor;
+    private System.Drawing.Rectangle screen;
     private int windowX;
+    private int windowY;
     private int windowWidth;
     private int windowHeight;
     private bool hasRegion;
@@ -162,7 +166,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         BOOL disableTransitions = true;
         PInvoke.DwmSetWindowAttribute(Hwnd, DWMWINDOWATTRIBUTE.DWMWA_TRANSITIONS_FORCEDISABLED, &disableTransitions, (uint)sizeof(BOOL));
         scale = PInvoke.GetDpiForWindow(Hwnd) / 96.0;
-        screenWidth = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN);
+        monitor = PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
+        screen = BoundsOf(monitor) ?? default;
 
         // Windows.UI.Composition needs the OS dispatcher queue on this thread.
         PInvoke.CreateDispatcherQueueController(
@@ -200,18 +205,35 @@ internal sealed unsafe class IslandWindow : IDisposable
         Live = compositor.CreatePropertySet();
         Live.InsertScalar("RampW", 0);
         Live.InsertScalar("Depth", 0);
+        Live.InsertScalar("Room", 0);
+
+        // The body's right edge from the centre line, in pixels, in every frame.
+        string edge = FormattableString.Invariant($"((content.Size.X - {2 * Margin}) / 2 - live.RampW * dips.Scale.X)");
+        float half = (float)IslandGeometry.Compact.Width / 2;
+
+        // With room for a button at the trailing end, the pill's content keeps its 220 wide frame against the leading
+        // end: as the body grows past 220 it moves left with the left edge, by up to half the room, a whole number of pixels.
+        Pill = compositor.CreateContainerVisual();
+        var frame = compositor.CreateExpressionAnimation(FormattableString.Invariant(
+            $"Vector3(-Clamp(Round({edge} - {half} * dips.Scale.X), 0, Round(live.Room / 2 * dips.Scale.X)) / dips.Scale.X, 0, 0)"));
+        frame.SetReferenceParameter("content", Content);
+        frame.SetReferenceParameter("dips", Dips);
+        frame.SetReferenceParameter("live", Live);
+        Pill.StartAnimation("Offset", frame);
+        Dips.Children.InsertAtTop(Pill);
 
         // The body's trailing end in every frame, and the middle of the live top row against the pill's, each a whole
         // number of pixels from Dips' origin, so text placed in it lands on the pixel grid as it does there. At rest on
-        // the pill, both are exactly where Dips puts the pill's own right edge and middle.
+        // the pill, both are exactly where Dips puts the pill's own right edge and middle. With room for a button, the end
+        // is that of the content's frame instead.
         Trailing = compositor.CreateContainerVisual();
         var end = compositor.CreateExpressionAnimation(FormattableString.Invariant(
-            $"Vector3(Ceil((content.Size.X - {2 * Margin}) / 2 - live.RampW * dips.Scale.X) / dips.Scale.X, Floor((Min(content.Size.Y - {2 * Margin}, {PanelSpace.TabStripHeight} * dips.Scale.X) - Ceil({IslandGeometry.Compact.Depth} * dips.Scale.X)) / 2) / dips.Scale.X, 0)"));
+            $"Vector3((live.Room > 0 ? Round({half} * dips.Scale.X) : Ceil({edge})) / dips.Scale.X, Floor((Min(content.Size.Y - {2 * Margin}, {PanelSpace.TabStripHeight} * dips.Scale.X) - Ceil({IslandGeometry.Compact.Depth} * dips.Scale.X)) / 2) / dips.Scale.X, 0)"));
         end.SetReferenceParameter("content", Content);
         end.SetReferenceParameter("dips", Dips);
         end.SetReferenceParameter("live", Live);
         Trailing.StartAnimation("Offset", end);
-        Dips.Children.InsertAtTop(Trailing);
+        Pill.Children.InsertAtTop(Trailing);
 
         live = compositor.CreateContainerVisual();
         live.Children.InsertAtBottom(pill.Visual);
@@ -273,6 +295,23 @@ internal sealed unsafe class IslandWindow : IDisposable
     public ContainerVisual Trailing { get; }
 
     /// <summary>
+    /// Inside <see cref="Dips"/>, the Compact pill's content in island space, except while the pill has
+    /// <see cref="ButtonRoom"/>: then its 220 wide frame keeps to the leading end of the grown pill. <see cref="Trailing"/>
+    /// is inside it.
+    /// </summary>
+    public ContainerVisual Pill { get; }
+
+    /// <summary>
+    /// DIPs the Compact pill grows by at its trailing end for a button there; 0 for none. Set it before the morph that
+    /// grows the pill, while the pill is still 220 wide, and leave it while the pill shrinks back: at 220 it moves
+    /// nothing. Set it to 0 before a pill of another width opens.
+    /// </summary>
+    public float ButtonRoom
+    {
+        set => Live.InsertScalar("Room", value);
+    }
+
+    /// <summary>
     /// Inside <see cref="Content"/>, in island space: DIPs, x = 0 on the island's centre line, y = 0 at the
     /// island's top edge. It carries the monitor's scale, so what is built here is laid out in DIPs and
     /// follows a DPI change by itself. Panels and Compact content attach here.
@@ -326,8 +365,39 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// <summary>The drag let go, or a double click on the pill sent the island back to the middle: its new place, to keep.</summary>
     public event Action<double>? Moved;
 
-    /// <summary>The pixel column the Compact pill's centre rests on, which the reveal zone is centred under.</summary>
-    public int CenterX => IslandPlace.Center(place.Target, attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact, scale, screenWidth, attached);
+    /// <summary>
+    /// The pixel column the Compact pill's centre rests on, on any monitor at its scale, which that monitor's reveal zone
+    /// is centred under. The place is the same offset from the middle on every monitor.
+    /// </summary>
+    public int CenterOn(System.Drawing.Rectangle bounds, double monitorScale) =>
+        IslandPlace.Column(place.Target, attached ? IslandGeometry.Compact.Attached() : IslandGeometry.Compact, monitorScale, bounds, attached);
+
+    /// <summary>Where a show from hidden opens: the monitor under the pointer, or the primary one. Unset, the primary one.</summary>
+    public Func<HMONITOR>? PickMonitor { get; set; }
+
+    /// <summary>The monitor the island shows on; while hidden, the one it was last placed on for the next show.</summary>
+    public HMONITOR Monitor => monitor;
+
+    /// <summary>
+    /// The island opens on this monitor from now on. Hidden, it only moves; showing on another monitor, it is gone at
+    /// once with no retract, so the next morph opens it on the new one from hidden, at that monitor's scale, with no
+    /// frame drawn across the two.
+    /// </summary>
+    public void ShowOn(HMONITOR to)
+    {
+        if (to == monitor || to == HMONITOR.Null)
+        {
+            return;
+        }
+
+        if (visible)
+        {
+            Vanish();
+        }
+
+        monitor = to;
+        Rescale();
+    }
 
     /// <summary>The wheel turned over the island, at a point in island space: the raw delta, 120 a notch, positive away from the user.</summary>
     public event Action<Vector2, int>? Wheel;
@@ -380,8 +450,8 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public double ToCorner(in IslandGeometry shape, bool left)
     {
-        Rescale(MonitorScale());
-        return IslandPlace.ToCorner(place.Target, attached ? shape.Attached() : shape, scale, screenWidth, attached, left);
+        Refresh();
+        return IslandPlace.ToCorner(place.Target, attached ? shape.Attached() : shape, scale, screen.Width, attached, left);
     }
 
     private Vector2 SeatShift => new((float)seatX.Value, (float)seatY.Value);
@@ -424,7 +494,7 @@ internal sealed unsafe class IslandWindow : IDisposable
             return false;
         }
 
-        double offset = IslandPlace.Clamp(place.Value, targetGeometry, scale, screenWidth, attached);
+        double offset = IslandPlace.Clamp(place.Value, targetGeometry, scale, screen.Width, attached);
         (grabbing, grabMoved, grabPill, grabFrom, grabAt, grabOffset) = (true, false, false, from, at, offset);
         PInvoke.SetCapture(Hwnd);
         // The pointer is past the drag distance already: the island catches up with it now.
@@ -432,9 +502,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         return true;
     }
 
-    /// <summary>Primary monitor in DIPs at the window's DPI, for the 60% x 50% panel cap.</summary>
-    public (double Width, double Height) MonitorSize =>
-        (PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN) / scale, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYSCREEN) / scale);
+    /// <summary>The island's monitor in DIPs at its scale, for the 60% x 50% panel cap.</summary>
+    public (double Width, double Height) MonitorSize => (screen.Width / scale, screen.Height / scale);
 
     /// <summary>
     /// Only the notch tells panels and the palette from the other states by the 1 px stroke; the floating pill
@@ -499,10 +568,11 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public System.Drawing.PointF MascotLanding(bool alone)
     {
-        Rescale(MonitorScale());
+        Refresh();
         var pill = alone ? IslandGeometry.Peek : IslandGeometry.Compact;
         var shape = attached ? pill.Attached() : pill;
-        return Arrival.Landing(shape, scale, IslandPlace.Center(place.Target, shape, scale, screenWidth, attached), attached);
+        var land = Arrival.Landing(shape, scale, IslandPlace.Column(place.Target, shape, scale, screen, attached), attached);
+        return land with { Y = land.Y + screen.Top };
     }
 
     /// <summary>
@@ -511,7 +581,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public System.Drawing.Rectangle TargetBounds { get; private set; }
 
-    /// <summary>The scale, the screen's width or the island's place changed; anything measured in pixels needs recomputing.</summary>
+    /// <summary>The scale, the monitor, the displays or the island's place changed; anything measured in pixels needs recomputing.</summary>
     public event Action? LayoutChanged;
 
     /// <summary>Windows announced a change to its colours (WM_SETTINGCHANGE "ImmersiveColorSet"), on this window's thread.</summary>
@@ -566,7 +636,7 @@ internal sealed unsafe class IslandWindow : IDisposable
     public Task MorphTo(IslandGeometry to, SpringPreset preset)
     {
         Morphing?.Invoke();
-        Rescale(MonitorScale());
+        Refresh();
         if (attached)
         {
             to = to.Attached();
@@ -596,8 +666,8 @@ internal sealed unsafe class IslandWindow : IDisposable
         swell = swellAimed = false;
         double lead = heldLead;
         heldLead = 0;
-        // Trailing is always one of Dips' children, so only what is in it, or a second child, has anything to fade.
-        if (to.Depth <= 0.5 && (Dips.Children.Count > 1 || Trailing.Children.Count > 0))
+        // Pill is always one of Dips' children and Trailing one of Pill's, so only what is in them, or another child, has anything to fade.
+        if (to.Depth <= 0.5 && (Dips.Children.Count > 1 || Pill.Children.Count > 1 || Trailing.Children.Count > 0))
         {
             // Whatever shows inside fades out first; the shape follows.
             lead = Math.Max(lead, ContentFadeOutSeconds);
@@ -754,20 +824,19 @@ internal sealed unsafe class IslandWindow : IDisposable
     /// </summary>
     public System.Drawing.Rectangle RestBounds(IslandGeometry g)
     {
-        Rescale(MonitorScale());
+        Refresh();
         var shape = attached ? g.Attached() : g;
-        return IslandOutline.WindowBounds(shape, scale, IslandPlace.Center(place.Target + shape.Shift, shape, scale, screenWidth, attached), attached);
+        return IslandPlace.Window(place.Target + shape.Shift, shape, scale, screen, attached);
     }
 
-    /// <summary>Window rectangle for a geometry in physical pixels, at its place along the primary monitor's top edge.</summary>
-    private System.Drawing.Rectangle Bounds(in IslandGeometry g) =>
-        IslandOutline.WindowBounds(g, scale, IslandPlace.Center(place.Value + g.Shift, g, scale, screenWidth, attached), attached);
+    /// <summary>Window rectangle for a geometry in physical pixels, at its place along its monitor's top edge.</summary>
+    private System.Drawing.Rectangle Bounds(in IslandGeometry g) => IslandPlace.Window(place.Value + g.Shift, g, scale, screen, attached);
 
     // The pointer is tracked against where the shape is heading, its place included: on a slide back to the middle,
     // a pointer left where the island was is outside at once, and the island retracts as it would for any pointer
     // that left it.
     private System.Drawing.Rectangle PointerTarget() =>
-        IslandOutline.PointerBounds(IslandOutline.WindowBounds(targetGeometry, scale, IslandPlace.Center(place.Target + targetGeometry.Shift, targetGeometry, scale, screenWidth, attached), attached), targetGeometry, scale, attached);
+        IslandOutline.PointerBounds(IslandPlace.Window(place.Target + targetGeometry.Shift, targetGeometry, scale, screen, attached), targetGeometry, scale, attached);
 
     /// <summary>The place moved: the window and the bounds the pointer is tracked against follow it.</summary>
     private void Follow()
@@ -838,14 +907,14 @@ internal sealed unsafe class IslandWindow : IDisposable
 
     private void SizeWindow(System.Drawing.Rectangle r)
     {
-        if (r.X == windowX && r.Width == windowWidth && r.Height == windowHeight)
+        if (r.X == windowX && r.Y == windowY && r.Width == windowWidth && r.Height == windowHeight)
         {
             return;
         }
 
-        (windowX, windowWidth, windowHeight) = (r.X, r.Width, r.Height);
+        (windowX, windowY, windowWidth, windowHeight) = (r.X, r.Y, r.Width, r.Height);
         // Size and place only: a drag and the slide back call this per move and per frame, and the show re-asserts topmost.
-        PInvoke.SetWindowPos(Hwnd, HWND.HWND_TOPMOST, r.X, 0, r.Width, r.Height, SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
+        PInvoke.SetWindowPos(Hwnd, HWND.HWND_TOPMOST, r.X, r.Y, r.Width, r.Height, SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE | SET_WINDOW_POS_FLAGS.SWP_NOZORDER);
     }
 
     private void CompositorClockLoop()
@@ -1196,27 +1265,67 @@ internal sealed unsafe class IslandWindow : IDisposable
         };
     }
 
-    /// <summary>The monitor's effective DPI, which is live; a window's own DPI only updates once WM_DPICHANGED lands.</summary>
-    private double MonitorScale()
+    /// <summary>A monitor's bounds in virtual-screen pixels, or null for a handle a display change took away.</summary>
+    private static System.Drawing.Rectangle? BoundsOf(HMONITOR of)
     {
-        var monitor = PInvoke.MonitorFromWindow(Hwnd, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
-        return PInvoke.GetDpiForMonitor(monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpi, out _).Succeeded ? dpi / 96.0 : scale;
+        var info = new MONITORINFO { cbSize = (uint)sizeof(MONITORINFO) };
+        if (!PInvoke.GetMonitorInfo(of, ref info))
+        {
+            return null;
+        }
+
+        var r = info.rcMonitor;
+        return System.Drawing.Rectangle.FromLTRB(r.left, r.top, r.right, r.bottom);
+    }
+
+    /// <summary>Hidden, the island goes where the next show opens; then the monitor's scale and bounds are read again.</summary>
+    private void Refresh()
+    {
+        if (!visible && PickMonitor is { } pick)
+        {
+            monitor = pick();
+        }
+
+        Rescale();
     }
 
     /// <summary>
-    /// Re-lay the current outline out at a new scale or screen width. WM_DPICHANGED can arrive at once,
-    /// during the next SetWindowPos, or not until then, so this is idempotent and never completes a morph.
-    /// A resolution change at the same DPI only moves the place, so that is checked too.
+    /// Gone at once, with no retract and nothing faded: the springs land on Hidden, the window is hidden and the tick
+    /// stops. Only for a show that opens on another monitor.
     /// </summary>
-    private void Rescale(double newScale)
+    private void Vanish()
     {
-        int width = PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN);
-        if (newScale == scale && width == screenWidth)
+        ticking.Reset();
+        (islandMoving, contentPending, swell, swellAimed) = (false, false, false, false);
+        crossfadeGeneration++;
+        ghost.Visual.StopAnimation("Opacity");
+        ghost.Visual.Opacity = 0;
+        targetGeometry = IslandGeometry.Hidden with { Lift = lift.Target, Bare = bare.Target, Shift = shift.Target };
+        (width.Target, depth.Target, corner.Target, rampW.Target, rampH.Target) = (targetGeometry.Width, targetGeometry.Depth, targetGeometry.Corner, targetGeometry.RampW, targetGeometry.RampH);
+        Settle();
+    }
+
+    /// <summary>
+    /// Re-lay the current outline out at its monitor's scale and bounds, read live: a window's own DPI only updates
+    /// once WM_DPICHANGED lands, which can be at once, during the next SetWindowPos, or not until then, so this is
+    /// idempotent and never completes a morph. A resolution change at the same DPI only moves the place, and a monitor
+    /// that went away hands the island to the nearest one left, so both are checked too.
+    /// </summary>
+    private void Rescale()
+    {
+        if (BoundsOf(monitor) is not { } bounds)
+        {
+            monitor = PInvoke.MonitorFromPoint(new System.Drawing.Point(screen.Left + screen.Width / 2, screen.Top), MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+            bounds = BoundsOf(monitor) ?? screen;
+        }
+
+        double newScale = PInvoke.GetDpiForMonitor(monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpi, out _).Succeeded ? dpi / 96.0 : scale;
+        if (newScale == scale && bounds == screen)
         {
             return;
         }
 
-        (scale, screenWidth) = (newScale, width);
+        (scale, screen) = (newScale, bounds);
         ShadowLook();
         TargetBounds = PointerTarget();
         Dips.Scale = new Vector3((float)scale, (float)scale, 1);
@@ -1337,7 +1446,7 @@ internal sealed unsafe class IslandWindow : IDisposable
         {
             // From where the shape it rests in may be, so an inward drag moves it at once after an earlier one pushed a
             // narrower shape further out.
-            double from = IslandPlace.Clamp(place.Value, targetGeometry, scale, screenWidth, attached);
+            double from = IslandPlace.Clamp(place.Value, targetGeometry, scale, this.screen.Width, attached);
             (grabbing, grabMoved, grabPill, grabFrom, grabAt, grabOffset) = (true, false, pill, screen, at, from);
             PInvoke.SetCapture(Hwnd);
             return;
@@ -1368,7 +1477,7 @@ internal sealed unsafe class IslandWindow : IDisposable
                 MoveStarted?.Invoke();
             }
 
-            place.Jump(IslandPlace.Clamp(grabOffset + dx / scale, targetGeometry, scale, screenWidth, attached));
+            place.Jump(IslandPlace.Clamp(grabOffset + dx / scale, targetGeometry, scale, screen.Width, attached));
             Follow();
             return;
         }
@@ -1417,13 +1526,15 @@ internal sealed unsafe class IslandWindow : IDisposable
     }
 
     /// <summary>An exception must not unwind through the unmanaged caller: log it and report the message handled.</summary>
-    private static LRESULT GuardedRescale(double? newScale)
+    private static LRESULT GuardedRescale(bool displayChanged = false)
     {
         try
         {
-            if (instance is not null && newScale is double s)
+            instance?.Rescale();
+            if (displayChanged)
             {
-                instance.Rescale(s);
+                // Another monitor may have come, gone or changed: whatever is measured per monitor is measured again.
+                instance?.LayoutChanged?.Invoke();
             }
         }
         catch (Exception e)
@@ -1459,7 +1570,7 @@ internal sealed unsafe class IslandWindow : IDisposable
                 // The registered targets first, then a text box being drag-selected.
                 return Interact(message, wParam, lParam) ?? Typed(message, wParam, lParam) ?? PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_DPICHANGED:
-                return GuardedRescale(((uint)(wParam.Value >> 16) & 0xFFFF) / 96.0);
+                return GuardedRescale();
             case PInvoke.WM_SETTINGCHANGE when lParam.Value != 0 && new string((char*)lParam.Value) == "ImmersiveColorSet":
                 // Windows' colours, light or dark, accent or transparency changed. The handler reads them again.
                 if (instance?.ColorsChanged is { } changed)
@@ -1476,8 +1587,9 @@ internal sealed unsafe class IslandWindow : IDisposable
 
                 return PInvoke.DefWindowProc(window, message, wParam, lParam);
             case PInvoke.WM_DISPLAYCHANGE:
-                // A scaling change reaches a resting window here before its own WM_DPICHANGED does.
-                return GuardedRescale(instance?.MonitorScale());
+                // A scaling change reaches a resting window here before its own WM_DPICHANGED does; so do a monitor
+                // plugged in or out and a resolution change, after which the island's monitor may be another one.
+                return GuardedRescale(displayChanged: true);
             // Who has the keys decides: a text box, or with none the registered targets, which TypingFocus hands them to.
             case PInvoke.WM_KEYDOWN or PInvoke.WM_KEYUP or PInvoke.WM_CHAR or PInvoke.WM_SYSKEYDOWN or PInvoke.WM_SYSKEYUP or PInvoke.WM_SYSCHAR:
             case >= PInvoke.WM_IME_STARTCOMPOSITION and <= PInvoke.WM_IME_COMPOSITION:

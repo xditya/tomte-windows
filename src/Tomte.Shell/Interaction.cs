@@ -1163,3 +1163,69 @@ internal sealed class InteractionHost
         private static Windows.UI.Color Argb(uint c) => Windows.UI.Color.FromArgb((byte)(c >> 24), (byte)(c >> 16), (byte)(c >> 8), (byte)c);
     }
 }
+
+/// <summary>A slider's drag on the island: the knob follows the pointer from the drag distance until the button comes up.</summary>
+internal static class PointerDrag
+{
+    /// <summary>
+    /// After DragDetect said a drag started: <paramref name="moved"/> hears every point the pointer moves to, in island
+    /// space, and the answer is where the button came up. Esc, the mouse going to another window, a move seen with the
+    /// button already up, or <paramref name="going"/> turning false end it with null. Every other message is dispatched as
+    /// the island's loop would.
+    /// </summary>
+    public static unsafe Vector2? Follow(IslandWindow island, Func<bool> going, Action<Vector2> moved)
+    {
+        var hwnd = island.Hwnd;
+        PInvoke.SetCapture(hwnd);
+        try
+        {
+            MSG message;
+            while (going() && PInvoke.GetCapture() == hwnd)
+            {
+                if (PInvoke.GetMessage(&message, HWND.Null, 0, 0).Value <= 0)
+                {
+                    // The app is quitting: the island's own loop has to see it too.
+                    PInvoke.PostQuitMessage((int)message.wParam.Value);
+                    return null;
+                }
+
+                // The island is never the foreground window, so a button let go off it can go unseen: a move with
+                // the button up ends the drag with nothing to set.
+                if (message.message == PInvoke.WM_MOUSEMOVE && (message.wParam.Value & (nuint)Windows.Win32.System.SystemServices.MODIFIERKEYS_FLAGS.MK_LBUTTON) == 0)
+                {
+                    return null;
+                }
+
+                if (message.message is PInvoke.WM_MOUSEMOVE or PInvoke.WM_LBUTTONUP && message.hwnd == hwnd)
+                {
+                    int x = (short)(message.lParam.Value & 0xFFFF), y = (short)((message.lParam.Value >> 16) & 0xFFFF);
+                    var at = island.ToIsland(x, y);
+                    if (message.message == PInvoke.WM_LBUTTONUP)
+                    {
+                        return at;
+                    }
+
+                    moved(at);
+                    continue;
+                }
+
+                if (message.message == PInvoke.WM_KEYDOWN && message.wParam.Value == (nuint)VIRTUAL_KEY.VK_ESCAPE)
+                {
+                    return null;
+                }
+
+                PInvoke.TranslateMessage(&message);
+                PInvoke.DispatchMessage(&message);
+            }
+
+            return null;
+        }
+        finally
+        {
+            if (PInvoke.GetCapture() == hwnd)
+            {
+                PInvoke.ReleaseCapture();
+            }
+        }
+    }
+}

@@ -6,6 +6,8 @@ using Tomte.Core.Rambler;
 using Tomte.Core.Triggers;
 using Windows.Win32;
 using Windows.Win32.Foundation;
+using Windows.Win32.Graphics.Gdi;
+using Windows.Win32.UI.HiDpi;
 using Windows.Win32.UI.WindowsAndMessaging;
 
 namespace Tomte.Shell;
@@ -47,6 +49,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
     private TomteSettings settings;
     private IslandActivity activity;
     private bool armed, pointerInside, pointerOn, peekWanted, eventShowing, dragEntered, firstRunShowing, arrivalShowing;
+
+    // The Shelf panel is the one showing: Ctrl+V pastes onto it while the pointer is on the island.
+    private bool shelfShowing;
+
+    // The mic button is on the pill, and its tooltip.
+    private bool micOn;
+    private string? micTip;
     private ArrivalFlight? arrival;
     private Task saving = Task.CompletedTask;
 
@@ -103,6 +112,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             island.Swell(false);
         };
         island.Moved += OnMoved;
+        island.PickMonitor = NextMonitor;
         island.LayoutChanged += () =>
         {
             PushZone();
@@ -111,7 +121,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         };
         PushZone();
 
-        watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0);
+        watch = new DesktopWatch(island.Hwnd, island.Queue, () => settings.AppRules.Count > 0, () => island.Monitor);
         watch.Changed += OnSuppressionChanged;
         watch.WindowsChanged += OnWindowsChanged;
         dropTarget = new DropTarget(island.Hwnd, () => island.Moving, log);
@@ -124,7 +134,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         store.Changed += s => island.Queue.TryEnqueue(() => OnSettingsChanged(s));
         // Events wait out a pause; a resume from the tray, or the hour running out, shows them.
         pause.Ended += ReadThenRelease;
-        log?.Invoke($"input: mouse hook {(InputThread.HookInstalled ? "on" : "off")}, ui thread {Environment.CurrentManagedThreadId}, all monitors={settings.AllMonitors} (primary only until the island window can move)");
+        log?.Invoke($"input: mouse hook {(InputThread.HookInstalled ? "on" : "off")}, ui thread {Environment.CurrentManagedThreadId}, all monitors={settings.AllMonitors}");
 
         SchedulePeek();
         // Quiet hours and presenting are known only once the notification state has been read.
@@ -182,6 +192,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// the foreground window from before the overlay took focus. Null until the shell sets it; then the chord only logs.
     /// </summary>
     public Func<CaptureOverlay, PixelRect, nint, Task>? Captured { get; set; }
+
+    /// <summary>What a finished rectangle of Copy text from screen does, with what <see cref="Captured"/> gets. Null until the shell sets it.</summary>
+    public Func<CaptureOverlay, PixelRect, nint, Task>? TextCaptured { get; set; }
+
+    /// <summary>What a pick of Pick a colour from the screen does: the overlay holds the colour, the rectangle is its pixel. Null until the shell sets it.</summary>
+    public Func<CaptureOverlay, PixelRect, nint, Task>? ColourPicked { get; set; }
 
     /// <summary>The lasso is cropped: the Palette state at its smallest, as the palette hotkey opens it.</summary>
     internal void PaletteFromCapture() => Go(IslandState.Palette, (PanelSize.PaletteWidth, PanelSize.PaletteMinHeight));
@@ -278,6 +294,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         machine.State != IslandState.Compact ? CompactReason.None
         : activity.HasFlag(IslandActivity.Rambling) ? CompactReason.Rambler
         : activity.HasFlag(IslandActivity.Undo) ? CompactReason.Undo
+        : activity.HasFlag(IslandActivity.Reminder) ? CompactReason.Reminder
         : firstRunShowing ? CompactReason.Hint
         : arrivalShowing ? CompactReason.Arrival
         : eventShowing ? CompactReason.Event
@@ -326,6 +343,23 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
     /// <summary>Whether the now-playing row is on the Compact pill now; a click on the pill then opens the Media tab.</summary>
     public Func<bool>? NowPlayingShows { get; set; }
+
+    /// <summary>Whether a call is on (the Call tab shows); a click on the pill then opens it.</summary>
+    internal Func<bool>? OnCall { get; set; }
+
+    /// <summary>A click on the mic button, and the mute key: whoever holds the microphone answers them.</summary>
+    internal Action? MicClicked { get; set; }
+
+    internal Action? MuteKey { get; set; }
+
+    /// <summary>The feature whose one event the pill shows, or Other for none or a digest.</summary>
+    internal IslandEventSource EventOwner => eventShowing ? CompactRules.Owner(showing) : IslandEventSource.Other;
+
+    /// <summary>Desktop peek is what shows, rested or grown into its pill.</summary>
+    internal bool PeekShowing => activity.HasFlag(IslandActivity.Peek);
+
+    /// <summary>The mic button is on the pill; see <see cref="ShowMic"/>.</summary>
+    internal bool MicShown => micOn;
 
     /// <summary>
     /// Whether something plays, raised with every media change. With "Keep showing while music plays" on, the pill comes
@@ -492,8 +526,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         var reveal = settings.Reveal;
         // The silhouette is a setting too; the window takes it up with its next morph.
         island.Attached = settings.AttachToTopEdge;
-        // Centred under the island, wherever along the edge it has been moved.
-        InputThread.SetZone(RevealZone.For(0, 0, PInvoke.GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN), island.CenterX, reveal.ZoneFraction, reveal.DragApproachDip, island.Scale));
+        // One zone per monitor the island may open on, each centred under where the island rests on it, wherever along
+        // the edge it has been moved, and measured at that monitor's scale.
+        InputThread.SetEdges(RevealEdges.For(Monitors(), settings.AllMonitors, island.CenterOn, reveal.ZoneFraction, reveal.DragApproachDip));
         if (machine.State != IslandState.Hidden)
         {
             InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(reveal.RetractMarginDip * island.Scale));
@@ -509,7 +544,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         // in what PushZone reads: records compare by value, so the first-run flag, a tool grant or the media switch
         // leaves it as it is.
         InputThread.ApplySettings();
-        if (next.Reveal != previous.Reveal || next.AttachToTopEdge != previous.AttachToTopEdge)
+        if (next.Reveal != previous.Reveal || next.AttachToTopEdge != previous.AttachToTopEdge || next.AllMonitors != previous.AllMonitors)
         {
             PushZone();
         }
@@ -722,11 +757,21 @@ internal sealed unsafe partial class TriggerController : IDisposable
         public IReadOnlyList<Target> Targets { get; private set; } = [];
 
         /// <summary>The state, the shape or the rambling changed: the targets again, registered while in Compact, and say so.</summary>
+        /// <summary>The pointer is on the mic button, where a rest does not open Panels.</summary>
+        public bool OnMic { get; private set; }
+
         public void Changed()
         {
-            Targets = owner.machine.State == IslandState.Compact && (owner.activity & (IslandActivity.Rambling | IslandActivity.Undo)) == 0
+            Targets = owner.machine.State == IslandState.Compact && (owner.activity & (IslandActivity.Rambling | IslandActivity.Undo | IslandActivity.Reminder)) == 0
                 ? CompactLayout.Targets(owner.island.Heading, owner.island.Mascot.Enabled)
                 : [];
+            if (owner.micOn && Targets.Count > 0)
+            {
+                // Last, so it sits on top of the pill.
+                var box = CompactLayout.MicButton;
+                Targets = [.. Targets, new Target(CompactLayout.MicId, box, box.Height / 2, TargetKind.Button, Tip: owner.micTip)];
+            }
+
             if (owner.machine.State == IslandState.Compact)
             {
                 PInvoke.GetCursorPos(out shownAt);
@@ -747,9 +792,13 @@ internal sealed unsafe partial class TriggerController : IDisposable
             {
                 owner.AskClicked();
             }
+            else if (id == CompactLayout.MicId)
+            {
+                owner.MicClicked?.Invoke();
+            }
             else
             {
-                owner.OpenPanelsNextTurn(CompactRules.ClickOpens(owner.NowPlayingShows?.Invoke() == true));
+                owner.OpenPanelsNextTurn(CompactRules.ClickOpens(owner.NowPlayingShows?.Invoke() == true, owner.OnCall?.Invoke() == true));
             }
         }
 
@@ -759,6 +808,15 @@ internal sealed unsafe partial class TriggerController : IDisposable
         public void Hovered(string? id)
         {
             owner.island.Mascot.Hover(id == CompactLayout.TomteId);
+            // Clicking the mic in a call must not grow the panels over it: the rest that opens them stops on the button,
+            // and starts again from the pill around it.
+            bool wasOnMic = OnMic;
+            OnMic = id == CompactLayout.MicId;
+            if (OnMic != wasOnMic && id is not null && owner.pointerOn)
+            {
+                owner.Dwell(OnMic ? HoverStep.Cancel : HoverStep.Start);
+            }
+
             // The window's own mouse messages put the pointer on the pill or the badge. The rest that opens Panels runs
             // from the input thread's raw-input samples, which have been seen to miss a pointer resting on the peek
             // badge, so that thread looks again now.
@@ -840,7 +898,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 }
 
                 break;
-            case HoverTimer when pointerOn && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
+            case HoverTimer when pointerOn && !compact.OnMic && !island.Holding && RetractionRules.OpensPanels(machine.State, activity):
                 Go(IslandState.Panels);
                 break;
             case EventTimer or FirstRunTimer when (id == EventTimer ? eventShowing : firstRunShowing) && machine.State == IslandState.Compact:
@@ -893,6 +951,8 @@ internal sealed unsafe partial class TriggerController : IDisposable
                 {
                     finished = run;
                     log?.Invoke($"timer: done, ended {run!.EndsAt:O}");
+                    // Heard at once, through Focus and fullscreen too: the user set this timer to be told.
+                    Alarm.Play();
                     Raise(new IslandEvent(CompactRules.TimerDone(run!.Duration), DateTimeOffset.Now) { Source = IslandEventSource.Timer });
                 }
                 else
@@ -926,10 +986,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         // Only a pointer coming onto the pill dwells; one moving about on it lets the dwell run.
         Dwell(hover);
-        if ((activity & (IslandActivity.Result | IslandActivity.Pinned)) != 0)
+        if ((activity & (IslandActivity.Result | IslandActivity.Pinned | IslandActivity.Sharing)) != 0)
         {
             InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, inside));
         }
+
+        TakePaste();
     }
 
     /// <summary>The dwell that opens Panels from the pill starts, with the push pill's swell, or stops.</summary>
@@ -1063,6 +1125,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
+        if (id == InputThread.PasteHotkeyId)
+        {
+            island.Interaction.Command(NavKey.Paste);
+            return;
+        }
+
         if (id == InputThread.ConfirmHotkeyId)
         {
             rambler?.Answer(allow: true);
@@ -1078,7 +1146,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
 
         if (id is >= InputThread.ChoiceHotkeyId and <= InputThread.ChoiceEnterHotkeyId)
         {
-            // Enter, Alt+I, Alt+A or Alt+N on the rambler's card.
+            // Enter, Alt+I, Alt+A, Alt+N or Alt+C on the rambler's card.
             rambler?.Choose(id == InputThread.ChoiceEnterHotkeyId ? null : (VoiceChoice)(id - InputThread.ChoiceHotkeyId));
             return;
         }
@@ -1150,19 +1218,28 @@ internal sealed unsafe partial class TriggerController : IDisposable
             case HotkeyAction.CircleToAsk when Captured is null:
                 log?.Invoke("circle to ask: no question configured (start with --debug-capture)");
                 break;
-            case HotkeyAction.CircleToAsk when capturing:
+            case HotkeyAction.CircleToAsk or HotkeyAction.TextCapture or HotkeyAction.ColourPick when capturing:
                 break;
-            case HotkeyAction.CircleToAsk when watch.State.ExclusiveFullscreen:
+            case HotkeyAction.CircleToAsk or HotkeyAction.TextCapture or HotkeyAction.ColourPick when watch.State.ExclusiveFullscreen:
                 // Unlike the island the overlay takes the foreground, which would drop a game out of exclusive
                 // mode, so an allow rule for the app does not apply here.
-                log?.Invoke("circle to ask: exclusive fullscreen, nothing shown");
+                log?.Invoke($"{action}: exclusive fullscreen, nothing shown");
                 break;
             case HotkeyAction.CircleToAsk:
                 if (Allowed(RevealTrigger.Hotkey))
                 {
-                    _ = Capture(Captured);
+                    _ = Capture(Captured, CaptureMode.Lasso);
                 }
 
+                break;
+            case HotkeyAction.TextCapture when TextCaptured is not null && Allowed(RevealTrigger.Hotkey):
+                _ = Capture(TextCaptured, CaptureMode.Rectangle);
+                break;
+            case HotkeyAction.ColourPick when ColourPicked is not null && Allowed(RevealTrigger.Hotkey):
+                _ = Capture(ColourPicked, CaptureMode.Colour);
+                break;
+            case HotkeyAction.Mute:
+                MuteKey?.Invoke();
                 break;
         }
     }
@@ -1206,9 +1283,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
     }
 
     /// <summary>
-    /// One digest for everything that waited, once nothing holds events back; its content is the panel work's. Then the
-    /// pill kept while music plays, which waits for the island to come free in the same way. Called when the suppression
-    /// changes, when the island hides and when a pause ends, the ways a wait can end.
+    /// One digest for everything that waited, once nothing holds events back; its content is the panel work's. Then a
+    /// reminder that rang, and the pill kept while music plays, which wait for the island to come free in the same way.
+    /// Called when the suppression changes, when the island hides and when a pause ends, the ways a wait can end.
     /// </summary>
     private void ReleaseEvents()
     {
@@ -1224,6 +1301,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             ShowEvent(waited);
         }
 
+        ShowReminder();
         KeepWhilePlaying();
     }
 
@@ -1269,7 +1347,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         }
     }
 
-    private void ShowEvent(IReadOnlyList<IslandEvent> shown)
+    private void ShowEvent(IReadOnlyList<IslandEvent> shown, RevealTrigger trigger = RevealTrigger.Event)
     {
         // Callers queue while the island is busy; this is only the last guard against morphing over a panel.
         if (TriggerQueue.IslandBusy(machine.State, activity))
@@ -1277,7 +1355,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return;
         }
 
-        if (Reveal(RevealTrigger.Event, IslandState.Compact))
+        if (Reveal(trigger, IslandState.Compact))
         {
             eventShowing = true;
             showing = shown;
@@ -1294,11 +1372,64 @@ internal sealed unsafe partial class TriggerController : IDisposable
         else
         {
             // The callers asked about the pause and the suppression a moment ago. Should either have changed since,
-            // the events wait again, and a finished timer keeps its ring for its own pill.
-            foreach (var e in shown)
+            // the events wait again, and a finished timer keeps its ring for its own pill. A key's own pill is now or never.
+            foreach (var e in trigger == RevealTrigger.Event ? shown : [])
             {
                 events.Offer(e, suppressed: true);
             }
+        }
+    }
+
+    /// <summary>The Compact pill grown at its trailing end for the mic button.</summary>
+    private static IslandGeometry MicPill => IslandGeometry.Compact with { Width = IslandGeometry.Compact.Width + CompactLayout.MicRoom };
+
+    /// <summary>
+    /// The mic button on the pill, or not, with what its tooltip says. The pill grows by <see cref="CompactLayout.MicRoom"/>
+    /// at its trailing end for it, and back; its content keeps its frame at the leading end meanwhile. Only in Compact.
+    /// </summary>
+    internal void ShowMic(bool on, string tip)
+    {
+        on &= machine.State == IslandState.Compact;
+        bool grow = on != micOn;
+        if (!grow && tip == micTip)
+        {
+            return;
+        }
+
+        (micOn, micTip) = (on, tip);
+        // Leaving Compact, the state change has its own shape.
+        if (grow && machine.State == IslandState.Compact)
+        {
+            // Set while the pill is still 220 wide, where it moves nothing; left as it is while the pill shrinks back.
+            if (on)
+            {
+                island.ButtonRoom = CompactLayout.MicRoom;
+            }
+
+            island.MorphTo(on ? MicPill : IslandGeometry.Compact, SpringPreset.Snappy);
+            InputThread.TrackPointer(island.TargetBounds, (int)Math.Round(settings.Reveal.RetractMarginDip * island.Scale));
+        }
+
+        compact.Changed();
+    }
+
+    /// <summary>
+    /// The mute key's pill: an event's pill for the event's time, with the mic button and whether it is muted now. Shown
+    /// now or never, since a state shown late is wrong: an island busy with something else shows nothing. A mute key
+    /// pill that is up takes the new state and starts its time again.
+    /// </summary>
+    internal void FlashMic(bool muted)
+    {
+        var e = new IslandEvent(CompactRules.MicLine(muted), DateTimeOffset.Now) { Source = IslandEventSource.Mic };
+        if (machine.State == IslandState.Compact && EventOwner == IslandEventSource.Mic)
+        {
+            showing = [e];
+            PInvoke.SetTimer(island.Hwnd, EventTimer, EventHoldMs, null);
+            UpdateRing();
+        }
+        else if (arrival is null && !TriggerQueue.IslandBusy(machine.State, activity))
+        {
+            ShowEvent([e], RevealTrigger.Hotkey);
         }
     }
 
@@ -1313,7 +1444,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private void ReadThenRelease()
     {
-        if (events.Count > 0)
+        if (events.Count > 0 || ringing.Count > 0)
         {
             watch.ReadNotificationState(ReleaseEvents);
         }
@@ -1356,7 +1487,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
             var (words, left) = CompactLine(DateTimeOffset.Now);
             bool mascot = island.Mascot.Enabled;
             float x = CompactLayout.Group(mascot, CompactLayout.RingSize, CompactLayout.RingWords(words ?? "", countdown: left is not null)).Lead;
-            ring.Show(run, DateTimeOffset.Now, mascot ? island.Trailing : island.Dips, mascot ? x - CompactLayout.End : x);
+            ring.Show(run, DateTimeOffset.Now, mascot ? island.Trailing : island.Pill, mascot ? x - CompactLayout.End : x);
         }
         else
         {
@@ -1376,7 +1507,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     {
         rambler?.ForegroundChanged();
         SchedulePeek();
-        if (events.Count > 0)
+        if (events.Count > 0 || ringing.Count > 0)
         {
             // Focus and quiet hours end with no event to hear, and the notification state was last read when the
             // waiting event was raised. A window change is the next sign of the user doing something, so the
@@ -1423,7 +1554,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
     // back, events held back.
     private void UpdateLipDot()
     {
-        bool waiting = timer.Run is not null || finished is not null || undo.Live(DateTimeOffset.Now) || events.Count > 0;
+        bool waiting = timer.Run is not null || finished is not null || undo.Live(DateTimeOffset.Now) || events.Count > 0 || ringing.Count > 0;
         bool show = PeekResting && peekStyle == PeekStyle.Lip && waiting;
         if (show && lipDot is null)
         {
@@ -1591,6 +1722,40 @@ internal sealed unsafe partial class TriggerController : IDisposable
         return true;
     }
 
+    // A show from hidden, or over what shows without being asked for (peek, the pill kept while music plays, the launch
+    // arrival), opens on the monitor the pointer is on, as an edge push there would. Anything the user opened stays
+    // where it is as it changes.
+    private bool OpensOnAnotherMonitor => RetractionRules.PushShows(machine.State, activity, Compact);
+
+    /// <summary>The monitor under the pointer with "Every monitor" on, else the primary one. A hotkey opens there too.</summary>
+    private HMONITOR NextMonitor()
+    {
+        if (!settings.AllMonitors || !PInvoke.GetCursorPos(out var cursor))
+        {
+            return PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
+        }
+
+        return PInvoke.MonitorFromPoint(cursor, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+    }
+
+    // Every monitor's bounds in virtual-screen pixels and its scale. Filled on this thread only.
+    private static readonly List<(System.Drawing.Rectangle Bounds, double Scale)> Found = [];
+
+    private static List<(System.Drawing.Rectangle Bounds, double Scale)> Monitors()
+    {
+        Found.Clear();
+        PInvoke.EnumDisplayMonitors(HDC.Null, null, &AddMonitor, 0);
+        return [.. Found];
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvStdcall)])]
+    private static BOOL AddMonitor(HMONITOR monitor, HDC dc, RECT* bounds, LPARAM data)
+    {
+        double scale = PInvoke.GetDpiForMonitor(monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out uint dpi, out _).Succeeded ? dpi / 96.0 : 1;
+        Found.Add((System.Drawing.Rectangle.FromLTRB(bounds->left, bounds->top, bounds->right, bounds->bottom), scale));
+        return true;
+    }
+
     private bool Allowed(RevealTrigger trigger, bool ignorePause = false)
     {
         // Nothing opens over a recording; the voice key's own press checks CanBegin before it gets here.
@@ -1606,9 +1771,11 @@ internal sealed unsafe partial class TriggerController : IDisposable
             return false;
         }
 
-        if (!Suppression.Allows(trigger, watch.State, settings.AppRules))
+        // Judged on the monitor it would open on: a fullscreen app on another one does not hold it back.
+        var state = watch.On(OpensOnAnotherMonitor ? NextMonitor() : island.Monitor);
+        if (!Suppression.Allows(trigger, state, settings.AppRules))
         {
-            log?.Invoke($"{trigger}: suppressed ({watch.State})");
+            log?.Invoke($"{trigger}: suppressed ({state})");
             return false;
         }
 
@@ -1670,6 +1837,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// </summary>
     private void Go(IslandState state, (double W, double H) size = default, bool peek = false, bool resting = false)
     {
+        if (state != IslandState.Hidden && OpensOnAnotherMonitor)
+        {
+            island.ShowOn(NextMonitor());
+            watch.Follow();
+        }
+
         // The corner pill opens the island at its place, away from the pointer, which has not left the island by that.
         bool fromCorner = PeekInCorner;
         peekOpen = false;
@@ -1732,7 +1905,16 @@ internal sealed unsafe partial class TriggerController : IDisposable
             island.JumpSeat(CompactLayout.PeekSeat(peekStyle));
         }
 
-        var geometry = resting ? PeekShape(peekStyle) : peek ? IslandGeometry.Peek : state == IslandState.Compact && width > 0 ? IslandGeometry.Compact with { Width = width } : IslandGeometry.For(state, width, height);
+        // A pill that had the mic button keeps its room through the change, until the pill's reason is settled and the
+        // button is asked for again (ShowMic); any other state or shape drops it.
+        micOn &= state == IslandState.Compact && width == 0 && !peek && !resting;
+        if (state == IslandState.Compact)
+        {
+            island.ButtonRoom = micOn ? CompactLayout.MicRoom : 0;
+        }
+
+        var geometry = resting ? PeekShape(peekStyle) : peek ? IslandGeometry.Peek : state == IslandState.Compact && width > 0 ? IslandGeometry.Compact with { Width = width }
+            : micOn ? MicPill : IslandGeometry.For(state, width, height);
         // WS_EX_TOPMOST is re-asserted inside MorphTo on every show.
         var morph = island.MorphTo(geometry, Spring.PresetFor(from, state));
         // After MorphTo, which picks up a new monitor scale.
@@ -1760,6 +1942,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         // peek or the first-run hint, where swallowing the user's Esc in their own app would be a surprise. Once the
         // palette and the scratchpad activate the window they receive WM_KEYDOWN and this hotkey goes.
         InputThread.SetEscape(RetractionRules.TakesEscape(state, activity, pointerInside));
+        TakePaste();
     }
 
     /// <summary>A text box has the keys, or no longer: typing holds the island open, and once it ends the pointer's leaving counts again.</summary>
@@ -1772,7 +1955,20 @@ internal sealed unsafe partial class TriggerController : IDisposable
         {
             InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, pointerInside));
         }
+
+        TakePaste();
     }
+
+    /// <summary>The Shelf panel showed or hid.</summary>
+    internal void ShelfShowing(bool on)
+    {
+        shelfShowing = on;
+        TakePaste();
+    }
+
+    // Asked again whenever one of its inputs changes; registering what is registered already, or releasing what is not,
+    // changes nothing.
+    private void TakePaste() => InputThread.SetPaste(RetractionRules.TakesPaste(machine.State, activity, pointerInside, shelfShowing));
 
     /// <summary>A press on one of the island's targets holds the mouse, or a view's drag from it runs: the island does not retract under it.</summary>
     internal void Pressing(bool on) => Hold(IslandActivity.Pressing, on);
@@ -1839,11 +2035,12 @@ internal sealed unsafe partial class TriggerController : IDisposable
     /// A drop zone's panel: the Palette state at this height, held open while its request runs, and once it is done
     /// held by its result, which was paid for, until the user dismisses it: Esc while the pointer is on the island, the
     /// palette hotkey, a press outside the island or another state. The pointer being away never retracts it. <paramref name="hold"/> false leaves a panel
-    /// that holds nothing of its own (Ask about it, which hands over to the typing palette) to the usual rules.
+    /// that holds nothing of its own (Ask about it, which hands over to the typing palette) to the usual rules. From
+    /// Panels (Tomte Drop on the shelf) the state passes through Hidden, so a view for it is made after this call.
     /// </summary>
-    internal void ZonePalette(double height, bool busy, bool hold = true)
+    internal void ZonePalette(double height, bool busy, bool hold = true, bool sharing = false)
     {
-        if (machine.State == IslandState.ShelfDrop || (machine.State == IslandState.Palette && height != zoneHeight))
+        if (machine.State is IslandState.ShelfDrop or IslandState.Panels || (machine.State == IslandState.Palette && height != zoneHeight))
         {
             zoneHeight = height;
             Go(IslandState.Palette, (PanelSize.PaletteWidth, height));
@@ -1852,8 +2049,9 @@ internal sealed unsafe partial class TriggerController : IDisposable
         if (machine.State == IslandState.Palette)
         {
             var was = activity;
-            activity = (activity & ~(IslandActivity.AiTask | IslandActivity.Result)) | (busy ? IslandActivity.AiTask : hold ? IslandActivity.Result : IslandActivity.None);
-            if ((was ^ activity).HasFlag(IslandActivity.Result))
+            activity = (activity & ~(IslandActivity.AiTask | IslandActivity.Result | IslandActivity.Sharing))
+                | (busy ? IslandActivity.AiTask : sharing ? IslandActivity.Sharing : hold ? IslandActivity.Result : IslandActivity.None);
+            if (((was ^ activity) & (IslandActivity.Result | IslandActivity.Sharing)) != 0)
             {
                 InputThread.SetEscape(RetractionRules.TakesEscape(machine.State, activity, pointerInside));
             }
@@ -1895,6 +2093,7 @@ internal sealed unsafe partial class TriggerController : IDisposable
         showing = [];
         InputThread.StopTrackingPointer();
         InputThread.SetEscape(false);
+        InputThread.SetPaste(false);
         if (machine.State != IslandState.Hidden)
         {
             Go(IslandState.Hidden);
@@ -2040,9 +2239,10 @@ internal sealed partial class TriggerController
 {
     /// <summary>
     /// The overlay on the monitor under the cursor with the island hidden under it. The guard holds from the
-    /// overlay through the crop and the palette run, so a second press never lands under a running ask.
+    /// overlay through the crop and the palette run, so a second press never lands under a running ask. Copy text from
+    /// screen draws a rectangle instead of the lasso, and the colour picker a magnifier (<paramref name="mode"/>).
     /// </summary>
-    private async Task Capture(Func<CaptureOverlay, PixelRect, nint, Task> captured)
+    private async Task Capture(Func<CaptureOverlay, PixelRect, nint, Task> captured, CaptureMode mode)
     {
         capturing = true;
         long triggered = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -2054,12 +2254,18 @@ internal sealed partial class TriggerController
             PInvoke.GetCursorPos(out var cursor);
             machine.TransitionTo(IslandState.Capture);
             island.Mascot.Follow(IslandState.Hidden, IslandState.Capture);
-            var open = overlay = new CaptureOverlay(island.Compositor, cursor, Program.Text);
+            var open = overlay = new CaptureOverlay(island.Compositor, cursor, Program.Text, mode);
             log?.Invoke($"capture overlay shown in {System.Diagnostics.Stopwatch.GetElapsedTime(triggered).TotalMilliseconds:F1}ms monitor={open.Bounds} scale={open.Lasso.Scale} activated={open.Activated}");
             var box = await open.Result;
             overlay = null;
             if (box is not PixelRect crop)
             {
+                // The colour picker's grab failed: handled below like any capture that Windows refused.
+                if (open.Grabbed is { } failed)
+                {
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failed).Throw();
+                }
+
                 log?.Invoke("capture cancelled");
                 ToHiddenFromCapture();
                 return;
