@@ -20,17 +20,27 @@ account and no key.
 ## What's in it
 
 - **Home.** Your shelf, what's playing, your note, your shortcuts and an Ask bar on one page.
-- **Shelf.** Park files, text and links while you work, then drag them out into any app. Pin the ones you want to
-  keep there after you drag them out, and filter by files, text or links.
+- **Shelf.** Park files, text and links while you work, then drag them out into any app. <kbd>Ctrl</kbd>+<kbd>V</kbd>
+  pastes from the clipboard. Pin the ones you want to keep there after you drag them out, filter by files, text or
+  links, and save what's there as a set to bring back later.
+- **Tomte Drop.** Send files between your PC and a phone on the same Wi-Fi. Scan the code, and the phone gets a page
+  to download what you share and to send files and text back. Nothing goes through the internet.
+- **Copy text from screen.** <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd>, draw around any text, and it's copied. The
+  card can translate it and opens the link in a QR code. <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> picks a colour.
+- **Calls.** While an app uses your microphone, the pill shows a mute button and a Call tab sets the microphone, the
+  speaker and the call's volume.
+- **Reminders.** Type "remind me to call Sam at 5pm" in the AI box, no key needed. It rings on the island until you
+  snooze or dismiss it.
 - **Shortcuts.** Tiles for apps, folders, web pages and scripts.
 - **Media.** Play, pause, skip and seek whatever is playing, in any app that shows up in Windows' media controls.
-- **Scratchpad.** One Markdown note, <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> away. It shows formatted, and you
-  can tick its checklists without editing.
+- **Scratchpad.** One Markdown note, <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> away. It shows formatted, you can
+  tick its checklists without editing, and <kbd>/</kbd> inserts a saved snippet.
 - **Clipboard history.** The last 50 bits of text and 50 images you copied, with a preview, a filter and pins.
   Anything a password manager marks as private is never kept.
-- **Search.** <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> finds apps, files and Windows settings pages. It uses
-  [Everything](https://www.voidtools.com/) when that's running, and the Windows index when it isn't.
-- **Timers** that count down in the pill, and an optional pill that shows the song while music plays.
+- **Search.** <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd> finds apps, files, Windows settings pages and pinned
+  clips. It uses [Everything](https://www.voidtools.com/) when that's running, and the Windows index when it isn't.
+- **Timers** that count down in the pill and ring when they end, and an optional pill that shows the song while
+  music plays.
 
 <img src=".github/readme/shelf.png" alt="The Shelf panel with two rows of tiles, previews of a recipe, a lease and a podcast cover, and a pinned photo" width="960">
 
@@ -78,6 +88,9 @@ Tomte rests on the desktop, its theme and its accent colour show a picture of ea
 | <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> | Circle to ask |
 | <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>V</kbd> (hold) | Voice |
 | <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd> | Scratchpad |
+| <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd> | Copy text from screen |
+| <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd> | Pick a colour |
+| <kbd>Win</kbd>+<kbd>Alt</kbd>+<kbd>U</kbd> | Mute the microphone during a call |
 
 All of them can be changed in Settings. <kbd>Esc</kbd> closes whatever is open.
 
@@ -87,6 +100,7 @@ All of them can be changed in Settings. <kbd>Esc</kbd> closes whatever is open.
 - Your shelf, note, clipboard and AI history stay in one SQLite file in `%LOCALAPPDATA%\Tomte`. Keys are kept in
   Windows Credential Manager.
 - Nothing goes to an AI provider until you send it.
+- Tomte Drop sends files only over your local network, and only while you share.
 
 The full [privacy policy](https://tomte.xditya.me/privacy) lists what is stored and what is sent.
 
