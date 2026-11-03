@@ -53,7 +53,7 @@
 
   <Extensions>
     <!-- Tomte Drop: a phone on the same Wi-Fi opens the share's page on one of these ports (DropShare.FirstPort to
-         LastPort). Private and domain networks only; on a Public one Windows keeps them closed and the card says so. -->
+         LastPort). Private and domain networks only; on a Public one they stay closed and the card says so. -->
     <desktop2:Extension Category="windows.firewallRules">
       <desktop2:FirewallRules Executable="Tomte.Shell.exe">
         <desktop2:Rule Direction="in" IPProtocol="TCP" LocalPortMin="53320" LocalPortMax="53329" Profile="domainAndPrivate" />

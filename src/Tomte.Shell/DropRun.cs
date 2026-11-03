@@ -180,7 +180,7 @@ internal sealed class DropRun
 
             (share, idle, running) = (started, options.Idle, this);
             started.Activity += activity => island.Queue.TryEnqueue(() => On(activity));
-            log?.Invoke($"tomte drop: sharing {files.Count} items{(started.PublicNetwork ? ", the network is set to Public" : "")}");
+            log?.Invoke($"tomte drop: sharing {files.Count} items{(started.PublicNetwork ? ", the firewall blocks phones on this Public network" : "")}");
             card = DropCard.Sharing(files.Count, folders, bytes, started.Link, started.Qr, started.PublicNetwork);
             Show();
         }

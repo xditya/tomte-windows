@@ -24,10 +24,10 @@ public static class DropCard
     public const string CouldNotStart = "Tomte Drop could not start. Nothing is shared.";
 
     /// <summary>
-    /// Windows' firewall keeps phones out of a network set to Public unless a rule for Tomte lets them in, which the
-    /// user may have allowed. The card stays up while the user changes it in Settings, and goes once a phone gets through.
+    /// Shown only when the network is Public and the firewall has no rule letting phones reach Tomte there. The card
+    /// stays up while the user changes it in Settings, and the warning goes once a phone gets through.
     /// </summary>
-    public const string PublicNetwork = "Windows has this network set to Public. If your phone can't open the page, set it to Private in Network settings.";
+    public const string PublicNetwork = "Windows has this network set to Public, and its firewall blocks phones here. Set it to Private in Network settings, then scan the code.";
 
     /// <summary>The card while the share starts.</summary>
     public static DropResult Opening => new(Name, Indicator, Starting, false, "", [], [Stop]);

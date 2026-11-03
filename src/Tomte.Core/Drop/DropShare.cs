@@ -180,7 +180,7 @@ public sealed class DropShare : IDisposable
     /// <summary>The page's address, token included: what the QR code holds.</summary>
     public Uri Link { get; }
 
-    /// <summary>Windows has the network this address is on set to Public, where its firewall keeps phones out unless a rule lets them in.</summary>
+    /// <summary>Windows has the network this address is on set to Public and its firewall has no rule that lets phones reach Tomte there.</summary>
     public bool PublicNetwork { get; }
 
     /// <summary>The QR code of <see cref="Link"/>: [row, column], true for a dark module, with no quiet zone.</summary>
@@ -237,8 +237,10 @@ public sealed class DropShare : IDisposable
             }
 
             problem = null;
-            var share = new DropShare(files, options, listener, DropNetwork.IsPublic(address), log);
-            log?.Invoke($"drop: sharing {files.Count} items on port {port}{(share.PublicNetwork ? " of a public network" : "")}");
+            // On a Public network the firewall keeps phones out unless a rule for Tomte lets them in.
+            bool blocked = DropNetwork.IsPublic(address) && !DropNetwork.PublicLetsIn(Environment.ProcessPath);
+            var share = new DropShare(files, options, listener, blocked, log);
+            log?.Invoke($"drop: sharing {files.Count} items on port {port}{(share.PublicNetwork ? " of a public network the firewall blocks" : "")}");
             return share;
         }
 
