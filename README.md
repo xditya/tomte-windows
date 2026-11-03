@@ -47,6 +47,15 @@ account and no key.
 It hides over fullscreen apps, games and the lock screen. On an empty desktop a small tomte can sit on the top edge
 (or an edge tab, the pill, or a corner pill, or nothing), and the island follows your taskbar's light or dark theme.
 
+**Tomte Drop.** Pick Tomte Drop on a file you drag to the top edge, on shelf items or a saved set, or pick Receive
+from phone in the tray menu, then scan the code with your phone. The phone gets a page to download what you share and
+to send files and text back, which land in `Downloads\Tomte Drop` and on the shelf. It works on the same Wi-Fi only,
+and nothing goes through the internet.
+
+<img src=".github/readme/tomte-drop.png" alt="The Tomte Drop card at the top of the screen with a QR code, the share's link, 3 files and 301 KB, and a photo the phone sent, kept on the shelf" width="960">
+
+<img src=".github/readme/tomte-drop-phone.png" alt="The Tomte Drop page on a phone in dark and light: three shared files to download, and a photo sent back to the PC" width="960">
+
 ## AI, if you want it
 
 Add your own key for Anthropic, Gemini or any OpenAI-compatible server, including a local Ollama. Nothing is sent
