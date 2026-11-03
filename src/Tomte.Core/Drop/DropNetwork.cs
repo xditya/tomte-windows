@@ -90,4 +90,64 @@ internal static class DropNetwork
 
         return false;
     }
+
+    /// <summary>
+    /// Whether Windows' firewall lets other devices on a Public network reach <paramref name="program"/>: the firewall is
+    /// off for Public networks, or an enabled inbound rule for the program allows TCP there and none blocks it. The
+    /// firewall's own prompt saves such a rule when the user ticks Public networks. False when the rules cannot be read,
+    /// so the card warns.
+    /// Simplification: a rule's ports and remote addresses are not looked at; a rule for the program is taken to cover
+    /// the share's ports, which is what the prompt's rules do.
+    /// </summary>
+    public static bool PublicLetsIn(string? program)
+    {
+        const int Public = 4, Inbound = 1, Block = 0, Tcp = 6, AnyProtocol = 256;
+        if (program is null || Type.GetTypeFromProgID("HNetCfg.FwPolicy2") is not { } type)
+        {
+            return false;
+        }
+
+        try
+        {
+            object policy = Activator.CreateInstance(type)!;
+            if (!(bool)Indexed(policy, "FirewallEnabled", Public))
+            {
+                return true;
+            }
+
+            if ((bool)Indexed(policy, "BlockAllInboundTraffic", Public))
+            {
+                return false;
+            }
+
+            bool allowed = false;
+            foreach (dynamic rule in (System.Collections.IEnumerable)type.InvokeMember("Rules", System.Reflection.BindingFlags.GetProperty, null, policy, null)!)
+            {
+                if (!(bool)rule.Enabled || (int)rule.Direction != Inbound || ((int)rule.Profiles & Public) == 0 || (int)rule.Protocol is not (Tcp or AnyProtocol)
+                    || rule.ApplicationName is not string name
+                    || !string.Equals(Environment.ExpandEnvironmentVariables(name), program, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                // A block rule wins over any allow rule, as in the firewall itself.
+                if ((int)rule.Action == Block)
+                {
+                    return false;
+                }
+
+                allowed = true;
+            }
+
+            return allowed;
+        }
+        catch (Exception e) when (e is System.Runtime.InteropServices.COMException or InvalidCastException or UnauthorizedAccessException
+            or System.Reflection.TargetInvocationException or MissingMemberException or Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+        {
+            return false;
+        }
+
+        static object Indexed(object target, string property, int profile) =>
+            target.GetType().InvokeMember(property, System.Reflection.BindingFlags.GetProperty, null, target, [profile])!;
+    }
 }
